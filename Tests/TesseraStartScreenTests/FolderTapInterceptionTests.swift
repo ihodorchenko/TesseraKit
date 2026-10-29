@@ -12,10 +12,10 @@
 //  подвью сетки (как в `TileEditTests`), окно не нужно: вне окна раскрытие
 //  выполняется синхронно, без анимации.
 //
-//  Раскрытие «на месте» (D17): пока панель открыта, плитки папки в наборе нет,
-//  поэтому перехватчик к ней уже не применяется — панель закрывает собственный
-//  жест по фону/заголовку (см. `TesseraFolderPanelCell`), а выбор панели
-//  коллекцией отключён (`shouldSelectItemAt`).
+//  Панель вставляется под плитку папки (D17): пока панель открыта, плитка папки
+//  остаётся в наборе, но панель закрывает собственный жест по фону/заголовку
+//  (см. `TesseraFolderPanelCell`), а выбор панели коллекцией отключён
+//  (`shouldSelectItemAt`).
 //
 
 #if canImport(UIKit)
@@ -62,8 +62,8 @@ final class FolderTapInterceptionTests: XCTestCase {
 
     /// Индекс плитки-папки в наборе коллекции.
     ///
-    /// Панель пропускается: она делит идентификатор с папкой, но это другое
-    /// состояние сетки (D17).
+    /// Панель пропускается: она делит идентификатор с папкой, но это другой
+    /// элемент набора (D17).
     ///
     /// - Parameters:
     ///   - grid: Сетка.
@@ -161,9 +161,9 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertEqual(grid.expandedFolderID, folder.id)
     }
 
-    /// Пока панель раскрыта, плитки папки в наборе нет: выбор панели не
-    /// вызывает перехватчик и не меняет состояние. Закрытие — жест самой
-    /// панели по фону/заголовку, а не перехват тапа по папке (D17).
+    /// Выбор панели не вызывает перехватчик и не меняет состояние: панель —
+    /// представление, а не элемент модели. Закрытие — жест самой панели по
+    /// фону/заголовку, а не перехват тапа по папке (D17).
     func testHandlerIsNotCalledForExpandedPanel() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -187,8 +187,8 @@ final class FolderTapInterceptionTests: XCTestCase {
     }
 
     /// Выбор панели отключён, а плитка папки и ярлыки выбираются: иначе тап по
-    /// панели после её закрытия пришёл бы по индексу вернувшейся плитки папки и
-    /// сразу раскрыл её снова.
+    /// панели после её закрытия пришёл бы по индексу, где панели уже нет, и
+    /// сработал бы по чужому элементу.
     func testPanelIsNotSelectableWhileTilesAndFoldersAre() throws {
         let folder = makeFolder("f")
         let tile = tesseraTestTile("a")
@@ -215,6 +215,33 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertFalse(
             grid.collectionView(collectionView, shouldSelectItemAt: IndexPath(item: index, section: 0))
         )
+    }
+
+    /// Пока панель раскрыта, плитка папки остаётся в наборе и выбирается:
+    /// повторный тап по ней закрывает панель (D17). Перехватчика нет, поэтому
+    /// тап идёт обычным путём.
+    func testFolderTileStaysSelectableWhileExpanded() throws {
+        let folder = makeFolder("f")
+        let grid = makeGrid([.folder(folder)])
+        let collectionView = try collectionView(in: grid)
+        var tapped: [TileGridItem] = []
+        grid.onTap = { tapped.append($0) }
+
+        grid.openFolder(folder, animated: false)
+        let index = try folderIndex(in: grid, id: folder.id)
+        XCTAssertTrue(
+            grid.collectionView(
+                collectionView,
+                shouldSelectItemAt: IndexPath(item: index, section: 0)
+            )
+        )
+
+        try tap(grid: grid, at: index)
+
+        XCTAssertEqual(tapped.count, 1)
+        XCTAssertEqual(tapped.first?.folder?.id, folder.id)
+        XCTAssertNil(grid.expandedFolderID)
+        XCTAssertFalse(grid.displayItems.contains { $0.isFolderPanel })
     }
 
     /// Перехватчик папок не трогает тапы по ярлыкам: они идут в `onTap`.

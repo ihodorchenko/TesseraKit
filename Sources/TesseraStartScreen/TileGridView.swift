@@ -19,13 +19,15 @@
 //  STARTSCREEN-IOS-DESIGN.md.
 //  Задача плана: E4.2-UI (live-контент подключён в E5).
 //
-//  D17 (docs/STATE.md, E7.3) — нативное WP-раскрытие папки: панель
-//  `TileGridItem.folderContent` заменяет плитку-папку по её индексу (папка
-//  «разворачивается на месте»), блокировка прокрутки на время анимации,
-//  каскад иконок после роста высоты, закрытие повторным тапом/тапом по пустому
-//  месту/Back и перехватчик `folderTapHandler` для хоста. Панель — ячейка
-//  коллекции (`TesseraFolderPanelCell`), поэтому строки под ней сдвигает
-//  штатная анимация batch-обновлений, а не ручной layout.
+//  D17 (docs/STATE.md, E7.3) — нативное WP-раскрытие папки: под плиткой папки
+//  (она остаётся видимой) вставляется полноширинная панель
+//  `TileGridItem.folderContent` — отдельная строка сразу после строки, в которой
+//  заканчивается папка. Блокировка прокрутки на время анимации, каскад иконок
+//  после роста высоты, закрытие повторным тапом/тапом по пустому месту/Back и
+//  перехватчик `folderTapHandler` для хоста. Панель — ячейка коллекции
+//  (`TesseraFolderPanelCell`), поэтому строки под ней сдвигает штатная анимация
+//  batch-обновлений, а не ручной layout. Пока папка раскрыта, на её плитке
+//  скрыты мини-ярлыки превью 2×2 (подложка и заголовок остаются).
 //
 //  Границы ответственности:
 //  - сетка только отображает снимок TileGridSnapshot (E4.2) и сообщает о
@@ -126,12 +128,14 @@ import TesseraCore
 ///
 /// ## Раскрытие папки (D17, E7.3)
 ///
-/// Тап по закрытой папке раскрывает её нативно, как в Windows Phone: папка
-/// «разворачивается на месте» — плитка-папка исчезает, а на её индекс встаёт
-/// полноширинная панель с заголовком (в нижнем регистре) и четырёхколоночной
-/// сеткой ярлыков. Панель занимает верхний край бывшей плитки и растёт вниз,
-/// поэтому всё, что делило строку с папкой или шло ниже, сдвигается под неё;
-/// иконки появляются каскадом после завершения роста. Панель — это
+/// Тап по закрытой папке раскрывает её нативно, как в Windows Phone: под
+/// плиткой папки (она остаётся на месте и видна) вставляется полноширинная
+/// панель с заголовком (в нижнем регистре) и четырёхколоночной сеткой ярлыков.
+/// Панель занимает отдельную строку сразу после строки, в которой заканчивается
+/// папка, и растёт вниз, поэтому всё, что начинается ниже этой строки,
+/// сдвигается под неё; иконки появляются каскадом после завершения роста. Пока
+/// папка раскрыта, на её плитке скрыты мини-ярлыки превью 2×2 — подложка и
+/// заголовок остаются; при закрытии превью возвращается. Панель — это
 /// UI-состояние, а не данные: в снимок `TileStore` она не попадает, а ``items``
 /// её не содержит.
 ///
@@ -280,23 +284,25 @@ public final class TesseraTileGridView: UIView {
 
     /// Раскрывает папку встроенной панелью (D17).
     ///
-    /// Папка «разворачивается на месте»: в наборе коллекции плитка-папка
-    /// заменяется панелью ``TileGridItem/folderContent(_:)`` по тому же индексу,
-    /// поэтому число элементов не меняется, а панель занимает верхний край
-    /// бывшей плитки и растягивается на всю ширину. Batch-обновление удаляет
-    /// плитку папки и вставляет панель одним движением: высота панели растёт
-    /// 0 → `panelHeight`, а строки, которые делили строку с папкой или шли
-    /// ниже, сдвигаются под неё. На время анимации прокрутка сетки блокируется
-    /// (`isScrollEnabled = false`), иконки появляются каскадом ~35 мс на индекс
-    /// после завершения роста. При Reduce Motion (§9) и вне окна панель
-    /// появляется без анимации.
+    /// Под плиткой папки появляется полноширинная панель
+    /// ``TileGridItem/folderContent(_:)``: в наборе коллекции она вставляется
+    /// отдельным элементом сразу после плитки папки, сама плитка остаётся на
+    /// месте и видна всё время раскрытия. Геометрически панель занимает строку
+    /// сразу после строки, в которой заканчивается папка, и растягивается на всю
+    /// ширину. Batch-обновление только вставляет панель: её высота растёт
+    /// 0 → `panelHeight`, а строки, начинающиеся ниже папки, сдвигаются под неё.
+    /// На время анимации прокрутка сетки блокируется (`isScrollEnabled = false`),
+    /// иконки появляются каскадом ~35 мс на индекс после завершения роста.
+    /// Пока папка раскрыта, на её плитке скрыты мини-ярлыки превью 2×2. При
+    /// Reduce Motion (§9) и вне окна панель появляется без анимации.
     ///
     /// Если папки нет в текущем снимке, вызов ничего не делает; если открыта
     /// другая папка, она сначала закрывается.
     ///
     /// - Parameters:
     ///   - folder: Папка из текущего снимка сетки.
-    ///   - animated: Анимировать ли замену (при Reduce Motion игнорируется).
+    ///   - animated: Анимировать ли появление панели (при Reduce Motion
+    ///     игнорируется).
     public func openFolder(_ folder: TileFolder, animated: Bool = true) {
         guard !isFolderChangeAnimating else { return }
         guard expandedFolderID != folder.id else { return }
@@ -306,8 +312,9 @@ public final class TesseraTileGridView: UIView {
             collapseExpansion(animated: false, notify: true)
         }
 
-        // D17: панель встаёт на индекс папки, а не отдельной строкой под ней.
-        guard let replacementIndex = TileLayoutEngine.folderPanelReplacementIndex(
+        // D17: панель вставляется отдельным элементом сразу после плитки папки;
+        // сама плитка остаётся в наборе.
+        guard let insertionIndex = TileLayoutEngine.folderPanelInsertionIndex(
             items: baseItems,
             expandedFolderID: currentFolder.id
         ) else {
@@ -316,9 +323,9 @@ public final class TesseraTileGridView: UIView {
 
         expandedFolderID = currentFolder.id
         invalidateDisplayItems()
-        guard displayItems.count == baseItems.count,
-              displayItems.indices.contains(replacementIndex),
-              displayItems[replacementIndex].isFolderPanel else {
+        guard displayItems.count == baseItems.count + 1,
+              displayItems.indices.contains(insertionIndex),
+              displayItems[insertionIndex].isFolderPanel else {
             expandedFolderID = nil
             invalidateDisplayItems()
             return
@@ -339,24 +346,22 @@ public final class TesseraTileGridView: UIView {
         collectionView.isScrollEnabled = false
         isFolderChangeAnimating = true
 
-        let replacement = IndexPath(item: replacementIndex, section: 0)
+        let panel = IndexPath(item: insertionIndex, section: 0)
         animateFolderChange { [weak self] in
             guard let self else { return }
             self.tileLayout.setItems(self.displayItems, reason: .items)
             self.collectionView.performBatchUpdates({
-                // Одна и та же позиция: плитка папки исчезает, панель
-                // появляется. UICollectionView анимирует это как замену:
-                // плитка гаснет на своём месте, панель растёт из нулевой
-                // высоты от её верхнего края (атрибуты — в раскладке).
-                self.collectionView.deleteItems(at: [replacement])
-                self.collectionView.insertItems(at: [replacement])
+                // Плитка папки никуда не девается: вставляется только панель,
+                // которая растёт из нулевой высоты от своей строки (атрибуты —
+                // в раскладке), а строки под ней сдвигаются вниз.
+                self.collectionView.insertItems(at: [panel])
             }, completion: nil)
         } completion: { [weak self] in
             guard let self else { return }
             self.isFolderChangeAnimating = false
             self.collectionView.isScrollEnabled = previousScrollState
 
-            if let panelCell = self.collectionView.cellForItem(at: replacement) as? TesseraFolderPanelCell {
+            if let panelCell = self.collectionView.cellForItem(at: panel) as? TesseraFolderPanelCell {
                 // Каскад запускается открытием, а не показом ячейки: прокрутка
                 // и переиспользование не должны повторять анимацию.
                 panelCell.playIconCascade()
@@ -368,11 +373,12 @@ public final class TesseraTileGridView: UIView {
 
     /// Закрывает панель раскрытой папки (D17).
     ///
-    /// Обратный «разворот на месте»: иконки панели гаснут, затем её высота
-    /// схлопывается, а на её индекс возвращается плитка папки — элементы под
-    /// панелью поднимаются вверх. По завершении прокрутка разблокируется, а
-    /// `contentOffset` зажимается в новых границах контента. Хост может вызвать
-    /// метод для закрытия по Back, не дожидаясь тапа.
+    /// Иконки панели гаснут, затем её высота схлопывается, а из набора
+    /// удаляется сама панель: плитка папки всё это время остаётся на своём
+    /// месте, а элементы под панелью поднимаются вверх. При закрытии на плитке
+    /// возвращаются мини-ярлыки превью. По завершении прокрутка разблокируется,
+    /// а `contentOffset` зажимается в новых границах контента. Хост может
+    /// вызвать метод для закрытия по Back, не дожидаясь тапа.
     ///
     /// - Parameter animated: Анимировать ли закрытие (при Reduce Motion
     ///   игнорируется).
@@ -514,10 +520,10 @@ public final class TesseraTileGridView: UIView {
     /// хит-тест, поэтому тап по ячейке (в том числе по панели) его не закрывает.
     private let backgroundTapRecognizer = UITapGestureRecognizer()
 
-    /// Кеш элементов с заменённой панелью раскрытой папки.
+    /// Кеш элементов с вставленной панелью раскрытой папки.
     ///
     /// Пересчитывается редко — при смене снимка, раскрытии/закрытии и числа
-    /// колонок, а не на каждый запрос коллекции: замена ищет индекс папки по
+    /// колонок, а не на каждый запрос коллекции: вставка ищет индекс папки по
     /// снимку.
     private var cachedDisplayItems: [TileGridItem]?
 
@@ -605,8 +611,8 @@ public final class TesseraTileGridView: UIView {
             forCellWithReuseIdentifier: TesseraTileGridView.cellReuseIdentifier
         )
         // D17: панель раскрытой папки — отдельная ячейка: при раскрытии она
-        // заменяет плитку папки штатным batch-обновлением, поэтому соседи под
-        // панелью переезжают анимацией UICollectionView, без ручной геометрии.
+        // вставляется под плитку папки штатным batch-обновлением, поэтому соседи
+        // под панелью переезжают анимацией UICollectionView, без ручной геометрии.
         collectionView.register(
             TesseraFolderPanelCell.self,
             forCellWithReuseIdentifier: TesseraTileGridView.folderPanelReuseIdentifier
@@ -914,9 +920,9 @@ public final class TesseraTileGridView: UIView {
     /// показывать.
     ///
     /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Рамка в точках или `nil`, если элемента нет в снимке, сетка
-    ///   ещё ни разу не раскладывалась или папка раскрыта: пока панель занимает
-    ///   её место, плитки папки в наборе нет.
+    /// - Returns: Рамка в точках или `nil`, если элемента нет в снимке либо сетка
+    ///   ещё ни разу не раскладывалась. У раскрытой папки возвращается рамка её
+    ///   плитки: плитка остаётся на месте, панель встаёт под ней.
     public func frame(forItemID id: AnyHashable) -> CGRect? {
         guard let contentFrame = tileLayout.frame(forItemID: id) else { return nil }
         return collectionView.convert(contentFrame, to: self)
@@ -1044,16 +1050,17 @@ public final class TesseraTileGridView: UIView {
         snapshot?.items ?? []
     }
 
-    /// Элементы в порядке коллекции: снимок, в котором плитка раскрытой папки
-    /// заменена панелью (D17).
+    /// Элементы в порядке коллекции: снимок, в который при раскрытой папке
+    /// добавлена панель (D17).
     ///
-    /// Число элементов совпадает с `baseItems`: раскрытие — это замена по
-    /// индексу, а не вставка. Кеш сбрасывается только при смене снимка,
-    /// раскрытия и числа колонок — на каждый запрос коллекции индекс замены не
-    /// пересчитывается. Доступ внутренний (не публичный): это представление
-    /// сетки, а не данные; наружу отдаются ``items`` и ``expandedFolderID``.
-    /// Тестам E7.4 нужен именно набор коллекции — по нему проверяются замена
-    /// плитки панелью и её обратное возвращение.
+    /// Число элементов при раскрытии равно `baseItems.count + 1`: панель —
+    /// отдельный элемент сразу после плитки папки, сама плитка остаётся в
+    /// наборе. Кеш сбрасывается только при смене снимка, раскрытия и числа
+    /// колонок — на каждый запрос коллекции индекс вставки не пересчитывается.
+    /// Доступ внутренний (не публичный): это представление сетки, а не данные;
+    /// наружу отдаются ``items`` и ``expandedFolderID``. Тестам E7.4 нужен
+    /// именно набор коллекции — по нему проверяются вставка панели под папку и
+    /// её удаление.
     var displayItems: [TileGridItem] {
         if let cachedDisplayItems {
             return cachedDisplayItems
@@ -1068,22 +1075,24 @@ public final class TesseraTileGridView: UIView {
         cachedDisplayItems = nil
     }
 
-    /// Собирает элементы коллекции: заменяет плитку раскрытой папки панелью.
+    /// Собирает элементы коллекции: вставляет панель раскрытой папки после её
+    /// плитки, не убирая саму плитку.
     private func makeDisplayItems() -> [TileGridItem] {
         guard let snapshot else { return [] }
         guard let expandedID = expandedFolderID,
               let folder = snapshot.items.compactMap({ $0.folder }).first(where: { $0.id == expandedID }),
-              let replacementIndex = TileLayoutEngine.folderPanelReplacementIndex(
+              let insertionIndex = TileLayoutEngine.folderPanelInsertionIndex(
                   items: snapshot.items,
                   expandedFolderID: expandedID
               ) else {
             return snapshot.items
         }
 
-        // D17: «разворот на месте» — панель встаёт на индекс папки, элементов
-        // по-прежнему столько же. Строки ниже сдвигает раскладка.
+        // D17: панель — отдельная полноширинная строка сразу после строки
+        // папки. Плитка папки остаётся на своём индексе; строки ниже панели
+        // сдвигает раскладка.
         var items = snapshot.items
-        items[replacementIndex] = .folderContent(folder)
+        items.insert(.folderContent(folder), at: insertionIndex)
         return items
     }
 
@@ -1190,9 +1199,8 @@ public final class TesseraTileGridView: UIView {
     ///
     /// `UIViewPropertyAnimator` с `UICubicTimingParameters` даёт ровно
     /// `cubic-bezier(0.1, 0.9, 0.2, 1)`; `performBatchUpdates` внутри его
-    /// анимационного блока наследует длительность и кривую, поэтому замена
-    /// «плитка папки ↔ панель» и сдвиг элементов под панелью идут одним
-    /// движением.
+    /// анимационного блока наследует длительность и кривую, поэтому появление
+    /// (схлопывание) панели и сдвиг элементов под ней идут одним движением.
     ///
     /// - Parameters:
     ///   - changes: Изменения модели коллекции (batch updates и раскладка).
@@ -1220,10 +1228,9 @@ public final class TesseraTileGridView: UIView {
 
     /// Снимает раскрытие папки; общая реализация ``closeFolder(animated:)``.
     ///
-    /// Обратный «разворот на месте»: панель схлопывается, а на её индекс
-    /// возвращается плитка папки. Batch-обновление удаляет панель и вставляет
-    /// плитку одним движением, поэтому строки под панелью поднимаются вместе с
-    /// уменьшением её высоты.
+    /// Панель схлопывается и удаляется из набора; плитка папки всё это время
+    /// остаётся на своём месте. Batch-обновление удаляет только панель, поэтому
+    /// строки под ней поднимаются вместе с уменьшением её высоты.
     ///
     /// - Parameters:
     ///   - animated: Анимировать ли схлопывание.
@@ -1281,10 +1288,9 @@ public final class TesseraTileGridView: UIView {
             self.animateFolderChange {
                 self.tileLayout.setItems(self.displayItems, reason: .items)
                 self.collectionView.performBatchUpdates({
-                    // D17: панель уходит, на её индекс возвращается плитка
-                    // папки — та же позиция, обратная замена.
+                    // D17: уходит только панель — плитка папки из набора не
+                    // удалялась и остаётся на месте.
                     self.collectionView.deleteItems(at: [replacement])
-                    self.collectionView.insertItems(at: [replacement])
                 }, completion: nil)
             } completion: { [weak self] in
                 guard let self else { return }
@@ -1442,10 +1448,9 @@ extension TesseraTileGridView: UICollectionViewDataSource {
             if let panelCell = cell as? TesseraFolderPanelCell,
                let folder = item.panelFolder {
                 panelCell.configure(folder: folder, columns: tileLayout.columns)
-                // D17: тап по фону/заголовку панели закрывает папку — это и есть
-                // «повторный тап» после раскрытия (плитки папки на сетке больше
-                // нет). Ярлыки внутри панели обрабатывает сама ячейка: её жест
-                // сначала проверяет попадание в иконку.
+                // D17: тап по фону/заголовку панели закрывает папку. Ярлыки
+                // внутри панели обрабатывает сама ячейка: её жест сначала
+                // проверяет попадание в иконку.
                 panelCell.onBackgroundTap = { [weak self] in
                     self?.closeFolder(animated: true)
                 }
@@ -1478,8 +1483,7 @@ extension TesseraTileGridView: UICollectionViewDelegate {
     /// Панель раскрытой папки — представление, а не элемент модели (D17):
     /// выбор по ней не нужен. Жест самой панели уже обработал попадание в
     /// ярлык или закрытие по фону, а лишний `didSelect` после закрытия мог бы
-    /// прийти по индексу, где снова стоит плитка папки, и сразу раскрыть её
-    /// обратно.
+    /// прийти по индексу, где панели уже нет, и сработать по чужому элементу.
     public func collectionView(
         _ collectionView: UICollectionView,
         shouldSelectItemAt indexPath: IndexPath
@@ -1612,10 +1616,12 @@ final class TesseraTileCell: UICollectionViewCell {
     /// Показывает ли ячейка сейчас превью папки, а не одиночную иконку.
     private var showsFolderPreview = false
 
-    /// Раскрыта ли папка (хук волны 2, E7.3).
+    /// Раскрыта ли папка (D17, E7.3).
     ///
     /// Саму панель раскрытия рисует сетка/хост, а не ячейка: ячейке достаточно
-    /// поставить превью на паузу, пока панель открыта.
+    /// поставить превью на паузу и скрыть мини-ярлыки 2×2, пока панель открыта.
+    /// Подложка и заголовок плитки остаются — панель встаёт под плиткой, а не
+    /// вместо неё.
     private var isFolderExpanded = false
 
     /// Движок, в котором зарегистрирован ``liveTileView``.
@@ -1813,10 +1819,12 @@ final class TesseraTileCell: UICollectionViewCell {
             tiles: Array(folder.tiles.prefix(4)),
             schedule: TesseraFolderFlipSchedule(folderID: folder.id)
         )
-        preview.isHidden = false
         preview.setExpanded(isFolderExpanded)
         preview.setVisible(isVisible)
         showsFolderPreview = true
+        // D17: у раскрытой папки мини-ярлыки превью скрыты — плитка остаётся
+        // видимой подложкой с заголовком.
+        updateFolderPreviewVisibility()
 
         // Одиночная иконка уступает место мини-сетке; у её мини-плиток иконки
         // свои, поэтому общая иконка ячейки не нужна.
@@ -1954,16 +1962,34 @@ final class TesseraTileCell: UICollectionViewCell {
         liveTileEngine.setVisible(visible, for: liveTileView)
     }
 
-    /// Сообщает ячейке, что папка раскрыта панелью (хук волны 2, E7.3).
+    /// Сообщает ячейке, что папка раскрыта панелью (D17, E7.3).
     ///
-    /// Раскрытие рисует панель сетки, а не ячейка: ячейка лишь ставит превью на
-    /// паузу, чтобы idle-флип не спорил с каскадом иконок панели. Закрытие
-    /// папки возвращает превью в расписание (если ячейка видима).
+    /// Раскрытие рисует панель сетки, а не ячейка: ячейка ставит превью на
+    /// паузу (idle-флип не должен спорить с каскадом иконок панели) и прячет
+    /// мини-ярлыки 2×2, оставляя подложку и заголовок плитки. Закрытие папки
+    /// возвращает превью в расписание (если ячейка видима) и показывает
+    /// мини-ярлыки снова.
+    ///
+    /// Состояние хранится флагом, а не только у превью: ячейка
+    /// переиспользуется, и `configure(with:isFolderExpanded:)` применяет флаг
+    /// заново при каждом показе, поэтому чужая папка не унаследует скрытое или
+    /// показанное превью.
     ///
     /// - Parameter expanded: Раскрыта ли папка этим элементом сетки.
     func setFolderExpanded(_ expanded: Bool) {
         isFolderExpanded = expanded
         folderPreviewView?.setExpanded(expanded)
+        updateFolderPreviewVisibility()
+    }
+
+    /// Показывает мини-ярлыки превью только у закрытой папки (D17).
+    ///
+    /// Скрывается именно блок мини-иконок 2×2 (`TesseraFolderPreviewView`), а не
+    /// вся ячейка: подложка и заголовок остаются. `isHidden` надёжнее `alpha`:
+    /// он исключает превью из отрисовки и hit-теста, а неявные анимации
+    /// переиспользованной ячейки не могут вернуть ему видимость.
+    private func updateFolderPreviewVisibility() {
+        folderPreviewView?.isHidden = !showsFolderPreview || isFolderExpanded
     }
 
     /// Создаёт превью папки один раз на ячейку.
@@ -2280,12 +2306,13 @@ final class TesseraTileCell: UICollectionViewCell {
 
 /// Ячейка-панель раскрытой папки: заголовок и сетка ярлыков (D17).
 ///
-/// Панель — полноширинная ячейка коллекции, которая встаёт на индекс
-/// плитки-папки при раскрытии (``TileGridItem/folderContent(_:)``): папка
-/// «разворачивается на месте», плитка исчезает. Геометрию задаёт
-/// `TesseraTileCollectionViewLayout` (верхний край — место папки, высота —
-/// формула ``TileLayoutEngine/panelHeight(for:width:columns:)``), поэтому ячейка
-/// только раскладывает содержимое по тем же константам. Сами константы берутся
+/// Панель — полноширинная ячейка коллекции, которая вставляется отдельной
+/// строкой сразу после строки, в которой заканчивается плитка-папка
+/// (``TileGridItem/folderContent(_:)``); сама плитка папки остаётся видимой.
+/// Геометрию задаёт `TesseraTileCollectionViewLayout` (верхний край — строка
+/// сразу под папкой, высота — формула
+/// ``TileLayoutEngine/panelHeight(for:width:columns:)``), поэтому ячейка только
+/// раскладывает содержимое по тем же константам. Сами константы берутся
 /// у движка (`Metrics`): формула высоты и раскладка содержимого обязаны
 /// считаться по одним числам.
 ///
@@ -2307,7 +2334,7 @@ final class TesseraTileCell: UICollectionViewCell {
 /// единственные анимации панели. Задержка по индексу считается чистой функцией
 /// ``TesseraTileGridView/staggerDelay(index:)``; при Reduce Motion (§9) каскада
 /// нет. Панель не трогает раскладку сетки: соседей сдвигает UICollectionView
-/// при замене ячейки.
+/// при вставке/удалении ячейки.
 ///
 /// Высота панели тоже анимируется — но раскладкой, а не ячейкой: при вставке
 /// UICollectionView растит рамку от 0 до полной высоты
@@ -2602,7 +2629,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     }
 
     /// Тап по панели: попал в ярлык — выполнить его действие; мимо ярлыков —
-    /// закрыть папку (D17, «повторный тап»: плитки папки на сетке уже нет).
+    /// закрыть папку (D17, «повторный тап» по панели).
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
         let point = recognizer.location(in: contentView)
         for (index, cell) in shortcutCells.enumerated() where cell.frame.contains(point) {

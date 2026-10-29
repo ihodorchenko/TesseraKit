@@ -53,8 +53,8 @@ final class TileGridItemTests: XCTestCase {
 
     // MARK: - Новый case folderContent (D17)
 
-    /// Панель наследует идентификатор папки: по нему раскладка находит след
-    /// папки, на место которого встаёт панель (D17: «разворот на месте»).
+    /// Панель наследует идентификатор папки: по нему раскладка находит строку
+    /// папки, после которой встаёт панель (D17: панель вставляется под плитку).
     func testFolderContentSharesIdentityWithFolder() {
         let folder = makeFolder()
         let panel = TileGridItem.folderContent(folder)
@@ -78,8 +78,8 @@ final class TileGridItemTests: XCTestCase {
     }
 
     /// Собственного размера у панели нет: `.wide` — метка «полная ширина».
-    /// Раскладка не упаковывает панель по этой метке: место в упаковке она
-    /// берёт у самой папки (`panelFolder.size`), чтобы занять её след.
+    /// Раскладка не упаковывает панель по этой метке: панель — отдельная
+    /// полноширинная строка под папкой, а не плитка.
     func testFolderContentUsesWideSizeAsFullWidthMarker() {
         let panel = TileGridItem.folderContent(makeFolder())
 
@@ -106,8 +106,9 @@ final class TileGridItemTests: XCTestCase {
         XCTAssertFalse(TileGridItem.tile(tesseraTestTile("a")).isFolderPanel)
     }
 
-    /// Папка и панель делят идентификатор, но остаются разными случаями:
-    /// сравнение по `id` не путает данные с UI-состоянием.
+    /// Папка и панель делят идентификатор, но остаются разными случаями: в
+    /// наборе они стоят рядом (панель после плитки), а сравнение по `id` не
+    /// путает данные с UI-состоянием.
     func testFolderAndPanelShareIDButRemainDistinctCases() {
         let folder = makeFolder()
         let panel = TileGridItem.folderContent(folder)
