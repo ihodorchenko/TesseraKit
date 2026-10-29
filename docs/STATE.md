@@ -5,10 +5,9 @@
 Дата: 29.10.2026. **Есть проектная документация, фундамент пакета (E0 — PR #2), реализация
 TesseraCore (E1 — PR #4) и TesseraPivot (E2 — PR #5)**, все смержены в `dev`: пейджер, снап,
 параллакс, арбитраж, хостинг, accessibility/RTL; лента заголовков с индикатором, синхронизация,
-вертикальный скролл, фасад. **E3 (TesseraPanorama) готов** в ветке `task/tessera-panorama` (ждёт
-апрува): кастомный снап с peek, параллакс фона, заголовки с интерполяцией по `t`, вариант B,
-фасад, accessibility/RTL. **Тесты: 86 (Core) + 58 (Pivot) + 51 (Panorama) = 195 passed / 0
-failures** (`xcodebuild test` на симуляторе iPhone 17). E4 не начата, CI нет. Статус каждой
+вертикальный скролл, фасад. **E3 (TesseraPanorama) смержен в `dev` (PR #6)**: кастомный снап с peek, параллакс фона,
+заголовки с интерполяцией по `t`, вариант B, фасад, accessibility/RTL. **Тесты: 86 (Core) + 58 (Pivot) + 51 (Panorama) = 195 passed / 0
+failures** (`xcodebuild test` на симуляторе iPhone 17). E4 не начата, CI нет. Ветка `task/tessera-panorama` удалена. Статус каждой
 задачи — в [`PLAN.md`](PLAN.md).
 
 ## Готово
