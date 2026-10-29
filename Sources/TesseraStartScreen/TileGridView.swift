@@ -2217,9 +2217,15 @@ final class TesseraTileCell: UICollectionViewCell {
 
     /// Раскладывает превью папки и заголовок под ним (D17).
     ///
-    /// Превью — квадрат 2×2 в верхней части плитки, заголовок прижат к низу,
-    /// как у ярлыка. Если плитка низкая (крупный Dynamic Type, тонкая 1×1-папка),
-    /// приоритет у заголовка: превью ужимается вместе с мини-плитками.
+    /// Превью — квадрат 2×2, прижатый к **верхнему** углу плитки по направлению
+    /// чтения (§9): в LTR — к левому, в RTL — к правому. Так закрытая папка
+    /// читается как сетка рабочего стола: мини-иконки начинаются от того же края,
+    /// что и плитки, а не висят по центру. Отступ от края — как у плитки
+    /// (`inset`), поэтому превью не липнет к границе ячейки. Заголовок прижат
+    /// к низу, как у ярлыка.
+    ///
+    /// Если плитка низкая (крупный Dynamic Type, тонкая 1×1-папка), приоритет у
+    /// заголовка: превью ужимается вместе с мини-плитками.
     ///
     /// - Parameter bounds: Границы контента ячейки.
     private func layoutFolderPreview(in bounds: CGRect) {
@@ -2257,11 +2263,13 @@ final class TesseraTileCell: UICollectionViewCell {
             return
         }
 
-        // Квадрат превью — по центру верхней области: мини-плитки внутри него
-        // раскладываются 2×2 с малым зазором.
+        // §9, RTL: мини-сетка зеркалится — прижимается к правому верхнему углу,
+        // чтобы порядок чтения остался прежним. Заголовок внизу не зеркалится:
+        // его выравнивание задаёт сама подпись (`.natural`).
+        let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
         preview.frame = CGRect(
-            x: (bounds.width - blockSide) / 2,
-            y: inset + max(0, (available - blockSide) / 2),
+            x: isRightToLeft ? bounds.width - inset - blockSide : inset,
+            y: inset,
             width: blockSide,
             height: blockSide
         )
@@ -2277,16 +2285,19 @@ final class TesseraTileCell: UICollectionViewCell {
 /// «разворачивается на месте», плитка исчезает. Геометрию задаёт
 /// `TesseraTileCollectionViewLayout` (верхний край — место папки, высота —
 /// формула ``TileLayoutEngine/panelHeight(for:width:columns:)``), поэтому ячейка
-/// только раскладывает содержимое по тем же константам: поля 12 pt, строка
-/// заголовка 44 pt, зазор 8 pt, квадратные ярлыки с зазором 8 pt.
+/// только раскладывает содержимое по тем же константам. Сами константы берутся
+/// у движка (`Metrics`): формула высоты и раскладка содержимого обязаны
+/// считаться по одним числам.
 ///
 /// ## Отрисовка ярлыков
 ///
-/// Внутри переиспользуется ``TesseraTileCell`` — та же отрисовка иконки,
-/// заголовка и бэйджа, что и на сетке. Фон мини-ячейки прозрачный: в панели
-/// ярлык читается как иконка приложения на фоне панели, а не как отдельная
-/// плитка. Тап по ярлыку вызывает ``TileDescriptor/action`` и **не** закрывает
-/// папку (D17); VoiceOver-активация идёт тем же путём через
+/// Внутри переиспользуется ``TesseraTileCell`` — та же плитка, что и на сетке:
+/// подложка, иконка, заголовок, бэйдж. Ячейка настраивается так же, как на
+/// рабочем столе (фон не обнуляется), а её сторона равна юниту сетки
+/// (``TileLayoutEngine/panelTileSide(width:columns:)``), поэтому ярлык в панели
+/// — настоящая small-плитка 1×1, совпадающая с плитками под панелью по размеру
+/// и колонкам. Тап по ярлыку вызывает ``TileDescriptor/action`` и **не**
+/// закрывает папку (D17); VoiceOver-активация идёт тем же путём через
 /// `TesseraTileCell.onActivate`. Тап по фону или заголовку вызывает
 /// ``onBackgroundTap`` — так сетка закрывает папку повторным тапом.
 ///
@@ -2311,11 +2322,15 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     // MARK: - Метрики
 
     /// Константы совпадают с формулой высоты панели в `TileLayoutEngine`.
+    ///
+    /// Значения берутся у движка, а не дублируются: высота панели и раскладка
+    /// её содержимого обязаны считаться по одним числам, иначе последняя строка
+    /// ярлыков либо обрежется, либо не заполнит панель.
     private enum Metrics {
-        static let padding: CGFloat = 12
-        static let headerHeight: CGFloat = 44
-        static let headerSpacing: CGFloat = 8
-        static let cellSpacing: CGFloat = 8
+        static let padding = TileLayoutEngine.panelPadding
+        static let headerHeight = TileLayoutEngine.panelHeaderHeight
+        static let headerSpacing = TileLayoutEngine.panelHeaderSpacing
+        static let cellSpacing = TileLayoutEngine.panelContentSpacing
         static let cascadeDuration: TimeInterval = 0.18
         static let cascadeOffset: CGFloat = 10
         static let collapseDuration: TimeInterval = 0.12
@@ -2429,7 +2444,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
 
     /// Применяет папку: заголовок и сетку её ярлыков.
     ///
-    /// Состав переиспользуется: при том же числе ярлыков мини-ячейки только
+    /// Состав переиспользуется: при том же числе ярлыков плитки панели только
     /// перенастраиваются, поэтому панель не «мигает» при обновлении снимка.
     ///
     /// - Parameters:
@@ -2450,8 +2465,9 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
         while shortcutCells.count < tiles.count {
             let cell = TesseraTileCell(frame: .zero)
-            // В панели ярлык — иконка с подписью, а не плитка с подложкой.
-            cell.contentView.backgroundColor = .clear
+            // D17: ярлык в панели — настоящая плитка small, а не «иконка с
+            // подписью»: подложку, бэйдж, иконку и заголовок рисует та же
+            // ячейка, что и на сетке, поэтому фон не обнуляем.
             contentView.addSubview(cell)
             shortcutCells.append(cell)
         }
@@ -2655,6 +2671,15 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
 
     /// Считает внутреннюю раскладку по ширине панели.
     ///
+    /// Сторона ярлыка — юнит сетки (``TileLayoutEngine/panelTileSide(width:columns:)``):
+    /// та же формула, что у плитки 1×1 на рабочем столе. Юнит считается по всей
+    /// ширине панели и зазору `Metrics.cellSpacing`, поэтому по горизонтали
+    /// ярлыки занимают ширину целиком и встают в те же колонки, что и плитки под
+    /// панелью. Поля `Metrics.padding` действуют по вертикали и для заголовка.
+    ///
+    /// Высота в расчёт не входит: содержимое прижато к верхнему краю, а рост
+    /// панели только обрезает его снизу.
+    ///
     /// - Parameter width: Текущая ширина панели (вся ширина контента сетки).
     /// - Returns: Раскладка либо `nil` для вырожденной ширины.
     private func makeContentLayout(width: CGFloat) -> ContentLayout? {
@@ -2662,7 +2687,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         let innerWidth = max(0, width - padding * 2)
         let columns = max(1, columnCount)
         let spacing = Metrics.cellSpacing
-        let side = (innerWidth - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+        let side = TileLayoutEngine.panelTileSide(width: width, columns: columns)
         guard side.isFinite, side > 0 else { return nil }
 
         let titleFrame = CGRect(
@@ -2683,7 +2708,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             let column = rightToLeft ? columns - 1 - logicalColumn : logicalColumn
             tileFrames.append(
                 CGRect(
-                    x: padding + CGFloat(column) * (side + spacing),
+                    x: CGFloat(column) * (side + spacing),
                     y: originY + CGFloat(row) * (side + spacing),
                     width: side,
                     height: side
@@ -3202,6 +3227,14 @@ final class TesseraFolderPreviewView: UIView {
 
     // MARK: - Раскладка
 
+    /// Раскладывает мини-сетку 2×2 от верхнего угла по направлению чтения.
+    ///
+    /// Блок больше не центрируется: превью начинается с той же точки, что и
+    /// плитки рабочего стола (верхний левый угол в LTR, верхний правый в RTL),
+    /// поэтому закрытая папка читается как миниатюра настоящей сетки, а не как
+    /// «картинка по центру». Во втором случае блок сам зеркалится по колонкам —
+    /// первый ярлык остаётся первым в порядке чтения. Если ярлыков меньше
+    /// четырёх, блок прижат к тому же верхнему углу, а не к центру.
     override func layoutSubviews() {
         super.layoutSubviews()
 
@@ -3216,12 +3249,11 @@ final class TesseraFolderPreviewView: UIView {
         }
 
         let columns = min(2, miniTileViews.count)
-        let rows = (miniTileViews.count + 1) / 2
         let contentWidth = CGFloat(columns) * miniSide + CGFloat(columns - 1) * spacing
-        let contentHeight = CGFloat(rows) * miniSide + CGFloat(rows - 1) * spacing
-        let originX = (bounds.width - contentWidth) / 2
-        let originY = (bounds.height - contentHeight) / 2
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        // Верхний угол по направлению чтения: в LTR — левый, в RTL — правый.
+        let originX = isRightToLeft ? bounds.width - contentWidth : 0
+        let originY: CGFloat = 0
 
         for (index, miniTile) in miniTileViews.enumerated() {
             let row = index / 2

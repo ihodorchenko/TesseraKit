@@ -420,11 +420,11 @@ final class FolderPanelInsertionTests: XCTestCase {
         for count in 1...4 {
             let folder = makeFolder("f", tiles: (0..<count).map { tesseraTestTile("t\($0)") })
 
-            // 390 pt: внутренняя ширина 366, ячейка (366 − 3×8) / 4 = 85.5;
-            // высота = 68 (заголовок) + 8 (зазор) + 85.5 = 161.5.
+            // 390 pt: юнит сетки (390 − 3×8) / 4 = 91.5 — та же сторона, что
+            // у плитки 1×1; высота = 68 (заголовок) + 8 (зазор) + 91.5 = 167.5.
             XCTAssertEqual(
                 TileLayoutEngine.panelHeight(for: folder, width: 390, columns: 4),
-                161.5,
+                167.5,
                 accuracy: accuracy,
                 "Одна строка содержимого при \(count) ярлыках"
             )
@@ -436,16 +436,16 @@ final class FolderPanelInsertionTests: XCTestCase {
         let five = makeFolder("f", tiles: (0..<5).map { tesseraTestTile("t\($0)") })
         let nine = makeFolder("f", tiles: (0..<9).map { tesseraTestTile("t\($0)") })
 
-        // 2 строки: 68 + 8 + (2×85.5 + 8) = 255.
+        // 2 строки: 68 + 8 + (2×91.5 + 8) = 267.
         XCTAssertEqual(
             TileLayoutEngine.panelHeight(for: five, width: 390, columns: 4),
-            255,
+            267,
             accuracy: accuracy
         )
-        // 3 строки: 68 + 8 + (3×85.5 + 2×8) = 348.5.
+        // 3 строки: 68 + 8 + (3×91.5 + 2×8) = 366.5.
         XCTAssertEqual(
             TileLayoutEngine.panelHeight(for: nine, width: 390, columns: 4),
-            348.5,
+            366.5,
             accuracy: accuracy
         )
     }
@@ -455,16 +455,16 @@ final class FolderPanelInsertionTests: XCTestCase {
         let four = makeFolder("f", tiles: (0..<4).map { tesseraTestTile("t\($0)") })
         let five = makeFolder("f", tiles: (0..<5).map { tesseraTestTile("t\($0)") })
 
-        // 320 pt: внутренняя ширина 296, ячейка (296 − 24) / 4 = 68.
+        // 320 pt: юнит (320 − 3×8) / 4 = 74.
         XCTAssertEqual(
             TileLayoutEngine.panelHeight(for: four, width: 320, columns: 4),
-            144,
+            150,
             accuracy: accuracy
         )
-        // 2 строки: 68 + 8 + (2×68 + 8) = 220.
+        // 2 строки: 68 + 8 + (2×74 + 8) = 232.
         XCTAssertEqual(
             TileLayoutEngine.panelHeight(for: five, width: 320, columns: 4),
-            220,
+            232,
             accuracy: accuracy
         )
 
@@ -478,11 +478,11 @@ final class FolderPanelInsertionTests: XCTestCase {
     func testPanelHeightDependsOnColumns() {
         let folder = makeFolder("f", tiles: [tesseraTestTile("a")])
 
-        // 390 pt, 2 колонки: внутренняя ширина 366, ячейка (366 − 8) / 2 = 179;
-        // высота = 68 + 8 + 179 = 255.
+        // 390 pt, 2 колонки: юнит (390 − 8) / 2 = 191;
+        // высота = 68 + 8 + 191 = 267.
         XCTAssertEqual(
             TileLayoutEngine.panelHeight(for: folder, width: 390, columns: 2),
-            255,
+            267,
             accuracy: accuracy
         )
     }
