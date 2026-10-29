@@ -144,6 +144,48 @@ final class TesseraTileLayoutAttributes: UICollectionViewLayoutAttributes {
 ///   ``TesseraTileLayoutInvalidationContext`` через
 ///   ``setItems(_:reason:)``; анимацию выполняет `TesseraTileGridView`.
 ///
+/// ## Панель раскрытой папки (D17, E7)
+///
+/// Раскрытие «на месте»: в наборе элементов панель
+/// ``TileGridItem/folderContent(_:)`` **заменяет** плитку-папку по тому же
+/// индексу (число элементов не меняется), поэтому:
+///
+/// - панель растягивается на всю ширину контента (все ``columns`` колонок) и
+///   начинается в строке, где стояла папка: её верхний край — верхний край
+///   бывшей плитки;
+/// - высоту в точках считает
+///   ``TileLayoutEngine/panelHeight(for:width:columns:)`` — раскладка не хранит
+///   `TileFolder`, только число ярлыков;
+/// - в базовой упаковке панель занимает след своей папки (размер берётся у
+///   `TileFolder`), поэтому всё, что было выше папки, остаётся на месте;
+/// - всё, что делило строку с папкой или шло ниже, упаковывается заново и
+///   встаёт под панелью: панель занимает всю ширину и не может накрыть соседа;
+/// - идентификатор панели совпадает с идентификатором папки, но пока папка
+///   раскрыта, её плитки в наборе нет — ``frame(forItemID:)`` по этому
+///   идентификатору возвращает `nil`.
+///
+/// ## Анимация замены «папка ↔ панель» (D17, E7)
+///
+/// Сетка делает одно batch-обновление: `deleteItems` плитки папки и
+/// `insertItems` панели по одному и тому же `IndexPath`. Атрибуты для этой
+/// замены раскладка выдаёт явно:
+///
+/// - панель появляется с высотой 0 (``initialLayoutAttributesForAppearingItem``)
+///   и растёт до ``panelHeight``; верхний край и ширина при этом не меняются,
+///   поэтому элементы под панелью одновременно сдвигаются вниз;
+/// - исчезающая плитка папки гаснет по альфе на своём месте. Схлопывать её по
+///   высоте не нужно: панель уже растёт из её верхнего края, а сжатие плитки
+///   читалось бы как второй, встречный «разворот»;
+/// - при закрытии — обратная замена: панель схлопывается до нулевой высоты
+///   (``finalLayoutAttributesForDisappearingItem``), а плитка папки проявляется
+///   на её месте по альфе, пока элементы под панелью поднимаются.
+///
+/// Нулевая высота панели выдаётся только на время batch-обновления, в котором
+/// панель действительно появляется или удаляется
+/// (`prepare(forCollectionViewUpdates:)`). При `reloadData` (Reduce Motion, сетка
+/// вне окна) UICollectionView не анимирует замену, и панель обязана сразу
+/// получить полный размер — иначе на кадр появился бы артефакт нулевой высоты.
+///
 /// ## Узкая сетка
 ///
 /// D15 требует четырёх размеров, и ``columns`` по умолчанию 4. Если хост
@@ -200,6 +242,10 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
     /// Идентификаторы элементов в порядке сетки (индекс совпадает с
     /// `IndexPath.item`). Обновляется в layout-проходе.
+    ///
+    /// При раскрытой папке на её индексе стоит панель
+    /// (``TileGridItem/folderContent(_:)``), поэтому идентификатор папки
+    /// встречается в наборе один раз — как у панели.
     private(set) var itemIdentifiers: [AnyHashable] = []
 
     /// Рамка элемента в координатах контента коллекции.
@@ -207,6 +253,10 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     /// Координаты контента — те же, в которых UICollectionView хранит рамки
     /// ячеек: `(0, 0)` — левый верхний угол контента, без учёта `contentOffset`.
     /// Для координат сетки-вью используйте `TesseraTileGridView.frame(forItemID:)`.
+    ///
+    /// Для раскрытой папки её плитки в наборе нет: панель заняла её индекс и
+    /// идентификатор, но это не элемент модели, поэтому по идентификатору
+    /// папки возвращается `nil` (панель не адресуется как плитка).
     ///
     /// - Parameter id: Идентификатор ярлыка или папки.
     /// - Returns: Рамка в точках или `nil`, если элемента нет в текущем наборе.
@@ -239,11 +289,13 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
     // MARK: - Модель
 
-    /// Пары «идентификатор — размер» в порядке сетки.
+    /// Элементы в порядке сетки: идентификатор, модель размера и признак
+    /// панели раскрытой папки.
     ///
     /// Хранится копией: раскладка не удерживает `TileDescriptor` и `TileFolder`
     /// (в них есть замыкания и `UIImage`), ей для геометрии достаточно
-    /// идентичности и размера D15.
+    /// идентичности, размера D15 и числа ярлыков панели (от него зависит высота
+    /// панели в точках).
     private var layoutItems: [GeometryKey.Item] = []
 
     // MARK: - Состояние layout-прохода
@@ -259,6 +311,39 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
     /// Последний посчитанный размер контента.
     private var cachedContentSize: CGSize = .zero
+
+    // MARK: - Состояние анимации замены «папка ↔ панель» (D17, E7)
+
+    /// Индекс панели раскрытой папки в текущем наборе атрибутов.
+    ///
+    /// `nil`, если панели нет или геометрия ещё не посчитана. Нужен, чтобы
+    /// отличить появление панели от обычной плитки.
+    private var panelAttributeIndex: Int?
+
+    /// Индекс панели, которая появляется текущим batch-обновлением.
+    ///
+    /// Заполняется в ``prepare(forCollectionViewUpdates:)`` только для реальной
+    /// вставки; при `reloadData` остаётся `nil`, и панель сразу получает полную
+    /// высоту.
+    private var appearingPanelIndex: Int?
+
+    /// Индекс и атрибуты плитки папки, которую панель заменяет при раскрытии.
+    ///
+    /// UICollectionView удаляет плитку и вставляет панель по одному индексу.
+    /// Финальные атрибуты исчезающей плитки нужно построить из её прежней рамки:
+    /// в новом наборе на этом индексе уже стоит панель.
+    private var replacedFolderIndex: Int?
+    private var replacedFolderAttributes: TesseraTileLayoutAttributes?
+
+    /// Индекс плитки папки, которая появляется при закрытии на месте панели.
+    private var appearingFolderIndex: Int?
+
+    /// Рамка панели, исчезнувшей из набора на последнем `setItems`.
+    ///
+    /// UICollectionView запрашивает финальные атрибуты удаляемого элемента уже
+    /// после того, как раскладка получила новый набор: панели в нём больше нет,
+    /// и без сохранённой рамки схлопывание не из чего построить.
+    private var disappearingPanel: (index: Int, attributes: TesseraTileLayoutAttributes)?
 
     // MARK: - Вид ключа
 
@@ -290,8 +375,28 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
         /// Элемент, от которого зависит только геометрия.
         struct Item: Equatable {
+
+            /// Идентификатор элемента.
             var id: AnyHashable
+
+            /// Размер плитки из модели (D15). У панели — метка ``TileSize/wide``.
             var size: TileSize
+
+            /// След, который элемент занимает в базовой упаковке.
+            ///
+            /// У панели — размер самой папки (`TileFolder.size`): панель
+            /// «разворачивается на месте», поэтому в упаковке она должна занять
+            /// ровно след бывшей плитки, иначе соседи выше папки переехали бы.
+            var packingSize: TileSize
+
+            /// Элемент — полноширинная панель раскрытой папки (D17).
+            var isPanel: Bool
+
+            /// Число ярлыков панели: от него зависит высота панели в точках.
+            ///
+            /// Только число, а не сами ярлыки: раскладка не удерживает
+            /// `TileDescriptor` и `TileFolder` (в них замыкания и `UIImage`).
+            var folderTileCount: Int
         }
     }
 
@@ -318,17 +423,38 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     }
 
     /// Принимает новый набор элементов и инвалидирует раскладку с контекстом
-    /// (§3, §5).
+    /// (§3, §5, D17).
     ///
     /// Вызывается `TesseraTileGridView` перед `reloadData()` (полная перезагрузка) или
     /// внутри `performBatchUpdates` (анимированный resize/reorder). Сам метод
     /// анимацию не запускает — это делает вью-слой, который владеет коллекцией.
     ///
+    /// Замена «плитка папки ↔ панель» приходит сюда же: панель занимает индекс
+    /// папки, поэтому меняется размер/признак элемента, а число элементов
+    /// остаётся прежним. Геометрия пересобирается по смене ключа, а инвалидация
+    /// несёт контекст `.items` — ячейки не перезагружаются без надобности,
+    /// UICollectionView доезжает до новых рамок анимацией вью-слоя.
+    ///
     /// - Parameters:
     ///   - items: Элементы сетки в порядке отображения.
     ///   - reason: Причина пересчёта (состав или только геометрия).
     func setItems(_ items: [TileGridItem], reason: TesseraTileLayoutInvalidationReason) {
-        layoutItems = items.map { GeometryKey.Item(id: $0.id, size: $0.size) }
+        // Атрибуты исчезающего элемента запоминаем до смены набора: в новом
+        // наборе на его индексе уже другой элемент, а UICollectionView спросит
+        // финальные атрибуты по прежнему индексу (D17, E7).
+        capturePanelTransition(replacingWith: items)
+        appearingPanelIndex = nil
+
+        layoutItems = items.map { item in
+            let panel = item.panelFolder
+            return GeometryKey.Item(
+                id: item.id,
+                size: item.size,
+                packingSize: panel?.size ?? item.size,
+                isPanel: panel != nil,
+                folderTileCount: panel?.tiles.count ?? 0
+            )
+        }
         itemIdentifiers = layoutItems.map { $0.id }
 
         let context = TesseraTileLayoutInvalidationContext(
@@ -336,6 +462,53 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
             itemIdentifiers: itemIdentifiers
         )
         invalidateLayout(with: context)
+    }
+
+    /// Запоминает атрибуты элемента, который исчезает при замене «папка ↔ панель».
+    ///
+    /// Вызывается из ``setItems(_:reason:)`` до замены набора: раскладка ещё
+    /// знает старые элементы и их атрибуты, поэтому может построить анимацию
+    /// исчезновения по прежней рамке. Заменой считается только смена случая на
+    /// том же индексе (плитка папки → панель или обратно) — при обычном
+    /// resize/reorder ничего не запоминается.
+    ///
+    /// - Parameter items: Новый набор элементов сетки.
+    private func capturePanelTransition(replacingWith items: [TileGridItem]) {
+        replacedFolderIndex = nil
+        replacedFolderAttributes = nil
+        appearingFolderIndex = nil
+        disappearingPanel = nil
+
+        // Сначала дешёвое сравнение состава: обычные обновления (resize,
+        // reorder, смена снимка без раскрытия) не должны трогать геометрию.
+        let panelIndex = items.firstIndex(where: { $0.isFolderPanel })
+        let oldIndex: Int?
+        if let panelIndex {
+            let panelID = items[panelIndex].id
+            let folderIndex = layoutItems.firstIndex { !$0.isPanel && $0.id == panelID }
+            oldIndex = folderIndex == panelIndex ? folderIndex : nil
+        } else {
+            oldIndex = layoutItems.firstIndex { $0.isPanel }
+        }
+
+        guard let oldIndex else { return }
+
+        // Геометрия могла ещё не посчитаться: `frame(forItemID:)` и `prepare()`
+        // считают её лениво. Атрибуты нужны в координатах контента, поэтому
+        // пересчитываем по текущим (ещё старым) элементам.
+        ensureGeometry()
+
+        guard attributesByIndex.indices.contains(oldIndex),
+              let copy = attributesByIndex[oldIndex].copy() as? TesseraTileLayoutAttributes else {
+            return
+        }
+
+        if panelIndex != nil {
+            replacedFolderIndex = oldIndex
+            replacedFolderAttributes = copy
+        } else {
+            disappearingPanel = (index: oldIndex, attributes: copy)
+        }
     }
 
     /// Инвалидирует раскладку из-за смены конфигурации (колонки, поля, зазор).
@@ -380,6 +553,123 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
         ensureGeometry()
         guard attributesByIndex.indices.contains(indexPath.item) else { return nil }
         return attributesByIndex[indexPath.item]
+    }
+
+    // MARK: - Анимация замены «папка ↔ панель» (D17, E7)
+
+    /// Разбирает batch-обновление: какая сторона замены анимируется.
+    ///
+    /// UICollectionView вызывает метод, когда сетка уже отдала новый набор через
+    /// ``setItems(_:reason:)``. Только здесь видно, что панель именно
+    /// появляется (или исчезает) анимацией: при `reloadData` (Reduce Motion,
+    /// сетка вне окна) этого вызова нет, и панель сразу получает полную высоту.
+    override func prepare(forCollectionViewUpdates updateItems: [UICollectionViewUpdateItem]) {
+        super.prepare(forCollectionViewUpdates: updateItems)
+        appearingPanelIndex = nil
+        appearingFolderIndex = nil
+
+        // Ключ геометрии уже новый: атрибуты должны соответствовать набору,
+        // который прислала сетка.
+        ensureGeometry()
+
+        for update in updateItems {
+            switch update.updateAction {
+            case .insert:
+                guard let indexPath = update.indexPathAfterUpdate else { continue }
+                // Появилась панель на индексе замены — раскрытие.
+                if let panelAttributeIndex, indexPath.item == panelAttributeIndex {
+                    appearingPanelIndex = indexPath.item
+                }
+                // Появилась плитка папки на месте удалённой панели — закрытие.
+                if let panel = disappearingPanel,
+                   indexPath.item == panel.index,
+                   layoutItems.indices.contains(indexPath.item),
+                   !layoutItems[indexPath.item].isPanel {
+                    appearingFolderIndex = indexPath.item
+                }
+
+            default:
+                continue
+            }
+        }
+    }
+
+    /// Начальные атрибуты появляющегося элемента.
+    ///
+    /// При раскрытии панель приходит с высотой 0 и вырастает до полной: верхний
+    /// край и ширина не меняются, поэтому элементы под панелью одновременно
+    /// сдвигаются вниз. При закрытии на месте схлопывающейся панели появляется
+    /// плитка папки — она проявляется по альфе, чтобы не «вспыхнуть».
+    override func initialLayoutAttributesForAppearingItem(
+        at itemIndexPath: IndexPath
+    ) -> UICollectionViewLayoutAttributes? {
+        if let appearingPanelIndex,
+           itemIndexPath.item == appearingPanelIndex,
+           itemIndexPath.item == panelAttributeIndex,
+           let attributes = layoutAttributesForItem(at: itemIndexPath),
+           let collapsed = collapsedPanelAttributes(from: attributes) {
+            return collapsed
+        }
+
+        if let appearingFolderIndex,
+           itemIndexPath.item == appearingFolderIndex,
+           let attributes = layoutAttributesForItem(at: itemIndexPath),
+           let copy = attributes.copy() as? UICollectionViewLayoutAttributes {
+            copy.alpha = 0
+            return copy
+        }
+
+        return super.initialLayoutAttributesForAppearingItem(at: itemIndexPath)
+    }
+
+    /// Финальные атрибуты исчезающего элемента.
+    ///
+    /// При раскрытии плитка папки гаснет на своём месте: панель уже растёт из её
+    /// верхнего края, и схлопывание плитки по высоте читалось бы как второй,
+    /// встречный разворот. При закрытии панель схлопывается до высоты 0, верхний
+    /// край остаётся на месте, поэтому элементы под панелью поднимаются вверх.
+    override func finalLayoutAttributesForDisappearingItem(
+        at itemIndexPath: IndexPath
+    ) -> UICollectionViewLayoutAttributes? {
+        if let appearingPanelIndex,
+           let replacedFolderIndex,
+           replacedFolderIndex == itemIndexPath.item,
+           appearingPanelIndex == itemIndexPath.item,
+           let replacedFolderAttributes,
+           let copy = replacedFolderAttributes.copy() as? UICollectionViewLayoutAttributes {
+            copy.alpha = 0
+            return copy
+        }
+
+        if let panel = disappearingPanel,
+           panel.index == itemIndexPath.item,
+           let collapsed = collapsedPanelAttributes(from: panel.attributes) {
+            return collapsed
+        }
+
+        return super.finalLayoutAttributesForDisappearingItem(at: itemIndexPath)
+    }
+
+    /// Копия атрибутов панели со схлопнутой высотой (D17, E7).
+    ///
+    /// Верхний край и ширина панели сохраняются: панель «вырастает» вниз из-под
+    /// верхнего края бывшей плитки папки и так же схлопывается вверх. Копия
+    /// обязательна: UICollectionView анимирует именно возвращённый объект, и
+    /// портить кадр атрибутов раскладки нельзя.
+    ///
+    /// - Parameter attributes: Полные атрибуты панели.
+    /// - Returns: Копия с `frame.size.height == 0` или `nil`, если копирование
+    ///   недоступно.
+    private func collapsedPanelAttributes(
+        from attributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutAttributes? {
+        guard let copy = attributes.copy() as? UICollectionViewLayoutAttributes else {
+            return nil
+        }
+        var frame = copy.frame
+        frame.size.height = 0
+        copy.frame = frame
+        return copy
     }
 
     /// Нужно ли пересчитать раскладку при изменении `bounds`.
@@ -431,12 +721,24 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     /// Здесь же обновляются ``itemIdentifiers`` и ``cachedContentSize``: после
     /// этого layout согласован с моделью, даже если UICollectionView ещё не
     /// спросил атрибуты.
+    ///
+    /// Раскрытие папки (D17) считается в два шага:
+    ///
+    /// 1. Базовая упаковка: панель занимает **след своей папки** (размер берётся
+    ///    у `TileFolder`), поэтому все элементы получают те же слоты, что и в
+    ///    свёрнутой сетке. Ничего не переезжает из-за того, что папка исчезла.
+    /// 2. Панель встаёт на верхний край бывшей плитки и растягивается на всю
+    ///    ширину. Элементы, которые заканчиваются выше строки папки, остаются на
+    ///    месте; все остальные (делили строку с папкой или шли ниже)
+    ///    упаковываются заново и встают под панелью. Так панель никого не
+    ///    накрывает, а её место в порядке элементов сохраняется.
     private func rebuild(for key: GeometryKey) {
         lastKey = key
         itemIdentifiers = key.items.map { $0.id }
         attributesByIndex.removeAll(keepingCapacity: true)
         indexByID.removeAll(keepingCapacity: true)
         cachedContentSize = .zero
+        panelAttributeIndex = nil
 
         guard !key.items.isEmpty else { return }
 
@@ -452,8 +754,8 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
         // Ужимаем только след плитки для узкой сетки; модель (TileSize) не
         // меняется — её по-прежнему видят ячейка и TileStore.
-        let packItems: [(id: AnyHashable, size: TileSize)] = key.items.map {
-            (id: $0.id, size: normalizedSize($0.size, columns: key.columns))
+        let packItems: [(id: AnyHashable, size: TileSize)] = key.items.map { item in
+            (id: item.id, size: normalizedSize(item.packingSize, columns: key.columns))
         }
         let slots = TileLayoutEngine.pack(
             items: packItems,
@@ -462,35 +764,117 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
         )
 
         // Движок пропускает только плитки шире сетки; normalizedSize это
-        // исключает. Страховка на случай будущих изменений движка: лучше
-        // остаться без атрибутов, чем получить рассинхрон индексов.
+        // исключает (панель упакована следом папки). Страховка на случай
+        // будущих изменений движка: лучше остаться без атрибутов, чем получить
+        // рассинхрон индексов.
         guard slots.count == key.items.count else { return }
 
-        var maximumY = key.insets.top
-        attributesByIndex.reserveCapacity(slots.count)
-
-        for (index, slot) in slots.enumerated() {
-            var frame = TileLayoutEngine.rect(
+        /// Рамка слота в точках с началом контента и зеркалированием RTL (§9).
+        func elementFrame(for slot: TileLayoutSlot, top: CGFloat) -> CGRect {
+            var rect = TileLayoutEngine.rect(
                 for: slot,
                 unit: unit,
                 gap: key.spacing,
-                origin: CGPoint(x: key.insets.left, y: key.insets.top)
+                origin: CGPoint(x: key.insets.left, y: top)
+            )
+            if key.direction == .rightToLeft {
+                let localX = rect.minX - key.insets.left
+                rect.origin.x = key.insets.left + contentWidth - localX - rect.width
+            }
+            return rect
+        }
+
+        var frames: [CGRect?] = Array(repeating: nil, count: key.items.count)
+
+        if let panelIndex = key.items.firstIndex(where: { $0.isPanel }) {
+            panelAttributeIndex = panelIndex
+            let folderSlot = slots[panelIndex]
+            let panelHeight = TileLayoutEngine.panelHeight(
+                tileCount: key.items[panelIndex].folderTileCount,
+                width: contentWidth,
+                columns: key.columns
             )
 
-            // §9, RTL: движок считает в LTR, зеркалирование — здесь.
-            if key.direction == .rightToLeft {
-                let localX = frame.minX - key.insets.left
-                frame.origin.x = key.insets.left + contentWidth - localX - frame.width
+            // D17: панель занимает место папки — тот же верхний край, вся ширина.
+            let panelTop = elementFrame(for: folderSlot, top: key.insets.top).minY
+            let panelFrame = CGRect(
+                x: key.insets.left,
+                y: panelTop,
+                width: contentWidth,
+                height: panelHeight
+            )
+            frames[panelIndex] = panelFrame
+
+            // Кто остаётся над панелью: слот целиком выше строки папки.
+            var belowIndices: [Int] = []
+            belowIndices.reserveCapacity(key.items.count)
+            for index in key.items.indices where index != panelIndex {
+                // D17 раскрывает одну папку; лишние панели (если хост всё же
+                // положит несколько) не участвуют в упаковке и получают пустую
+                // рамку, чтобы индексы не разъехались.
+                if key.items[index].isPanel {
+                    frames[index] = CGRect(
+                        x: key.insets.left,
+                        y: key.insets.top,
+                        width: contentWidth,
+                        height: 0
+                    )
+                    continue
+                }
+
+                let slot = slots[index]
+                if slot.row + slot.unitRows <= folderSlot.row {
+                    frames[index] = elementFrame(for: slot, top: key.insets.top)
+                } else {
+                    belowIndices.append(index)
+                }
             }
+
+            // Всё, что делит строку с папкой или идёт ниже, упаковывается
+            // заново от левого края и встаёт сразу под панелью. Юнитная сетка
+            // сохраняется, начало координат — нижняя граница панели плюс зазор.
+            if !belowIndices.isEmpty {
+                let belowItems: [(id: AnyHashable, size: TileSize)] = belowIndices.map { index in
+                    let item = key.items[index]
+                    return (id: item.id, size: normalizedSize(item.packingSize, columns: key.columns))
+                }
+                let belowSlots = TileLayoutEngine.pack(
+                    items: belowItems,
+                    columns: key.columns,
+                    unit: unit
+                )
+                guard belowSlots.count == belowIndices.count else { return }
+
+                let belowTop = panelTop + panelHeight + key.spacing
+                for (position, index) in belowIndices.enumerated() {
+                    frames[index] = elementFrame(for: belowSlots[position], top: belowTop)
+                }
+            }
+        } else {
+            for index in key.items.indices {
+                frames[index] = elementFrame(for: slots[index], top: key.insets.top)
+            }
+        }
+
+        var maximumY = key.insets.top
+        attributesByIndex.reserveCapacity(key.items.count)
+
+        for (index, item) in key.items.enumerated() {
+            guard let frame = frames[index] else { return }
 
             let attributes = TesseraTileLayoutAttributes(
                 forCellWith: IndexPath(item: index, section: 0)
             )
-            attributes.itemID = slot.id
-            attributes.tileSize = key.items[index].size
+            attributes.itemID = item.id
+            attributes.tileSize = item.size
             attributes.frame = frame
             attributesByIndex.append(attributes)
-            indexByID[slot.id] = index
+
+            // Пока папка раскрыта, её плитки в наборе нет — панель не
+            // адресуется как элемент модели (`frame(forItemID:)` → nil).
+            if !item.isPanel {
+                indexByID[item.id] = index
+            }
             maximumY = max(maximumY, frame.maxY)
         }
 
@@ -507,10 +891,10 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     /// D15 рассчитан на 4 колонки; при меньшем числе колонок широкая плитка
     /// не помещается. Вместо пропуска (который сдвинул бы соответствие индексов)
     /// берём ближайший меньший размер: 2×2 при двух-трёх колонках и 1×1 при
-    /// одной.
+    /// одной. Правило живёт в `TileLayoutEngine.fittingSize(_:columns:)`, чтобы
+    /// раскладка и чистые функции панели (E7.1) считали одинаково.
     private func normalizedSize(_ size: TileSize, columns: Int) -> TileSize {
-        guard size.unitColumns > columns else { return size }
-        return columns >= 2 ? .medium : .small
+        TileLayoutEngine.fittingSize(size, columns: columns)
     }
 
     /// Санитизирует внешние поля: отрицательные и нечисловые — 0.

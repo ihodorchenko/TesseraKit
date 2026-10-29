@@ -1179,6 +1179,12 @@ public final class TesseraTileEditCoordinator: NSObject {
                 } else if let index = grid.index(ofItemID: hovered.id) {
                     target = .reorder(hovered.id, index: index)
                 }
+
+            case .folderContent:
+                // Панель раскрытой папки (D17) не цель перетаскивания в E7.1:
+                // её место в раскладке фиксировано, а взаимодействие с
+                // содержимым панели появится в E7.3.
+                break
             }
         }
 
