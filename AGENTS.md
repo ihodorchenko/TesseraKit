@@ -32,7 +32,7 @@
 - **iOS 15+**, **Swift 5.9+**, `swift-tools-version: 5.9`. API новее iOS 15 запрещены: никаких `@Observable` (использовать `ObservableObject`), `scrollTargetBehavior`/`scrollTargetLayout`, `@Entry` и т.п.
 - **UIKit-ядро + SwiftUI-фасады** (`UIViewControllerRepresentable`).
 - **Без внешних зависимостей** — только системные фреймворки.
-- Сборка через SPM (`swift build`, `swift test`). Файлов `.xcodeproj` в репозитории быть не должно.
+- Сборка через SPM (`swift build`, `swift test`). Файлов `.xcodeproj` в репозитории быть не должно — **кроме Example-хоста** (`Example/*.xcodeproj`, решение D16): он нужен для ручной проверки компонентов на симуляторе.
 
 ## Ключевые контракты (из docs/CORE-IOS-DESIGN.md)
 
