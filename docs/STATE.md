@@ -6,9 +6,9 @@
 TesseraCore (E1 — PR #4), TesseraPivot (E2 — PR #5) и TesseraPanorama (E3 — PR #6)**, все смержены
 в `dev`: пейджер, снап, параллакс, арбитраж, хостинг, accessibility/RTL; лента заголовков с
 индикатором, синхронизация, вертикальный скролл, фасад; панорама с peek-снапом, фоном и заголовками.
-**E4 (TesseraStartScreen) готов** в ветке `task/tessera-start-screen` (ждёт апрува): рабочий стол
+**E4 (TesseraStartScreen) смержен в `dev` (PR #7)**: рабочий стол
 с ярлыками-действиями и папками (D12), опциональные боковые страницы (D13), папки через функцию
-одобрения (D14), live-плитки (D15). **Тесты: 86 + 58 + 51 + 76 = 271 passed / 0 failures** (`xcodebuild test` на
+одобрения (D14), live-плитки (D15). Ветка `task/tessera-start-screen` удалена. **E5 (релиз) — в работе.** **Тесты: 86 + 58 + 51 + 76 = 271 passed / 0 failures** (`xcodebuild test` на
 симуляторе iPhone 17). CI нет. Статус каждой задачи — в [`PLAN.md`](PLAN.md).
 
 ## Готово
