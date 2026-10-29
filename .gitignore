@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+.typecheck-cache/
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
