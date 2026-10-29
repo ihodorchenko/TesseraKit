@@ -341,36 +341,77 @@ public enum TileLayoutEngine {
 
     // MARK: - Панель раскрытой папки (D17)
 
-    /// Внутренние поля панели по горизонтали и вертикали, в точках.
-    private static let panelPadding: CGFloat = 12
+    /// Внутренние поля панели по вертикали, в точках.
+    ///
+    /// Горизонтально содержимое панели полей не добавляет: ярлыки встают в те
+    /// же колонки, что и плитки рабочего стола (панель уже ограничена полями
+    /// раскладки). Поля заголовка — по ``panelPadding`` с каждой стороны.
+    static let panelPadding: CGFloat = 12
 
     /// Высота строки заголовка панели в точках (одна строка Dynamic Type).
-    private static let panelHeaderHeight: CGFloat = 44
+    static let panelHeaderHeight: CGFloat = 44
 
     /// Зазор между заголовком и сеткой содержимого панели в точках.
-    private static let panelHeaderSpacing: CGFloat = 8
+    static let panelHeaderSpacing: CGFloat = 8
 
     /// Зазор между ячейками сетки содержимого панели в точках.
-    private static let panelContentSpacing: CGFloat = 8
+    ///
+    /// Совпадает с зазором сетки рабочего стола (`itemSpacing` раскладки по
+    /// умолчанию), поэтому ярлыки панели встают в те же колонки, что и плитки
+    /// под панелью.
+    static let panelContentSpacing: CGFloat = 8
+
+    /// Сторона ярлыка панели раскрытой папки в точках (D17, E7).
+    ///
+    /// Ярлык в панели — та же плитка small, что и на рабочем столе, поэтому его
+    /// сторона считается **той же формулой юнита**, что у сетки
+    /// (``unit(screenWidth:columns:gaps:)``):
+    ///
+    /// `юнит = (ширина − зазор × (N − 1)) / N`.
+    ///
+    /// Доступной шириной служит вся ширина панели, которая уже равна ширине
+    /// контента сетки (без внешних полей раскладки), а зазор —
+    /// ``panelContentSpacing``. Горизонтальных полей панель не добавляет, иначе
+    /// ярлык стал бы меньше плитки 1×1 и разъехался бы с колонками сетки.
+    ///
+    /// - Parameters:
+    ///   - width: Полная ширина панели в точках (ширина контента сетки).
+    ///   - columns: Число колонок сетки содержимого, больше нуля.
+    /// - Returns: Сторона квадратного ярлыка в точках или `0` для вырожденной
+    ///   геометрии.
+    static func panelTileSide(width: CGFloat, columns: Int) -> CGFloat {
+        unit(screenWidth: width, columns: columns, gaps: panelContentSpacing)
+    }
 
     /// Высота полноширинной панели раскрытой папки в точках (D17, E7.1).
     ///
     /// Панель состоит из строки заголовка и квадратной сетки содержимого:
     ///
-    /// - внешние поля — по 12 pt со всех сторон;
+    /// - внешние поля сверху и снизу — по 12 pt (`panelPadding`);
     /// - заголовок — 44 pt: высота фиксирована, потому что заголовок занимает
     ///   ровно одну строку;
     /// - зазор между заголовком и сеткой — 8 pt;
-    /// - ячейки содержимого квадратные, их сторона считается по доступной
-    ///   ширине и числу колонок, зазоры между ячейками — 8 pt.
+    /// - ярлыки содержимого квадратные, их сторона равна юниту сетки
+    ///   (``panelTileSide(width:columns:)``), зазоры между строками — 8 pt;
+    /// - по горизонтали ярлыки занимают всю ширину панели: тот же юнит и тот же
+    ///   зазор, что у сетки, дают ровно `columns` колонок без остатка.
+    ///
+    /// Итоговая формула (строки — `ceil(count / columns)`):
+    ///
+    /// `высота = padding × 2 + заголовок + зазор + строки × юнит +
+    /// (строки − 1) × зазор`.
+    ///
+    /// Формула обязана совпадать с метриками `TesseraFolderPanelCell`: ячейка
+    /// раскладывает содержимое по этим же числам, поэтому высота панели точно
+    /// вмещает последнюю строку ярлыков.
     ///
     /// Метод не зависит от модели ярлыка: раскладка передаёт только число
     /// ярлыков папки (``panelHeight(tileCount:width:columns:)``), чтобы не
     /// удерживать `TileFolder` с замыканиями и картинками.
     ///
-    /// Вырожденная геометрия (нечисловая/неположительная ширина, `columns <= 0`
-    /// или ширина меньше внешних полей) даёт `0`: панель без высоты, как и
-    /// плитка без места.
+    /// Вырожденная геометрия (нечисловая/неположительная ширина, ширина, где
+    /// зазоры съедают всё место, `columns <= 0`) даёт `0`: панель без высоты,
+    /// как и плитка без места.
     ///
     /// - Parameters:
     ///   - tileCount: Число ярлыков в сетке содержимого панели; отрицательное
@@ -383,12 +424,8 @@ public enum TileLayoutEngine {
         guard columns > 0, width.isFinite, width > 0 else { return 0 }
 
         let columnCount = max(1, columns)
-        let innerWidth = width - panelPadding * 2
-        guard innerWidth.isFinite, innerWidth > 0 else { return 0 }
-
-        let spacing = panelContentSpacing
-        let cellSide = (innerWidth - spacing * CGFloat(columnCount - 1)) / CGFloat(columnCount)
-        guard cellSide.isFinite, cellSide > 0 else { return 0 }
+        let side = panelTileSide(width: width, columns: columnCount)
+        guard side.isFinite, side > 0 else { return 0 }
 
         let count = max(0, tileCount)
         let rows = count == 0 ? 0 : (count + columnCount - 1) / columnCount
@@ -396,7 +433,7 @@ public enum TileLayoutEngine {
 
         guard rows > 0 else { return headerHeight }
 
-        let contentHeight = CGFloat(rows) * cellSide + CGFloat(rows - 1) * spacing
+        let contentHeight = CGFloat(rows) * side + CGFloat(rows - 1) * panelContentSpacing
         return headerHeight + panelHeaderSpacing + contentHeight
     }
 
