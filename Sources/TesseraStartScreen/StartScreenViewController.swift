@@ -78,12 +78,21 @@ public enum TesseraStartScreenPage: Hashable {
 ///
 /// ## Арбитраж осей (§1, docs/CORE-IOS-DESIGN.md §2)
 ///
-/// Пейджер владеет горизонталью, сетка START — вертикалью. Контроллер
-/// подписывается на пан пейджера и по доминирующей оси
+/// Пейджер владеет горизонталью, вертикаль — детям. Контроллер подписывается
+/// на пан пейджера и по доминирующей оси
 /// (``TesseraGestureArbiter/axisDecision(forVelocity:)``) на время
-/// горизонтального жеста блокирует прокрутку сетки через
+/// горизонтального жеста блокирует прокрутку детей через
 /// ``TesseraGestureArbiter``, возвращая прежнее состояние по завершении.
-/// Вертикальный жест остаётся сетке и не блокируется.
+/// Вертикальный жест остаётся детям и не блокируется.
+///
+/// Арбитраж трёхсторонний (§1): вертикальных владельцев двое — сетка START и
+/// скролл боковой страницы (хук §7 или список приложений §6). Сетка START
+/// регистрируется автоматически: она есть в любой конфигурации (D13). Скроллы
+/// опциональных страниц создаёт хост, поэтому контроллер их не знает — хост
+/// регистрирует их сам через ``registerVerticalOwner(_:)`` после появления
+/// страницы и снимает через ``unregisterVerticalOwner(_:)``, если скролл
+/// перестал использоваться. Оба метода — холодный путь: они не выполняются из
+/// `scrollViewDidScroll` и не трогают layout.
 ///
 /// ## Параллакс (§8)
 ///
@@ -302,6 +311,21 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// выгруженному контенту.
     private var gestureArbiter: TesseraGestureArbiter?
 
+    /// Слабая ссылка на вертикальный скролл-вью боковой страницы.
+    ///
+    /// Боковые страницы опциональны (D13) и выгружаются пейджером, поэтому
+    /// между жестами контроллер не держит их сильными ссылками: выгруженная
+    /// страница выпадает из реестра сама.
+    private struct WeakVerticalOwner {
+        weak var scrollView: UIScrollView?
+    }
+
+    /// Зарегистрированные хостом вертикальные владельцы боковых страниц (§1).
+    ///
+    /// Сетка START сюда не входит: она есть всегда и добавляется в арбитр
+    /// автоматически (``verticalOwnersForArbitration``).
+    private var extraVerticalOwners: [WeakVerticalOwner] = []
+
     // MARK: - Инициализация
 
     /// Создаёт пустой рабочий стол.
@@ -406,6 +430,9 @@ public final class TesseraStartScreenViewController: UIViewController {
     ///   - rightPage: Фабрика контроллера правой страницы; `nil` — страницы нет.
     ///     Фабрика может вызываться повторно (пейджер лениво выгружает страницы
     ///     ±1) и должна возвращать контроллер, который можно встроить заново.
+    ///
+    /// - Note: Вертикальный скролл боковой страницы регистрируется отдельно —
+    ///   через ``registerVerticalOwner(_:)`` после появления страницы (§1).
     public func configure(
         leftPanel: QuickPanelProviding?,
         rightPage: (() -> UIViewController)?
@@ -465,6 +492,70 @@ public final class TesseraStartScreenViewController: UIViewController {
         currentPage = page
         currentPageIndex = index
         pagerViewController.go(toPage: index, animated: shouldAnimate)
+    }
+
+    // MARK: - Регистрация вертикальных владельцев (§1)
+
+    /// Регистрирует вертикальный скролл-вью боковой страницы.
+    ///
+    /// Арбитраж трёхсторонний (§1): горизонталь принадлежит пейджеру, вертикаль —
+    /// сетке START и скроллам боковых страниц. Сетку START контроллер
+    /// регистрирует сам (она есть в любой конфигурации, D13), а скроллы
+    /// опциональных страниц создаёт хост, поэтому о них нужно сообщить:
+    ///
+    /// ```swift
+    /// // В контроллере боковой страницы, после её появления:
+    /// override func viewDidAppear(_ animated: Bool) {
+    ///     super.viewDidAppear(animated)
+    ///     startScreen.registerVerticalOwner(listPage.scrollView)
+    /// }
+    /// ```
+    ///
+    /// Регистрируйте страницу после её появления (например, из `viewDidAppear`
+    /// её контроллера), когда скролл-вью уже существует. На время
+    /// горизонтального жеста пейджера прокрутка владельца блокируется и по
+    /// завершении жеста получает прежнее `isScrollEnabled`
+    /// (``TesseraGestureArbiter``). Вертикальный жест не блокируется — он
+    /// остаётся странице.
+    ///
+    /// Ссылки слабые: когда пейджер выгружает страницу (D13, ленивая загрузка
+    /// ±1), её скролл выпадает из реестра сам — снимать регистрацию не
+    /// обязательно. Повторная регистрация того же экземпляра — no-op. Скролл-вью
+    /// самого пейджера в арбитраж не попадает (``TesseraGestureArbiter``
+    /// исключает горизонтального владельца).
+    ///
+    /// - Parameter scrollView: Вертикальный скролл-вью боковой страницы; у
+    ///   ``TesseraAppsListPageViewController`` это его `scrollView`.
+    ///
+    /// - Note: Регистрация пополняет список владельцев, из которого арбитр
+    ///   собирается на каждый жест: второй арбитр для боковых страниц не
+    ///   создаётся — START-сетка и они блокируются одним и тем же
+    ///   ``TesseraGestureArbiter``. Если горизонтальный жест уже идёт,
+    ///   регистрация вступит в силу со следующего жеста: арбитр собирается на
+    ///   `.began` и в Core не расширяется.
+    public func registerVerticalOwner(_ scrollView: UIScrollView) {
+        guard scrollView !== pagerScrollView else { return }
+
+        pruneExtraVerticalOwners()
+        guard !extraVerticalOwners.contains(where: { $0.scrollView === scrollView }) else {
+            return
+        }
+        extraVerticalOwners.append(WeakVerticalOwner(scrollView: scrollView))
+    }
+
+    /// Снимает регистрацию вертикального скролл-вью боковой страницы.
+    ///
+    /// Вызывать не обязательно: ссылки слабые, и освобождённые скроллы выпадают
+    /// из арбитража сами. Метод нужен, когда страница живёт дальше, но её
+    /// скролл больше не должен блокироваться на время горизонтального жеста
+    /// (например, хост переиспользует скролл-вью для другой страницы).
+    ///
+    /// - Parameter scrollView: Ранее зарегистрированный вертикальный скролл-вью.
+    public func unregisterVerticalOwner(_ scrollView: UIScrollView) {
+        extraVerticalOwners.removeAll { owner in
+            guard let registered = owner.scrollView else { return true }
+            return registered === scrollView
+        }
     }
 
     // MARK: - Accessibility (§9)
@@ -748,31 +839,36 @@ public final class TesseraStartScreenViewController: UIViewController {
         }
     }
 
-    /// Начинает горизонтальный жест: на время жеста сетка не прокручивается.
+    /// Начинает горизонтальный жест: на время жеста дети не прокручиваются.
+    ///
+    /// Детей двое (§1): сетка START (регистрируется автоматически) и скроллы
+    /// боковых страниц, зарегистрированные хостом через
+    /// ``registerVerticalOwner(_:)`` (``verticalOwnersForArbitration``).
     ///
     /// Решение по доминирующей оси принимается по первому доступному вектору
     /// пана (как в Pivot): заменить делегата пана пейджера нельзя, поэтому
     /// `gestureRecognizerShouldBegin` арбитра не назначается. Если жест
-    /// вертикальный, сетка остаётся прокручиваемой — иначе выключение
+    /// вертикальный, дети остаются прокручиваемыми — иначе выключение
     /// скролл-вью остановило бы начавшуюся вертикальную прокрутку (§1,
     /// CORE-IOS-DESIGN.md §2 «Арбитраж»).
     private func beginHorizontalScroll(with pan: UIPanGestureRecognizer) {
         guard let pagerScrollView else { return }
 
         guard isHorizontalPan(pan) else {
-            // Вертикаль принадлежит сетке: снимаем возможную прошлую
+            // Вертикаль принадлежит детям: снимаем возможную прошлую
             // блокировку и не трогаем `isScrollEnabled`.
             endHorizontalScroll()
             return
         }
 
         // Защита от наложения жестов: незавершённый арбитр сначала возвращает
-        // сетке исходное состояние, иначе снимок `isScrollEnabled` потеряется.
+        // детям исходное состояние, иначе снимок `isScrollEnabled` потеряется.
         if gestureArbiter != nil {
             endHorizontalScroll()
         }
 
-        let verticalOwners = [startPageController.gridScrollView].compactMap { $0 }
+        pruneExtraVerticalOwners()
+        let verticalOwners = verticalOwnersForArbitration
         let arbiter = TesseraGestureArbiter(
             horizontalOwner: pagerScrollView,
             verticalOwners: verticalOwners
@@ -791,10 +887,50 @@ public final class TesseraStartScreenViewController: UIViewController {
         return TesseraGestureArbiter.axisDecision(forVelocity: vector) == .horizontal
     }
 
-    /// Завершает горизонтальный жест: возвращает сетке исходную прокрутку.
+    /// Завершает горизонтальный жест: возвращает детям исходную прокрутку.
+    ///
+    /// После этого арбитр освобождается: сильных ссылок на скролл-вью боковых
+    /// страниц между жестами контроллер не держит, выгруженные страницы (D13)
+    /// не живут в арбитре.
     private func endHorizontalScroll() {
         gestureArbiter?.endHorizontalScroll()
         gestureArbiter = nil
+        pruneExtraVerticalOwners()
+    }
+
+    /// Вертикальные владельцы для арбитра: сетка START плюс зарегистрированные
+    /// хостом скроллы боковых страниц.
+    ///
+    /// Сетка START — автоматический владелец: она есть в любой конфигурации
+    /// (D13), поэтому её не нужно регистрировать. Порядок — сетка первой: она
+    /// участвует в жесте чаще остальных, а порядок влияет только на очерёдность
+    /// блокировки. Повторы и сам скролл-вью пейджера отсекаем здесь, не
+    /// полагаясь на внутреннюю фильтрацию ``TesseraGestureArbiter``.
+    private var verticalOwnersForArbitration: [UIScrollView] {
+        var owners: [UIScrollView] = []
+
+        if let gridScrollView = startPageController.gridScrollView {
+            owners.append(gridScrollView)
+        }
+
+        for owner in extraVerticalOwners {
+            guard let scrollView = owner.scrollView,
+                  scrollView !== pagerScrollView,
+                  !owners.contains(where: { $0 === scrollView }) else {
+                continue
+            }
+            owners.append(scrollView)
+        }
+
+        return owners
+    }
+
+    /// Убирает из реестра освобождённые скролл-вью боковых страниц.
+    ///
+    /// Пейджер выгружает страницы лениво (D13), поэтому их скроллы исчезают без
+    /// явного ``unregisterVerticalOwner(_:)``.
+    private func pruneExtraVerticalOwners() {
+        extraVerticalOwners.removeAll { $0.scrollView == nil }
     }
 
     // MARK: - Вспомогательные

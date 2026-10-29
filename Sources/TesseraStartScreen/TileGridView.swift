@@ -7,22 +7,26 @@
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §2 «Архитектура»
 //  (StartPage: TileGridView — UICollectionView + кастомный layout), §3
 //  «Плиточная сетка» (юниты, четыре размера, кастомный layout, инвалидация),
-//  §4 «Live-плитки» (бэйдж — отдельный view; live-контент подключается
-//  движком E4.3), §5 «Режим редактирования» (хуки для E4.4: снэпшот, пустышка,
-//  инвалидация), §8 «Параллакс фона» (колбэк прокрутки отдаёт offset наружу; в
-//  самом scrollViewDidScroll ничего не раскладывается) и §9 «Accessibility»
+//  §4 «Live-плитки» (live-контент ярлыка обслуживает один
+//  `TesseraLiveTileEngine` на сетку: стахгер, флипы, паузы, Reduce Motion;
+//  бэйдж — отдельный view контейнера, не часть флипа), §5 «Режим
+//  редактирования» (хуки для E4.4: снэпшот, пустышка, инвалидация), §8
+//  «Параллакс фона» (колбэк прокрутки отдаёт offset наружу; в самом
+//  scrollViewDidScroll ничего не раскладывается) и §9 «Accessibility»
 //  (VoiceOver, Dynamic Type, RTL).
 //  Уточнения пользователя: D12 (ярлык — действие), D14 (папки — элемент
-//  сетки), D15 (четыре размера) — docs/STATE.md; §14 STARTSCREEN-IOS-DESIGN.md.
-//  Задача плана: E4.2-UI.
+//  сетки), D15 (четыре размера и live-плитки) — docs/STATE.md; §14
+//  STARTSCREEN-IOS-DESIGN.md.
+//  Задача плана: E4.2-UI (live-контент подключён в E5).
 //
 //  Границы ответственности:
 //  - сетка только отображает снимок TileGridSnapshot (E4.2) и сообщает о
 //    тапах/долгом нажатии; порядок, размеры, папки и действия — за TileStore и
 //    хостом (правило «один писатель», §6);
-//  - флипы, стахгер и паузы live-плиток — E4.3: здесь статичная ячейка с
-//    иконкой, заголовком и бэйджем; ``TesseraLiveTileView`` можно внедрить
-//    позже, не меняя публичный API сетки;
+//  - live-контент ярлыка (§4) обслуживает ``TesseraLiveTileEngine``: сетка
+//    держит один движок на все ячейки, регистрирует контейнер при показе
+//    ячейки и ставит на паузу при уходе с экрана; флипы, стахгер, паузы и
+//    Reduce Motion остаются внутри движка, ячейка лишь отдаёт контейнер;
 //  - в `scrollViewDidScroll` выполняется только `onScrollOffsetChanged`:
 //    ни `layoutIfNeeded`, ни `invalidateLayout`, ни `reloadData` (§3, §8,
 //    CORE-IOS-DESIGN.md §2). Параллакс — frame/transform/alpha на стороне
@@ -56,6 +60,24 @@ import TesseraCore
 /// ``update(snapshot:animated:)``. Сетка не ходит в `TileStore` сама: хост
 /// передаёт снимок после каждого изменения (`TileStore.onChange`), поэтому
 /// экран и список приложений (§6) читают одно и то же состояние.
+///
+/// ## Live-плитки (§4)
+///
+/// Живой контент задаётся провайдером в ``TileDescriptor/liveContent``: сетка
+/// создаёт один ``TesseraLiveTileEngine`` на себя, а ячейка с таким ярлыком
+/// показывает ``TesseraLiveTileView`` вместо статичной иконки и заголовка.
+/// Бэйдж остаётся снаружи флипа (им владеет контейнер).
+///
+/// Жизненный цикл:
+/// - регистрация — в `willDisplay` (ячейка действительно на экране);
+/// - пауза — в `didEndDisplaying` и ``setItemHidden(_:forItemID:)``:
+///   движок сбрасывает незавершённый флип и не планирует новые;
+/// - снятие регистрации — в `prepareForReuse`, как требует контракт движка;
+/// - Reduce Motion — движок показывает статичный фронт, сетка его не дублирует.
+///
+/// Расписание (`cycleInterval`, `flipDuration` и т. п.) настраивается через
+/// ``liveTileConfiguration``; провайдерам без подписки доступен явный
+/// ``refreshLiveTile(forItemID:)``.
 ///
 /// ## Прокрутка и параллакс
 ///
@@ -156,6 +178,57 @@ public final class TesseraTileGridView: UIView {
         snapshot?.items ?? []
     }
 
+    // MARK: - Live-плитки (§4)
+
+    /// Параметры расписания live-флипов (§4).
+    ///
+    /// По умолчанию — значения ``TesseraLiveTileEngine/Configuration``. Смена
+    /// применяется к уже созданному ``liveTileEngine`` сразу: движок
+    /// перепланирует цикл и обновит длительность флипа у зарегистрированных
+    /// плиток. Сетке без живых плиток настройка ничего не создаёт.
+    public var liveTileConfiguration: TesseraLiveTileEngine.Configuration {
+        get { storedLiveTileConfiguration }
+        set {
+            storedLiveTileConfiguration = newValue
+            storedLiveTileEngine?.configuration = newValue
+        }
+    }
+
+    /// Движок живых плиток сетки (docs/STARTSCREEN-IOS-DESIGN.md §4).
+    ///
+    /// Один на сетку: ячейки переиспользуются, движок — нет. Создаётся при
+    /// первом обращении, то есть при первой live-плитке в снимке: статичному
+    /// рабочему столу таймеры и подписки не нужны. Движок сам считает стахгер,
+    /// держит паузы (вне экрана, фон, Reduce Motion) и удерживает
+    /// зарегистрированные контейнеры — сетка обязана снимать регистрацию при
+    /// уходе ячейки с экрана, что и делает в `didEndDisplaying`/`prepareForReuse`.
+    public var liveTileEngine: TesseraLiveTileEngine {
+        if let engine = storedLiveTileEngine {
+            return engine
+        }
+        let engine = TesseraLiveTileEngine(configuration: storedLiveTileConfiguration)
+        storedLiveTileEngine = engine
+        return engine
+    }
+
+    /// Перечитывает live-контент видимой плитки (§4).
+    ///
+    /// Нужен провайдерам без подписки `startObservingChanges` (v1, §10): после
+    /// изменения своего состояния они просят хост обновить плитку. Провайдеры
+    /// с подпиской получают то же самое автоматически. Обновление не запускает
+    /// флип — расписание остаётся прежним.
+    ///
+    /// - Parameter id: Идентификатор ярлыка. Для статичной плитки, папки и
+    ///   элемента вне экрана вызов ничего не делает.
+    public func refreshLiveTile(forItemID id: AnyHashable) {
+        guard let cell = cellView(forItemID: id) as? TesseraTileCell,
+              let liveTileView = cell.liveTileView,
+              let engine = storedLiveTileEngine else {
+            return
+        }
+        engine.refresh(liveTileView)
+    }
+
     // MARK: - Конфигурация раскладки
 
     /// Число колонок сетки, по умолчанию 4 (§3; 6 — опция для больших экранов,
@@ -230,6 +303,16 @@ public final class TesseraTileGridView: UIView {
 
     /// Идентификатор ячейки сетки.
     private static let cellReuseIdentifier = "TesseraTileCell"
+
+    /// Движок live-плиток; `nil` — сетка ещё не встречала live-контент.
+    ///
+    /// Храним отдельно от вычисляемого ``liveTileEngine``, чтобы
+    /// ``liveTileConfiguration`` не создавал движок (и его наблюдатели) сетке
+    /// без живых плиток.
+    private var storedLiveTileEngine: TesseraLiveTileEngine?
+
+    /// Параметры, с которыми будет создан ``liveTileEngine``.
+    private var storedLiveTileConfiguration = TesseraLiveTileEngine.Configuration()
 
     // MARK: - Инициализация
 
@@ -438,7 +521,7 @@ public final class TesseraTileGridView: UIView {
                   let item = item(atIndex: indexPath.item) else {
                 continue
             }
-            configure(cell, with: item)
+            configure(cell, with: item, isVisible: true)
         }
     }
 
@@ -451,14 +534,42 @@ public final class TesseraTileGridView: UIView {
     /// - Parameters:
     ///   - cell: Ячейка сетки.
     ///   - item: Элемент, который она показывает.
-    private func configure(_ cell: TesseraTileCell, with item: TileGridItem) {
-        cell.configure(with: item)
-        cell.setSourceHidden(hiddenItemIDs.contains(item.id))
+    ///   - isVisible: Показывается ли ячейка на экране. Для `false` движок не
+    ///     создаётся вовсе: `cellForItemAt` лишь готовит ячейку, а регистрацию
+    ///     в движке выполняет `willDisplay`.
+    private func configure(_ cell: TesseraTileCell, with item: TileGridItem, isVisible: Bool) {
+        // Движок создаётся только для live-ярлыка: статичной плите и папке
+        // расписание флипов не нужно.
+        let engine = isVisible ? liveEngine(for: item) : nil
+        // Скрытая на время drag ячейка не должна флипаться «в себя», но её
+        // регистрация нужна: возврат из скрытия возобновит расписание без
+        // повторного `willDisplay`.
+        let isHidden = hiddenItemIDs.contains(item.id)
+        cell.configure(
+            with: item,
+            liveTileEngine: engine,
+            isVisible: isVisible && !isHidden
+        )
+        cell.setSourceHidden(isHidden)
 
         let itemID = item.id
         cell.onActivate = { [weak self] in
             self?.activate(itemID: itemID)
         }
+    }
+
+    /// Движок для элемента: `nil` — ярлык статичный или это папка.
+    ///
+    /// Обращение к ``liveTileEngine`` лениво создаёт движок, поэтому сетка без
+    /// live-контента не заводит таймеров и наблюдателей.
+    ///
+    /// - Parameter item: Элемент сетки.
+    /// - Returns: Движок либо `nil`, если живой стороны у элемента нет.
+    private func liveEngine(for item: TileGridItem) -> TesseraLiveTileEngine? {
+        guard case .tile(let descriptor) = item, descriptor.liveContent != nil else {
+            return nil
+        }
+        return liveTileEngine
     }
 
     /// Активация элемента VoiceOver: тот же путь, что у тапа пальцем.
@@ -584,6 +695,10 @@ public final class TesseraTileGridView: UIView {
             return
         }
         cell.setSourceHidden(hidden)
+        // Скрытая на время drag плитка не должна флипаться «в себя»: пауза
+        // движка сбрасывает незавершённый флип и не планирует новые (§4,
+        // «Паузы»). Возврат ячейки возобновляет расписание без перерегистрации.
+        cell.setLiveTileVisible(!hidden)
     }
 
     /// Пересчитывает геометрию сетки без смены снимка (§3).
@@ -705,8 +820,11 @@ extension TesseraTileGridView: UICollectionViewDataSource {
 
     /// Ячейка ярлыка или папки.
     ///
-    /// Содержимое: иконка, заголовок, бэйдж (только у ярлыка). Live-контент
-    /// подключается движком E4.3, не этой ячейкой.
+    /// Содержимое готовит ``configure(_:with:isVisible:)``: статичные иконка,
+    /// заголовок и бэйдж либо live-контейнер, если у ярлыка есть
+    /// ``TileDescriptor/liveContent``. Регистрация live-плитки в движке
+    /// выполняется на `willDisplay`, а не здесь: ячейка, подготовленная для
+    /// prefetch, может так и не появиться на экране.
     public func collectionView(
         _ collectionView: UICollectionView,
         cellForItemAt indexPath: IndexPath
@@ -718,7 +836,7 @@ extension TesseraTileGridView: UICollectionViewDataSource {
 
         if let tileCell = cell as? TesseraTileCell,
            let item = item(atIndex: indexPath.item) {
-            configure(tileCell, with: item)
+            configure(tileCell, with: item, isVisible: false)
         }
         return cell
     }
@@ -742,7 +860,13 @@ extension TesseraTileGridView: UICollectionViewDelegate {
         onTap?(item)
     }
 
-    /// Возвращает скрытое состояние после переиспользования ячейки.
+    /// Показ ячейки: регистрирует live-плитку в движке и возвращает скрытое
+    /// состояние после переиспользования.
+    ///
+    /// Регистрация именно здесь, а не в `cellForItemAt`: UICollectionView
+    /// сообщает о фактическом появлении ячейки на экране, включая возврат
+    /// после прокрутки. Один движок на сетку при этом не пересоздаётся — он
+    /// лишь получает контейнер и провайдера.
     public func collectionView(
         _ collectionView: UICollectionView,
         willDisplay cell: UICollectionViewCell,
@@ -752,10 +876,28 @@ extension TesseraTileGridView: UICollectionViewDelegate {
               let item = item(atIndex: indexPath.item) else {
             return
         }
-        tileCell.setSourceHidden(hiddenItemIDs.contains(item.id))
+        configure(tileCell, with: item, isVisible: true)
         // Динамический шрифт мог смениться, пока ячейка была вне экрана
         // (например, в prefetch): пересобираем метрики на показе.
         tileCell.refreshTypography()
+    }
+
+    /// Уход ячейки с экрана: live-плитка ставится на паузу (§4, «Паузы»).
+    ///
+    /// Движок сбрасывает незавершённый флип и не планирует новые, но
+    /// сохраняет подписку провайдера и состояние сторон — возврат на экран не
+    /// требует перерегистрации. Регистрацию окончательно снимает
+    /// `prepareForReuse`, как требует контракт движка.
+    public func collectionView(
+        _ collectionView: UICollectionView,
+        didEndDisplaying cell: UICollectionViewCell,
+        forItemAt indexPath: IndexPath
+    ) {
+        guard let tileCell = cell as? TesseraTileCell else { return }
+        // UIKit может вызвать метод уже после переиспользования ячейки: если
+        // она снова в коллекции, пауза относилась бы к другой (новой) плите.
+        guard collectionView.indexPath(for: cell) == nil else { return }
+        tileCell.setLiveTileVisible(false)
     }
 
     /// Прокрутка сетки: наружу отдаётся только offset — никакого layout
@@ -775,7 +917,17 @@ extension TesseraTileGridView: UICollectionViewDelegate {
 /// папка (D14: создание папки из ярлыка) — тип ячейки не меняется.
 ///
 /// Ячейка не знает про layout: рамку задаёт раскладка, содержимое —
-/// ``configure(with:)``. В горячем пути скролла она не участвует.
+/// ``configure(with:liveTileEngine:isVisible:)``. В горячем пути скролла она не
+/// участвует.
+///
+/// ## Live-контент (§4, D15)
+///
+/// Если у ярлыка задан ``TileDescriptor/liveContent``, статичные подвиды
+/// (иконка, заголовок, бэйдж) уступают место ``TesseraLiveTileView``: он
+/// рисует фронт и бэк, а его бэйдж живёт поверх сторон и не участвует во
+/// флипе. Контейнер создаётся один раз и переиспользуется вместе с ячейкой —
+/// пересоздание на каждом reuse сбрасывало бы флип и подписку провайдера.
+/// Расписание флипов ведёт движок сетки, ячейка лишь сообщает ему видимость.
 final class TesseraTileCell: UICollectionViewCell {
 
     /// Идентификатор элемента, который сейчас показан.
@@ -794,8 +946,30 @@ final class TesseraTileCell: UICollectionViewCell {
     /// Бэйдж ярлыка — отдельный view поверх плитки (§4).
     ///
     /// Переиспользуется готовый ``TesseraLiveTileBadgeView`` из E4.3: он уже
-    /// умеет точку/счётчик, «99+», Dynamic Type и не входит во флип.
+    /// умеет точку/счётчик, «99+», Dynamic Type и не входит во флип. В
+    /// live-режиме его заменяет бэйдж ``TesseraLiveTileView``.
     private let badgeView = TesseraLiveTileBadgeView()
+
+    /// Контейнер живой плитки; `nil` — ячейка ещё не встречала live-контент.
+    private(set) var liveTileView: TesseraLiveTileView?
+
+    /// Показывает ли ячейка сейчас live-контент.
+    private var showsLiveContent = false
+
+    /// Движок, в котором зарегистрирован ``liveTileView``.
+    ///
+    /// Ссылка слабая: владелец движка — сетка. При `nil` (сетка уже
+    /// освободилась) снимать регистрацию не с кого, и это безопасно.
+    private weak var liveTileEngine: TesseraLiveTileEngine?
+
+    /// Провайдер, с которым контейнер зарегистрирован в движке.
+    ///
+    /// Нужен, чтобы при повторной конфигурации не пересоздавать подписку:
+    /// тот же провайдер — только обновление видимости и бэйджа.
+    private weak var registeredLiveProvider: TesseraLiveTileContentProvider?
+
+    /// Зарегистрирован ли ``liveTileView`` в ``liveTileEngine``.
+    private var isLiveRegistered = false
 
     /// bucket размера, для которого собран шрифт (0 — компактные плитки,
     /// 1 — средние, 2 — крупные; границы — по фактической стороне).
@@ -811,6 +985,15 @@ final class TesseraTileCell: UICollectionViewCell {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setUp()
+    }
+
+    deinit {
+        // Страховка на случай перезагрузки коллекции без `prepareForReuse`:
+        // движок удерживает контейнер и провайдера, поэтому исчезнувшая
+        // ячейка обязана снять свою регистрацию.
+        if isLiveRegistered, let liveTileView {
+            liveTileEngine?.unregister(liveTileView)
+        }
     }
 
     /// Общая настройка: квадратная плитка, один accessibility-элемент (§9).
@@ -852,30 +1035,41 @@ final class TesseraTileCell: UICollectionViewCell {
 
     /// Применяет элемент сетки.
     ///
-    /// - Parameter item: Ярлык или папка из снимка `TileStore`.
-    func configure(with item: TileGridItem) {
+    /// Статичная плитка и папка рисуются как раньше (иконка + заголовок +
+    /// бэйдж). Если у ярлыка есть ``TileDescriptor/liveContent``, содержимое
+    /// отдаётся ``TesseraLiveTileView`` и регистрируется в движке.
+    ///
+    /// - Parameters:
+    ///   - item: Ярлык или папка из снимка `TileStore`.
+    ///   - engine: Движок live-плиток. `nil` — ячейка только готовится к показу
+    ///     (`cellForItemAt`): стороны отрисовываются без расписания флипов.
+    ///   - isVisible: Видима ли ячейка сейчас; движок не флипает невидимые
+    ///     плитки (§4, «Паузы»).
+    func configure(
+        with item: TileGridItem,
+        liveTileEngine engine: TesseraLiveTileEngine?,
+        isVisible: Bool
+    ) {
         itemID = item.id
 
         switch item {
         case .tile(let descriptor):
-            iconView.image = descriptor.icon
-            iconView.tintColor = nil
-            titleLabel.text = descriptor.title
-            badgeView.badge = descriptor.badge
+            if let provider = descriptor.liveContent {
+                configureLiveContent(
+                    provider: provider,
+                    badge: descriptor.badge,
+                    engine: engine,
+                    isVisible: isVisible
+                )
+            } else {
+                endLiveContent()
+                configureStaticTile(descriptor)
+            }
             configureAccessibility(for: descriptor)
 
         case .folder(let folder):
-            if let icon = folder.icon {
-                iconView.image = icon
-                iconView.tintColor = nil
-            } else {
-                // Иконка-заглушка папки; шаблонный символ красится в
-                // secondaryLabel и адаптируется к тёмной теме.
-                iconView.image = UIImage(systemName: "folder.fill")
-                iconView.tintColor = .secondaryLabel
-            }
-            titleLabel.text = folder.title
-            badgeView.badge = .none
+            endLiveContent()
+            configureStaticFolder(folder)
             configureAccessibility(for: folder)
         }
 
@@ -884,6 +1078,155 @@ final class TesseraTileCell: UICollectionViewCell {
         accessibilityElementsHidden = false
         contentView.alpha = 1
         setNeedsLayout()
+    }
+
+    /// Статичная плитка: иконка, заголовок и бэйдж ярлыка (прежнее поведение).
+    private func configureStaticTile(_ descriptor: TileDescriptor) {
+        iconView.image = descriptor.icon
+        iconView.tintColor = nil
+        titleLabel.text = descriptor.title
+        badgeView.badge = descriptor.badge
+    }
+
+    /// Папка: иконка-превью или заглушка, заголовок; бэйджа у папки нет.
+    private func configureStaticFolder(_ folder: TileFolder) {
+        if let icon = folder.icon {
+            iconView.image = icon
+            iconView.tintColor = nil
+        } else {
+            // Иконка-заглушка папки; шаблонный символ красится в
+            // secondaryLabel и адаптируется к тёмной теме.
+            iconView.image = UIImage(systemName: "folder.fill")
+            iconView.tintColor = .secondaryLabel
+        }
+        titleLabel.text = folder.title
+        badgeView.badge = .none
+    }
+
+    // MARK: - Live-контент
+
+    /// Готовит live-сторону: контейнер, бэйдж и регистрация в движке.
+    ///
+    /// - Parameters:
+    ///   - provider: Провайдер контента ярлыка.
+    ///   - badge: Бэйдж ярлыка (D12/D15) — рисуется контейнером поверх сторон.
+    ///   - engine: Движок сетки; `nil` — предпросмотр без расписания.
+    ///   - isVisible: Видима ли ячейка.
+    private func configureLiveContent(
+        provider: TesseraLiveTileContentProvider,
+        badge: TileBadge,
+        engine: TesseraLiveTileEngine?,
+        isVisible: Bool
+    ) {
+        let liveView = liveTileView ?? makeLiveTileView()
+        showsLiveContent = true
+
+        // Фронт/бэк и бэйдж рисует контейнер: статичные подвиды уступают ему
+        // место. Бэйдж контейнера не участвует во флипе (§4, D15).
+        iconView.isHidden = true
+        titleLabel.isHidden = true
+        badgeView.isHidden = true
+        liveView.isHidden = false
+        liveView.badge = badge
+
+        guard let engine else {
+            // Ячейка ещё не показана: стороны без регистрации, чтобы движок не
+            // планировал флипы для ячейки, которая может так и не появиться.
+            if !isLiveRegistered {
+                liveView.setFaces(front: provider.frontFace, back: provider.backFace)
+                liveView.show(.front, animated: false)
+            }
+            return
+        }
+
+        attachLiveContent(
+            of: provider,
+            to: liveView,
+            engine: engine,
+            isVisible: isVisible
+        )
+    }
+
+    /// Регистрирует контейнер в движке либо, если провайдер тот же,
+    /// ограничивается обновлением видимости.
+    ///
+    /// Повторная регистрация на каждом обновлении снимка не нужна: движок
+    /// удерживает провайдера и сам перечитывает стороны по подписке.
+    private func attachLiveContent(
+        of provider: TesseraLiveTileContentProvider,
+        to liveView: TesseraLiveTileView,
+        engine: TesseraLiveTileEngine,
+        isVisible: Bool
+    ) {
+        if isLiveRegistered,
+           registeredLiveProvider !== provider || liveTileEngine !== engine {
+            // Провайдер или движок сменились: прежняя регистрация неактуальна.
+            liveTileEngine?.unregister(liveView)
+            isLiveRegistered = false
+        }
+
+        liveTileEngine = engine
+
+        if isLiveRegistered {
+            engine.setVisible(isVisible, for: liveView)
+            return
+        }
+
+        registeredLiveProvider = provider
+        // Новая регистрация всегда стартует с фронта: ячейка могла прийти из
+        // reuse на бэке (движок при `unregister` сторону не меняет), а фронт —
+        // устоявшееся состояние плитки (§4).
+        liveView.show(.front, animated: false)
+        engine.register(liveView, provider: provider, isVisible: isVisible)
+        isLiveRegistered = true
+    }
+
+    /// Создаёт контейнер живой плитки один раз на ячейку.
+    ///
+    /// Контейнер не перехватывает касания и не является отдельным
+    /// accessibility-элементом: тап и озвучивание остаются за ячейкой (§9,
+    /// «плитка — один элемент»).
+    private func makeLiveTileView() -> TesseraLiveTileView {
+        let liveView = TesseraLiveTileView(frame: contentView.bounds)
+        liveView.isAccessibilityElement = false
+        liveView.isUserInteractionEnabled = false
+        contentView.addSubview(liveView)
+        liveTileView = liveView
+        return liveView
+    }
+
+    /// Снимает live-режим: регистрация в движке отменяется, статичные подвиды
+    /// возвращаются в раскладку.
+    ///
+    /// Сам контейнер не уничтожается — он переиспользуется, если ярлык снова
+    /// окажется живым.
+    private func endLiveContent() {
+        if isLiveRegistered, let liveTileView {
+            liveTileEngine?.unregister(liveTileView)
+        }
+        isLiveRegistered = false
+        registeredLiveProvider = nil
+        liveTileEngine = nil
+        showsLiveContent = false
+        // Переиспользованная ячейка уходит в устоявшееся состояние: после
+        // `unregister` движок сторону не меняет, поэтому фронт выставляем сами.
+        liveTileView?.show(.front, animated: false)
+        liveTileView?.isHidden = true
+        badgeView.isHidden = false
+        iconView.isHidden = false
+        titleLabel.isHidden = false
+    }
+
+    /// Ставит live-плитку на паузу или возобновляет её (§4, «Паузы»).
+    ///
+    /// Движок не флипает невидимую плитку и сбрасывает незавершённый флип, но
+    /// сохраняет подписку провайдера и состояние сторон — возврат на экран не
+    /// требует перерегистрации.
+    ///
+    /// - Parameter visible: Видима ли ячейка на экране.
+    func setLiveTileVisible(_ visible: Bool) {
+        guard isLiveRegistered, let liveTileView, let liveTileEngine else { return }
+        liveTileEngine.setVisible(visible, for: liveTileView)
     }
 
     /// §9: ярлык — один элемент, label — заголовок, value — счётчик бэйджа.
@@ -941,6 +1284,10 @@ final class TesseraTileCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
 
+        // Движок удерживает контейнер и провайдера: без явной отмены ячейка
+        // осталась бы зарегистрированной после переиспользования (§4).
+        endLiveContent()
+
         // «Желе» режима редактирования (E4.4) живёт на ячейке анимациями слоя.
         // Переиспользованная ячейка не должна унаследовать чужую анимацию или
         // поворот от прежнего элемента.
@@ -967,6 +1314,14 @@ final class TesseraTileCell: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+
+        if showsLiveContent {
+            // Контейнер занимает всю плитку; содержимое сторон, бэйдж и RTL он
+            // раскладывает сам (§4), ячейка только даёт ему рамку.
+            liveTileView?.frame = contentView.bounds
+            return
+        }
+
         updateTitleFontIfNeeded()
         layoutContent()
     }
