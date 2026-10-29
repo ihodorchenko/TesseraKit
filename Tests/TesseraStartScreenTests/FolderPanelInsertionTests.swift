@@ -4,12 +4,13 @@
 //
 //  Тесты чистой геометрии панели раскрытой папки (задача E7.4, решение D17).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»;
-//  D17 в docs/STATE.md — папка «разворачивается на месте»: панель заменяет
-//  плитку-папку по её индексу, а всё, что делило строку с папкой или шло ниже,
-//  встаёт под панелью.
+//  D17 в docs/STATE.md — панель вставляется отдельным элементом сразу после
+//  плитки папки (плитка остаётся видимой), а геометрически занимает
+//  полноширинную строку сразу после строки, в которой заканчивается папка;
+//  всё, что начинается ниже этой строки, встаёт под панелью.
 //
 //  Проверяются только чистые функции `TileLayoutEngine`:
-//  `folderPanelReplacementIndex`, `rowsBelowOffset`, `panelHeight`. Ни
+//  `folderPanelInsertionIndex`, `rowsBelowOffset`, `panelHeight`. Ни
 //  UICollectionView, ни окно, ни layout-проход здесь не нужны: функции
 //  детерминированы и зависят только от модели и числа колонок.
 //
@@ -55,51 +56,51 @@ final class FolderPanelInsertionTests: XCTestCase {
         items.map { $0.id }
     }
 
-    // MARK: - Индекс замены панели (folderPanelReplacementIndex)
+    // MARK: - Индекс вставки панели (folderPanelInsertionIndex)
 
-    /// Без раскрытой папки заменять нечего.
-    func testReplacementIndexIsNilWithoutExpandedFolder() {
+    /// Без раскрытой папки вставлять нечего.
+    func testInsertionIndexIsNilWithoutExpandedFolder() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [.tile(tesseraTestTile("a")), .folder(folder)]
 
         XCTAssertNil(
-            TileLayoutEngine.folderPanelReplacementIndex(
+            TileLayoutEngine.folderPanelInsertionIndex(
                 items: items,
                 expandedFolderID: nil
             )
         )
     }
 
-    /// Папки нет в наборе — заменять нечего (идентификатор не совпал).
-    func testReplacementIndexIsNilWhenFolderIsMissing() {
+    /// Папки нет в наборе — вставлять нечего (идентификатор не совпал).
+    func testInsertionIndexIsNilWhenFolderIsMissing() {
         let items: [TileGridItem] = [.tile(tesseraTestTile("a"))]
 
         XCTAssertNil(
-            TileLayoutEngine.folderPanelReplacementIndex(
+            TileLayoutEngine.folderPanelInsertionIndex(
                 items: items,
                 expandedFolderID: AnyHashable("missing")
             )
         )
     }
 
-    /// Панель уже в наборе — второй раз её не добавляют.
-    func testReplacementIndexIsNilWhenPanelIsAlreadyInserted() {
+    /// Панель уже в наборе — второй раз её не вставляют.
+    func testInsertionIndexIsNilWhenPanelIsAlreadyInserted() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
-            .tile(tesseraTestTile("a")),
+            .folder(folder),
             .folderContent(folder),
         ]
 
         XCTAssertNil(
-            TileLayoutEngine.folderPanelReplacementIndex(
+            TileLayoutEngine.folderPanelInsertionIndex(
                 items: items,
                 expandedFolderID: folder.id
             )
         )
     }
 
-    /// Индекс замены — это индекс самой плитки-папки, а не «после неё».
-    func testReplacementIndexPointsAtFolderTile() {
+    /// Индекс вставки — сразу после плитки-папки, а не вместо неё.
+    func testInsertionIndexPointsRightAfterFolderTile() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
             .tile(tesseraTestTile("a", size: .small)),
@@ -108,17 +109,17 @@ final class FolderPanelInsertionTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderPanelReplacementIndex(
+            TileLayoutEngine.folderPanelInsertionIndex(
                 items: items,
                 expandedFolderID: folder.id
             ),
-            1
+            2
         )
     }
 
-    /// Замена по индексу не меняет число элементов и их порядок: панель просто
-    /// занимает место папки.
-    func testReplacementKeepsItemCountAndOrder() {
+    /// Вставка не убирает плитку папки: число элементов растёт на один, плитка
+    /// остаётся на своём индексе, панель идёт следующей.
+    func testInsertionKeepsFolderTileAndGrowsItemCount() {
         let folder = makeFolder("f")
         var items: [TileGridItem] = [
             .tile(tesseraTestTile("a")),
@@ -128,42 +129,42 @@ final class FolderPanelInsertionTests: XCTestCase {
         ]
         let before = ids(items)
 
-        let index = TileLayoutEngine.folderPanelReplacementIndex(
+        let index = TileLayoutEngine.folderPanelInsertionIndex(
             items: items,
             expandedFolderID: folder.id
         )
+        XCTAssertEqual(index, 2)
+        guard let index else { return }
+        items.insert(.folderContent(folder), at: index)
 
-        XCTAssertEqual(index, 1)
-        if let index {
-            items[index] = .folderContent(folder)
-        }
-
-        XCTAssertEqual(items.count, before.count)
-        XCTAssertEqual(ids(items), before)
-        XCTAssertTrue(items[1].isFolderPanel)
-        XCTAssertEqual(items[1].panelFolder?.id, folder.id)
-        XCTAssertFalse(items.contains { $0.folder != nil })
+        XCTAssertEqual(items.count, before.count + 1)
+        // Плитка папки осталась на прежнем индексе: [a, folder, panel, b, c].
+        XCTAssertEqual(ids(items), [before[0], before[1], folder.id, before[2], before[3]])
+        XCTAssertEqual(items[1].folder?.id, folder.id)
+        XCTAssertTrue(items[2].isFolderPanel)
+        XCTAssertEqual(items[2].panelFolder?.id, folder.id)
     }
 
-    /// Индекс не зависит от позиции папки: первая и последняя тоже находятся.
-    func testReplacementIndexWorksForFirstAndLastFolder() {
+    /// Индекс работает для первой и последней папки: первая даёт 1, последняя —
+    /// конец массива (вставка в конец).
+    func testInsertionIndexWorksForFirstAndLastFolder() {
         let folder = makeFolder("f")
         let first: [TileGridItem] = [.folder(folder), .tile(tesseraTestTile("a"))]
         let last: [TileGridItem] = [.tile(tesseraTestTile("a")), .folder(folder)]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderPanelReplacementIndex(items: first, expandedFolderID: folder.id),
-            0
+            TileLayoutEngine.folderPanelInsertionIndex(items: first, expandedFolderID: folder.id),
+            1
         )
         XCTAssertEqual(
-            TileLayoutEngine.folderPanelReplacementIndex(items: last, expandedFolderID: folder.id),
-            1
+            TileLayoutEngine.folderPanelInsertionIndex(items: last, expandedFolderID: folder.id),
+            2
         )
     }
 
-    /// Индекс не зависит от размеров соседей и от геометрии сетки: это позиция
-    /// в наборе, а не в раскладке.
-    func testReplacementIndexIgnoresNeighbourSizes() {
+    /// Индекс не зависит от размеров соседей: это позиция в массиве, а не в
+    /// раскладке (строку панели считает уже геометрия вью-слоя).
+    func testInsertionIndexIgnoresNeighbourSizes() {
         let folder = makeFolder("f", size: .medium)
         let items: [TileGridItem] = [
             .tile(tesseraTestTile("wide", size: .wide)),
@@ -173,17 +174,17 @@ final class FolderPanelInsertionTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderPanelReplacementIndex(
+            TileLayoutEngine.folderPanelInsertionIndex(
                 items: items,
                 expandedFolderID: folder.id
             ),
-            2
+            3
         )
     }
 
-    /// Папка с тем же размером, что и соседи, всё равно находится по
-    /// идентификатору, а не по случаю элемента.
-    func testReplacementIndexFindsFolderAmongTiles() {
+    /// Папка находится по идентификатору, а не по случаю элемента: панель
+    /// вставляется после неё, даже если рядом стоят другие папки.
+    func testInsertionIndexFindsFolderAmongTiles() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
             .tile(tesseraTestTile("a")),
@@ -193,19 +194,20 @@ final class FolderPanelInsertionTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderPanelReplacementIndex(
+            TileLayoutEngine.folderPanelInsertionIndex(
                 items: items,
                 expandedFolderID: folder.id
             ),
-            2
+            3
         )
     }
 
     // MARK: - Отступ строк под панелью (rowsBelowOffset)
 
-    /// Сосед делит строку с папкой — он уходит под панель, отступ равен её
-    /// высоте.
-    func testRowsBelowOffsetShiftsNeighbourFromFolderRow() {
+    /// Сосед в той же строке, что и 2×2-папка, остаётся на месте: панель
+    /// начинается после строки, в которой заканчивается папка, а не с её
+    /// верхнего края.
+    func testRowsBelowOffsetIsZeroWhenNeighbourSharesFolderRow() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
             .folder(folder),
@@ -219,12 +221,37 @@ final class FolderPanelInsertionTests: XCTestCase {
                 expandedFolderID: folder.id,
                 panelHeight: 120
             ),
-            120,
+            0,
             accuracy: accuracy
         )
     }
 
-    /// Элемент ниже папки тоже уходит под панель.
+    /// Сосед в последней строке папки тоже остаётся на месте: первая строка
+    /// панели идёт ниже неё.
+    func testRowsBelowOffsetIsZeroWhenNeighbourSharesFolderLastRow() {
+        let folder = makeFolder("f")
+        let items: [TileGridItem] = [
+            .folder(folder),
+            .tile(tesseraTestTile("a", size: .small)),
+            .tile(tesseraTestTile("b", size: .small)),
+            .tile(tesseraTestTile("c", size: .small)),
+        ]
+
+        // a и b — строка 0 (справа от папки), c — строка 1: все выше строки 2.
+        XCTAssertEqual(
+            TileLayoutEngine.rowsBelowOffset(
+                items: items,
+                columns: 4,
+                expandedFolderID: folder.id,
+                panelHeight: 120
+            ),
+            0,
+            accuracy: accuracy
+        )
+    }
+
+    /// Элемент, начинающийся ниже строки папки, уходит под панель: отступ
+    /// равен её высоте.
     func testRowsBelowOffsetShiftsItemsBelowFolder() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
@@ -264,8 +291,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Элементы, заканчивающиеся выше строки папки, остаются на месте: панель
-    /// занимает только её строку и ниже.
+    /// Элементы, заканчивающиеся выше строки папки, остаются на месте.
     func testRowsBelowOffsetIsZeroWhenAllItemsAreAboveFolderRow() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
@@ -315,6 +341,7 @@ final class FolderPanelInsertionTests: XCTestCase {
     func testRowsBelowOffsetIsZeroWhenPanelIsAlreadyPresent() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
+            .folder(folder),
             .folderContent(folder),
             .tile(tesseraTestTile("below", size: .wide)),
         ]
