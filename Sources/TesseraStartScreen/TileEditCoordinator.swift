@@ -6,11 +6,11 @@
 //  собственный drag и операции с папками через функцию одобрения хоста.
 //
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  - §5 «Режим редактирования»: long-press → «желе» (`CAKeyframeAnimation`
-//    поворота ±2° со случайной фазой), unpin с fly-out, resize по циклу
-//    small → medium → wide → large с переупаковкой, собственный drag-координатор
-//    (снэпшот + пустышка + переупаковка модели + инвалидация layout), а не
-//    нативный `UICollectionView` interactive movement;
+//  - §5 «Режим редактирования»: long-press → «желе» (мягкая синусоидальная
+//    `CAKeyframeAnimation` поворота ±1,2° за 0,4 с со случайной фазой), unpin
+//    с fly-out, resize по циклу small → medium → wide → large с переупаковкой,
+//    собственный drag-координатор (снэпшот + пустышка + переупаковка модели +
+//    инвалидация layout), а не нативный `UICollectionView` interactive movement;
 //  - §3 «Плиточная сетка»: переупаковку считает `TileLayoutEngine`, анимацию
 //    сдвига соседей — `TesseraTileGridView.update(snapshot:animated:)` через
 //    batch updates;
@@ -198,9 +198,9 @@ public extension TesseraTileEditCoordinatorDelegate {
 
 /// Параметры режима редактирования (docs/STARTSCREEN-IOS-DESIGN.md §5).
 ///
-/// Значения по умолчанию подобраны под §5: поворот «желе» ±2°, короткий цикл
-/// покачивания, отдельная фаза на каждую плитку (seedable — детерминированная
-/// для тестов E4.7), автопрокрутка у краёв при перетаскивании.
+/// Значения по умолчанию: мягкий синусоидальный поворот «желе» ±1,2° с циклом
+/// 0,4 с, отдельная фаза на каждую плитку (seedable — детерминированная для
+/// тестов E4.7), автопрокрутка у краёв при перетаскивании.
 public struct TesseraTileEditConfiguration {
 
     /// Seed «желе» и фаз: одинаковый seed даёт одинаковую картину покачивания.
@@ -210,10 +210,17 @@ public struct TesseraTileEditConfiguration {
     /// запусками) и воспроизводится в тестах.
     public var seed: UInt64
 
-    /// Амплитуда «желе» в градусах (по §5 — ±2°).
+    /// Амплитуда «желе» в градусах (по умолчанию ±1,2°).
+    ///
+    /// Малая амплитуда при мягкой синусоидальной анимации читается как «дыхание»
+    /// плитки, а не как дёрганье: резкое покачивание глазу мешает, а цель
+    /// эффекта — показать, что элемент «живой» и его можно двигать.
     public var jiggleAngle: CGFloat
 
     /// Базовая длительность одного цикла покачивания в секундах.
+    ///
+    /// По умолчанию 0,4 с; с разбросом фазы/длительности (0,85–1,15) циклы
+    /// плиток расходятся на 0,34–0,46 с, и сетка не качается синхронно.
     public var jiggleDuration: TimeInterval
 
     /// Масштаб поднятой плитки при перетаскивании.
@@ -240,8 +247,8 @@ public struct TesseraTileEditConfiguration {
     ///
     /// - Parameters:
     ///   - seed: Seed фаз «желе»; по умолчанию фиксированный.
-    ///   - jiggleAngle: Амплитуда в градусах, по умолчанию 2.
-    ///   - jiggleDuration: Длительность цикла в секундах, по умолчанию 0.18.
+    ///   - jiggleAngle: Амплитуда в градусах, по умолчанию 1.2.
+    ///   - jiggleDuration: Длительность цикла в секундах, по умолчанию 0.4.
     ///   - liftScale: Масштаб поднятой плитки, по умолчанию 1.04.
     ///   - controlDiameter: Диаметр кнопок, по умолчанию 28.
     ///   - autoScrollEdge: Зона автопрокрутки, по умолчанию 64.
@@ -249,8 +256,8 @@ public struct TesseraTileEditConfiguration {
     ///   - folderTitle: Название новой папки, по умолчанию пусто.
     public init(
         seed: UInt64 = 0xE4_0004_0000_0001,
-        jiggleAngle: CGFloat = 2,
-        jiggleDuration: TimeInterval = 0.18,
+        jiggleAngle: CGFloat = 1.2,
+        jiggleDuration: TimeInterval = 0.4,
         liftScale: CGFloat = 1.04,
         controlDiameter: CGFloat = 28,
         autoScrollEdge: CGFloat = 64,
@@ -293,8 +300,9 @@ public struct TesseraTileEditConfiguration {
 ///
 /// - **вход**: long-press по плитке или пустому месту → режим редактирования;
 ///   по плитке сразу поднимается drag-сессия (как в iOS home);
-/// - **«желе»**: `CAKeyframeAnimation` поворота ±2° с детерминированной фазой
-///   на каждую плитку; при Reduce Motion анимации нет — остаются крестики;
+/// - **«желе»**: мягкая синусоидальная `CAKeyframeAnimation` поворота ±1,2°
+///   за цикл 0,4 с с детерминированной фазой на каждую плитку; при Reduce
+///   Motion анимации нет — остаются крестики;
 /// - **unpin**: крестик → fly-out снимка плитки, затем `TileStore.unpin`;
 /// - **resize**: стрелка → циклическая смена размера из поддерживаемых
 ///   (по умолчанию — все четыре, помещающиеся в текущее число колонок) через
@@ -2052,16 +2060,53 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Создаёт анимацию «желе».
     ///
+    /// Покачивание — синусоида, а не три кадра «−амплитуда / +амплитуда /
+    /// −амплитуда» с `easeInEaseOut`. У синуса скорость в крайних точках
+    /// (`sin = ±1`) равна нулю и меняется непрерывно, поэтому на развороте нет
+    /// резкого торможения с последующим рывком — именно оно и читалось как
+    /// «дёрганье» трёхкадрового варианта.
+    ///
+    /// Цикл разбит на `N = 12` равных шагов и сэмплирован по формуле
+    ///
+    ///     values[i] = angle * sin(2π * i / N),   i = 0…N
+    ///     keyTimes[i] = i / N
+    ///
+    /// Кадр `i = N` замыкает цикл: `sin(2π) = 0` совпадает с `i = 0`, и
+    /// `keyTimes` заканчиваются ровно на 1.0 — этого требует Core Animation;
+    /// без замыкающего кадра последнее значение удерживалось бы до конца
+    /// длительности и на стыке циклов получался бы рывок. Между кадрами —
+    /// линейная интерполяция: форму кривой задают сами выборки синуса, любая
+    /// дополнительная нелинейность только исказила бы её. Шаг `1/12` при цикле
+    /// 0,34–0,46 с — около 0,03 с, мельче кадра экрана (60 Гц), поэтому ломаная
+    /// из 12 выборок визуально неотличима от синусоиды.
+    ///
+    /// `N = 12` — компромисс: 6–8 выборок заметно «гранят» на медленном цикле,
+    /// 24+ дают лишние вычисления интерполяции на каждом слое каждой плитки
+    /// без видимой разницы.
+    ///
     /// - Parameter spec: Параметры покачивания.
     /// - Returns: Бесконечно повторяющаяся анимация поворота.
     private static func makeJiggleAnimation(spec: TesseraJiggleSpec) -> CAKeyframeAnimation {
+        let steps = 12
+
+        // Синусоида, сэмплированная по равным долям цикла; кадр `steps`
+        // замыкает её в ноль, чтобы `keyTimes` закончились на 1.0.
+        let values: [CGFloat] = (0...steps).map { step in
+            let phase = 2 * Double.pi * Double(step) / Double(steps)
+            return CGFloat(sin(phase)) * spec.angle
+        }
+        let keyTimes: [NSNumber] = (0...steps).map { step in
+            NSNumber(value: Double(step) / Double(steps))
+        }
+
+        // Линейные сегменты: интерполируются сами выборки синуса, своих
+        // ускорений/замедлений сегментам не нужно.
+        let linear = CAMediaTimingFunction(name: .linear)
+
         let animation = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        animation.values = [-spec.angle, spec.angle, -spec.angle]
-        animation.keyTimes = [0, 0.5, 1]
-        animation.timingFunctions = [
-            CAMediaTimingFunction(name: .easeInEaseOut),
-            CAMediaTimingFunction(name: .easeInEaseOut),
-        ]
+        animation.values = values
+        animation.keyTimes = keyTimes
+        animation.timingFunctions = Array(repeating: linear, count: steps)
         animation.duration = spec.duration
         animation.timeOffset = spec.timeOffset
         animation.repeatCount = .infinity
