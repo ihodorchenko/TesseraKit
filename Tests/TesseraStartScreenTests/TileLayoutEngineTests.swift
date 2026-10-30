@@ -2,17 +2,20 @@
 //  TileLayoutEngineTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты чистой раскладки плиточной сетки (задача E4.7).
+//  Тесты чистой раскладки плиточной сетки (задача E4.7, строгая компактность —
+//  E8.5).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»
-//  (формула юнита, жадная упаковка слева направо сверху вниз, «честные дыры»,
-//  юнитные координаты, переупаковка при resize) и §14 «Уточнения MVP» п. 4
-//  (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
+//  (формула юнита, упаковка слева направо сверху вниз, юнитные координаты,
+//  переупаковка при resize; «честные дыры» отменены в E8.5) и §14 «Уточнения
+//  MVP» п. 4 (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
 //
 //  Тесты работают только с чистыми функциями `TileLayoutEngine`: без UIKit-цикла,
 //  без окна и без коллекции. Случайные конфигурации seeded — прогон
-//  воспроизводим. Для каждой упаковки отдельно проверяется свойство «первая
-//  свободная позиция по обходу сверху вниз, слева направо»: это и есть контракт
-//  жадного алгоритма, а не просто отсутствие пересечений.
+//  воспроизводим. Для каждой упаковки проверяется свойство «первая свободная
+//  позиция по обходу сверху вниз, слева направо» и строгая компактность готовой
+//  раскладки: ни одну плитку нельзя сдвинуть вверх/влево, пустых строк нет.
+//  Отдельно проверяется схлопывание (`stabilize`) и reflow после «утаскивания»
+//  плитки — это контракт E8.5, а не просто отсутствие пересечений.
 //
 
 #if canImport(UIKit)
@@ -25,7 +28,7 @@ final class TileLayoutEngineTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    /// Проверяет корректность жадной упаковки по контракту §3.
+    /// Проверяет контракт строгой компактности упаковки (E8.5).
     ///
     /// Для каждой плитки в порядке `items`:
     /// 1. слот относится к тому же ярлыку и имеет тот же размер;
@@ -34,11 +37,16 @@ final class TileLayoutEngineTests: XCTestCase {
     /// 3. сама позиция свободна (пересечений нет);
     /// 4. плитка не выходит за число колонок.
     ///
+    /// Затем — по **готовой** раскладке, а не по порядку укладки:
+    /// 5. ни одну плитку нельзя сдвинуть вверх или влево: если снять её с
+    ///    сетки, все более ранние позиции заняты;
+    /// 6. нет пустых строк: в каждой строке до последней занятой есть юнит.
+    ///
     /// - Parameters:
     ///   - items: Запрошенные пары «идентификатор — размер».
     ///   - slots: Результат упаковки.
     ///   - columns: Число колонок сетки.
-    private func assertGreedyPacking(
+    private func assertCompactPacking(
         items: [(id: AnyHashable, size: TileSize)],
         slots: [TileLayoutSlot],
         columns: Int,
@@ -75,11 +83,11 @@ final class TileLayoutEngineTests: XCTestCase {
             return true
         }
 
-        func mark(column: Int, row: Int, width: Int, height: Int) {
+        func mark(column: Int, row: Int, width: Int, height: Int, value: Bool = true) {
             ensureRows(row + height)
             for currentRow in row..<(row + height) {
                 for currentColumn in column..<(column + width) {
-                    occupied[currentRow][currentColumn] = true
+                    occupied[currentRow][currentColumn] = value
                 }
             }
         }
@@ -110,8 +118,7 @@ final class TileLayoutEngineTests: XCTestCase {
             ensureRows(slot.row + height)
 
             // Все позиции, которые обход посещает раньше назначенной, обязаны
-            // быть заняты — иначе движок выбрал бы их («честные дыры» не
-            // заполняются, пока плитка в них не помещается целиком»).
+            // быть заняты — иначе движок выбрал бы их.
             for row in 0...slot.row {
                 let lastColumn = row == slot.row ? slot.column - 1 : columns - width
                 guard lastColumn >= 0 else { continue }
@@ -133,6 +140,48 @@ final class TileLayoutEngineTests: XCTestCase {
                 line: line
             )
             mark(column: slot.column, row: slot.row, width: width, height: height)
+        }
+
+        // E8.5: по готовой раскладке ни одну плитку нельзя сдвинуть вверх/влево.
+        for slot in slots {
+            let width = slot.unitColumns
+            let height = slot.unitRows
+            ensureRows(slot.row + height)
+
+            mark(
+                column: slot.column,
+                row: slot.row,
+                width: width,
+                height: height,
+                value: false
+            )
+
+            for row in 0...slot.row {
+                let lastColumn = row == slot.row ? slot.column - 1 : columns - width
+                guard lastColumn >= 0 else { continue }
+
+                for column in 0...lastColumn {
+                    XCTAssertFalse(
+                        isFree(column: column, row: row, width: width, height: height),
+                        "Плитку \(slot.id) можно сдвинуть вверх/влево в (\(column), \(row))",
+                        file: file,
+                        line: line
+                    )
+                }
+            }
+
+            mark(column: slot.column, row: slot.row, width: width, height: height)
+        }
+
+        // E8.5: пустых строк в середине раскладки не остаётся.
+        let lastRow = slots.map { $0.row + $0.unitRows }.max() ?? 0
+        for row in 0..<lastRow {
+            XCTAssertTrue(
+                occupied[row].contains(true),
+                "Строка \(row) пуста: раскладка не компактна сверху вниз",
+                file: file,
+                line: line
+            )
         }
     }
 
@@ -213,14 +262,15 @@ final class TileLayoutEngineTests: XCTestCase {
         XCTAssertTrue(TileLayoutEngine.pack(items: items, columns: 4, unit: .infinity).isEmpty)
     }
 
-    // MARK: - Жадная упаковка
+    // MARK: - Строгая компактность (E8.5)
 
     /// Детерминированный пример: medium → wide → small.
     ///
     /// medium стоит в (0,0), wide не помещается в первые две строки и уходит в
-    /// (0,2), а small позже занимает «честную дыру» (2,0) выше wide — поиск
-    /// каждый раз начинается с нулевой строки (§3).
-    func testLaterTileFillsHoleAboveWideTile() throws {
+    /// (0,2), а small позже занимает свободный юнит (2,0) выше wide — поиск
+    /// каждый раз начинается с нулевой строки. После упаковки ни одну плитку
+    /// нельзя сдвинуть вверх/влево (E8.5).
+    func testLaterTileFillsFreeSlotAboveWideTile() throws {
         let items: [(id: AnyHashable, size: TileSize)] = [
             (id: AnyHashable("medium"), size: .medium),
             (id: AnyHashable("wide"), size: .wide),
@@ -230,16 +280,17 @@ final class TileLayoutEngineTests: XCTestCase {
 
         XCTAssertEqual(slots.map { $0.column }, [0, 0, 2])
         XCTAssertEqual(slots.map { $0.row }, [0, 2, 0])
-        assertGreedyPacking(items: items, slots: slots, columns: 4)
+        assertCompactPacking(items: items, slots: slots, columns: 4)
     }
 
-    /// Дыры не «заливаются» соседями: они остаются пустыми до тех пор, пока
-    /// плитка не поместится в них целиком.
+    /// Дыра остаётся только там, куда не помещается ни одна текущая плитка, и
+    /// исчезает, как только появляется плитка подходящего размера.
     ///
-    /// После medium(0,0), wide(0,2) и двух small заняты 15 юнитов из 16; дыра
-    /// (3,1) остаётся, а новая small в неё не влезает (занята строка 0) —
-    /// проверяется арифметикой занятой площади, а не внутренним состоянием.
-    func testHonestHolesStayEmpty() {
+    /// После medium(0,0), wide(0,2) и трёх small заняты 15 юнитов из 16:
+    /// свободен только юнит (3,1). Ни одна из текущих плиток в него не влезает —
+    /// сдвигать нечего, это не «честная дыра» §3, а след размеров. Следующая
+    /// small в новой упаковке занимает именно (3,1), а не остаётся ниже.
+    func testOnlyUnfillableHoleRemainsAndNextSmallFillsIt() {
         let items: [(id: AnyHashable, size: TileSize)] = [
             (id: AnyHashable("medium"), size: .medium),
             (id: AnyHashable("wide"), size: .wide),
@@ -249,22 +300,36 @@ final class TileLayoutEngineTests: XCTestCase {
         ]
         let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 10)
 
-        assertGreedyPacking(items: items, slots: slots, columns: 4)
+        assertCompactPacking(items: items, slots: slots, columns: 4)
 
         let occupiedUnits = slots.reduce(0) { partial, slot in
             partial + slot.unitColumns * slot.unitRows
         }
         // medium 4 + wide 8 + три small 3 = 15 юнитов; сетка занята до строки 3
-        // включительно (16 юнитов), значит остаётся ровно одна честная дыра —
-        // (3,1). Последняя small встала в (2,1), потому что (3,0) уже занята.
+        // включительно (16 юнитов), значит свободен ровно один юнит — (3,1).
+        // Последняя small встала в (2,1): строка 0 заполнена, а в строке 1
+        // свободны колонки 2 и 3 — поиск берёт левую.
         XCTAssertEqual(occupiedUnits, 15)
         XCTAssertEqual(slots.last?.column, 2)
         XCTAssertEqual(slots.last?.row, 1)
+
+        // Строгая компактность: появившаяся small занимает свободный юнит выше,
+        // а не встаёт в новую строку.
+        let extra = (id: AnyHashable("small-4"), size: TileSize.small)
+        let extendedItems = items + [extra]
+        let extendedSlots = TileLayoutEngine.pack(
+            items: extendedItems,
+            columns: 4,
+            unit: 10
+        )
+        XCTAssertEqual(extendedSlots.last?.column, 3)
+        XCTAssertEqual(extendedSlots.last?.row, 1)
+        assertCompactPacking(items: extendedItems, slots: extendedSlots, columns: 4)
     }
 
-    /// Случайные конфигурации (seeded): порядок, размеры и первая свободная
-    /// позиция совпадают с контрактом жадного алгоритма.
-    func testGreedyPackingOnSeededRandomConfigurations() {
+    /// Случайные конфигурации (seeded): порядок, размеры, первая свободная
+    /// позиция и строгая компактность готовой раскладки.
+    func testCompactPackingOnSeededRandomConfigurations() {
         for seed in 0..<32 {
             var generator = TesseraTestSeededGenerator(seed: UInt64(seed))
             let columns = [4, 6][generator.int(upperBound: 2)]
@@ -290,7 +355,7 @@ final class TileLayoutEngineTests: XCTestCase {
                 slots.allSatisfy { $0.unit == unit },
                 "Юнит должен попасть в каждый слот (seed \(seed))"
             )
-            assertGreedyPacking(items: items, slots: slots, columns: columns)
+            assertCompactPacking(items: items, slots: slots, columns: columns)
         }
     }
 
@@ -303,7 +368,7 @@ final class TileLayoutEngineTests: XCTestCase {
         let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 8)
 
         XCTAssertEqual(slots.count, 101)
-        assertGreedyPacking(items: items, slots: slots, columns: 4)
+        assertCompactPacking(items: items, slots: slots, columns: 4)
 
         XCTAssertEqual(slots.last?.column, 0)
         XCTAssertEqual(slots.last?.row, 25)
@@ -322,7 +387,167 @@ final class TileLayoutEngineTests: XCTestCase {
         let slots = TileLayoutEngine.pack(items: items, columns: 6, unit: 30)
 
         XCTAssertEqual(slots.count, items.count)
-        assertGreedyPacking(items: items, slots: slots, columns: 6)
+        assertCompactPacking(items: items, slots: slots, columns: 6)
+    }
+
+    // MARK: - Схлопывание и reflow (E8.5)
+
+    /// Схлопывание поднимает «подвешенную» плитку в свободный юнит выше.
+    ///
+    /// Раскладка [medium в (0,0), small в (0,2)] не компактна: small висит
+    /// строкой ниже, хотя справа от medium есть свободный юнит. После
+    /// схлопывания small встаёт в (2,0) — в самую верхнюю-левую позицию.
+    func testStabilizeLiftsFloatingTileIntoFreeSlot() throws {
+        let slots = [
+            TileLayoutSlot(
+                id: AnyHashable("medium"),
+                size: .medium,
+                column: 0,
+                row: 0,
+                unit: 10
+            ),
+            TileLayoutSlot(
+                id: AnyHashable("small"),
+                size: .small,
+                column: 0,
+                row: 2,
+                unit: 10
+            ),
+        ]
+
+        let compacted = TileLayoutEngine.stabilize(slots, columns: 4)
+
+        XCTAssertEqual(compacted.count, 2)
+        XCTAssertEqual(compacted.map { $0.id }, slots.map { $0.id })
+
+        let small = try XCTUnwrap(compacted.last)
+        XCTAssertEqual(small.column, 2)
+        XCTAssertEqual(small.row, 0)
+
+        // medium уже в самой ранней позиции — его не трогаем.
+        XCTAssertEqual(compacted.first?.column, 0)
+        XCTAssertEqual(compacted.first?.row, 0)
+
+        // Одна «подвешенная» плитка тоже схлопывается в (0,0).
+        let single = [
+            TileLayoutSlot(
+                id: AnyHashable("single"),
+                size: .small,
+                column: 2,
+                row: 2,
+                unit: 10
+            ),
+        ]
+        let compactedSingle = TileLayoutEngine.stabilize(single, columns: 4)
+        XCTAssertEqual(compactedSingle.first?.column, 0)
+        XCTAssertEqual(compactedSingle.first?.row, 0)
+    }
+
+    /// Схлопывание сдвигает плитку влево в той же строке, если слева есть место.
+    func testStabilizeMovesTileLeftInsideRow() throws {
+        let slots = [
+            TileLayoutSlot(
+                id: AnyHashable("medium"),
+                size: .medium,
+                column: 0,
+                row: 0,
+                unit: 10
+            ),
+            TileLayoutSlot(
+                id: AnyHashable("small"),
+                size: .small,
+                column: 3,
+                row: 0,
+                unit: 10
+            ),
+        ]
+
+        let compacted = TileLayoutEngine.stabilize(slots, columns: 4)
+        let small = try XCTUnwrap(compacted.last)
+
+        XCTAssertEqual(small.column, 2)
+        XCTAssertEqual(small.row, 0)
+    }
+
+    /// Схлопывание не двигает уже компактную раскладку: упаковка — его
+    /// неподвижная точка.
+    func testStabilizeKeepsCompactPackingUnchanged() {
+        let configurations: [[TileSize]] = [
+            [.medium, .wide, .small],
+            [.small, .medium, .small, .medium, .wide],
+            [.large, .medium, .small, .small, .wide],
+            [.small, .small, .wide, .medium, .medium, .large],
+        ]
+
+        for (index, sizes) in configurations.enumerated() {
+            let items = sizes.enumerated().map { offset, size in
+                (id: AnyHashable("tile-\(offset)"), size: size)
+            }
+            let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 8)
+
+            XCTAssertEqual(
+                TileLayoutEngine.stabilize(slots, columns: 4),
+                slots,
+                "Упаковка №\(index) должна быть неподвижной точкой схлопывания"
+            )
+        }
+    }
+
+    /// Публичный `pack` — это строго компактная упаковка: раскладка и
+    /// edit/drag ходят через него, поэтому визуал режимов не различается.
+    func testPublicPackMatchesCompactImplementation() {
+        let items: [(id: AnyHashable, size: TileSize)] = [
+            (id: AnyHashable("a"), size: .medium),
+            (id: AnyHashable("b"), size: .small),
+            (id: AnyHashable("c"), size: .wide),
+            (id: AnyHashable("d"), size: .small),
+        ]
+
+        XCTAssertEqual(
+            TileLayoutEngine.pack(items: items, columns: 4, unit: 12),
+            TileLayoutEngine.packCompact(items: items, columns: 4, unit: 12)
+        )
+    }
+
+    /// Reflow после «утаскивания» плитки: нижняя плитка поднимается в
+    /// освободившееся место, пустых строк не остаётся (E8.5).
+    func testRemovingTileLiftsLowerTileIntoVacatedSpace() {
+        let medium = (id: AnyHashable("medium"), size: TileSize.medium)
+        let wide = (id: AnyHashable("wide"), size: TileSize.wide)
+
+        let before = TileLayoutEngine.pack(items: [medium, wide], columns: 4, unit: 10)
+        XCTAssertEqual(before.map { $0.row }, [0, 2])
+
+        // Утащили medium: wide поднимается в строку 0.
+        let after = TileLayoutEngine.pack(items: [wide], columns: 4, unit: 10)
+        XCTAssertEqual(after.first?.row, 0)
+        XCTAssertEqual(after.first?.column, 0)
+        assertCompactPacking(items: [wide], slots: after, columns: 4)
+    }
+
+    /// Перетаскивание меняет порядок (E8.4), а упаковка превью-порядка остаётся
+    /// строго компактной — визуал drag и обычного режима не различается (E8.5).
+    func testDragPreviewOrderPacksCompactly() {
+        let items: [TileGridItem] = [
+            .tile(tesseraTestTile("a", size: .medium)),
+            .tile(tesseraTestTile("b", size: .small)),
+            .tile(tesseraTestTile("c", size: .wide)),
+            .tile(tesseraTestTile("d", size: .small)),
+        ]
+
+        let preview = TileLayoutEngine.previewOrder(
+            items: items,
+            draggingID: AnyHashable("d"),
+            targetID: AnyHashable("b")
+        ) ?? []
+
+        XCTAssertEqual(tesseraTestIDs(preview), ["a", "d", "b", "c"])
+        let packItems: [(id: AnyHashable, size: TileSize)] = preview.map {
+            (id: $0.id, size: $0.size)
+        }
+        let slots = TileLayoutEngine.pack(items: packItems, columns: 4, unit: 10)
+
+        assertCompactPacking(items: packItems, slots: slots, columns: 4)
     }
 
     // MARK: - Переупаковка (resize и смена геометрии)
@@ -353,7 +578,7 @@ final class TileLayoutEngineTests: XCTestCase {
             (id: AnyHashable("b"), size: .small),
             (id: AnyHashable("c"), size: .wide),
         ]
-        assertGreedyPacking(items: expected, slots: resized, columns: 4)
+        assertCompactPacking(items: expected, slots: resized, columns: 4)
     }
 
     /// Resize неизвестного идентификатора эквивалентен обычной переупаковке:
@@ -411,7 +636,7 @@ final class TileLayoutEngineTests: XCTestCase {
 
         XCTAssertEqual(repacked.count, items.count)
         XCTAssertEqual(repacked.map { $0.id }, items.map { $0.id })
-        assertGreedyPacking(items: items, slots: repacked, columns: 6)
+        assertCompactPacking(items: items, slots: repacked, columns: 6)
     }
 
     // MARK: - Формула юнита
