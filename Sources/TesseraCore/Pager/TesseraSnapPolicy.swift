@@ -15,7 +15,7 @@ import CoreGraphics
 /// Выравнивание, к которому снап приводит страницу.
 ///
 /// Различие режимов — в формуле «ближайшего» индекса (см.
-/// `TesseraSnapPolicy.targetContentOffset(proposedOffset:velocity:itemWidth:pageCount:)`),
+/// `TesseraSnapPolicy.targetContentOffset(proposedOffset:velocity:itemWidth:pageCount:startOffset:)`),
 /// а не в знаке итогового offset'а: политика возвращает offset начала страницы.
 public enum TesseraSnapAlignment {
     /// Выравнивание по ведущему краю: индекс = `floor(offset / itemWidth + 0.5)`.
@@ -31,7 +31,9 @@ public enum TesseraSnapAlignment {
 /// Потребитель (пейджер в режиме `snapping` / `PanoScrollView`) вызывает
 /// `targetContentOffset(...)` из
 /// `UIScrollViewDelegate.scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)`,
-/// подставляя `proposedOffset` и `velocity` из параметра `inout`-указателя.
+/// подставляя `proposedOffset` из параметра `inout`-указателя, скорость
+/// `velocity`, переведённую из points/ms UIKit в pt/s (`× 1000`), и стартовый
+/// offset жеста из `scrollViewWillBeginDragging`.
 ///
 /// Документ §2: в режиме `snapping` потребитель дополнительно выставляет
 /// `decelerationRate = .fast` — это его ответственность, политика децелерацией не управляет.
@@ -67,14 +69,26 @@ public struct TesseraSnapPolicy {
     /// 2. Ближайший индекс `nearest` относительно `proposedOffset`:
     ///    - `.center`:  `nearest = round(proposedOffset / itemWidth)`;
     ///    - `.leading`: `nearest = floor(proposedOffset / itemWidth + 0.5)`.
-    /// 3. Если `|velocity| > velocityThreshold` — секция соседняя с `nearest`
-    ///    по знаку скорости: `velocity > 0` → `nearest + 1` (следующая),
-    ///    `velocity < 0` → `nearest - 1` (предыдущая). Иначе — `nearest`.
+    /// 3. Если `|velocity| > velocityThreshold` — шаг на одну секцию по знаку
+    ///    скорости (`velocity > 0` → `+1`, `velocity < 0` → `−1`) от опорного
+    ///    индекса: секции, с которой начался жест (ближайшей к `startOffset`
+    ///    по той же формуле выравнивания), а если `startOffset` не передан —
+    ///    от `nearest`. Иначе — `nearest`.
     /// 4. Результат — `index * itemWidth`, зажатый в `[0, (pageCount - 1) * itemWidth]`.
+    ///
+    /// Опора на стартовую секцию нужна потому, что `proposedOffset` у быстрого
+    /// флика уже включает инерцию: шаг от `nearest(proposed)` перескакивал бы
+    /// через секцию. Со `startOffset` один жест сдвигает не больше чем на одну
+    /// секцию от стартовой (поведение WP), а медленный жест (ниже порога)
+    /// остаётся на ближайшей к `proposedOffset`.
     ///
     /// Знак скорости — в конвенции `UIScrollView`: положительная скорость
     /// увеличивает `contentOffset.x` (в LTR это следующая секция, в RTL потребитель
     /// нормализует координаты по направлению чтения, документ §2 «Инвариант прогресса»).
+    ///
+    /// - Important: `UIScrollViewDelegate.scrollViewWillEndDragging` отдаёт
+    ///   скорость в **points/ms**; потребитель обязан перевести её в pt/s
+    ///   (`× 1000`) перед вызовом — порог ``velocityThreshold`` задан в pt/s.
     ///
     /// Формулы `.center` и `.leading` совпадают для неотрицательного
     /// `proposedOffset` (округление к ближайшему, полуцелые — вверх), но
@@ -89,12 +103,16 @@ public struct TesseraSnapPolicy {
     ///   - velocity: скорость жеста по горизонтали в pt/s (знаковая).
     ///   - itemWidth: ширина одной секции (шаг снапа) в pt.
     ///   - pageCount: число секций.
+    ///   - startOffset: `contentOffset.x` в начале жеста (обычно запоминается в
+    ///     `scrollViewWillBeginDragging`); `nil` или нечисловое значение —
+    ///     опора на `nearest(proposedOffset)`, как до появления параметра.
     /// - Returns: клампированный целевой offset; для вырожденного входа —
     ///   `proposedOffset` как есть.
     public func targetContentOffset(proposedOffset: CGFloat,
                                     velocity: CGFloat,
                                     itemWidth: CGFloat,
-                                    pageCount: Int) -> CGFloat {
+                                    pageCount: Int,
+                                    startOffset: CGFloat? = nil) -> CGFloat {
         // Вырожденная геометрия: снап невозможен, отдаём предложение системы.
         guard itemWidth > 0, pageCount > 0 else { return proposedOffset }
 
@@ -103,8 +121,15 @@ public struct TesseraSnapPolicy {
 
         let targetIndex: CGFloat
         if abs(velocity) > threshold {
-            // Быстрый свайп: шаг на секцию в сторону движения.
-            targetIndex = velocity > 0 ? nearestIndex + 1 : nearestIndex - 1
+            // Быстрый свайп: шаг на секцию в сторону движения от стартовой
+            // секции жеста (без неё — от ближайшей к предложенному offset'у).
+            let baseIndex: CGFloat
+            if let startOffset, startOffset.isFinite {
+                baseIndex = self.nearestIndex(for: startOffset, itemWidth: itemWidth)
+            } else {
+                baseIndex = nearestIndex
+            }
+            targetIndex = velocity > 0 ? baseIndex + 1 : baseIndex - 1
         } else {
             // Медленный жест или удержание: остаёмся на ближайшей секции.
             targetIndex = nearestIndex

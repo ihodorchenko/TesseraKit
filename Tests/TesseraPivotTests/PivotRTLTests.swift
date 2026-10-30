@@ -259,19 +259,20 @@ final class PivotRTLTests: XCTestCase {
         XCTAssertEqual(pivot.currentSectionIndex, 3)
     }
 
-    /// VoiceOver-жест в RTL инвертируется: «влево» — вперёд по чтению,
-    /// «вправо» с первой секции — назад, за границу набора (§8).
+    /// VoiceOver-жест в RTL инвертируется относительно LTR: в LTR свайп влево
+    /// листает вперёд (конвенция UIKit, E9.3), поэтому в RTL вперёд по чтению
+    /// ведёт «вправо», а «влево» с первой секции — назад, за границу набора (§8).
     func testPivotAccessibilityScrollInvertsDirectionInRTL() throws {
         let (pivot, _) = try makeLoadedRTLPivot(sectionCount: 3)
 
         XCTAssertFalse(
-            pivot.accessibilityScroll(.right),
-            "В RTL «вправо» — назад, с первой секции некуда"
+            pivot.accessibilityScroll(.left),
+            "В RTL «влево» — назад, с первой секции некуда"
         )
-        XCTAssertTrue(pivot.accessibilityScroll(.left))
+        XCTAssertTrue(pivot.accessibilityScroll(.right))
         XCTAssertEqual(pivot.currentSectionIndex, 1)
 
-        XCTAssertTrue(pivot.accessibilityScroll(.right))
+        XCTAssertTrue(pivot.accessibilityScroll(.left))
         XCTAssertEqual(pivot.currentSectionIndex, 0)
     }
 }

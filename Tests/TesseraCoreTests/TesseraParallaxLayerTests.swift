@@ -9,9 +9,12 @@
 //  «Концептуальная поверхность API» (TesseraParallaxLayer — фон + фактор + ось)
 //  и §2, п. 6 (Reduce Motion).
 //
-//  Проверяются чистая функция `effectiveOffset(contentOffset:factor:)`,
-//  пересборка `transform` при `update(withContentOffset:)` и отсечка
-//  параллакса через инжектируемый провайдер Reduce Motion.
+//  Проверяются чистая функция `effectiveOffset(contentOffset:factor:)`
+//  (смещение фона в координатах контента, знак как у offset'а), пересборка
+//  `transform` при `update(withContentOffset:)` (экранная проекция со знаком
+//  минус для слоя рядом со скроллом, E10.7), контракт направления «фон едет
+//  туда же, куда контент, но медленнее» и отсечка параллакса через
+//  инжектируемый провайдер Reduce Motion.
 //
 
 #if canImport(UIKit)
@@ -87,7 +90,9 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(result.y, offset.y)
     }
 
-    /// Знак offset'а сохраняется на обеих осях: слой сдвигается в ту же сторону.
+    /// Знак offset'а сохраняется на обеих осях: `effectiveOffset` — смещение фона
+    /// в координатах контента. Экранная проекция (`transform`) — со знаком минус,
+    /// её проверяют тесты `update(withContentOffset:)` и контракт направления.
     func testEffectiveOffsetPreservesSignOnBothAxes() {
         let result = TesseraParallaxLayer.effectiveOffset(
             contentOffset: CGPoint(x: -120, y: 80),
@@ -198,14 +203,18 @@ final class TesseraParallaxLayerTests: XCTestCase {
     // MARK: - update(withContentOffset:) и transform
 
     /// `update(withContentOffset:)` меняет только `transform`: сдвиг равен
-    /// `offset × factor`, масштаба и поворота нет.
+    /// `−offset × factor` (экранная проекция для слоя-соседа скролла, E10.7),
+    /// масштаба и поворота нет.
+    ///
+    /// До E10.7 тест канонизировал `+offset × factor` — именно этот знак уводил
+    /// фон в сторону, противоположную контенту.
     func testUpdateTranslatesLayerByEffectiveOffset() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 0)
 
         layer.update(withContentOffset: CGPoint(x: 120, y: -40))
 
-        assertTranslation(layer.transform, x: 60, y: -20)
+        assertTranslation(layer.transform, x: -60, y: 20)
     }
 
     /// Нулевой offset оставляет слой в покое (identity-трансформ).
@@ -227,7 +236,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
 
         layer.update(withContentOffset: CGPoint(x: CGFloat.nan, y: 999))
 
-        assertTranslation(layer.transform, x: 50, y: 50)
+        assertTranslation(layer.transform, x: -50, y: -50)
     }
 
     /// Смена `factor` пересчитывает трансформ от последнего offset'а без нового
@@ -236,10 +245,10 @@ final class TesseraParallaxLayerTests: XCTestCase {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 0)
         layer.update(withContentOffset: CGPoint(x: 120, y: -40))
-        assertTranslation(layer.transform, x: 60, y: -20)
+        assertTranslation(layer.transform, x: -60, y: 20)
 
         layer.configure(factor: 1, extraSize: 0)
-        assertTranslation(layer.transform, x: 120, y: -40)
+        assertTranslation(layer.transform, x: -120, y: 40)
 
         layer.configure(factor: 0, extraSize: 0)
         XCTAssertEqual(layer.transform, .identity)
@@ -269,7 +278,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
 
         layer.update(withContentOffset: CGPoint(x: 200, y: 100))
 
-        assertTranslation(layer.transform, x: 200, y: 100)
+        assertTranslation(layer.transform, x: -200, y: -100)
     }
 
     /// Провайдер опрашивается на каждом пересчёте: переключение Reduce Motion
@@ -284,7 +293,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
 
         reduceMotion = false
         layer.update(withContentOffset: CGPoint(x: 200, y: 200))
-        assertTranslation(layer.transform, x: 100, y: 100)
+        assertTranslation(layer.transform, x: -100, y: -100)
     }
 
     /// Системное уведомление о смене Reduce Motion сбрасывает сдвиг, не дожидаясь
@@ -294,7 +303,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { reduceMotion })
         layer.configure(factor: 0.5, extraSize: 0)
         layer.update(withContentOffset: CGPoint(x: 100, y: 100))
-        assertTranslation(layer.transform, x: 50, y: 50)
+        assertTranslation(layer.transform, x: -50, y: -50)
 
         reduceMotion = true
         NotificationCenter.default.post(
@@ -303,6 +312,99 @@ final class TesseraParallaxLayerTests: XCTestCase {
         )
 
         XCTAssertEqual(layer.transform, .identity)
+    }
+
+    // MARK: - Направление: слой — сосед скролла (E10.7а)
+
+    /// Сцена контракта направления: контейнер-«экран», в нём слой фона и
+    /// **рядом** с ним (не внутри) скролл-вью с контентом — ровно так слой
+    /// кладут Panorama и StartScreen.
+    private struct SiblingScene {
+        let container: UIView
+        let layer: TesseraParallaxLayer
+        let scrollView: UIScrollView
+        let content: UIView
+
+        /// Экранная (в координатах контейнера) позиция начала вью с учётом
+        /// `transform` и `contentOffset`.
+        func screenOrigin(of view: UIView) -> CGPoint {
+            view.convert(CGPoint.zero, to: container)
+        }
+
+        /// Пишет offset в скролл и транслирует его слою — как делает
+        /// потребитель в `scrollViewDidScroll`.
+        func scroll(to offset: CGPoint) {
+            scrollView.contentOffset = offset
+            layer.update(withContentOffset: scrollView.contentOffset)
+        }
+    }
+
+    private func makeSiblingScene(factor: CGFloat, reduceMotion: Bool) -> SiblingScene {
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+
+        let layer = TesseraParallaxLayer(reduceMotionProvider: { reduceMotion })
+        layer.configure(factor: factor, extraSize: 0)
+        layer.setContentSize(container.bounds.size)
+        layer.center = CGPoint(x: container.bounds.midX, y: container.bounds.midY)
+        container.addSubview(layer)
+
+        let scrollView = UIScrollView(frame: container.bounds)
+        let content = UIView(frame: CGRect(x: 0, y: 0, width: 2000, height: 2000))
+        scrollView.addSubview(content)
+        scrollView.contentSize = content.bounds.size
+        container.addSubview(scrollView)
+
+        return SiblingScene(container: container, layer: layer, scrollView: scrollView, content: content)
+    }
+
+    /// Контракт направления (E10.7): слой лежит рядом со скроллом; offset
+    /// растёт на Δ по обеим осям → контент на экране уходит на −Δ, фон — на
+    /// −Δ × factor: **в ту же сторону**, что контент, но медленнее.
+    ///
+    /// До E10.7 слой ставил `transform = +offset × factor`, и фон ехал в
+    /// противоположную контенту сторону — этот тест ловит регресс знака.
+    func testSiblingLayerMovesWithContentButSlowerOnBothAxes() {
+        let factor: CGFloat = 0.5
+        let scene = makeSiblingScene(factor: factor, reduceMotion: false)
+        scene.scroll(to: CGPoint(x: 100, y: 60))
+
+        let contentBefore = scene.screenOrigin(of: scene.content)
+        let backgroundBefore = scene.screenOrigin(of: scene.layer)
+
+        let delta = CGPoint(x: 80, y: 40)
+        scene.scroll(to: CGPoint(x: 100 + delta.x, y: 60 + delta.y))
+
+        let contentAfter = scene.screenOrigin(of: scene.content)
+        let backgroundAfter = scene.screenOrigin(of: scene.layer)
+
+        // Контент: offset +Δ → экранная позиция −Δ.
+        XCTAssertEqual(contentAfter.x - contentBefore.x, -delta.x, accuracy: 0.0001)
+        XCTAssertEqual(contentAfter.y - contentBefore.y, -delta.y, accuracy: 0.0001)
+
+        // Фон: −Δ × factor — тот же знак, что у контента, модуль в factor раз меньше.
+        XCTAssertEqual(backgroundAfter.x - backgroundBefore.x, -delta.x * factor, accuracy: 0.0001)
+        XCTAssertEqual(backgroundAfter.y - backgroundBefore.y, -delta.y * factor, accuracy: 0.0001)
+    }
+
+    /// Контракт направления при Reduce Motion: контент продолжает уезжать, а
+    /// экранная позиция фона не меняется (Core §2, п. 6).
+    func testSiblingLayerStaysInPlaceUnderReduceMotion() {
+        let scene = makeSiblingScene(factor: 0.5, reduceMotion: true)
+        scene.scroll(to: CGPoint(x: 100, y: 60))
+
+        let contentBefore = scene.screenOrigin(of: scene.content)
+        let backgroundBefore = scene.screenOrigin(of: scene.layer)
+
+        scene.scroll(to: CGPoint(x: 180, y: 100))
+
+        let contentAfter = scene.screenOrigin(of: scene.content)
+        let backgroundAfter = scene.screenOrigin(of: scene.layer)
+
+        XCTAssertEqual(contentAfter.x - contentBefore.x, -80, accuracy: 0.0001)
+        XCTAssertEqual(contentAfter.y - contentBefore.y, -40, accuracy: 0.0001)
+        XCTAssertEqual(backgroundAfter.x - backgroundBefore.x, 0, accuracy: 0.0001)
+        XCTAssertEqual(backgroundAfter.y - backgroundBefore.y, 0, accuracy: 0.0001)
+        XCTAssertEqual(scene.layer.transform, .identity)
     }
 
     // MARK: - Декоративность слоя

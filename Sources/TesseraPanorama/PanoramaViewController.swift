@@ -691,12 +691,17 @@ public final class PanoramaViewController: UIViewController {
     /// пустое состояние осталось бы без фона), а запас — весь ход фона
     /// (`maximumOffsetX × factor`) плюс поля под «резину» на границах.
     ///
-    /// Слой стоит со сдвинутым влево началом координат: положительный transform
-    /// из ``TesseraParallaxLayer/update(withContentOffset:)``
-    /// (`backgroundOffset = offset × factor`) сдвигает его вправо, и видимое окно
-    /// плавно едет по картинке, не выходя за её края — ни на bounce, ни на краю
-    /// ленты. Сама картинка занимает только реально посещаемое окно, а не всю
-    /// площадь огромного слоя.
+    /// Слой — сосед скролла, поэтому ``TesseraParallaxLayer/update(withContentOffset:)``
+    /// проецирует смещение фона (`backgroundOffset = offset × factor`) на экран
+    /// со знаком минус: `transform = −backgroundOffset` (E10.7). При росте offset'а
+    /// фон уезжает влево вместе с секциями, но медленнее. Начало слоя — у левого
+    /// края вьюпорта, сдвинутое влево только на поле `padding` (под «резину» до
+    /// начала ленты, где offset < 0); весь ход фона `shift` и правое поле лежат
+    /// справа от вьюпорта. Экранный левый край картинки — `−padding − offset × factor`,
+    /// правый — `width + shift + padding − offset × factor`: вьюпорт закрыт при
+    /// любом offset'е в `[−padding / factor, maximumOffsetX + padding / factor]`,
+    /// то есть ни на bounce, ни на краю ленты пустых полос нет. Сама картинка
+    /// занимает только реально посещаемое окно, а не всю площадь огромного слоя.
     ///
     /// Множитель берётся из стиля, а не из действующего: при Reduce Motion
     /// действующий фактор равен нулю (Core §2, п. 6), но запас должен остаться
@@ -719,11 +724,12 @@ public final class PanoramaViewController: UIViewController {
         parallaxLayer.setContentSize(contentSize)
 
         let size = parallaxLayer.bounds.size
-        // Начало слоя уходит влево на весь возможный ход фона плюс «резину»:
-        // тогда при любом offset'е (T = offset × factor) вьюпорт остаётся внутри
-        // слоя, а картинка, прижатая к началу координат слоя, — внутри картинки.
+        // Начало слоя уходит влево только на «резину»: слой едет влево
+        // (transform = −offset × factor, E10.7), поэтому ход фона `shift` нужен
+        // справа. Тогда при любом offset'е вьюпорт остаётся внутри картинки,
+        // прижатой к началу координат слоя.
         parallaxLayer.center = CGPoint(
-            x: -(shift + padding) + size.width / 2,
+            x: -padding + size.width / 2,
             y: size.height / 2
         )
 

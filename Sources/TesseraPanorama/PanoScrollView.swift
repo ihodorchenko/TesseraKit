@@ -203,6 +203,9 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     /// Хранилище ``sectionCount`` — валидируется на записи.
     private var storedSectionCount: Int = 0
 
+    /// `contentOffset.x` на начале жеста — опора шага ±1 снапа (E10.11).
+    private var dragStartOffsetX: CGFloat?
+
     /// ``peek`` с гарантией диапазона (страховка для значений, полученных до init).
     private var effectivePeek: CGFloat { Self.sanitizedPeek(storedPeek) }
 
@@ -447,6 +450,14 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
         observer?.panoScrollViewDidScroll(self)
     }
 
+    /// Начало жеста: запоминаем стартовый offset для снапа (E10.11).
+    ///
+    /// - Parameter scrollView: Скролл-вью-источник.
+    public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === self else { return }
+        dragStartOffsetX = contentOffset.x
+    }
+
     /// Кастомный снап панорамы (§4, «Снап»).
     ///
     /// Расчёт цели полностью делегируется ``TesseraSnapPolicy``: скролл-вью
@@ -469,6 +480,11 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     ) {
         guard scrollView === self else { return }
 
+        // UIKit отдаёт скорость в points/ms, политика и наблюдатель — в pt/s.
+        let velocityX = velocity.x * 1000
+        let startOffsetX = dragStartOffsetX
+        dragStartOffsetX = nil
+
         let count = storedSectionCount
         let width = itemWidth
 
@@ -479,7 +495,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
             }
             observer?.panoScrollViewWillEndDragging(
                 self,
-                velocityX: velocity.x,
+                velocityX: velocityX,
                 targetReadingIndex: 0
             )
             return
@@ -487,15 +503,16 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
 
         targetContentOffset.pointee.x = snapPolicy.targetContentOffset(
             proposedOffset: targetContentOffset.pointee.x,
-            velocity: velocity.x,
+            velocity: velocityX,
             itemWidth: width,
-            pageCount: count
+            pageCount: count,
+            startOffset: startOffsetX
         )
 
         // Prefetch (§6): цель уже известна, снап ещё не начался.
         observer?.panoScrollViewWillEndDragging(
             self,
-            velocityX: velocity.x,
+            velocityX: velocityX,
             targetReadingIndex: readingIndex(forRawOffset: targetContentOffset.pointee.x)
         )
     }

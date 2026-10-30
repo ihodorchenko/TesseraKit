@@ -1167,8 +1167,15 @@ private final class TesseraStartPageViewController: UIViewController {
     /// - `contentSize` слоя — высота контента, но не меньше вьюпорта;
     /// - запас `extraSize` — весь ход фона (`maximumOffsetY × factor`) плюс
     ///   «резина» на границах: слой заведомо больше контента (Core §2);
-    /// - слой сдвинут вверх на `shift + padding`, поэтому положительный
-    ///   `transform` из Core уводит картинку вниз, не обнажая краёв;
+    /// - слой — сосед скролла сетки, Core проецирует смещение фона на экран
+    ///   со знаком минус (`transform = −offset × factor`, E10.7): при
+    ///   прокрутке вниз обои уезжают вверх вместе с плитками, но медленнее;
+    /// - поэтому начало слоя — у верхнего края страницы, поднятое только на
+    ///   `padding` (поле под «резину» над верхом, где offset < 0), а весь ход
+    ///   фона `shift` плюс второе поле лежат ниже вьюпорта: экранный верх
+    ///   картинки `−padding − offset × factor`, низ
+    ///   `height + shift + padding − offset × factor` — вьюпорт закрыт при
+    ///   любом offset в `[−padding / factor, maximumOffset + padding / factor]`;
     /// - картинка занимает только реально видимое окно за всю прокрутку.
     ///
     /// Множитель берётся из конфигурации, а не из действующего: при
@@ -1186,10 +1193,13 @@ private final class TesseraStartPageViewController: UIViewController {
             CGSize(width: bounds.width, height: contentHeight)
         )
 
+        // Начало слоя (и картинки) — на `padding` выше страницы: запас под
+        // «резину» сверху. Ход фона `shift` и нижнее поле — ниже вьюпорта,
+        // туда слой уезжает при прокрутке вниз (E10.7).
         let layerSize = parallaxLayer.bounds.size
         parallaxLayer.center = CGPoint(
             x: layerSize.width / 2,
-            y: -(shift + padding) + layerSize.height / 2
+            y: -padding + layerSize.height / 2
         )
 
         backgroundImageView.frame = CGRect(
