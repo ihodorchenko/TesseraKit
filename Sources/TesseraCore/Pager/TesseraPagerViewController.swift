@@ -8,10 +8,13 @@
 // - t = contentOffset.x / pageWidth, наружу отдаётся нормализованным по
 //   направлению чтения через TesseraRTL (§2 «Инвариант прогресса»);
 // - contentOffset пишут только жест UIScrollView и программный
-//   go(toPage:animated:); делегат и подписчики только читают (§2 «Один писатель»);
+//   go(toPage:animated:) (а также доводка снапа и восстановление геометрии
+//   самим пейджером); делегат и подписчики только читают (§2 «Один писатель»);
 // - в scrollViewDidScroll нет layout: только чтение offset и колбэк делегата
 //   (§2 «Дисциплина производительности»); фреймы страниц и contentSize
-//   раскладываются в viewDidLayoutSubviews.
+//   раскладываются в viewDidLayoutSubviews;
+// - appearance-коллбэки страниц пересылаются вручную: appear получает только
+//   текущая (видимая) страница, соседи ±1 держатся в памяти «за кадром».
 
 #if canImport(UIKit)
 import UIKit
@@ -38,6 +41,11 @@ public enum TesseraPagerMode {
 /// В памяти находится текущая страница и её соседи (±1). Контроллеры страниц
 /// создаются через `TesseraContentHosting` и подключаются как child-VC
 /// (`addChild` / `didMove(toParent:)`).
+///
+/// Appearance-коллбэки (`viewWillAppear` / `viewDidAppear` / …) страницы
+/// получают по видимости: appear — только текущая страница при показе пейджера
+/// и при смене текущей страницы по завершении перехода; соседи ±1, загруженные
+/// «за кадром», коллбэков не получают.
 ///
 /// - Important: Работает только на главном потоке. Делегат не удерживается.
 public final class TesseraPagerViewController: UIViewController, UIScrollViewDelegate {
@@ -75,7 +83,9 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     private var loadedControllers: [Int: UIViewController] = [:]
 
     /// Текущая (ближайшая) страница в порядке чтения.
-    private var currentPageIndex = 0
+    ///
+    /// Чтение открыто внутри модуля (для контрактных тестов); пишет только пейджер.
+    private(set) var currentPageIndex = 0
 
     /// Последняя страница, о которой сообщили делегату.
     private var lastShownPageIndex: Int?
@@ -84,11 +94,39 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     private var lastLayoutWidth: CGFloat = 0
 
     /// Направление чтения, для которого рассчитаны физические слоты страниц.
+    ///
+    /// Текущий `contentOffset` интерпретируется именно в нём, а не в «живом»
+    /// `effectiveUserInterfaceLayoutDirection`: после смены направления на лету
+    /// и до ближайшего layout'а offset всё ещё стоит в старых слотах (E10.10).
     private var lastLayoutDirection: UIUserInterfaceLayoutDirection?
 
     /// Нужно ли восстановить offset текущей страницы на ближайшем layout'е
     /// (первый layout, `reload(pages:)`, смена ширины или направления).
     private var needsOffsetRestore = true
+
+    /// Идёт запись геометрии в `layoutPager()`: промежуточные `scrollViewDidScroll`
+    /// (зажатие offset'а UIKit'ом при смене frame/contentSize) не должны сбивать
+    /// индекс и доходить до делегата.
+    private var isApplyingLayout = false
+
+    /// Идёт программная анимация offset'а пейджера (`go(toPage:animated:)` или
+    /// доводка снапа); завершается в `scrollViewDidEndScrollingAnimation`.
+    private var isAnimatingTransition = false
+
+    /// `contentOffset.x` на начале жеста — опора шага ±1 снапа (E10.11).
+    private var dragStartOffsetX: CGFloat?
+
+    /// Цель снапа, рассчитанная в `scrollViewWillEndDragging` (режим `.snapping`).
+    ///
+    /// Нужна для доводки, когда жест кончился без инерции: UIKit игнорирует
+    /// изменённый `targetContentOffset` при нулевой скорости (E9.2а).
+    private var pendingSnapOffsetX: CGFloat?
+
+    /// Состояние appearance самого пейджера (ручная пересылка детям).
+    private var appearanceState: AppearanceState = .disappeared
+
+    /// Страница, которой переслан appear (начатый или завершённый).
+    private weak var appearanceController: UIViewController?
 
     // MARK: - Инициализация
 
@@ -119,15 +157,34 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     // MARK: - Жизненный цикл
 
     public override func loadView() {
-        let rootView = UIView()
+        let rootView = PagerRootView()
         rootView.backgroundColor = .clear
         rootView.addSubview(scrollView)
         view = rootView
     }
 
+    /// Appearance детям пересылается вручную — по видимости, а не по факту
+    /// нахождения в иерархии (соседи ±1 лежат в скролл-вью за кадром).
+    public override var shouldAutomaticallyForwardAppearanceMethods: Bool { false }
+
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         layoutPager()
+    }
+
+    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+
+        // Смена направления окружения: слоты перераскладываются в layoutPager().
+        if previousTraitCollection?.layoutDirection != traitCollection.layoutDirection {
+            view.setNeedsLayout()
+        }
+    }
+
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        appearanceState = .appearing
+        syncPageAppearance(animated: animated)
     }
 
     public override func viewDidAppear(_ animated: Bool) {
@@ -139,6 +196,26 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         if scrollView.bounds.width > 0 {
             refreshLoadedPages(around: currentPageIndex)
         }
+
+        // viewDidAppear без viewWillAppear UIKit не присылает, но страхуемся:
+        // appear текущей страницы должен быть начат до завершения.
+        appearanceState = .appearing
+        syncPageAppearance(animated: animated)
+        appearanceController?.endAppearanceTransition()
+        appearanceState = .appeared
+    }
+
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        appearanceState = .disappearing
+        appearanceController?.beginAppearanceTransition(false, animated: animated)
+    }
+
+    public override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        appearanceController?.endAppearanceTransition()
+        appearanceController = nil
+        appearanceState = .disappeared
     }
 
     // MARK: - Публичный API
@@ -146,15 +223,19 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     /// Пересобирает пейджер под новый набор страниц.
     ///
     /// Текущая страница сохраняется по `id`, если он есть в новом наборе; иначе
-    /// сохраняется прежний индекс с зажимом в новые границы. Загруженные
-    /// контроллеры освобождаются, `contentSize` и фреймы пересчитываются в
-    /// `viewDidLayoutSubviews` (единственное место layout'а).
+    /// сохраняется прежний индекс с зажимом в новые границы. Контроллеры
+    /// страниц, чей `id` сохранился и попадает в новое окно ±1, переиспользуются
+    /// (тот же экземпляр; SwiftUI-контент обновляется на месте); выгружаются
+    /// только исчезнувшие и вышедшие из окна. `contentSize` и фреймы
+    /// пересчитываются в `viewDidLayoutSubviews` (единственное место layout'а).
     ///
-    /// - Parameter pages: Новые страницы в порядке чтения.
-    public func reload(pages: [TesseraPageDescriptor]) {
+    /// - Parameter newPages: Новые страницы в порядке чтения.
+    public func reload(pages newPages: [TesseraPageDescriptor]) {
+        // Текущий id — из СТАРОГО набора: по нему страница ищется в новом.
+        let oldPages = pages
         let previousIndex = clampedPageIndex(currentPageIndex)
-        let previousID: AnyHashable? = pages.indices.contains(previousIndex)
-            ? pages[previousIndex].id
+        let previousID: AnyHashable? = oldPages.indices.contains(previousIndex)
+            ? oldPages[previousIndex].id
             : nil
 
         // Останавливаем инерцию/анимацию до удаления страниц: offset пишет
@@ -162,16 +243,28 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         if isViewLoaded {
             scrollView.setContentOffset(scrollView.contentOffset, animated: false)
         }
+        isAnimatingTransition = false
+        dragStartOffsetX = nil
+        pendingSnapOffsetX = nil
 
-        for controller in loadedControllers.values {
-            detach(controller)
+        // Загруженные контроллеры — по id старого набора.
+        var survivors: [(id: AnyHashable, controller: UIViewController)] = []
+        for (index, controller) in loadedControllers.sorted(by: { $0.key < $1.key }) {
+            if oldPages.indices.contains(index) {
+                survivors.append((oldPages[index].id, controller))
+            } else {
+                detach(controller)
+            }
         }
         loadedControllers.removeAll()
-        contentHosting.removeAll()
 
-        self.pages = pages
+        pages = newPages
 
-        if pages.isEmpty {
+        if newPages.isEmpty {
+            for survivor in survivors {
+                detach(survivor.controller)
+            }
+            contentHosting.removeAll()
             currentPageIndex = 0
             lastShownPageIndex = nil
             needsOffsetRestore = true
@@ -182,10 +275,28 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
             return
         }
 
-        if let previousID, let preservedIndex = pages.firstIndex(where: { $0.id == previousID }) {
+        if let previousID, let preservedIndex = newPages.firstIndex(where: { $0.id == previousID }) {
             currentPageIndex = preservedIndex
         } else {
-            currentPageIndex = min(max(previousIndex, 0), pages.count - 1)
+            currentPageIndex = min(max(previousIndex, 0), newPages.count - 1)
+        }
+
+        // Переиспользуем выживших в новом окне ±1; остальных выгружаем.
+        let window = pageWindow(around: currentPageIndex)
+        for survivor in survivors {
+            if let newIndex = newPages.firstIndex(where: { $0.id == survivor.id }),
+               window.contains(newIndex),
+               loadedControllers[newIndex] == nil {
+                loadedControllers[newIndex] = survivor.controller
+                // Тот же экземпляр из реестра; SwiftUI-поставщик обновляет rootView.
+                _ = contentHosting.viewController(
+                    for: survivor.id,
+                    provider: newPages[newIndex].content
+                )
+            } else {
+                detach(survivor.controller)
+                contentHosting.removeContent(for: survivor.id)
+            }
         }
 
         lastShownPageIndex = nil
@@ -197,6 +308,7 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         if isViewLoaded {
             view.setNeedsLayout()
             view.layoutIfNeeded()
+            syncPageAppearance(animated: false)
         }
     }
 
@@ -206,6 +318,14 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     /// (§2 «Один писатель»). При `animated == true` делегат продолжает получать
     /// `didChangeProgress` на кадрах анимации, а `didShowPageAt` — по её
     /// завершении. Индекс зажимается в `0...pages.count - 1`.
+    ///
+    /// Анимированный переход дальше соседней страницы — «прямой прыжок» без
+    /// пролёта промежуточных (docs/PIVOT-IOS-DESIGN.md §1 п.4): offset без
+    /// анимации переставляется на соседа целевой страницы со стороны текущей,
+    /// окно ±1 загружается вокруг цели, и анимируется один последний шаг.
+    /// Делегат получает один `didChangeProgress` со скачком на соседа цели
+    /// (прогресс всегда отражает фактический offset), затем кадры анимации;
+    /// `didShowPageAt` — только для цели.
     ///
     /// - Parameters:
     ///   - index: Индекс в порядке чтения (в RTL — не физический слот).
@@ -235,18 +355,35 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         }
 
         let targetIndex = clampedPageIndex(index)
-        currentPageIndex = targetIndex
+        let targetOffset = contentOffset(forReadingIndex: targetIndex, pageWidth: pageWidth)
         needsOffsetRestore = false
+        pendingSnapOffsetX = nil
 
-        let targetOffset = CGPoint(
-            x: CGFloat(rawSlot(forReadingIndex: targetIndex)) * pageWidth,
-            y: 0
-        )
-        scrollView.setContentOffset(targetOffset, animated: animated)
-
-        if !animated {
+        guard animated, abs(scrollView.contentOffset.x - targetOffset.x) > Self.alignmentTolerance else {
+            // Без анимации — или анимировать нечего: UIKit не присылает
+            // scrollViewDidEndScrollingAnimation для нулевого пути.
+            isAnimatingTransition = false
+            currentPageIndex = targetIndex
+            scrollView.setContentOffset(targetOffset, animated: false)
             finishTransition()
+            return
         }
+
+        updateCurrentPageIndexFromOffset()
+        let distance = targetIndex - currentPageIndex
+        if abs(distance) > 1 {
+            // Прямой прыжок: без анимации — на соседа цели со стороны текущей.
+            let neighbourIndex = targetIndex - distance.signum()
+            scrollView.setContentOffset(
+                contentOffset(forReadingIndex: neighbourIndex, pageWidth: pageWidth),
+                animated: false
+            )
+            refreshLoadedPages(around: targetIndex)
+        }
+
+        currentPageIndex = targetIndex
+        isAnimatingTransition = true
+        scrollView.setContentOffset(targetOffset, animated: true)
     }
 
     // MARK: - UIScrollViewDelegate
@@ -258,58 +395,76 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     /// колбэк делегата. `t` нормализуется по направлению чтения через
     /// `TesseraRTL` (§2 «Инвариант прогресса»).
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard scrollView === self.scrollView, !pages.isEmpty else { return }
+        guard scrollView === self.scrollView, !isApplyingLayout else { return }
+        reportProgress()
+    }
 
-        let pageWidth = scrollView.bounds.width
-        guard pageWidth > 0 else { return }
-
-        let rawProgress = scrollView.contentOffset.x / pageWidth
-        guard rawProgress.isFinite else { return }
-
-        // Ближайшая страница: нужна для восстановления индекса при повороте.
-        currentPageIndex = readingPageIndex(forRawProgress: rawProgress, rounded: true)
-
-        let progress = TesseraRTL.normalizedProgress(
-            rawProgress,
-            pageCount: pages.count,
-            layoutDirection: effectiveLayoutDirection
-        )
-        guard progress.isFinite else { return }
-
-        delegate?.pager(self, didChangeProgress: progress)
+    /// Начало жеста: запоминаем стартовый offset для снапа и снимаем флаг
+    /// программной анимации (жест её перехватывает, UIKit не присылает
+    /// `didEndScrollingAnimation`).
+    public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === self.scrollView else { return }
+        dragStartOffsetX = scrollView.contentOffset.x
+        pendingSnapOffsetX = nil
+        isAnimatingTransition = false
     }
 
     /// Кастомный снап режима `.snapping` (docs/Core-iOS-Design.md §2).
     ///
     /// Расчёт полностью делегируется ``TesseraSnapPolicy``; пейджер только
-    /// подставляет фактическую ширину страницы и скорость жеста. В режиме
-    /// `.paged` снап выполняет `isPagingEnabled`.
+    /// подставляет фактическую ширину страницы, скорость жеста и стартовый
+    /// offset. UIKit отдаёт `velocity` в points/ms, политика ждёт pt/s —
+    /// перевод `× 1000` здесь (E10.11). В режиме `.paged` снап выполняет
+    /// `isPagingEnabled`.
     public func scrollViewWillEndDragging(
         _ scrollView: UIScrollView,
         withVelocity velocity: CGPoint,
         targetContentOffset: UnsafeMutablePointer<CGPoint>
     ) {
-        guard scrollView === self.scrollView, mode == .snapping, !pages.isEmpty else {
-            return
-        }
+        guard scrollView === self.scrollView else { return }
+
+        let startOffsetX = dragStartOffsetX
+        dragStartOffsetX = nil
+
+        guard mode == .snapping, !pages.isEmpty else { return }
 
         let itemWidth = scrollView.bounds.width
         guard itemWidth > 0 else { return }
 
-        targetContentOffset.pointee.x = snapPolicy.targetContentOffset(
+        let target = snapPolicy.targetContentOffset(
             proposedOffset: targetContentOffset.pointee.x,
-            velocity: velocity.x,
+            velocity: velocity.x * Self.millisecondsPerSecond,
             itemWidth: itemWidth,
-            pageCount: pages.count
+            pageCount: pages.count,
+            startOffset: startOffsetX
         )
+        targetContentOffset.pointee.x = target
+        pendingSnapOffsetX = target
     }
 
     /// Конец жеста без инерции: переход считается завершённым сразу.
+    ///
+    /// В режиме `.snapping` при нулевой скорости UIKit не двигает offset к
+    /// цели снапа (E9.2а): пейджер — единственный писатель — сам доводит его
+    /// анимацией до ближайшей страницы, а переход завершается в
+    /// `scrollViewDidEndScrollingAnimation`.
     public func scrollViewDidEndDragging(
         _ scrollView: UIScrollView,
         willDecelerate decelerate: Bool
     ) {
-        guard scrollView === self.scrollView, !decelerate else { return }
+        guard scrollView === self.scrollView else { return }
+
+        let snapOffsetX = pendingSnapOffsetX
+        pendingSnapOffsetX = nil
+        guard !decelerate else { return }
+
+        if mode == .snapping, let alignedOffset = alignedSnapOffset(preferred: snapOffsetX),
+           abs(scrollView.contentOffset.x - alignedOffset) > Self.alignmentTolerance {
+            isAnimatingTransition = true
+            scrollView.setContentOffset(CGPoint(x: alignedOffset, y: 0), animated: true)
+            return
+        }
+
         finishTransition()
     }
 
@@ -354,6 +509,12 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
 
     // MARK: - Конфигурация
 
+    /// UIKit отдаёт скорость жеста в points/ms; политика снапа — в pt/s.
+    private static let millisecondsPerSecond: CGFloat = 1000
+
+    /// Допуск «offset уже выровнен», в points.
+    private static let alignmentTolerance: CGFloat = 0.5
+
     private func configureScrollView() {
         scrollView.isPagingEnabled = mode == .paged
         scrollView.decelerationRate = mode == .snapping ? .fast : .normal
@@ -373,56 +534,83 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     /// `layoutIfNeeded` из публичных методов). В `scrollViewDidScroll` layout'а
     /// нет (§2 «Дисциплина производительности»).
     private func layoutPager() {
+        // Индекс — ДО любых записей геометрии: смена frame (поворот) и
+        // contentSize может зажать offset UIKit'ом и сбить текущую страницу.
+        let preservedIndex = clampedPageIndex(currentPageIndex)
+        let direction = effectiveLayoutDirection
+
+        isApplyingLayout = true
         scrollView.frame = view.bounds
 
         let pageWidth = scrollView.bounds.width
         let pageHeight = scrollView.bounds.height
-        let direction = effectiveLayoutDirection
 
         guard !pages.isEmpty else {
             scrollView.contentSize = .zero
+            isApplyingLayout = false
             lastLayoutWidth = pageWidth
             lastLayoutDirection = direction
             return
         }
 
-        guard pageWidth > 0 else { return }
+        guard pageWidth > 0 else {
+            isApplyingLayout = false
+            return
+        }
 
-        // Индекс до пересчёта contentSize: изменение contentSize может
-        // подвинуть offset и обновить currentPageIndex в scrollViewDidScroll.
-        let preservedIndex = clampedPageIndex(currentPageIndex)
+        let widthChanged = lastLayoutWidth > 0 && abs(pageWidth - lastLayoutWidth) > .ulpOfOne
+        let directionChanged = lastLayoutDirection != nil && lastLayoutDirection != direction
+
+        // Слоты отныне считаются в актуальном направлении.
+        lastLayoutWidth = pageWidth
+        lastLayoutDirection = direction
 
         scrollView.contentSize = CGSize(
             width: pageWidth * CGFloat(pages.count),
             height: pageHeight
         )
 
-        let widthChanged = lastLayoutWidth > 0 && abs(pageWidth - lastLayoutWidth) > .ulpOfOne
-        let directionChanged = lastLayoutDirection != nil && lastLayoutDirection != direction
-
-        if needsOffsetRestore || widthChanged || directionChanged {
+        let restoresOffset = needsOffsetRestore || widthChanged || directionChanged
+        var clampedOffset = false
+        if restoresOffset {
             currentPageIndex = preservedIndex
-            let slot = rawSlot(forReadingIndex: preservedIndex)
-            scrollView.contentOffset = CGPoint(x: CGFloat(slot) * pageWidth, y: 0)
+            scrollView.contentOffset = contentOffset(
+                forReadingIndex: preservedIndex,
+                pageWidth: pageWidth
+            )
             needsOffsetRestore = false
         } else {
-            clampContentOffsetIfNeeded(pageWidth: pageWidth)
+            clampedOffset = clampContentOffsetIfNeeded(pageWidth: pageWidth)
         }
+        isApplyingLayout = false
 
-        lastLayoutWidth = pageWidth
-        lastLayoutDirection = direction
+        if restoresOffset || clampedOffset {
+            // Подписчики получают итоговый прогресс один раз — без
+            // промежуточных значений зажатия.
+            reportProgress()
+            if restoresOffset {
+                currentPageIndex = preservedIndex
+            }
+        }
 
         refreshLoadedPages(around: currentPageIndex)
         layoutPageFrames(pageWidth: pageWidth, pageHeight: pageHeight)
+
+        if !isScrollInFlight {
+            syncPageAppearance(animated: false)
+        }
     }
 
     /// Зажимает offset в допустимые границы после изменения числа страниц.
-    private func clampContentOffsetIfNeeded(pageWidth: CGFloat) {
+    ///
+    /// - Returns: `true`, если offset изменился.
+    private func clampContentOffsetIfNeeded(pageWidth: CGFloat) -> Bool {
         let maximumOffset = max(0, pageWidth * CGFloat(pages.count) - pageWidth)
         let clampedX = min(max(scrollView.contentOffset.x, 0), maximumOffset)
-        guard clampedX != scrollView.contentOffset.x else { return }
+        guard clampedX != scrollView.contentOffset.x else { return false }
 
         scrollView.contentOffset = CGPoint(x: clampedX, y: 0)
+        return true
     }
 
     /// Раскладывает фреймы всех загруженных страниц.
@@ -452,7 +640,39 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         )
     }
 
+    /// Offset выравнивания страницы в порядке чтения.
+    private func contentOffset(forReadingIndex index: Int, pageWidth: CGFloat) -> CGPoint {
+        CGPoint(x: CGFloat(rawSlot(forReadingIndex: index)) * pageWidth, y: 0)
+    }
+
+    /// Выровненный offset для доводки снапа после жеста без инерции.
+    ///
+    /// Берётся цель, рассчитанная политикой в `scrollViewWillEndDragging`;
+    /// если её нет — ближайшая страница к текущему offset'у.
+    private func alignedSnapOffset(preferred: CGFloat?) -> CGFloat? {
+        guard !pages.isEmpty else { return nil }
+        let pageWidth = scrollView.bounds.width
+        guard pageWidth > 0 else { return nil }
+
+        if let preferred, preferred.isFinite {
+            return preferred
+        }
+        return snapPolicy.targetContentOffset(
+            proposedOffset: scrollView.contentOffset.x,
+            velocity: 0,
+            itemWidth: pageWidth,
+            pageCount: pages.count
+        )
+    }
+
     // MARK: - Ленивая загрузка child-VC
+
+    /// Индексы окна ±1 вокруг страницы.
+    private func pageWindow(around index: Int) -> Set<Int> {
+        guard !pages.isEmpty else { return [] }
+        let center = clampedPageIndex(index)
+        return Set([center - 1, center, center + 1].filter { pages.indices.contains($0) })
+    }
 
     /// Держит в памяти текущую страницу и соседей ±1.
     ///
@@ -462,10 +682,7 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     private func refreshLoadedPages(around index: Int) {
         guard !pages.isEmpty else { return }
 
-        let center = clampedPageIndex(index)
-        let desired = Set(
-            [center - 1, center, center + 1].filter { pages.indices.contains($0) }
-        )
+        let desired = pageWindow(around: index)
 
         for loadedIndex in Array(loadedControllers.keys) where !desired.contains(loadedIndex) {
             guard let controller = loadedControllers.removeValue(forKey: loadedIndex) else {
@@ -483,6 +700,9 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     }
 
     /// Создаёт контроллер страницы и подключает его как child-VC.
+    ///
+    /// Appearance-коллбэков страница здесь не получает: пересылку по видимости
+    /// выполняет `syncPageAppearance(animated:)`.
     private func loadPage(at index: Int) {
         guard pages.indices.contains(index) else { return }
 
@@ -513,7 +733,23 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     }
 
     /// Отсоединяет child-VC от пейджера.
+    ///
+    /// Если странице был переслан appear, перед удалением она получает
+    /// сбалансированный disappear.
     private func detach(_ controller: UIViewController) {
+        if controller === appearanceController {
+            switch appearanceState {
+            case .appearing, .appeared:
+                controller.beginAppearanceTransition(false, animated: false)
+                controller.endAppearanceTransition()
+            case .disappearing:
+                controller.endAppearanceTransition()
+            case .disappeared:
+                break
+            }
+            appearanceController = nil
+        }
+
         guard controller.parent != nil else {
             controller.view.removeFromSuperview()
             return
@@ -524,10 +760,54 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         controller.removeFromParent()
     }
 
+    // MARK: - Appearance по видимости
+
+    /// Состояние appearance пейджера.
+    private enum AppearanceState {
+        case disappeared
+        case appearing
+        case appeared
+        case disappearing
+    }
+
+    /// Идёт ли сейчас движение offset'а (жест, инерция, программная анимация).
+    private var isScrollInFlight: Bool {
+        scrollView.isDragging || scrollView.isDecelerating || isAnimatingTransition
+    }
+
+    /// Пересылает appear текущей странице, disappear — прежней.
+    ///
+    /// - `.appearing`: текущей странице начинается appear (завершит его
+    ///   `viewDidAppear` пейджера); если appear уже был начат другой странице,
+    ///   он отменяется сбалансированным disappear.
+    /// - `.appeared`: при смене текущей страницы прежняя получает полный
+    ///   disappear, новая — полный appear.
+    /// - Скрытый или скрывающийся пейджер коллбэков не пересылает.
+    private func syncPageAppearance(animated: Bool) {
+        guard appearanceState == .appearing || appearanceState == .appeared else { return }
+
+        let current = loadedControllers[clampedPageIndex(currentPageIndex)]
+        guard current !== appearanceController else { return }
+
+        if let previous = appearanceController {
+            previous.beginAppearanceTransition(false, animated: animated)
+            previous.endAppearanceTransition()
+            appearanceController = nil
+        }
+
+        guard let current else { return }
+        current.beginAppearanceTransition(true, animated: animated)
+        if appearanceState == .appeared {
+            current.endAppearanceTransition()
+        }
+        appearanceController = current
+    }
+
     // MARK: - Завершение перехода
 
     /// Фиксирует текущую страницу, обновляет окно ±1 и уведомляет делегата.
     private func finishTransition() {
+        isAnimatingTransition = false
         guard !pages.isEmpty else { return }
 
         updateCurrentPageIndexFromOffset()
@@ -535,7 +815,31 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
             refreshLoadedPages(around: currentPageIndex)
             view.setNeedsLayout()
         }
+        syncPageAppearance(animated: false)
         reportCurrentPageIfNeeded()
+    }
+
+    /// Обновляет индекс по offset'у и сообщает прогресс делегату.
+    private func reportProgress() {
+        guard !pages.isEmpty else { return }
+
+        let pageWidth = scrollView.bounds.width
+        guard pageWidth > 0 else { return }
+
+        let rawProgress = scrollView.contentOffset.x / pageWidth
+        guard rawProgress.isFinite else { return }
+
+        // Ближайшая страница: нужна для восстановления индекса при повороте.
+        currentPageIndex = readingPageIndex(forRawProgress: rawProgress, rounded: true)
+
+        let progress = TesseraRTL.normalizedProgress(
+            rawProgress,
+            pageCount: pages.count,
+            layoutDirection: slotLayoutDirection
+        )
+        guard progress.isFinite else { return }
+
+        delegate?.pager(self, didChangeProgress: progress)
     }
 
     private func updateCurrentPageIndexFromOffset() {
@@ -585,6 +889,13 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         }
     }
 
+    /// Направление, в котором сейчас разложены слоты (и стоит offset).
+    ///
+    /// До первого layout'а — живое направление вида.
+    private var slotLayoutDirection: UIUserInterfaceLayoutDirection {
+        lastLayoutDirection ?? effectiveLayoutDirection
+    }
+
     /// Физический слот страницы в координатах контента.
     ///
     /// В LTR страницы лежат в порядке чтения слева направо. В RTL первая
@@ -595,7 +906,7 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         guard !pages.isEmpty else { return 0 }
 
         let clampedIndex = clampedPageIndex(index)
-        guard effectiveLayoutDirection == .rightToLeft else { return clampedIndex }
+        guard slotLayoutDirection == .rightToLeft else { return clampedIndex }
         return pages.count - 1 - clampedIndex
     }
 
@@ -614,7 +925,7 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
         return TesseraRTL.pageIndex(
             for: clampedRawIndex,
             pageCount: pages.count,
-            layoutDirection: effectiveLayoutDirection
+            layoutDirection: slotLayoutDirection
         )
     }
 
@@ -622,6 +933,18 @@ public final class TesseraPagerViewController: UIViewController, UIScrollViewDel
     private func clampedPageIndex(_ index: Int) -> Int {
         guard !pages.isEmpty else { return 0 }
         return min(max(index, 0), pages.count - 1)
+    }
+}
+
+/// Корневой вид пейджера: смена `semanticContentAttribute` на лету помечает
+/// layout, чтобы `layoutPager()` перераскладывал слоты под новое направление.
+private final class PagerRootView: UIView {
+    override var semanticContentAttribute: UISemanticContentAttribute {
+        didSet {
+            if oldValue != semanticContentAttribute {
+                setNeedsLayout()
+            }
+        }
     }
 }
 #endif

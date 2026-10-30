@@ -31,21 +31,62 @@ public enum TesseraGestureAxis: Equatable {
 /// в `gestureRecognizerShouldBegin`, а не постфактум. Поддерживается несколько
 /// детей (например, сетка и список на одном экране StartScreen).
 ///
-/// Использование:
+/// Использование.
+///
+/// - Important: **Не назначайте арбитр делегатом пана `UIScrollView`.**
+///   Делегатом встроенного `panGestureRecognizer` скролл-вью обязан оставаться
+///   сам скролл-вью: строка `scrollView.panGestureRecognizer.delegate = arbiter`
+///   приводит к исключению UIKit (`NSInvalidArgumentException`: «UIScrollView's
+///   built-in pan gesture recognizer must have its scroll view as its
+///   delegate»). Пейджер TesseraKit построен на `UIScrollView`, поэтому
+///   этот путь для него закрыт.
+///
+/// Рабочая схема (так делают Pivot, Panorama и StartScreen): подписаться на пан
+/// скролл-вью аддитивно через `addTarget` — это не трогает его делегата и
+/// внутреннюю обработку жестов — и на состоянии `.began` принять решение по оси
+/// чистой функцией ``axisDecision(forVelocity:)``. При горизонтали собрать
+/// арбитр и заблокировать детей, по завершении жеста — восстановить:
 ///
 /// ```swift
-/// let arbiter = TesseraGestureArbiter(horizontalOwner: pager,
-///                                     verticalOwners: [grid, list])
-/// pager.panGestureRecognizer.delegate = arbiter
-/// // Далее пейджер/контроллер вызывает:
-/// arbiter.prepareForHorizontalScroll() // в начале горизонтального скролла
-/// arbiter.endHorizontalScroll()        // по завершении горизонтального скролла
+/// // Один раз, когда скролл-вью пейджера известен:
+/// pagerScrollView.panGestureRecognizer.addTarget(
+///     self, action: #selector(pagerPanDidChange(_:)))
+///
+/// @objc private func pagerPanDidChange(_ pan: UIPanGestureRecognizer) {
+///     switch pan.state {
+///     case .began:
+///         let velocity = pan.velocity(in: pan.view)
+///         let vector = velocity == .zero ? pan.translation(in: pan.view) : velocity
+///         guard TesseraGestureArbiter.axisDecision(forVelocity: vector) == .horizontal
+///         else { return } // вертикаль — детям, ничего не блокируем
+///         let arbiter = TesseraGestureArbiter(horizontalOwner: pagerScrollView,
+///                                             verticalOwners: [grid, list])
+///         arbiter.prepareForHorizontalScroll() // блокировка детей
+///         gestureArbiter = arbiter             // арбитр держит владелец
+///     case .ended, .cancelled, .failed:
+///         gestureArbiter?.endHorizontalScroll() // восстановление детей
+///         gestureArbiter = nil
+///     default:
+///         break
+///     }
+/// }
 /// ```
 ///
-/// Назначение делегата оставлено вызывающей стороне: арбитр не перетирает
-/// `panGestureRecognizer.delegate` в `init`, чтобы не ломать существующую
-/// настройку пейджера. Арбитр не удерживается скролл-вью, поэтому его должен
-/// удерживать владелец (пейджер или контроллер).
+/// `UIGestureRecognizer` держит таргеты слабо (проверено тестом
+/// `TesseraGestureTargetRetentionTests`), поэтому `addTarget(self, …)` не
+/// создаёт цикла удержания и `deinit` владельца достижим.
+///
+/// ``gestureRecognizerShouldBegin(_:)`` (решение до начала жеста, как в §2)
+/// применим только там, где делегата можно назначить законно: для
+/// **собственного** `UIPanGestureRecognizer` горизонтального владельца, либо
+/// из переопределения `gestureRecognizerShouldBegin(_:)` в подклассе
+/// `UIScrollView` (метод `UIView`, вызывается для жестов этого вида, делегата
+/// не требует) — например, `return arbiter?.shouldBegin(gestureRecognizer) ??
+/// super.gestureRecognizerShouldBegin(gestureRecognizer)`.
+///
+/// Арбитр не удерживается скролл-вью, поэтому его должен удерживать владелец
+/// (пейджер или контроллер). Он сильно держит переданные скролл-вью, поэтому
+/// при ленивой загрузке страниц удобно создавать его на время жеста.
 ///
 /// Все методы рассчитаны на главный поток: UIKit-свойства и жесты читаются
 /// и меняются только там. Layout не выполняется.
@@ -74,8 +115,8 @@ public final class TesseraGestureArbiter: NSObject, UIGestureRecognizerDelegate 
     ///     сохраняется; дубли и сам `horizontalOwner` отбрасываются, чтобы арбитр
     ///     не отключал прокрутку владельца.
     ///
-    /// Делегат пана не назначается: сделайте это сами
-    /// (`horizontalOwner.panGestureRecognizer.delegate = arbiter`).
+    /// Делегат пана не назначается и не должен назначаться для встроенного
+    /// пана `UIScrollView` (UIKit бросит исключение) — см. рецепт в описании типа.
     public init(horizontalOwner: UIScrollView, verticalOwners: [UIScrollView]) {
         self.horizontalOwner = horizontalOwner
 
@@ -139,6 +180,9 @@ public final class TesseraGestureArbiter: NSObject, UIGestureRecognizerDelegate 
     /// Мост к UIKit: `UIGestureRecognizerDelegate` вызывает именно этот метод.
     /// Решение делегируется публичному `shouldBegin(_:)`, чтобы логика оставалась
     /// тестируемой без подмены протокола.
+    ///
+    /// Срабатывает, только если арбитр законно назначен делегатом жеста —
+    /// для встроенного пана `UIScrollView` это невозможно (см. описание типа).
     @objc public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         shouldBegin(gestureRecognizer)
     }
