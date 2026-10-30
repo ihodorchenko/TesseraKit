@@ -139,6 +139,20 @@ public struct StartScreenStyle {
 /// обновляйте SwiftUI-состояние после `TileStore.onChange`, чтобы порядок
 /// «координатор → SwiftUI» сохранялся.
 ///
+/// ## Раскрытие папок (D17, E7.3)
+///
+/// По умолчанию тап по папке раскрывает её встроенной панелью сетки: заголовок
+/// (в нижнем регистре) и четырёхколоночная сетка ярлыков появляются под строкой
+/// папки, строки ниже сдвигаются, иконки идут каскадом. Повторный тап, тап по
+/// пустому месту и `Back`/VoiceOver-escape закрывают панель; состояние также
+/// снимается, если папка исчезла из снимка.
+///
+/// Хосту, который показывает собственный экран папки, нужно передать
+/// `folderTapHandler`, возвращающий `true`: тогда нативная панель не
+/// открывается, а `didTapFolder` не приходит — навигацию выполняет сам
+/// перехватчик. Раскрытие и закрытие сообщаются делегату событиями
+/// `didExpandFolder`/`didCollapseFolder`.
+///
 /// ## Делегат
 ///
 /// ``StartScreenDelegate`` — протокол с классовой связностью, а SwiftUI-структура
@@ -199,6 +213,15 @@ public struct StartScreenView: UIViewControllerRepresentable {
     /// `require(toFail:)`, поэтому задавайте её сразу, а не на лету.
     private let yieldsLeftEdgeToSystemGesture: Bool
 
+    /// Перехватчик тапа по папке (D17, E7.3).
+    ///
+    /// `nil` (по умолчанию) — папка раскрывается нативной панелью сетки. Если
+    /// замыкание вернуло `true`, нативное раскрытие не выполняется: хост сам
+    /// обрабатывает тап (например, показывает прежний экран папки). При `true`
+    /// событие ``StartScreenDelegate/startScreen(_:didTapFolder:)`` не приходит,
+    /// чтобы навигация не выполнилась дважды.
+    private let folderTapHandler: ((TileFolder) -> Bool)?
+
     /// Наблюдатель событий рабочего стола.
     private let delegate: StartScreenDelegate?
 
@@ -211,6 +234,8 @@ public struct StartScreenView: UIViewControllerRepresentable {
     ///   - rightPage: Фабрика правой страницы (§6); `nil` — страницы нет (D13).
     ///   - yieldsLeftEdgeToSystemGesture: Политика ведущей кромки (§1);
     ///     по умолчанию `false` — рабочий стол корневой экран.
+    ///   - folderTapHandler: Перехватчик тапа по папке (D17); `nil` — нативное
+    ///     раскрытие панелью.
     ///   - delegate: Наблюдатель тапов и переходов; необязателен.
     public init(
         snapshot: TileGridSnapshot,
@@ -218,6 +243,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         leftPanel: QuickPanelProviding? = nil,
         rightPage: (() -> UIViewController)? = nil,
         yieldsLeftEdgeToSystemGesture: Bool = false,
+        folderTapHandler: ((TileFolder) -> Bool)? = nil,
         delegate: StartScreenDelegate? = nil
     ) {
         self.snapshot = snapshot
@@ -225,6 +251,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         self.leftPanel = leftPanel
         self.rightPage = rightPage
         self.yieldsLeftEdgeToSystemGesture = yieldsLeftEdgeToSystemGesture
+        self.folderTapHandler = folderTapHandler
         self.delegate = delegate
     }
 
@@ -304,6 +331,9 @@ public struct StartScreenView: UIViewControllerRepresentable {
     /// замыкание `action`, у которого нет семантики равенства. Поэтому «то же
     /// самое» определяется тем, что видно и озвучивается: идентификатор,
     /// размер (D15), подпись, бейдж (D12), ссылка на иконку и состав папки.
+    /// Признак панели раскрытой папки (D17) входит в подпись отдельным полем:
+    /// панель и плитка-папка имеют один идентификатор, но это разные состояния
+    /// экрана.
     /// Действие и порядок сравниваются по идентификатору — если хост заменил
     /// `action` у ярлыка с тем же `id`, перезагрузка не нужна: сетка действие не
     /// хранит.
@@ -314,6 +344,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         let badge: TileBadge
         let iconIdentifier: ObjectIdentifier?
         let folderTileIdentifiers: [AnyHashable]
+        let isFolderPanel: Bool
 
         init(item: TileGridItem) {
             id = item.id
@@ -325,12 +356,20 @@ public struct StartScreenView: UIViewControllerRepresentable {
                 badge = shortcut.badge
                 iconIdentifier = shortcut.icon.map { ObjectIdentifier($0) }
                 folderTileIdentifiers = []
+                isFolderPanel = false
             case .folder(let folder):
                 title = folder.title
                 // У папки бейджа нет (§4): счётчик внимания — свойство ярлыка.
                 badge = .none
                 iconIdentifier = folder.icon.map { ObjectIdentifier($0) }
                 folderTileIdentifiers = folder.tiles.map { $0.id }
+                isFolderPanel = false
+            case .folderContent(let folder):
+                title = folder.title
+                badge = .none
+                iconIdentifier = folder.icon.map { ObjectIdentifier($0) }
+                folderTileIdentifiers = folder.tiles.map { $0.id }
+                isFolderPanel = true
             }
         }
     }
@@ -431,6 +470,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
                 force: isInitial
             )
             applyGrid(description.snapshot, to: screen, force: isInitial)
+            applyFolderTapHandler(description.folderTapHandler, to: screen)
         }
 
         /// Применяет стиль, не трогая неизменившиеся поля.
@@ -516,6 +556,18 @@ public struct StartScreenView: UIViewControllerRepresentable {
             screen.reload(grid: snapshot)
         }
 
+        /// Передаёт сетке перехватчик тапа по папке (D17, E7.3).
+        ///
+        /// Замыкание не сравнивается: оно небольшое, а присвоение свойства
+        /// сетки ничего не пересобирает. Хост может менять перехватчик между
+        /// перерисовками SwiftUI.
+        private func applyFolderTapHandler(
+            _ handler: ((TileFolder) -> Bool)?,
+            to screen: TesseraStartScreenViewController
+        ) {
+            screen.gridView.folderTapHandler = handler
+        }
+
         // MARK: Подключение к ядру
 
         /// Подключает координатор к живому контроллеру.
@@ -532,6 +584,10 @@ public struct StartScreenView: UIViewControllerRepresentable {
 
             screen.gridView.onTap = { [weak self] item in
                 self?.handleTap(item)
+            }
+            // D17: раскрытие и закрытие панели папки — события делегата.
+            screen.gridView.onFolderExpansionChanged = { [weak self] folder, expanded in
+                self?.handleFolderExpansion(folder, expanded: expanded)
             }
 
             // Вид нужен, чтобы найти пейджер и подключить прокси делегата.
@@ -550,6 +606,10 @@ public struct StartScreenView: UIViewControllerRepresentable {
                 pager.delegate = screenViewController
             }
             screenViewController?.gridView.onTap = nil
+            screenViewController?.gridView.onFolderExpansionChanged = nil
+            // Перехватчик принадлежит хосту-представлению: экран, переживший
+            // SwiftUI, не должен удерживать замыкание с его состоянием.
+            screenViewController?.gridView.folderTapHandler = nil
             pagerViewController = nil
             screenViewController = nil
         }
@@ -596,8 +656,27 @@ public struct StartScreenView: UIViewControllerRepresentable {
             case .tile(let shortcut):
                 parent.delegate?.startScreen(screen, didTapShortcut: shortcut)
             case .folder(let folder):
-                // D14: открытие папки — навигация хоста или TileEditCoordinator.
+                // D14/D17: событие тапа по папке. Нативное раскрытие панели
+                // выполняет сетка (если перехватчик не запретил).
                 parent.delegate?.startScreen(screen, didTapFolder: folder)
+            case .folderContent:
+                // Панель раскрытой папки (D17): тап по её заголовку/пустому
+                // месту ничего не меняет; ярлыки внутри обрабатывает панель.
+                break
+            }
+        }
+
+        /// Раскрытие/закрытие панели папки сеткой (D17, E7.3).
+        ///
+        /// - Parameters:
+        ///   - folder: Папка, к которой относится событие.
+        ///   - expanded: `true` — панель раскрыта, `false` — свёрнута.
+        private func handleFolderExpansion(_ folder: TileFolder, expanded: Bool) {
+            guard let screen = screenViewController else { return }
+            if expanded {
+                parent.delegate?.startScreen(screen, didExpandFolder: folder)
+            } else {
+                parent.delegate?.startScreen(screen, didCollapseFolder: folder)
             }
         }
 

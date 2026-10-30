@@ -15,14 +15,17 @@
 
 ## Статус
 
-Реализован, v0.1: все четыре библиотеки собраны, архитектура и контракты — в проектных документах `docs/`.
+Реализован, v0.2: все четыре библиотеки собраны, архитектура и контракты — в проектных документах `docs/`.
 
 - `TesseraCore` — пейджер `paged`/`snapping`, снап-политика, параллакс, арбитраж жестов, хостинг контента, accessibility/RTL;
 - `TesseraPivot` — лента заголовков с непрерывным индикатором, синхронизация ленты и пейджера, SwiftUI-фасад;
 - `TesseraPanorama` — peek-снап, параллакс фона, заголовки по прогрессу, SwiftUI-фасад;
 - `TesseraStartScreen` — рабочий стол с ярлыками-действиями и папками, live-плитки, режим редактирования, опциональные боковые страницы, SwiftUI-фасад.
+- Папки — WP-поведение: инлайн-раскрытие под плиткой (рост 0→панель, каскад), плитки small внутри, превью 2×2; переопределение тапа — через `folderTapHandler`.
+- Физика drag по спеке WP: масштаб 0.95, димминг, push-вниз, компактный reflow без дыр, слияние в папку по таймеру 600 мс, resize-выталкивание, bounce-кривая, магнитизм к ячейкам.
+- Плавное «желе» (±1.2°, 0.4 с).
 
-Тесты — **271**, гоняются через `xcodebuild test -scheme TesseraKit-Package -destination 'platform=iOS Simulator,name=iPhone 17'`: `swift test` на macOS-хосте UIKit-код не исполняет (D10 в [docs/STATE.md](docs/STATE.md)). Пакет — iOS 15+; Mac — только совместимость через Mac Catalyst (D9).
+Тесты — **412**, гоняются через `xcodebuild test -scheme TesseraKit-Package -destination 'platform=iOS Simulator,name=iPhone 17'`: `swift test` на macOS-хосте UIKit-код не исполняет (D10 в [docs/STATE.md](docs/STATE.md)). Пакет — iOS 15+; Mac — только совместимость через Mac Catalyst (D9).
 
 ## Подключение
 

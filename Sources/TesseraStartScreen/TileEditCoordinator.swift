@@ -6,17 +6,19 @@
 //  собственный drag и операции с папками через функцию одобрения хоста.
 //
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  - §5 «Режим редактирования»: long-press → «желе» (`CAKeyframeAnimation`
-//    поворота ±2° со случайной фазой), unpin с fly-out, resize по циклу
+//  - §5 «Режим редактирования»: long-press → «желе» (мягкая синусоидальная
+//    `CAKeyframeAnimation` поворота ±1,2° за 0,4 с со случайной фазой), unpin
+//    с fly-out, dimming всех плиток, кроме выбранной (E8.2), resize по циклу
 //    small → medium → wide → large с переупаковкой, собственный drag-координатор
-//    (снэпшот + пустышка + переупаковка модели + инвалидация layout), а не
-//    нативный `UICollectionView` interactive movement;
+//    (снэпшот + пустышка + превью порядка без записи в модель + инвалидация
+//    layout), а не нативный `UICollectionView` interactive movement;
 //  - §3 «Плиточная сетка»: переупаковку считает `TileLayoutEngine`, анимацию
 //    сдвига соседей — `TesseraTileGridView.update(snapshot:animated:)` через
 //    batch updates;
 //  - §9 «Accessibility»: в edit-режиме у плитки появляются custom actions
 //    resize/unpin, смена режима озвучивается; Reduce Motion отключает «желе»,
-//    fly-out и параллакс-подобные эффекты, оставляя крестики и подсветку;
+//    fly-out, анимацию димминга и параллакс-подобные эффекты, оставляя кнопки
+//    открепления, сам димминг и подсветку;
 //  - §14 «Уточнения MVP»: D12 (ярлык — просто действие), D14 (папки — только
 //    через функцию одобрения `TileStore.approval`), D15 (четыре размера).
 //
@@ -26,22 +28,67 @@
 //  новый снимок через `update(snapshot:animated:)`, но только если хост ещё не
 //  сделал этого из своего `TileStore.onChange` (сравнение снимков дешёвое).
 //
+//  E8.4: во время перетаскивания модель НЕ меняется. Порядок соседей —
+//  превью, которое живёт только в сетке (`TileLayoutEngine.previewOrder` +
+//  `grid.update(snapshot:animated:)`); в `TileStore` порядок пишется один раз на
+//  drop, а отмена просто возвращает сетке снимок на момент захвата. Хост не
+//  получает `onChange` на каждый шаг drag, автосохранение не срабатывает.
+//
+//  E8.7: resize-выталкивание. При увеличении плитка по возможности остаётся на
+//  своём месте, а конфликтующие плитки справа/снизу уходят вниз
+//  (`TileLayoutEngine.resizePlacement` + `TileStore.resize(_:to:columns:)`);
+//  координатор передаёт реальное число колонок сетки. Цикл размеров D15
+//  (small → medium → wide → large → small) не меняется.
+//
+//  E8.6: папка из двух ярлыков больше не создаётся мгновенно при drop на
+//  центр плитки-цели. Нужно удержать перетаскиваемую плитку над целью не
+//  меньше `mergeHoverDuration` (600 мс) при смещении пальца не больше
+//  `mergeHoverDisplacement` (10 pt); тогда цель подсвечивается «впитыванием»
+//  (масштаб 1,08 + акцентная рамка, ~0,2 с) и drop создаёт папку. Таймер не
+//  истёк или палец сместился больше допуска — обычное перетаскивание E8.4.
+//  Решение «сливать или нет» принимает чистая state-машина
+//  ``TesseraMergeHoverTracker``: в ней нет UIKit и часов системы, поэтому она
+//  тестируется без симулятора.
+//
+//  E8.8: движения плиток при перестановке (переезд соседей в
+//  `TesseraTileGridView.update(snapshot:animated:)` и пустышка под снятой
+//  плиткой) идут bounce-кривой `cubic-bezier(0.175, 0.885, 0.32, 1.1)`,
+//  0,26 с. Фабрика общая — `TesseraTileGridView.bounceTimingParameters()`;
+//  кривая раскрытия/закрытия панели папки (0.1, 0.9, 0.2, 1) не меняется.
+//
+//  E8.9: магнитизм к ячейкам. Под перетаскиваемой плиткой строится виртуальная
+//  сетка слотов той же размерности (`TesseraTileGridView.magnetSlotCenters(for:)`),
+//  а выбор ближайшего слота делает чистая функция
+//  `TesseraTileMagnet.magnetTarget(for:slotCenters:snapRadius:)`. Если палец
+//  попадает в `magnetSnapRadius` (28 pt) от центра ближайшего слота, снимок
+//  плавно подъезжает к его центру (spring 0,2 с); за радиусом снова следует
+//  за пальцем 1:1. Это только визуальный слой: цели E8.4 и таймер E8.6
+//  считаются по точке пальца, а не по центру снимка, поэтому перестановка и
+//  слияние не меняются. Над панелью раскрытой папки и над целями группировки
+//  (папка, центр ярлыка из зоны E8.6) притяжение не работает; при Reduce
+//  Motion оно отключено целиком — снимок остаётся строго под пальцем.
+//
 //  Дисциплина прокрутки (§3, CORE-IOS-DESIGN.md §2): в колбэке `contentOffset`
-//  координатор трогает только `frame`/`isHidden` видов-кнопок поверх сетки —
-//  layout сетки и ячеек не пересчитывается.
+//  координатор трогает только `frame`/`isHidden` видов-кнопок поверх сетки и
+//  `alpha` содержимого ячеек (димминг) — всё это разрешённые в горячем пути
+//  свойства; layout сетки и ячеек не пересчитывается.
 //
 //  Границы ответственности:
 //  - сетка (`TesseraTileGridView`) отображает снимок и отдаёт геометрию;
 //  - `TileStore` — единственный писатель модели;
-//  - координатор владеет жестами, оверлеями крестиков/стрелок, drag-сессией
-//    и минимальным экраном папки;
+//  - координатор владеет жестами, оверлеями кнопок открепления/размера,
+//    drag-сессией и минимальным экраном папки;
 //  - открытие ярлыка/папки по тапу остаётся за хостом (`onTap` сетки).
 //
 //  Все методы — главный поток: UIKit-вью и `TileStore` не рассчитаны на
 //  фоновые вызовы (CORE-IOS-DESIGN.md §3).
 //
 //  Задача плана: E4.4 (после E4.2: TileDescriptor, TileLayoutEngine, TileStore,
-//  TileGridView уже в репозитории).
+//  TileGridView уже в репозитории); E8.2 — димминг в режиме редактирования,
+//  E8.3 — булавка вместо крестика у кнопки «открепить», E8.4 — push-физика
+//  drag: превью порядка без записи в модель, фиксация на drop; E8.6 — слияние
+//  в папку по удержанию (600 мс / 10 pt) с подсветкой «впитывания»; E8.9 —
+//  виртуальная сетка слотов и spring-притяжение снимка к ближайшей ячейке.
 //
 
 #if canImport(UIKit)
@@ -198,9 +245,13 @@ public extension TesseraTileEditCoordinatorDelegate {
 
 /// Параметры режима редактирования (docs/STARTSCREEN-IOS-DESIGN.md §5).
 ///
-/// Значения по умолчанию подобраны под §5: поворот «желе» ±2°, короткий цикл
-/// покачивания, отдельная фаза на каждую плитку (seedable — детерминированная
-/// для тестов E4.7), автопрокрутка у краёв при перетаскивании.
+/// Значения по умолчанию: мягкий синусоидальный поворот «желе» ±1,2° с циклом
+/// 0,4 с, отдельная фаза на каждую плитку (seedable — детерминированная для
+/// тестов E4.7), автопрокрутка у краёв при перетаскивании, параметры
+/// слияния в папку по удержанию (E8.6): 600 мс удержания, допуск 10 pt и
+/// анимация подсветки «впитывания» 0,2 с с масштабом 1,08, а также параметры
+/// магнитизма к ячейкам (E8.9): радиус 28 pt, spring 0,2 с с демпфированием
+/// 0,82.
 public struct TesseraTileEditConfiguration {
 
     /// Seed «желе» и фаз: одинаковый seed даёт одинаковую картину покачивания.
@@ -210,15 +261,28 @@ public struct TesseraTileEditConfiguration {
     /// запусками) и воспроизводится в тестах.
     public var seed: UInt64
 
-    /// Амплитуда «желе» в градусах (по §5 — ±2°).
+    /// Амплитуда «желе» в градусах (по умолчанию ±1,2°).
+    ///
+    /// Малая амплитуда при мягкой синусоидальной анимации читается как «дыхание»
+    /// плитки, а не как дёрганье: резкое покачивание глазу мешает, а цель
+    /// эффекта — показать, что элемент «живой» и его можно двигать.
     public var jiggleAngle: CGFloat
 
     /// Базовая длительность одного цикла покачивания в секундах.
+    ///
+    /// По умолчанию 0,4 с; с разбросом фазы/длительности (0,85–1,15) циклы
+    /// плиток расходятся на 0,34–0,46 с, и сетка не качается синхронно.
     public var jiggleDuration: TimeInterval
 
     /// Масштаб поднятой плитки при перетаскивании.
     ///
+    /// Плитка слегка уменьшается, отделяясь от плоскости (в спеке WP — scale 0.95):
+    /// так захваченная плитка читается как «взятая» и не перекрывает соседей,
+    /// а рост 1.04, наоборот, наезжал бы на них и выглядел как приближение.
     /// При Reduce Motion подъём не анимируется (плитка едет 1:1 за пальцем).
+    /// Значение не обязано быть больше единицы: код анимаций работает с любым
+    /// масштабом, а рамки/центр снимка задаются через `bounds`/`center`,
+    /// поэтому уменьшение (< 1) безопасно.
     public var liftScale: CGFloat
 
     /// Диаметр круглых кнопок «открепить»/«размер» в точках.
@@ -236,26 +300,106 @@ public struct TesseraTileEditConfiguration {
     /// покажет нейтральный заголовок.
     public var folderTitle: String
 
+    /// Сколько нужно удерживать перетаскиваемую плитку над центром ярлыка-цели,
+    /// чтобы drop создал папку (E8.6).
+    ///
+    /// По умолчанию 0,6 с (600 мс — спека WP). До истечения этого времени цель
+    /// только подсвечивается обычной рамкой, а drop выполняет обычную
+    /// перестановку E8.4. Нулевое значение возвращает почти мгновенное слияние
+    /// (поведение до E8.6): готовность наступает на первом же кадре после
+    /// наведения, по отпусканию палец успевает раньше.
+    public var mergeHoverDuration: TimeInterval
+
+    /// Допустимое смещение пальца за время удержания в точках (E8.6).
+    ///
+    /// По умолчанию 10 pt. Смещение больше допуска отменяет удержание: жест
+    /// остаётся обычным перетаскиванием E8.4, даже если палец всё ещё над
+    /// центром плитки-цели. Порог намеренно маленький: он отделяет «палец
+    /// замер, чтобы собрать папку» от «палец ведёт плитку дальше».
+    public var mergeHoverDisplacement: CGFloat
+
+    /// Масштаб подсветки плитки-цели в состоянии «впитывания» (E8.6).
+    ///
+    /// По умолчанию 1,08 — середина диапазона 1.06–1.1 из спеки WP. Больше
+    /// 1,1 цель читалась бы как «плитка выросла», а не «плитка втягивает в
+    /// себя соседнюю». Значения меньше 1 не запрещены, но бессмысленны:
+    /// «впитывание» — это лёгкое увеличение. При Reduce Motion масштаб
+    /// применяется без анимации.
+    public var mergeHighlightScale: CGFloat
+
+    /// Длительность анимации подсветки «впитывания» в секундах (E8.6).
+    ///
+    /// По умолчанию 0,2 с: успевает прочитаться как реакция на удержание, но
+    /// не запаздывает относительно отпускания пальца. При Reduce Motion
+    /// анимация не проигрывается — рамка и масштаб выставляются сразу.
+    public var mergeHighlightDuration: TimeInterval
+
+    /// Радиус притяжения снимка к центру слота в точках (E8.9).
+    ///
+    /// По умолчанию 28 pt — середина диапазона 24–32 pt из спеки WP.
+    /// Притяжение включается, когда палец оказывается ближе этого радиуса к
+    /// центру виртуального слота той же размерности, что и перетаскиваемая
+    /// плитка: снимок плавно подъезжает к центру, а не «прыгает» туда.
+    /// Меньше 24 pt притяжение почти незаметно, больше 32 pt — начинает
+    /// «отбирать» плитку у пальца на полпути между слотами.
+    ///
+    /// `0` отключает притяжение; отрицательные и нечисловые значения тоже
+    /// трактуются как отключённое.
+    public var magnetSnapRadius: CGFloat
+
+    /// Длительность spring-подъезда снимка к центру слота в секундах (E8.9).
+    ///
+    /// По умолчанию 0,2 с: короткий spring читается как «плитка встала в
+    /// ячейку», но не задерживает снимок за пальцем. `0` — снимок
+    /// переставляется мгновенно (анимации притяжения нет).
+    ///
+    /// При Reduce Motion притяжение отключено целиком: снимок остаётся строго
+    /// под пальцем (то же правило, что у подъёма плитки в E8.1), поэтому
+    /// длительность не используется.
+    public var magnetSpringDuration: TimeInterval
+
+    /// Демпфирование spring-анимации притяжения (E8.9).
+    ///
+    /// По умолчанию 0,82 — почти критическое, с едва заметным отскоком:
+    /// сильный отскок (меньше 0,6) на сетке выглядит как дрожание. Значение
+    /// зажимается в диапазон 0,01…1; нечисловое трактуется как 0,82.
+    public var magnetSpringDamping: CGFloat
+
     /// Создаёт конфигурацию.
     ///
     /// - Parameters:
     ///   - seed: Seed фаз «желе»; по умолчанию фиксированный.
-    ///   - jiggleAngle: Амплитуда в градусах, по умолчанию 2.
-    ///   - jiggleDuration: Длительность цикла в секундах, по умолчанию 0.18.
-    ///   - liftScale: Масштаб поднятой плитки, по умолчанию 1.04.
+    ///   - jiggleAngle: Амплитуда в градусах, по умолчанию 1.2.
+    ///   - jiggleDuration: Длительность цикла в секундах, по умолчанию 0.4.
+    ///   - liftScale: Масштаб поднятой плитки, по умолчанию 0.95 (плитка
+    ///     слегка уменьшается, отделяясь от плоскости, — спека WP).
     ///   - controlDiameter: Диаметр кнопок, по умолчанию 28.
     ///   - autoScrollEdge: Зона автопрокрутки, по умолчанию 64.
     ///   - autoScrollMaximumSpeed: Максимальная скорость, по умолчанию 9.
     ///   - folderTitle: Название новой папки, по умолчанию пусто.
+    ///   - mergeHoverDuration: Удержание до слияния, по умолчанию 0.6 с.
+    ///   - mergeHoverDisplacement: Допуск смещения, по умолчанию 10 pt.
+    ///   - mergeHighlightScale: Масштаб «впитывания», по умолчанию 1.08.
+    ///   - mergeHighlightDuration: Длительность подсветки, по умолчанию 0.2 с.
+    ///   - magnetSnapRadius: Радиус притяжения к слоту, по умолчанию 28 pt.
+    ///   - magnetSpringDuration: Длительность spring-подъезда, по умолчанию 0.2 с.
+    ///   - magnetSpringDamping: Демпфирование spring, по умолчанию 0.82.
     public init(
         seed: UInt64 = 0xE4_0004_0000_0001,
-        jiggleAngle: CGFloat = 2,
-        jiggleDuration: TimeInterval = 0.18,
-        liftScale: CGFloat = 1.04,
+        jiggleAngle: CGFloat = 1.2,
+        jiggleDuration: TimeInterval = 0.4,
+        liftScale: CGFloat = 0.95,
         controlDiameter: CGFloat = 28,
         autoScrollEdge: CGFloat = 64,
         autoScrollMaximumSpeed: CGFloat = 9,
-        folderTitle: String = ""
+        folderTitle: String = "",
+        mergeHoverDuration: TimeInterval = 0.6,
+        mergeHoverDisplacement: CGFloat = 10,
+        mergeHighlightScale: CGFloat = 1.08,
+        mergeHighlightDuration: TimeInterval = 0.2,
+        magnetSnapRadius: CGFloat = 28,
+        magnetSpringDuration: TimeInterval = 0.2,
+        magnetSpringDamping: CGFloat = 0.82
     ) {
         self.seed = seed
         self.jiggleAngle = jiggleAngle
@@ -265,6 +409,13 @@ public struct TesseraTileEditConfiguration {
         self.autoScrollEdge = autoScrollEdge
         self.autoScrollMaximumSpeed = autoScrollMaximumSpeed
         self.folderTitle = folderTitle
+        self.mergeHoverDuration = mergeHoverDuration
+        self.mergeHoverDisplacement = mergeHoverDisplacement
+        self.mergeHighlightScale = mergeHighlightScale
+        self.mergeHighlightDuration = mergeHighlightDuration
+        self.magnetSnapRadius = magnetSnapRadius
+        self.magnetSpringDuration = magnetSpringDuration
+        self.magnetSpringDamping = magnetSpringDamping
     }
 }
 
@@ -293,21 +444,38 @@ public struct TesseraTileEditConfiguration {
 ///
 /// - **вход**: long-press по плитке или пустому месту → режим редактирования;
 ///   по плитке сразу поднимается drag-сессия (как в iOS home);
-/// - **«желе»**: `CAKeyframeAnimation` поворота ±2° с детерминированной фазой
-///   на каждую плитку; при Reduce Motion анимации нет — остаются крестики;
-/// - **unpin**: крестик → fly-out снимка плитки, затем `TileStore.unpin`;
+/// - **«желе»**: мягкая синусоидальная `CAKeyframeAnimation` поворота ±1,2°
+///   за цикл 0,4 с с детерминированной фазой на каждую плитку; при Reduce
+///   Motion анимации нет — остаются кнопки открепления;
+/// - **димминг** (E8.2): при входе в режим все плитки, кроме выбранной
+///   (той, по которой было долгое нажатие), гаснут до opacity 0,7; во время
+///   drag полной яркости остаются снимок и плитка-цель под пальцем, а при
+///   выходе яркость восстанавливается;
+/// - **unpin**: булавка (`pin.slash`) → fly-out снимка плитки, затем
+///   `TileStore.unpin`;
 /// - **resize**: стрелка → циклическая смена размера из поддерживаемых
 ///   (по умолчанию — все четыре, помещающиеся в текущее число колонок) через
-///   `TileStore.resize` и переупаковку layout;
-/// - **drag**: собственный координатор — снимок едет за пальцем, на месте
-///   остаётся пустышка, соседи «расступаются» переупаковкой модели, при
-///   отпускании плитка встаёт в ближайшее валидное место; автопрокрутка у краёв;
-/// - **папки** (D14): перетаскивание ярлыка на папку — `addToFolder`,
-///   на центр ярлыка — `createFolder` + `addToFolder`, всё через
-///   `TileStore.approval`; отказ → анимация возврата на место. Экран папки —
-///   минимальный sheet (`TesseraFolderViewController`), в нём долгое нажатие на
-///   ярлык открывает меню «переместить в другую папку / на рабочий стол»,
-///   которое вызывает `TileStore.moveBetweenFolders` (тоже через одобрение).
+///   `TileStore.resize(_:to:columns:)` и переупаковку layout; при увеличении
+///   плитка остаётся на месте, а конфликтующие соседи уходят вниз (E8.7);
+/// - **drag**: собственный координатор — снимок едет за пальцем и слегка
+///   уменьшается (0.95, спека WP: плитка «отделяется» от плоскости, а не
+///   приближается), на месте остаётся пустышка; при наведении на плитку-цель
+///   порядок пересобирается push-физикой (E8.4): перетаскиваемая встаёт в слот
+///   цели, а при движении снизу вверх цель и плитки под ней сдвигаются на одну
+///   позицию вниз (при движении сверху вниз освободившийся слот заполняется
+///   сдвигом вверх). Это **превью без записи в модель**; при отпускании порядок
+///   фиксируется одним `TileStore.move`; автопрокрутка у краёв; при подходе
+///   пальца к центру слота той же размерности снимок притягивается к ячейке
+///   (E8.9) — короткий spring, не влияющий на цели E8.4/E8.6;
+/// - **папки** (D14): перетаскивание ярлыка на папку — `addToFolder`; на центр
+///   ярлыка — удержание (E8.6): пока палец стоит над целью меньше 600 мс или
+///   уходит больше чем на 10 pt, drop делает обычную перестановку E8.4, а после
+///   удержания цель подсвечивается «впитыванием» и drop вызывает `createFolder`
+///   + `addToFolder`. Всё через `TileStore.approval`; отказ → анимация возврата
+///   на место. Экран папки — минимальный sheet (`TesseraFolderViewController`),
+///   в нём долгое нажатие на ярлык открывает меню «переместить в другую папку /
+///   на рабочий стол», которое вызывает `TileStore.moveBetweenFolders` (тоже
+///   через одобрение).
 ///
 /// ## Ограничения
 ///
@@ -330,10 +498,21 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Параметры «желе», drag и папок.
     ///
     /// Изменение на лету перезапускает анимации: фазы пересчитываются от нового
-    /// seed, кнопки пересоздаются с новым диаметром.
+    /// seed, кнопки пересоздаются с новым диаметром. Текущее удержание при этом
+    /// снимается (E8.6): порог и допуск могли измениться, и продолжать отсчёт
+    /// по старым значениям было бы нечестно.
     public var configuration: TesseraTileEditConfiguration {
         didSet {
             jiggleSpecs.removeAll()
+            // E8.6: порог и допуск удержания могли измениться — текущее
+            // удержание пересчитывать нечестно, проще снять его: подсветка
+            // вернётся к обычной, а новое удержание взведётся при повторном
+            // входе пальца на центр ярлыка.
+            resetMergeHover()
+            // E8.9: радиус и spring притяжения могли измениться — снимаем
+            // текущее притяжение, чтобы следующий шаг drag начался от того
+            // кадра, который видит пользователь.
+            resetDragMagnet()
             guard isEditing else { return }
             for control in editControls.values {
                 control.layer.removeAnimation(forKey: TesseraTileEditCoordinator.jiggleKey)
@@ -438,6 +617,29 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Активная drag-сессия; `nil` — перетаскивания нет.
     private var dragSession: TesseraTileDragSession?
 
+    /// Аниматор переезда пустышки (E8.8).
+    ///
+    /// Удерживается, чтобы следующая цель под пальцем могла остановить прошлый
+    /// переезд в текущей точке: `UIViewPropertyAnimator` не поддерживает
+    /// `.beginFromCurrentState`, а без остановки новая анимация началась бы от
+    /// конечного кадра предыдущей (модель слоя обновляется сразу) — пустышка
+    /// прыгала бы при быстрой смене цели.
+    private var placeholderAnimator: UIViewPropertyAnimator?
+
+    /// State-машина удержания над ярлыком-целью (E8.6).
+    ///
+    /// Живёт только во время drag и только пока палец над центром ярлыка,
+    /// на котором можно собрать папку. `nil` — удержания нет (цель другая,
+    /// таймер ещё не взведён или удержание уже сброшено).
+    private var mergeTracker: TesseraMergeHoverTracker?
+
+    /// Таймер удержания (E8.6); `nil` — отсчёт не идёт.
+    ///
+    /// Отдельный `Timer`, а не тикер автопрокрутки: `CADisplayLink` крутится
+    /// каждый кадр и на простое, а решение «удержание выдержано» нужно ровно
+    /// один раз через `mergeHoverDuration`.
+    private var mergeTimer: Timer?
+
     /// Кнопки «открепить»/«размер» поверх видимых плиток, по идентификатору.
     private var editControls: [AnyHashable: TesseraTileEditControlView] = [:]
 
@@ -453,15 +655,39 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Подсветка плитки-цели при перетаскивании.
     private var dropHighlightView: TesseraTileDropHighlightView?
 
+    /// Плитка, которая остаётся полной яркости в дим-поле (E8.2).
+    ///
+    /// Выставляется при входе в редактирование long-press'ом по плитке и при
+    /// старте drag; при входе с пустого места равен `nil`, и тогда гаснут все
+    /// плитки. Во время drag его перекрывает перетаскиваемая плитка: полной
+    /// яркости остаются снимок и цель под пальцем (см.
+    /// ``dimmingTargetAlpha(for:)``).
+    private var dimmingFocusID: AnyHashable?
+
+    /// Прозрачность невыбранной плитки в режиме редактирования (E8.2).
+    ///
+    /// 0,7 — из спеки WP: плитки остаются читаемыми и доступными для действий,
+    /// но фон визуально уходит назад, а выбранная/перетаскиваемая — вперёд.
+    private static let dimmedTileAlpha: CGFloat = 0.7
+
+    /// Длительность перехода димминга (E8.2).
+    ///
+    /// Короткая, чтобы режим «включался» без паузы; при Reduce Motion не
+    /// используется — прозрачность меняется мгновенно (сам дим остаётся, это не
+    /// движение).
+    private static let dimmingDuration: TimeInterval = 0.18
+
     /// Отложенная сверка кнопок: не выполняет layout внутри колбэка прокрутки.
     private var hasScheduledReconcile = false
 
     /// Значение ``TileStore/autosaves`` до начала drag.
     ///
-    /// Перетаскивание переставляет модель на каждом «расступании»; писать JSON
-    /// на каждый шаг — лишние синхронные записи на диск в горячем пути. На время
-    /// drag автосохранение выключается, а по завершении восстанавливается и
-    /// состояние сохраняется один раз.
+    /// С E8.4 модель за время drag не меняется вовсе: порядок соседей — превью
+    /// в сетке. Но drop может состоять из нескольких мутаций (создание папки +
+    /// добавление ярлыка) или одной перестановки, и сохранять состояние нужно
+    /// один раз по завершении, а не после каждой операции. Поэтому на время drag
+    /// автосохранение выключается и восстанавливается в
+    /// ``endDragStoreTransaction(saveIfNeeded:)``.
     private var autosavesBeforeDrag: Bool?
 
     /// Ключ анимации «желе» на слое.
@@ -500,6 +726,17 @@ public final class TesseraTileEditCoordinator: NSObject {
         displayLink?.invalidate()
         displayLink = nil
 
+        // E8.6: таймер удержания держит замыкание на координатор — снимаем его
+        // до того, как уйдут оверлеи.
+        mergeTimer?.invalidate()
+        mergeTimer = nil
+        mergeTracker = nil
+
+        // E8.9: spring притяжения держит замыкание на сессию с видом снимка —
+        // останавливаем его до того, как сетка и оверлеи уйдут из иерархии.
+        dragSession?.magnetAnimator?.stopAnimation(true)
+        dragSession?.magnetAnimator = nil
+
         if let wasEnabled = autosavesBeforeDrag {
             autosavesBeforeDrag = nil
             store.autosaves = wasEnabled
@@ -507,6 +744,12 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         grid.removeGestureRecognizer(longPressRecognizer)
         grid.removeGestureRecognizer(backgroundTapRecognizer)
+
+        // E8.4: незавершённое превью — состояние сетки, а не модели. Возвращаем
+        // базовый порядок, чтобы координатор не оставил после себя чужой экран.
+        if let session = dragSession {
+            grid.update(snapshot: session.baseSnapshot, animated: false)
+        }
 
         // Оверлеи — подвью сетки: если их не убрать, они переживут координатор.
         for control in editControls.values {
@@ -517,6 +760,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         dropHighlightView = nil
         dragSession?.dragView.removeFromSuperview()
         dragSession?.placeholder.removeFromSuperview()
+        stopPlaceholderAnimation()
         dragSession = nil
 
         for cell in cellsWithEditActions.values {
@@ -530,8 +774,15 @@ public final class TesseraTileEditCoordinator: NSObject {
                 cell.contentView.layer.removeAnimation(
                     forKey: TesseraTileEditCoordinator.jiggleKey
                 )
+                // E8.2: не оставляем плитки в дим-поле после ухода координатора.
+                // Полностью скрытую (alpha 0) плитку не трогаем: этим состоянием
+                // владеет сетка (`setSourceHidden`), а не димминг.
+                if cell.contentView.alpha > 0 {
+                    cell.contentView.alpha = 1
+                }
             }
         }
+        dimmingFocusID = nil
     }
 
     /// Ставит жесты: long-press (вход + drag) и tap по фону (выход).
@@ -601,18 +852,29 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     // MARK: - Режим редактирования
 
-    /// Входит в режим редактирования: «желе», крестики и стрелки.
+    /// Входит в режим редактирования: «желе», димминг и кнопки.
     ///
-    /// Повторный вызов ничего не делает. При Reduce Motion «желе» не запускается,
-    /// но кнопки и custom actions появляются (§9).
+    /// Повторный вызов ничего не делает. При Reduce Motion «желе» и анимация
+    /// димминга не запускаются, но сам дим, кнопки и custom actions появляются
+    /// (§9).
     public func beginEditing() {
+        beginEditing(focusing: nil)
+    }
+
+    /// Общая реализация входа с указанием «выбранной» плитки (E8.2).
+    ///
+    /// - Parameter itemID: Плитка, по которой вошли long-press'ом; она остаётся
+    ///   полной яркости, остальные гаснут до ``dimmedTileAlpha``. `nil` — вход
+    ///   с пустого места, гаснут все плитки.
+    private func beginEditing(focusing itemID: AnyHashable?) {
         guard !isEditing, isEnabled else { return }
 
         isEditing = true
+        dimmingFocusID = itemID
         backgroundTapRecognizer.isEnabled = true
-        reconcileEditControls(animated: false)
+        reconcileEditControls(animated: false, dimAnimated: true)
         // Ячейки могут быть ещё не созданы (первый layout/показ): доберём
-        // крестики и «желе» на следующем проходе runloop.
+        // кнопки, «желе» и димминг на следующем проходе runloop.
         scheduleReconcile()
 
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -622,17 +884,23 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Выходит из режима редактирования и снимает активное перетаскивание.
     ///
-    /// Порядок отката drag-перестановки — ``TileStore/move(_:toIndex:)`` к
-    /// исходному индексу, поэтому незавершённый drag не оставляет модель
-    /// в промежуточном состоянии.
+    /// E8.4: модель за время drag не менялась (порядок — превью в сетке),
+    /// поэтому откат — это возврат сетке снимка на момент захвата, без записи в
+    /// `TileStore`: незавершённый drag не оставляет модель в промежуточном
+    /// состоянии. Димминг снимается короткой анимацией (E8.2); при Reduce
+    /// Motion яркость возвращается сразу.
     public func endEditing() {
         guard isEditing else { return }
 
         cancelDragImmediately()
         isEditing = false
+        dimmingFocusID = nil
         backgroundTapRecognizer.isEnabled = false
         removeAllEditControls()
         removeAllJiggle()
+        // Возвращаем яркость всем плиткам; к этому моменту drag уже снят и
+        // скрытых координатором ячеек нет.
+        applyEditDimming(animated: true)
 
         announce("Режим редактирования завершён.")
         delegate?.tileEditCoordinatorDidEndEditing(self)
@@ -652,6 +920,8 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///
     /// Встроенный жест координатора вызывает этот же метод; повторный вызов во
     /// время уже начатого drag игнорируется, поэтому дублирование безопасно.
+    /// Плитка передаётся в ``beginEditing(focusing:)`` как выбранная: до старта
+    /// drag она полной яркости, остальные сразу гаснут (E8.2).
     ///
     /// - Parameters:
     ///   - item: Элемент, по которому было долгое нажатие.
@@ -662,7 +932,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         guard grid.index(ofItemID: item.id) != nil else { return }
 
         if !isEditing {
-            beginEditing()
+            beginEditing(focusing: item.id)
         }
         startDrag(itemID: item.id, at: point)
     }
@@ -779,6 +1049,11 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// `TileStore` + `TesseraTileGridView.update(snapshot:animated:)`: раскладка
     /// пересчитывается `TileLayoutEngine`, соседи переезжают batch-анимацией.
     ///
+    /// E8.7: координатор передаёт хранилищу реальное число колонок сетки, и
+    /// resize идёт через `TileStore.resize(_:to:columns:)` — увеличиваемая
+    /// плитка по возможности остаётся на месте, а плитки, попавшие в её новый
+    /// след справа или снизу, уходят вниз (``TileLayoutEngine/resizePlacement``).
+    ///
     /// - Parameter itemID: Идентификатор ярлыка или папки.
     /// - Returns: Новый размер или `nil`, если менять нечего.
     @discardableResult
@@ -793,7 +1068,10 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         let currentIndex = sizes.firstIndex(of: item.size) ?? -1
         let next = sizes[(currentIndex + 1) % sizes.count]
-        guard next != item.size, store.resize(itemID, to: next) else { return nil }
+        guard next != item.size,
+              store.resize(itemID, to: next, columns: grid.columns) else {
+            return nil
+        }
 
         render(animated: true)
         delegate?.tileEditCoordinator(self, didResize: itemID, to: next)
@@ -823,8 +1101,9 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Переставляет элемент сетки через `TileStore` (§6).
     ///
-    /// Операция раскладки не требует одобрения (D14); это тот же путь, которым
-    /// пользуется drag при «расступании» соседей.
+    /// Операция раскладки не требует одобрения (D14). Drag использует то же
+    /// правило `TileStore.move(_:toIndex:)` при фиксации drop'а (E8.4), но
+    /// пишет модель только один раз — на отпускании, а не на каждом шаге.
     ///
     /// - Parameters:
     ///   - itemID: Идентификатор ярлыка или папки на сетке.
@@ -1033,6 +1312,14 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Снимает копию ячейки **до** скрытия, кладёт на её место пустышку и вешает
     /// снимок поверх сетки. Модель на этом шаге не меняется.
     ///
+    /// E8.4: здесь же запоминается снимок модели — базовый порядок для превью
+    /// (`previewOrder`) и для отката. Во время drag `TileStore` не пишется, так
+    /// что этот порядок остаётся в модели до самого drop'а.
+    ///
+    /// E8.2: снимок всегда полной яркости — если плитка была в дим-поле
+    /// (редактирование начато с пустого места), прозрачность снимается до
+    /// снятия копии, иначе в копию попал бы alpha 0,7.
+    ///
     /// - Parameters:
     ///   - itemID: Идентификатор ярлыка или папки.
     ///   - point: Точка захвата в координатах сетки.
@@ -1042,18 +1329,31 @@ public final class TesseraTileEditCoordinator: NSObject {
               let frame = grid.frame(forItemID: itemID),
               frame.intersects(grid.bounds),
               let initialIndex = grid.index(ofItemID: itemID),
-              let placeholder = grid.placeholderView(forItemID: itemID),
-              let dragView = makeDragView(forItemID: itemID) else {
+              let placeholder = grid.placeholderView(forItemID: itemID) else {
             return
         }
+
+        // E8.2: плитка под пальцем становится «выбранной» и полной яркости.
+        // «Желе» снимаем до снимка: копия не должна унаследовать ни дим, ни
+        // текущий угол покачивания.
+        if let cell = grid.cellView(forItemID: itemID) as? TesseraTileCell {
+            cell.contentView.layer.removeAnimation(forKey: TesseraTileEditCoordinator.jiggleKey)
+            if cell.contentView.alpha > 0 {
+                cell.contentView.alpha = 1
+            }
+        }
+        guard let dragView = makeDragView(forItemID: itemID) else {
+            // Снимок не удался: возвращаем дим, чтобы плитка не осталась ярче
+            // соседей без начатого drag.
+            applyEditDimming(animated: false)
+            return
+        }
+        dimmingFocusID = itemID
 
         beginDragStoreTransaction()
 
         grid.setItemHidden(true, forItemID: itemID)
         removeControl(for: itemID)
-        if let cell = grid.cellView(forItemID: itemID) as? TesseraTileCell {
-            cell.contentView.layer.removeAnimation(forKey: TesseraTileEditCoordinator.jiggleKey)
-        }
 
         placeholder.frame = frame
         placeholder.layer.zPosition = 500
@@ -1068,6 +1368,9 @@ public final class TesseraTileEditCoordinator: NSObject {
         dragView.layer.shadowOffset = CGSize(width: 0, height: 8)
         grid.addSubview(dragView)
 
+        // E8.4: база превью — порядок модели на момент захвата. Сетка и модель
+        // к этому моменту совпадают, поэтому снимок хранилища и есть то, что
+        // видит пользователь.
         let session = TesseraTileDragSession(
             itemID: itemID,
             initialIndex: initialIndex,
@@ -1075,7 +1378,9 @@ public final class TesseraTileEditCoordinator: NSObject {
             grabOffset: CGPoint(x: frame.midX - point.x, y: frame.midY - point.y),
             dragView: dragView,
             placeholder: placeholder,
-            lastPoint: point
+            lastPoint: point,
+            baseSnapshot: store.snapshot(),
+            magnetSize: item.size
         )
         dragSession = session
         grid.isScrollEnabled = false
@@ -1104,22 +1409,29 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Создаёт снимок ячейки для перетаскивания.
     ///
-    /// Сначала берётся готовый снимок сетки (он дешевле), затем — резервный
-    /// вариант через `resizableSnapshotView`; для ячейки вне экрана возвращает
-    /// `nil`, и drag не начинается.
+    /// Сначала снимается копия самой ячейки с принудительным обновлением экрана
+    /// (`afterScreenUpdates: true`): к этому моменту координатор уже снял с неё
+    /// дим (E8.2), и снимок обязан быть полной яркости. Затем — резервный
+    /// `resizableSnapshotView`; последним берётся готовый снимок сетки (он
+    /// дешевле, но может не успеть показать снятый дим). Для ячейки вне экрана
+    /// возвращает `nil`, и drag не начинается.
     ///
     /// - Parameter itemID: Идентификатор элемента.
     /// - Returns: Вид-снимок.
     private func makeDragView(forItemID itemID: AnyHashable) -> UIView? {
-        if let snapshot = grid.snapshotView(forItemID: itemID) {
+        if let cell = grid.cellView(forItemID: itemID),
+           let snapshot = cell.snapshotView(afterScreenUpdates: true) {
             return snapshot
         }
-        guard let cell = grid.cellView(forItemID: itemID) else { return nil }
-        return cell.resizableSnapshotView(
-            from: cell.bounds,
-            afterScreenUpdates: true,
-            withCapInsets: .zero
-        )
+        if let cell = grid.cellView(forItemID: itemID),
+           let snapshot = cell.resizableSnapshotView(
+               from: cell.bounds,
+               afterScreenUpdates: true,
+               withCapInsets: .zero
+           ) {
+            return snapshot
+        }
+        return grid.snapshotView(forItemID: itemID)
     }
 
     /// Ведёт снимок за пальцем и обновляет цель под ним.
@@ -1128,87 +1440,370 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// а тесты E4.7 — напрямую через `@testable import`, чтобы прогонять
     /// перестановку без симуляции касаний.
     ///
-    /// - Parameter point: Текущая точка пальца в координатах сетки.
+    /// Позицию снимка выставляет ``updateHoverTargets(at:)`` — после выбора
+    /// цели: притяжение E8.9 зависит от зоны E8.6 под пальцем и не должно
+    /// запускаться над панелью раскрытой папки.
+    ///
+    /// - Parameter point: Точка пальца в координатах сетки.
     func updateDrag(to point: CGPoint) {
         guard let session = dragSession else { return }
 
         session.lastPoint = point
-        session.dragView.center = CGPoint(
-            x: point.x + session.grabOffset.x,
-            y: point.y + session.grabOffset.y
-        )
         updateHoverTargets(at: point)
     }
 
-    /// Пересчитывает цель под пальцем, «расступание» соседей и подсветку.
+    /// Пересчитывает цель под пальцем, превью порядка и подсветку.
     ///
-    /// Решение принимается по рамкам модели, а не по `grid.item(at:)`: исходная
+    /// Решение принимается по рамкам сетки, а не по `grid.item(at:)`: исходная
     /// ячейка скрыта, но остаётся в раскладке и перехватила бы хит-тест.
+    ///
+    /// E8.4: цель `.reorder` хранит **базовый** индекс плитки-цели (порядок
+    /// снимка на момент захвата), а не индекс в текущем превью — иначе индекс
+    /// зависел бы от предыдущего шага и «сдвиги» накапливались бы.
+    ///
+    /// E8.9: в конце шага снимок ставится под палец (или притягивается к
+    /// ближайшему слоту). Здесь же сбрасывается признак «палец над панелью
+    /// папки»: притяжение над панелью не работает.
     ///
     /// - Parameter point: Точка пальца в координатах сетки.
     private func updateHoverTargets(at point: CGPoint) {
         guard let session = dragSession else { return }
 
+        // E8.9: признак пересчитывается на каждом шаге, а не только при смене
+        // цели: панель могла уехать вместе с автопрокруткой.
+        session.isOverFolderPanel = false
+
         var target: HoverTarget = .none
 
         if grid.bounds.insetBy(dx: -8, dy: -8).contains(point),
            let hovered = item(under: point, excluding: session.itemID),
-           let frame = grid.frame(forItemID: hovered.id) {
+           let frame = grid.frame(forItemID: hovered.id),
+           let baseIndex = session.baseIndex(of: hovered.id) {
 
             switch hovered {
             case .folder(let folder):
                 if session.isTile {
                     // Ярлык над папкой — добавление (D14), папка не переезжает.
                     target = .folder(folder.id)
-                } else if let index = grid.index(ofItemID: hovered.id) {
-                    target = .reorder(hovered.id, index: index)
+                } else {
+                    // Перетаскивание папки по сетке — обычная перестановка.
+                    target = .reorder(hovered.id, index: baseIndex)
                 }
 
             case .tile(let tile):
                 if session.isTile, isPointInDropCenter(point, of: frame) {
                     // Центр ярлыка — создание папки из двух ярлыков (D14).
                     target = .group(tile.id)
-                } else if let index = grid.index(ofItemID: hovered.id) {
-                    target = .reorder(hovered.id, index: index)
+                } else {
+                    target = .reorder(hovered.id, index: baseIndex)
                 }
+
+            case .folderContent:
+                // Панель раскрытой папки (D17) не цель перетаскивания в E7.1:
+                // её место в раскладке фиксировано, а взаимодействие с
+                // содержимым панели появится в E7.3. E8.9: и притяжения над
+                // панелью нет — она сдвигает строки, и виртуальная сетка под
+                // ней не совпадала бы с фактическими слотами.
+                session.isOverFolderPanel = true
             }
         }
 
-        // «Расступание»: переставляем модель, layout переупаковывается и
-        // доезжает batch-анимацией сетки (§3, §5). Пустышка переезжает в новый
-        // слот перетаскиваемой плитки той же длительностью, что и соседи.
-        if case .reorder(_, let index) = target,
-           grid.index(ofItemID: session.itemID) != index,
-           store.move(session.itemID, toIndex: index) {
-            session.modelChanged = true
-            render(animated: true)
-            animatePlaceholder(to: currentFrame(of: session))
+        applyDragPreview(for: target, session: session)
+
+        // E8.6: удержание над центром ярлыка взводится/сбрасывается на каждом
+        // шаге — до обновления подсветки, чтобы она сразу показала «впитывание»,
+        // если удержание уже выдержано.
+        let hoverChanged = session.hover != target
+        session.hover = target
+        updateMergeHover(for: target, at: point)
+
+        if hoverChanged {
+            updateDropHighlight(for: target)
+        } else {
+            updateDropHighlightFrame()
         }
 
-        guard session.hover != target else {
-            updateDropHighlightFrame()
-            return
-        }
-        session.hover = target
-        updateDropHighlight(for: target)
+        // E8.9: снимок ведётся за пальцем после выбора цели. Притяжение —
+        // только визуальный слой: цели E8.4/E8.6 считаются по точке пальца,
+        // поэтому порядок и таймер слияния от него не зависят.
+        updateDragViewPosition(for: point, session: session)
     }
 
-    /// Анимирует пустышку к новой рамке при «расступании» соседей.
+    // MARK: - Магнитизм к ячейкам (E8.9)
+
+    /// Ставит снимок под палец или притягивает его к центру ближайшего слота.
+    ///
+    /// Без притяжения снимок следует за пальцем 1:1 (E8.1), как и до E8.9.
+    /// В радиусе слота он плавно подъезжает к центру коротким spring'ом; пока
+    /// цель та же, анимация не перезапускается — иначе на каждом событии
+    /// касания плитка «дёргалась» бы. За радиусом spring снимается и снимок
+    /// снова жёстко следует за пальцем.
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - session: Активная drag-сессия.
+    private func updateDragViewPosition(for point: CGPoint, session: TesseraTileDragSession) {
+        let followCenter = CGPoint(
+            x: point.x + session.grabOffset.x,
+            y: point.y + session.grabOffset.y
+        )
+
+        // Пока палец ни разу не вышел из радиуса притяжения от точки захвата,
+        // магнит не включаем: снимок и так стоит в исходном слоте, и без этого
+        // правила плитка «залипала» бы на месте захвата на первые ~28 pt
+        // движения.
+        updateMagnetEngagement(for: point, session: session)
+
+        guard let target = magnetTarget(for: point, session: session) else {
+            stopMagnetAnimation(session)
+            session.magnetTarget = nil
+            if session.dragView.center != followCenter {
+                session.dragView.center = followCenter
+            }
+            return
+        }
+
+        // Та же цель: spring уже едет в неё (или доехал) — не трогаем.
+        guard session.magnetTarget != target else { return }
+        session.magnetTarget = target
+
+        // Ячейка под снимком совпала с целью — анимировать нечего (например,
+        // захват ровно за центр плитки на её же слоте).
+        guard session.dragView.center != target else { return }
+
+        animateDragView(session, to: target)
+    }
+
+    /// Включает притяжение после того, как палец покинул стартовую зону (E8.9).
+    ///
+    /// На захвате снимок уже стоит в исходном слоте, поэтому «притягивать»
+    /// плитку к нему нечего: без этого флага снимок оставался бы
+    /// пришпиленным к стартовому центру, пока палец не отойдёт от него на
+    /// полный радиус, — первые точки движения не следовали бы за пальцем.
+    /// Флаг взводится один раз за сессию и дальше не снимается.
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - session: Активная drag-сессия.
+    private func updateMagnetEngagement(for point: CGPoint, session: TesseraTileDragSession) {
+        guard !session.hasLeftOriginSlot else { return }
+
+        let radius = configuration.magnetSnapRadius
+        guard radius.isFinite, radius > 0 else { return }
+
+        let dx = point.x - session.originPoint.x
+        let dy = point.y - session.originPoint.y
+        guard dx * dx + dy * dy > radius * radius else { return }
+
+        session.hasLeftOriginSlot = true
+    }
+
+    /// Центр слота, к которому нужно притянуть снимок, или `nil`.
+    ///
+    /// Притяжение отключено:
+    /// - при Reduce Motion — снимок остаётся строго под пальцем (E8.1);
+    /// - при нулевом/нечисловом ``TesseraTileEditConfiguration/magnetSnapRadius``;
+    /// - пока палец не вышел из стартовой зоны захвата (``TesseraTileDragSession/hasLeftOriginSlot``);
+    /// - над панелью раскрытой папки;
+    /// - над целями группировки (папка и центр ярлыка — зона E8.6): в этих
+    ///   местах снимок не должен уезжать из-под пальца, пока пользователь
+    ///   держит удержание или целится в папку.
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - session: Активная drag-сессия.
+    /// - Returns: Центр ближайшего слота в радиусе или `nil`.
+    private func magnetTarget(for point: CGPoint, session: TesseraTileDragSession) -> CGPoint? {
+        guard configuration.magnetSnapRadius > 0, !isReduceMotionEnabled() else { return nil }
+        guard !session.isOverFolderPanel else { return nil }
+        guard session.hasLeftOriginSlot else { return nil }
+
+        switch session.hover {
+        case .folder, .group:
+            return nil
+        case .none, .reorder:
+            break
+        }
+
+        return TesseraTileMagnet.magnetTarget(
+            for: point,
+            slotCenters: grid.magnetSlotCenters(for: session.magnetSize),
+            snapRadius: configuration.magnetSnapRadius
+        )
+    }
+
+    /// Плавно подъезжает снимком к центру слота (E8.9).
+    ///
+    /// Предыдущий spring останавливается в текущем кадре презентации, чтобы
+    /// новая анимация началась без прыжка (тот же приём, что у пустышки в
+    /// E8.8). Длительность и демпфирование — из
+    /// ``TesseraTileEditConfiguration/magnetSpringDuration`` и
+    /// ``TesseraTileEditConfiguration/magnetSpringDamping``; нулевая
+    /// длительность даёт мгновенную перестановку.
+    ///
+    /// - Parameters:
+    ///   - session: Активная drag-сессия.
+    ///   - center: Целевой центр снимка в координатах сетки.
+    private func animateDragView(_ session: TesseraTileDragSession, to center: CGPoint) {
+        stopMagnetAnimation(session)
+
+        let duration = configuration.magnetSpringDuration
+        guard duration.isFinite, duration > 0 else {
+            session.dragView.center = center
+            return
+        }
+
+        let damping = configuration.magnetSpringDamping.isFinite
+            ? min(max(configuration.magnetSpringDamping, 0.01), 1)
+            : 0.82
+        // Замыкание держит только вид-снимок: аниматор принадлежит сессии, и
+        // захват самой сессии дал бы цикл «сессия → аниматор → сессия».
+        let dragView = session.dragView
+        let animator = UIViewPropertyAnimator(
+            duration: duration,
+            timingParameters: UISpringTimingParameters(dampingRatio: damping)
+        )
+        animator.addAnimations {
+            dragView.center = center
+        }
+        animator.startAnimation()
+        session.magnetAnimator = animator
+    }
+
+    /// Останавливает spring притяжения, оставляя снимок в текущем кадре.
+    ///
+    /// После `stopAnimation(true)` модель слоя могла остаться в цели прошлой
+    /// анимации, поэтому её явно возвращают к presentation-кадру: следующее
+    /// движение (к пальцу или к новому слоту) начнётся без скачка.
+    ///
+    /// - Parameter session: Активная drag-сессия.
+    private func stopMagnetAnimation(_ session: TesseraTileDragSession) {
+        guard let animator = session.magnetAnimator else { return }
+
+        session.magnetAnimator = nil
+        let visibleCenter = session.dragView.layer.presentation()?.position ?? session.dragView.center
+        animator.stopAnimation(true)
+
+        if session.dragView.center != visibleCenter {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            session.dragView.center = visibleCenter
+            CATransaction.commit()
+        }
+    }
+
+    /// Снимает текущее притяжение, не завершая drag (E8.9).
+    ///
+    /// Нужен при смене конфигурации: радиус и spring могли измениться, и
+    /// продолжать движение по старым параметрам нечестно.
+    private func resetDragMagnet() {
+        guard let session = dragSession else { return }
+        stopMagnetAnimation(session)
+        session.magnetTarget = nil
+    }
+
+    /// Пересобирает превью порядка сетки для цели под пальцем (E8.4).
+    ///
+    /// Пишет **только в сетку** — `grid.update(snapshot:animated:)` гонит
+    /// batch-анимацию ~0,26 с с bounce-кривой E8.8, соседи «расступаются» без
+    /// записи в `TileStore`.
+    /// Порядок каждый раз считается от ``TesseraTileDragSession/baseSnapshot``,
+    /// а не от предыдущего превью: при перемещении между целями сдвиги не
+    /// накапливаются.
+    ///
+    /// Для целей, которые не переставляют порядок (пустое место, папка, центр
+    /// ярлыка), последнее превью остаётся как есть. Возврат к базовому порядку
+    /// здесь был бы ошибкой: плитка под пальцем уже переехала вместе с превью,
+    /// и хит-тест на следующем кадре дал бы попеременно `.none`/`.reorder` —
+    /// соседи «мигали» бы между двумя раскладками.
+    ///
+    /// - Parameters:
+    ///   - target: Цель под пальцем.
+    ///   - session: Активная drag-сессия.
+    private func applyDragPreview(for target: HoverTarget, session: TesseraTileDragSession) {
+        guard case .reorder(let targetID, _) = target,
+              let preview = TileLayoutEngine.previewOrder(
+                  items: session.baseSnapshot.items,
+                  draggingID: session.itemID,
+                  targetID: targetID
+              ) else {
+            animatePlaceholder(to: currentFrame(of: session))
+            return
+        }
+
+        guard preview.map({ $0.id }) != grid.items.map({ $0.id }) else {
+            animatePlaceholder(to: currentFrame(of: session))
+            return
+        }
+
+        grid.update(
+            snapshot: TileGridSnapshot(
+                items: preview,
+                unpinned: session.baseSnapshot.unpinned
+            ),
+            animated: !isReduceMotionEnabled()
+        )
+        if isEditing {
+            // Кнопки поверх плиток переставляются одновременно с соседями:
+            // свой короткий переезд (0,24 с) стартует вместе с batch-анимацией
+            // сетки.
+            reconcileEditControls(animated: true)
+            scheduleReconcile()
+        }
+        animatePlaceholder(to: currentFrame(of: session))
+    }
+
+    /// Анимирует пустышку к новой рамке при «расступании» соседей (E8.8).
+    ///
+    /// Кривая и длительность — общие с batch-анимацией сетки
+    /// (``TesseraTileGridView/bounceTimingParameters()``): место, откуда взяли
+    /// плитку, переезжает с тем же лёгким отскоком, что и соседи, поэтому
+    /// картинка не распадается на два разных движения.
     ///
     /// - Parameter frame: Новая рамка в координатах сетки.
     private func animatePlaceholder(to frame: CGRect) {
         guard let placeholder = dragSession?.placeholder else { return }
         guard placeholder.frame != frame else { return }
 
-        UIView.animate(
-            withDuration: 0.24,
-            delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction],
-            animations: {
-                placeholder.frame = frame
-            },
-            completion: nil
+        // §9: при Reduce Motion движение мгновенное, как и у сетки.
+        guard !isReduceMotionEnabled() else {
+            stopPlaceholderAnimation()
+            placeholder.frame = frame
+            return
+        }
+
+        // Новый шаг drag может прийти на середине прошлого переезда.
+        // Запоминаем кадр, который видит пользователь, останавливаем прошлую
+        // анимацию и стартуем с этой точки: модель слоя уже стоит в цели, и
+        // без возврата к presentation-кадру новая анимация началась бы с
+        // «прыжка» к концу предыдущей.
+        let currentFrame = placeholder.layer.presentation()?.frame ?? placeholder.frame
+        stopPlaceholderAnimation()
+        if placeholder.frame != currentFrame {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            placeholder.frame = currentFrame
+            CATransaction.commit()
+        }
+
+        let animator = UIViewPropertyAnimator(
+            duration: TesseraTileGridView.tileMoveDuration,
+            timingParameters: TesseraTileGridView.bounceTimingParameters()
         )
+        animator.addAnimations {
+            placeholder.frame = frame
+        }
+        animator.startAnimation()
+        placeholderAnimator = animator
+    }
+
+    /// Останавливает незавершённый переезд пустышки (E8.8).
+    ///
+    /// `stopAnimation(true)` оставляет вид в текущей позиции — следующая
+    /// анимация продолжит движение от неё, а не от конечного кадра.
+    private func stopPlaceholderAnimation() {
+        placeholderAnimator?.stopAnimation(true)
+        placeholderAnimator = nil
     }
 
     /// Элемент под точкой, кроме перетаскиваемого.
@@ -1240,9 +1835,149 @@ public final class TesseraTileEditCoordinator: NSObject {
         return frame.insetBy(dx: insetX, dy: insetY).contains(point)
     }
 
+    // MARK: - Удержание над целью (E8.6)
+
+    /// Взводит, ведёт или сбрасывает удержание над ярлыком-целью.
+    ///
+    /// Вызывается на каждом шаге drag (и на каждом кадре автопрокрутки) сразу
+    /// после вычисления цели под пальцем, поэтому обязана быть дешёвой: в
+    /// установившемся состоянии она делает одно сравнение смещения.
+    ///
+    /// - Parameters:
+    ///   - target: Цель под пальцем.
+    ///   - point: Точка пальца в координатах сетки.
+    private func updateMergeHover(for target: HoverTarget, at point: CGPoint) {
+        guard case .group(let targetID) = target else {
+            // Центр ярлыка — единственная цель слияния; любая другая цель
+            // (папка, перестановка, пустое место) снимает удержание.
+            resetMergeHover()
+            return
+        }
+
+        guard mergeTracker?.targetID == targetID else {
+            // Смена цели — новый отсчёт: удерживать нужно именно над этой
+            // плиткой, а не «где-то рядом» (E8.6).
+            armMergeHover(on: targetID, at: point)
+            return
+        }
+
+        let wasReady = mergeTracker?.isMergeReady == true
+        mergeTracker?.update(point: point)
+        guard mergeTracker?.state == .cancelled else { return }
+
+        // Палец сместился больше допуска — удержание отменено, дальше обычный
+        // drag E8.4. Таймер снимаем, а уже показанное «впитывание» откатываем.
+        cancelMergeTimer()
+        if wasReady {
+            refreshMergeHighlight(animated: true)
+        }
+    }
+
+    /// Начинает новый отсчёт удержания над ярлыком.
+    ///
+    /// Порог и допуск читаются из ``configuration`` в момент взвода: изменение
+    /// конфигурации на лету снимает текущее удержание (см. `didSet`).
+    ///
+    /// - Parameters:
+    ///   - targetID: Ярлык, на центр которого наведён палец.
+    ///   - point: Точка пальца в координатах сетки (якорь для допуска смещения).
+    private func armMergeHover(on targetID: AnyHashable, at point: CGPoint) {
+        resetMergeHover()
+
+        var tracker = TesseraMergeHoverTracker(
+            hoverDuration: max(0, configuration.mergeHoverDuration),
+            displacementThreshold: max(0, configuration.mergeHoverDisplacement)
+        )
+        tracker.beginHover(targetID: targetID, point: point)
+        mergeTracker = tracker
+        scheduleMergeTimer()
+    }
+
+    /// Планирует срабатывание таймера удержания на остаток интервала.
+    ///
+    /// Режим `.common`, а не `.default`: во время перетаскивания коллекция
+    /// находится в tracking-режиме, и таймер в `.default` не сработал бы до
+    /// отпускания пальца — то есть ровно никогда.
+    private func scheduleMergeTimer() {
+        cancelMergeTimer()
+        guard let tracker = mergeTracker, tracker.isArmed else { return }
+
+        // Остаток, а не полный интервал: если таймер сработал на волосок
+        // раньше порога, следующий досчитает недостающее.
+        let interval = max(0.01, tracker.remainingDuration)
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            self?.mergeTimerDidFire()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        mergeTimer = timer
+    }
+
+    /// Таймер удержания сработал: проверяет порог и показывает «впитывание».
+    ///
+    /// Готовность к слиянию — единственное, что отличает drop с созданием
+    /// папки от обычной перестановки E8.4, поэтому перед переключением
+    /// состояния ещё раз проверяется, что палец всё ещё над тем же ярлыком
+    /// (цель могла смениться автопрокруткой или уходом пальца).
+    private func mergeTimerDidFire() {
+        mergeTimer = nil
+
+        guard let session = dragSession,
+              case .group(let targetID) = session.hover,
+              mergeTracker?.targetID == targetID else {
+            return
+        }
+
+        guard mergeTracker?.timerFired() == true else {
+            // Порог ещё не выдержан — досчитываем остаток.
+            scheduleMergeTimer()
+            return
+        }
+
+        refreshMergeHighlight(animated: true)
+
+        // Тактильный отклик «готово» — по желанию, из спеки WP (лёгкий удар).
+        // Жест при этом не меняется: сигнал только подтверждает, что папка
+        // будет создана, если отпустить палец сейчас. При Reduce Motion он
+        // остаётся: это не движение, а обратная связь.
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        announce("Отпустите, чтобы создать папку.")
+    }
+
+    /// Снимает удержание: таймер, состояние машины и «впитывание» подсветки.
+    ///
+    /// Видимость подсветки не трогается — вызывающий либо прячет её, либо
+    /// перерисовывает. Если палец всё ещё над центром ярлыка, вид возвращается
+    /// к обычной подсветке цели (`.group`), а масштаб — к 1: сброс не должен
+    /// оставлять на экране обещание слияния.
+    private func resetMergeHover() {
+        cancelMergeTimer()
+        mergeTracker = nil
+
+        guard let view = dropHighlightView else { return }
+        if case .group = dragSession?.hover {
+            view.apply(.group)
+        }
+        view.transform = .identity
+    }
+
+    /// Останавливает таймер удержания.
+    private func cancelMergeTimer() {
+        mergeTimer?.invalidate()
+        mergeTimer = nil
+    }
+
     // MARK: - Подсветка цели
 
     /// Показывает/прячет подсветку плитки-цели.
+    ///
+    /// E8.2: цель — единственная плитка, которая во время drag остаётся полной
+    /// яркости в дим-поле (``dimmingTargetAlpha(for:)``), поэтому рамка
+    /// подсветки читается на приглушённых соседях. Здесь же обновляется
+    /// прозрачность: новая цель коротко «вспыхивает», а плитка, переставшая
+    /// быть целью, возвращается в дим.
+    ///
+    /// E8.6: для центра ярлыка вид зависит от удержания — обычная рамка до
+    /// порога и «впитывание» после него (``refreshMergeHighlight(animated:)``).
     ///
     /// - Parameter target: Текущая цель под пальцем.
     private func updateDropHighlight(for target: HoverTarget) {
@@ -1253,12 +1988,62 @@ public final class TesseraTileEditCoordinator: NSObject {
         case .folder(let itemID):
             showDropHighlight(for: itemID, style: .folder)
 
-        case .group(let itemID):
-            showDropHighlight(for: itemID, style: .group)
+        case .group:
+            refreshMergeHighlight(animated: false)
         }
+
+        applyEditDimming(animated: true)
+    }
+
+    /// Обновляет вид подсветки центра ярлыка под состояние удержания (E8.6).
+    ///
+    /// Единственное место, которое владеет `transform` подсветки: масштаб
+    /// 1,08 в готовности к слиянию и 1 в остальных состояниях. Стиль `.merge`
+    /// добавляет акцентную рамку — это второй, не анимационный признак
+    /// состояния, поэтому при Reduce Motion оно остаётся видимым: меняется
+    /// только рамка и масштаб, без проигрывания анимации.
+    ///
+    /// Увеличивается оверлей подсветки, а не ячейка цели: `transform` ячейки
+    /// занят «желе» и layout'ом коллекции (E4.2), а оверлей повторяет рамку
+    /// плитки, поэтому визуально «впитывание» читается как рост самой цели.
+    ///
+    /// - Parameter animated: Анимировать переход ``TesseraTileEditConfiguration/mergeHighlightDuration``.
+    private func refreshMergeHighlight(animated: Bool) {
+        var ready = false
+
+        if let session = dragSession, case .group(let targetID) = session.hover {
+            ready = mergeTracker?.isMergeReady == true
+            showDropHighlight(for: targetID, style: ready ? .merge : .group)
+        }
+
+        guard let view = dropHighlightView else { return }
+
+        let scale = ready ? max(1, configuration.mergeHighlightScale) : 1
+        let apply: () -> Void = {
+            view.transform = CGAffineTransform(scaleX: scale, y: scale)
+        }
+
+        // Reduce Motion отключает только анимацию: рамка и масштаб
+        // выставляются сразу, состояние всё равно читается.
+        guard animated, !isReduceMotionEnabled() else {
+            apply()
+            return
+        }
+
+        UIView.animate(
+            withDuration: max(0, configuration.mergeHighlightDuration),
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: apply,
+            completion: nil
+        )
     }
 
     /// Досчитывает рамку уже показанной подсветки (после переупаковки).
+    ///
+    /// E8.6: рамка задаётся через `bounds`/`center`, а не `frame`: в состоянии
+    /// «впитывания» у вида не-единичный `transform`, и `frame` для него
+    /// не определён.
     private func updateDropHighlightFrame() {
         guard let session = dragSession, let view = dropHighlightView, !view.isHidden else {
             return
@@ -1267,7 +2052,8 @@ public final class TesseraTileEditCoordinator: NSObject {
         switch session.hover {
         case .folder(let itemID), .group(let itemID):
             if let frame = grid.frame(forItemID: itemID) {
-                view.frame = frame
+                view.bounds = CGRect(origin: .zero, size: frame.size)
+                view.center = CGPoint(x: frame.midX, y: frame.midY)
             }
         case .none, .reorder:
             break
@@ -1278,7 +2064,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///
     /// - Parameters:
     ///   - itemID: Элемент-цель.
-    ///   - style: Тип цели (папка или создание папки).
+    ///   - style: Тип цели (папка, создание папки, «впитывание»).
     private func showDropHighlight(
         for itemID: AnyHashable,
         style: TesseraTileDropHighlightView.Style
@@ -1299,13 +2085,108 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
 
         view.apply(style)
-        view.frame = frame
+        // `bounds`/`center` вместо `frame`: вид может быть отмасштабирован
+        // «впитыванием» (E8.6).
+        view.bounds = CGRect(origin: .zero, size: frame.size)
+        view.center = CGPoint(x: frame.midX, y: frame.midY)
         view.isHidden = false
     }
 
-    /// Прячет подсветку цели.
+    /// Прячет подсветку цели и снимает «впитывание».
     private func hideDropHighlight() {
-        dropHighlightView?.isHidden = true
+        guard let view = dropHighlightView else { return }
+        view.isHidden = true
+        view.transform = .identity
+    }
+
+    // MARK: - Димминг (E8.2)
+
+    /// Применяет к видимым ячейкам прозрачность режима редактирования.
+    ///
+    /// Полной яркости остаются:
+    /// - плитка, по которой вошли в режим (``dimmingFocusID``), пока нет drag;
+    /// - перетаскиваемая плитка (её ячейка скрыта — яркость несёт снимок);
+    /// - плитка-цель под пальцем (папка или центр ярлыка) — чтобы существующая
+    ///   подсветка drop'а не утонула в дим-поле.
+    ///
+    /// Остальные гаснут до ``dimmedTileAlpha`` (0,7). Скрытые координатором
+    /// ячейки (`contentView.alpha == 0`: drag/unpin) не трогаем — их
+    /// видимостью владеет `TesseraTileGridView.setItemHidden`, и «поднять»
+    /// такую плитку до 0,7 значило бы показать её раньше времени.
+    ///
+    /// - Parameters:
+    ///   - animated: Анимировать переход ``dimmingDuration`` или выставить
+    ///     прозрачность сразу. При Reduce Motion анимации нет, но сам дим
+    ///     применяется: это не движение, его убирать нельзя.
+    ///   - itemIDs: Ограничение набора ячеек (горячий путь прокрутки передаёт
+    ///     только плитки с кнопками). `nil` — все элементы снимка.
+    private func applyEditDimming(animated: Bool, limitedTo itemIDs: [AnyHashable]? = nil) {
+        // Собираем изменения до анимации: `grid.cellView` во время анимации
+        // может вернуть уже другую (переиспользованную) ячейку.
+        var changes: [(cell: TesseraTileCell, alpha: CGFloat)] = []
+
+        let candidates = itemIDs ?? grid.items.map { $0.id }
+        for itemID in candidates {
+            // alpha скрытой перетаскиваемой ячейки принадлежит drag-сессии.
+            if itemID == dragSession?.itemID { continue }
+            guard let cell = grid.cellView(forItemID: itemID) as? TesseraTileCell,
+                  cell.itemID == itemID else {
+                continue
+            }
+            // Ячейка скрыта сеткой (drag/unpin): не «воскрешаем» её диммингом.
+            guard cell.contentView.alpha > 0.001 else { continue }
+
+            let target = dimmingTargetAlpha(for: itemID)
+            guard abs(cell.contentView.alpha - target) > 0.001 else { continue }
+            changes.append((cell, target))
+        }
+
+        guard !changes.isEmpty else { return }
+
+        let apply: () -> Void = {
+            for change in changes {
+                change.cell.contentView.alpha = change.alpha
+            }
+        }
+
+        guard animated, !isReduceMotionEnabled() else {
+            apply()
+            return
+        }
+
+        UIView.animate(
+            withDuration: TesseraTileEditCoordinator.dimmingDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: apply,
+            completion: nil
+        )
+    }
+
+    /// Целевая прозрачность содержимого плитки в текущем состоянии.
+    ///
+    /// Во время drag «выбранной» считается перетаскиваемая плитка и цель под
+    /// пальцем; вне drag — плитка, через которую вошли в редактирование.
+    ///
+    /// - Parameter itemID: Идентификатор плитки.
+    /// - Returns: 1 для полной яркости, ``dimmedTileAlpha`` для дима.
+    private func dimmingTargetAlpha(for itemID: AnyHashable) -> CGFloat {
+        guard isEditing else { return 1 }
+
+        if let session = dragSession {
+            if itemID == session.itemID { return 1 }
+
+            switch session.hover {
+            case .folder(let targetID), .group(let targetID):
+                if targetID == itemID { return 1 }
+            case .none, .reorder:
+                break
+            }
+            return TesseraTileEditCoordinator.dimmedTileAlpha
+        }
+
+        if itemID == dimmingFocusID { return 1 }
+        return TesseraTileEditCoordinator.dimmedTileAlpha
     }
 
     // MARK: - Drag: финал
@@ -1316,14 +2197,29 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// вызывают его через `@testable import`, чтобы завершить перестановку без
     /// симуляции касаний.
     ///
-    /// - Parameter commit: `true` — применить drop, `false` — откатить к
-    ///   исходному индексу (жест отменён).
+    /// E8.4: сетка к этому моменту показывает превью порядка, а модель всё ещё
+    /// в состоянии на момент захвата. Drop фиксирует превью одним
+    /// ``TileStore/move(_:toIndex:)`` по индексу перетаскиваемой плитки в
+    /// превью (он же — целевой индекс), отмена возвращает сетке базовый снимок
+    /// и не пишет в модель вовсе.
+    ///
+    /// - Parameter commit: `true` — зафиксировать превью, `false` — вернуть
+    ///   порядок на момент захвата (жест отменён).
     func finishDrag(commit: Bool) {
         guard let session = dragSession else { return }
 
         defer { endDragStoreTransaction(saveIfNeeded: session.modelChanged) }
 
+        // E8.6: готовность к слиянию снимается до сброса удержания — по этому
+        // флагу drop выбирает между созданием папки и обычной перестановкой.
+        let isMergeReady = mergeTracker?.isMergeReady == true
+
         stopTicker()
+        resetMergeHover()
+        // E8.9: возврат снимка на место (moveDragView/collapseDragView) должен
+        // стартовать от текущего кадра, а не от цели незавершённого spring'а.
+        stopMagnetAnimation(session)
+        session.magnetTarget = nil
         dragSession = nil
         grid.isScrollEnabled = true
         hideDropHighlight()
@@ -1340,11 +2236,17 @@ public final class TesseraTileEditCoordinator: NSObject {
         case .folder(let folderID) where session.isTile:
             dropIntoFolder(session, folderID: folderID)
 
-        case .group(let targetID) where session.isTile:
+        case .group(let targetID) where session.isTile && isMergeReady:
+            // E8.6: папка создаётся только если удержание выдержано (подсветка
+            // уже показала «впитывание»). Иначе — обычный путь ниже.
             dropIntoNewFolder(session, targetID: targetID)
 
         default:
-            let finalIndex = grid.index(ofItemID: session.itemID) ?? session.initialIndex
+            // Индекс перетаскиваемой плитки в текущем (превью) порядке сетки —
+            // ровно тот, который `TileStore.move` воспроизведёт: хранилище тоже
+            // вынимает элемент и вставляет его на это место.
+            let finalIndex = previewIndex(of: session)
+            commitPreviewOrder(session, toIndex: finalIndex)
             let frame = currentFrame(of: session)
             moveDragView(session, to: frame) {
                 self.cleanupDrag(session, unhide: true)
@@ -1356,6 +2258,38 @@ public final class TesseraTileEditCoordinator: NSObject {
                 )
             }
         }
+    }
+
+    /// Индекс перетаскиваемой плитки в текущем порядке сетки.
+    ///
+    /// Во время drag сетка показывает превью, поэтому это целевой индекс
+    /// drop'а; без превью он равен исходному.
+    ///
+    /// - Parameter session: Drag-сессия.
+    /// - Returns: Индекс в порядке сетки.
+    private func previewIndex(of session: TesseraTileDragSession) -> Int {
+        grid.index(ofItemID: session.itemID) ?? session.initialIndex
+    }
+
+    /// Фиксирует превью порядка в модели на drop (E8.4).
+    ///
+    /// `TileStore.move(_:toIndex:)` вынимает элемент и вставляет его по индексу
+    /// превью, поэтому порядок в модели совпадает с тем, что видит пользователь
+    /// (это проверяет `TileDragPushTests` через чистую функцию).
+    ///
+    /// Если хранилище не переставило элемент (порядок уже такой либо модель
+    /// успела измениться извне), сетку синхронизируем с моделью, чтобы на экране
+    /// не осталось висеть превью.
+    ///
+    /// - Parameters:
+    ///   - session: Drag-сессия.
+    ///   - index: Целевой индекс перетаскиваемой плитки.
+    private func commitPreviewOrder(_ session: TesseraTileDragSession, toIndex index: Int) {
+        if store.move(session.itemID, toIndex: index) {
+            session.modelChanged = true
+            return
+        }
+        render(animated: true)
     }
 
     /// Завершает drop на существующую папку (D14).
@@ -1389,6 +2323,11 @@ public final class TesseraTileEditCoordinator: NSObject {
     }
 
     /// Завершает drop на центр другого ярлыка: создаёт папку из двух ярлыков.
+    ///
+    /// E8.6: вызывается только из ``finishDrag(commit:)`` и только когда
+    /// удержание выдержано (`TesseraMergeHoverTracker/isMergeReady`) —
+    /// «впитывание» уже показано пользователю. Обычный drop на центр без
+    /// удержания сюда не попадает и завершается перестановкой E8.4.
     ///
     /// Операция D14 состоит из двух одобряемых шагов: создание папки из
     /// целевого ярлыка и добавление перетаскиваемого. Если второй шаг запрещён,
@@ -1439,6 +2378,11 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Возвращает ярлык на место после отказа функции одобрения (D14).
     ///
+    /// E8.4: превью порядка в модель не писало, но отказ мог случиться после
+    /// первой мутации двухшаговой операции с папкой (папка создана, ярлык ещё
+    /// нет), поэтому сетку синхронизируем с текущим состоянием `TileStore`, а не
+    /// с базовым снимком: иначе экран разошёлся бы с моделью.
+    ///
     /// - Parameters:
     ///   - action: Отклонённая операция.
     ///   - session: Drag-сессия.
@@ -1450,7 +2394,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         folderID: AnyHashable?,
         reason: String
     ) {
-        restore(session)
+        render(animated: true)
         UINotificationFeedbackGenerator().notificationOccurred(.error)
         announce("Не удалось: \(reason).")
         delegate?.tileEditCoordinator(
@@ -1465,13 +2409,16 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
     }
 
-    /// Откатывает перестановку к исходному индексу.
+    /// Возвращает сетке порядок на момент захвата (отмена drag, E8.4).
+    ///
+    /// Модель за время drag не менялась — превью живёт только в сетке, поэтому
+    /// откат не пишет в `TileStore` и не вызывает `onChange` у хоста. Снимок
+    /// захвата — ``TesseraTileDragSession/baseSnapshot``.
     ///
     /// - Parameter session: Drag-сессия.
     private func restore(_ session: TesseraTileDragSession) {
-        guard grid.index(ofItemID: session.itemID) != nil else { return }
-        guard store.move(session.itemID, toIndex: session.initialIndex) else { return }
-        render(animated: true)
+        guard !gridMatches(session.baseSnapshot) else { return }
+        grid.update(snapshot: session.baseSnapshot, animated: true)
     }
 
     /// Текущая рамка перетаскиваемого элемента (после переупаковки).
@@ -1488,8 +2435,13 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///   - session: Drag-сессия.
     ///   - unhide: Показывать ли исходную ячейку (элемент остался на сетке).
     private func cleanupDrag(_ session: TesseraTileDragSession, unhide: Bool) {
+        // E8.9: spring притяжения мог ещё не доиграть — снимаем его вместе с
+        // оверлеями, чтобы он не оживил уже убранный снимок.
+        stopMagnetAnimation(session)
+        session.magnetTarget = nil
         session.dragView.removeFromSuperview()
         session.placeholder.removeFromSuperview()
+        stopPlaceholderAnimation()
         hideDropHighlight()
 
         if unhide {
@@ -1499,10 +2451,18 @@ public final class TesseraTileEditCoordinator: NSObject {
     }
 
     /// Немедленно отменяет drag (выход из режима редактирования, фон).
+    ///
+    /// E8.4: отмена — это только возврат базового порядка сетки; модель не
+    /// пишется, поэтому откат мгновенный и не зависит от `TileStore`.
     private func cancelDragImmediately() {
         guard let session = dragSession else { return }
 
         stopTicker()
+        resetMergeHover()
+        // E8.9: незавершённый spring притяжения не должен пережить сессию —
+        // снимок убирается сразу, без хвостовой анимации.
+        stopMagnetAnimation(session)
+        session.magnetTarget = nil
         dragSession = nil
         grid.isScrollEnabled = true
         hideDropHighlight()
@@ -1510,6 +2470,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         restore(session)
         session.dragView.removeFromSuperview()
         session.placeholder.removeFromSuperview()
+        stopPlaceholderAnimation()
         grid.setItemHidden(false, forItemID: session.itemID)
         reconcileEditControls(animated: false)
         endDragStoreTransaction(saveIfNeeded: session.modelChanged)
@@ -1572,9 +2533,11 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Выключает автосохранение на время drag.
     ///
-    /// Модель меняется на каждом «расступании», а `TileStore.save()` синхронный:
-    /// без транзакции drag писал бы JSON десятки раз. Состояние сохраняется один
-    /// раз в ``endDragStoreTransaction(saveIfNeeded:)``.
+    /// E8.4: превью порядка модель не трогает, но drop может состоять из
+    /// нескольких мутаций (создание папки + добавление ярлыка), а
+    /// `TileStore.save()` синхронный: без транзакции каждая из них писала бы
+    /// JSON отдельно. Состояние сохраняется один раз в
+    /// ``endDragStoreTransaction(saveIfNeeded:)``.
     private func beginDragStoreTransaction() {
         guard autosavesBeforeDrag == nil else { return }
         autosavesBeforeDrag = store.autosaves
@@ -1583,7 +2546,7 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Восстанавливает автосохранение и при необходимости пишет состояние.
     ///
-    /// - Parameter saveIfNeeded: Были ли изменения модели за время drag.
+    /// - Parameter saveIfNeeded: Менялась ли модель в ходе drag (включая drop).
     private func endDragStoreTransaction(saveIfNeeded: Bool) {
         guard let wasEnabled = autosavesBeforeDrag else { return }
         autosavesBeforeDrag = nil
@@ -1666,14 +2629,20 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     // MARK: - Оверлеи редактирования
 
-    /// Создаёт или обновляет крестики/стрелки у видимых плиток.
+    /// Создаёт или обновляет кнопки открепления/размера у видимых плиток.
     ///
     /// Кнопки — подвью сетки, а не ячеек: так они не страдают от
     /// переиспользования ячеек и ездят вместе с плиткой обновлением `frame`
     /// в обработчике прокрутки (без layout сетки).
     ///
-    /// - Parameter animated: Анимировать ли переезд кнопок при resize/reorder.
-    private func reconcileEditControls(animated: Bool) {
+    /// Тут же переприменяется димминг (E8.2): конфигурация и переиспользование
+    /// ячеек возвращают `contentView.alpha` к 1, поэтому прозрачность нужно
+    /// выставлять после них.
+    ///
+    /// - Parameters:
+    ///   - animated: Анимировать ли переезд кнопок при resize/reorder.
+    ///   - dimAnimated: Анимировать ли переход прозрачности (вход в режим).
+    private func reconcileEditControls(animated: Bool, dimAnimated: Bool = false) {
         guard isEditing else {
             removeAllEditControls()
             return
@@ -1735,8 +2704,8 @@ public final class TesseraTileEditCoordinator: NSObject {
 
             // «Желе» — на слой контента ячейки, как ждёт E4.2 (иначе
             // UICollectionView сбросил бы transform самой ячейки). Оверлей с
-            // кнопками получает ту же анимацию и фазу, чтобы крестик/стрелка
-            // вращались вместе с плиткой вокруг её центра.
+            // кнопками получает ту же анимацию и фазу, чтобы кнопки
+            // открепления/размера вращались вместе с плиткой вокруг её центра.
             if let cell = grid.cellView(forItemID: item.id) as? TesseraTileCell,
                cell.itemID == item.id {
                 applyJiggle(
@@ -1748,6 +2717,9 @@ public final class TesseraTileEditCoordinator: NSObject {
             applyJiggle(to: control, itemID: item.id, enabled: !reduceMotion)
             applyEditActions(to: item)
         }
+
+        // E8.2: после конфигурации ячеек — снова выставить прозрачность.
+        applyEditDimming(animated: dimAnimated)
     }
 
     /// Создаёт оверлей с кнопками и подписывает их на действия.
@@ -1789,10 +2761,11 @@ public final class TesseraTileEditCoordinator: NSObject {
         editActionsItemByCell.removeAll()
     }
 
-    /// Обновляет `frame`/видимость оверлеев при прокрутке.
+    /// Обновляет `frame`/видимость оверлеев и димминг при прокрутке.
     ///
-    /// Вызывается из наблюдения за `contentOffset`; кроме `frame` и `isHidden`
-    /// здесь ничего не меняется (CORE-IOS-DESIGN.md §2).
+    /// Вызывается из наблюдения за `contentOffset`; здесь меняются только
+    /// `frame`/`isHidden` кнопок и `alpha` содержимого ячеек — layout не
+    /// пересчитывается (CORE-IOS-DESIGN.md §2).
     private func scrollOffsetDidChange() {
         guard isEditing else { return }
 
@@ -1805,6 +2778,12 @@ public final class TesseraTileEditCoordinator: NSObject {
             control.isHidden = dragSession?.itemID == itemID
                 || !frame.intersects(grid.bounds)
         }
+
+        // E8.2: `prepareForReuse` у переиспользованной ячейки вернул alpha 1 —
+        // возвращаем дим. Это только `alpha` (разрешённое в горячем пути
+        // свойство), никакого layout. Ограничиваемся плитками с кнопками
+        // (видимая область + запас), чтобы не копировать весь снимок на кадр.
+        applyEditDimming(animated: false, limitedTo: Array(editControls.keys))
 
         // Кнопки для плиток, попавших в кадр при прокрутке, создаются уже вне
         // колбэка прокрутки — чтобы не выполнять layout внутри него.
@@ -2052,16 +3031,53 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Создаёт анимацию «желе».
     ///
+    /// Покачивание — синусоида, а не три кадра «−амплитуда / +амплитуда /
+    /// −амплитуда» с `easeInEaseOut`. У синуса скорость в крайних точках
+    /// (`sin = ±1`) равна нулю и меняется непрерывно, поэтому на развороте нет
+    /// резкого торможения с последующим рывком — именно оно и читалось как
+    /// «дёрганье» трёхкадрового варианта.
+    ///
+    /// Цикл разбит на `N = 12` равных шагов и сэмплирован по формуле
+    ///
+    ///     values[i] = angle * sin(2π * i / N),   i = 0…N
+    ///     keyTimes[i] = i / N
+    ///
+    /// Кадр `i = N` замыкает цикл: `sin(2π) = 0` совпадает с `i = 0`, и
+    /// `keyTimes` заканчиваются ровно на 1.0 — этого требует Core Animation;
+    /// без замыкающего кадра последнее значение удерживалось бы до конца
+    /// длительности и на стыке циклов получался бы рывок. Между кадрами —
+    /// линейная интерполяция: форму кривой задают сами выборки синуса, любая
+    /// дополнительная нелинейность только исказила бы её. Шаг `1/12` при цикле
+    /// 0,34–0,46 с — около 0,03 с, мельче кадра экрана (60 Гц), поэтому ломаная
+    /// из 12 выборок визуально неотличима от синусоиды.
+    ///
+    /// `N = 12` — компромисс: 6–8 выборок заметно «гранят» на медленном цикле,
+    /// 24+ дают лишние вычисления интерполяции на каждом слое каждой плитки
+    /// без видимой разницы.
+    ///
     /// - Parameter spec: Параметры покачивания.
     /// - Returns: Бесконечно повторяющаяся анимация поворота.
     private static func makeJiggleAnimation(spec: TesseraJiggleSpec) -> CAKeyframeAnimation {
+        let steps = 12
+
+        // Синусоида, сэмплированная по равным долям цикла; кадр `steps`
+        // замыкает её в ноль, чтобы `keyTimes` закончились на 1.0.
+        let values: [CGFloat] = (0...steps).map { step in
+            let phase = 2 * Double.pi * Double(step) / Double(steps)
+            return CGFloat(sin(phase)) * spec.angle
+        }
+        let keyTimes: [NSNumber] = (0...steps).map { step in
+            NSNumber(value: Double(step) / Double(steps))
+        }
+
+        // Линейные сегменты: интерполируются сами выборки синуса, своих
+        // ускорений/замедлений сегментам не нужно.
+        let linear = CAMediaTimingFunction(name: .linear)
+
         let animation = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        animation.values = [-spec.angle, spec.angle, -spec.angle]
-        animation.keyTimes = [0, 0.5, 1]
-        animation.timingFunctions = [
-            CAMediaTimingFunction(name: .easeInEaseOut),
-            CAMediaTimingFunction(name: .easeInEaseOut),
-        ]
+        animation.values = values
+        animation.keyTimes = keyTimes
+        animation.timingFunctions = Array(repeating: linear, count: steps)
         animation.duration = spec.duration
         animation.timeOffset = spec.timeOffset
         animation.repeatCount = .infinity
@@ -2130,6 +3146,296 @@ extension TesseraTileEditCoordinator: UIGestureRecognizerDelegate {
 
 // MARK: - Внутренние типы координатора
 
+/// Чистая state-машина удержания над ярлыком-целью (E8.6).
+///
+/// Отвечает на один вопрос: «палец стоит над центром ярлыка достаточно долго и
+/// достаточно неподвижно, чтобы отпускание создало папку?». UIKit здесь нет —
+/// поэтому машина тестируется без симулятора (`TileMergeHoverTests`).
+///
+/// Состояния:
+/// - ``State/idle`` — удержания нет;
+/// - ``State/armed`` — палец над центром ярлыка, отсчёт идёт;
+/// - ``State/fired`` — порог выдержан, drop создаёт папку (``isMergeReady``);
+/// - ``State/cancelled`` — палец сместился больше допуска, удержание отменено.
+///
+/// Время читается через замыкание ``now``, а не напрямую из системных часов:
+/// тесты подменяют его управляемыми часами и проверяют порог без `sleep`.
+/// В проде подставляется `CACurrentMediaTime()` — тот же монотонный отсчёт,
+/// что у `CADisplayLink` и Core Animation, так что пауза приложения не
+/// сдвигает таймер.
+///
+/// Переходы:
+/// - ``beginHover(targetID:point:)``: новый ярлык (или выход из `cancelled`) —
+///   `armed` с якорем в точке и отсчётом с текущего момента; повторный вызов
+///   для того же ярлыка в `armed`/`fired` ничего не делает, чтобы покадровые
+///   вызовы не перезапускали таймер;
+/// - ``update(point:)``: смещение от якоря больше допуска — `cancelled`;
+/// - ``timerFired()``: прошло не меньше порога — `fired`, иначе остаётся
+///   `armed` (таймер мог сработать чуть раньше из-за округления runloop);
+/// - ``reset()`` — `idle`.
+///
+/// `cancelled` — терминальное состояние для текущего ярлыка: вернуть
+/// готовность может только ``beginHover(targetID:point:)`` (палец ушёл и
+/// вернулся) или ``reset()`` — координатор сбрасывает удержание при смене цели.
+struct TesseraMergeHoverTracker {
+
+    /// Состояние удержания.
+    enum State: Equatable {
+
+        /// Удержания нет.
+        case idle
+
+        /// Палец над ярлыком, отсчёт идёт.
+        case armed
+
+        /// Порог выдержан: drop создаст папку.
+        case fired
+
+        /// Палец сместился больше допуска.
+        case cancelled
+    }
+
+    /// Сколько времени нужно удерживать палец (``TesseraTileEditConfiguration/mergeHoverDuration``).
+    private let hoverDuration: TimeInterval
+
+    /// Допустимое смещение пальца от якоря в точках
+    /// (``TesseraTileEditConfiguration/mergeHoverDisplacement``).
+    private let displacementThreshold: CGFloat
+
+    /// Монотонные часы; инжектируются для тестов.
+    private let now: () -> TimeInterval
+
+    /// Момент взвода отсчёта по часам ``now``.
+    private var startedAt: TimeInterval?
+
+    /// Текущее состояние.
+    private(set) var state: State = .idle
+
+    /// Ярлык, над которым идёт удержание.
+    private(set) var targetID: AnyHashable?
+
+    /// Точка, от которой считается смещение пальца.
+    private(set) var anchor: CGPoint?
+
+    /// Создаёт машину удержания.
+    ///
+    /// - Parameters:
+    ///   - hoverDuration: Порог удержания в секундах; отрицательные значения
+    ///     трактуются как 0 (слияние сразу по наведению).
+    ///   - displacementThreshold: Допуск смещения в точках.
+    ///   - now: Провайдер монотонного времени; по умолчанию системные часы.
+    init(
+        hoverDuration: TimeInterval,
+        displacementThreshold: CGFloat,
+        now: @escaping () -> TimeInterval = { CACurrentMediaTime() }
+    ) {
+        self.hoverDuration = max(0, hoverDuration)
+        self.displacementThreshold = max(0, displacementThreshold)
+        self.now = now
+    }
+
+    /// Готов ли drop создать папку (E8.6).
+    var isMergeReady: Bool {
+        state == .fired
+    }
+
+    /// Идёт ли отсчёт удержания.
+    var isArmed: Bool {
+        state == .armed
+    }
+
+    /// Сколько осталось до готовности; 0, если отсчёт не идёт.
+    ///
+    /// Нужно координатору: таймер планируется на остаток, поэтому повторный
+    /// запуск после раннего срабатывания не продлевает удержание.
+    var remainingDuration: TimeInterval {
+        guard state == .armed, let startedAt else { return 0 }
+        return max(0, hoverDuration - (now() - startedAt))
+    }
+
+    /// Начинает (или продолжает) удержание над ярлыком.
+    ///
+    /// Повторный вызов для того же ярлыка в состояниях `armed`/`fired`
+    /// игнорируется: координатор вызывает метод на каждом шаге пальца, и
+    /// перезапуск отсчёта не дал бы удержанию когда-либо завершиться.
+    ///
+    /// - Parameters:
+    ///   - targetID: Ярлык под пальцем.
+    ///   - point: Точка пальца в координатах сетки — якорь допуска смещения.
+    mutating func beginHover(targetID: AnyHashable, point: CGPoint) {
+        if self.targetID == targetID, state == .armed || state == .fired {
+            return
+        }
+
+        self.targetID = targetID
+        anchor = point
+        startedAt = now()
+        state = .armed
+    }
+
+    /// Проверяет смещение пальца от якоря.
+    ///
+    /// Смещение дальше допуска отменяет удержание и в `armed`, и в `fired`:
+    /// подсветка «впитывания» обещает слияние только пока палец стоит.
+    ///
+    /// - Parameter point: Текущая точка пальца в координатах сетки.
+    mutating func update(point: CGPoint) {
+        guard state == .armed || state == .fired, let anchor else { return }
+
+        let dx = point.x - anchor.x
+        let dy = point.y - anchor.y
+        // Сравнение квадратов: hypot/`sqrt` здесь не нужен, порог тоже в точках.
+        guard dx * dx + dy * dy > displacementThreshold * displacementThreshold else {
+            return
+        }
+
+        state = .cancelled
+        startedAt = nil
+    }
+
+    /// Таймер удержания сработал.
+    ///
+    /// - Returns: `true`, если порог выдержан и состояние стало `fired`;
+    ///   `false` — рано (состояние осталось `armed`) или отсчёт не идёт.
+    @discardableResult
+    mutating func timerFired() -> Bool {
+        guard state == .armed, let startedAt else { return false }
+        guard now() - startedAt >= hoverDuration else { return false }
+
+        state = .fired
+        return true
+    }
+
+    /// Сбрасывает удержание в исходное состояние.
+    mutating func reset() {
+        state = .idle
+        targetID = nil
+        anchor = nil
+        startedAt = nil
+    }
+}
+
+/// Чистая математика магнитизма к ячейкам (E8.9).
+///
+/// Отвечает на один вопрос: «есть ли в радиусе притяжения центр слота, к
+/// которому снимок должен подъехать?». UIKit и геометрия сетки сюда не
+/// входят: координатор передаёт уже посчитанные центры
+/// (`TesseraTileGridView.magnetSlotCenters(for:)`), поэтому функция
+/// тестируется без симулятора (`TileMagnetTests`).
+///
+/// Притяжение — только визуальный слой (спека WP): цели push-физики E8.4 и
+/// таймер слияния E8.6 считаются по точке пальца, а не по центру снимка,
+/// так что магнит не может изменить порядок или создать папку.
+enum TesseraTileMagnet {
+
+    /// Центр ближайшего слота в радиусе притяжения.
+    ///
+    /// Расстояние считается обычным евклидовым (по квадратам, без `sqrt`:
+    /// порог тоже в точках — квадраты сравнимы). Радиус включительный:
+    /// центр ровно на `snapRadius` ещё притягивает. При равном расстоянии
+    /// побеждает слот, который идёт в массиве раньше, — результат
+    /// детерминирован и не зависит от порядка перебора.
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - slotCenters: Центры виртуальных слотов той же размерности (E8.9).
+    ///   - snapRadius: Радиус притяжения в точках; `0`, отрицательные и
+    ///     нечисловые значения отключают притяжение.
+    /// - Returns: Центр ближайшего слота или `nil`, если в радиусе слотов нет.
+    static func magnetTarget(
+        for point: CGPoint,
+        slotCenters: [CGPoint],
+        snapRadius: CGFloat
+    ) -> CGPoint? {
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        guard snapRadius.isFinite, snapRadius > 0 else { return nil }
+
+        let radiusSquared = snapRadius * snapRadius
+        var best: CGPoint?
+        var bestDistanceSquared = CGFloat.greatestFiniteMagnitude
+
+        for center in slotCenters {
+            guard center.x.isFinite, center.y.isFinite else { continue }
+
+            let dx = center.x - point.x
+            let dy = center.y - point.y
+            let distanceSquared = dx * dx + dy * dy
+            guard distanceSquared <= radiusSquared, distanceSquared < bestDistanceSquared else {
+                continue
+            }
+
+            best = center
+            bestDistanceSquared = distanceSquared
+        }
+
+        return best
+    }
+
+    /// Центры виртуальных слотов размера `size` (E8.9).
+    ///
+    /// Сетка виртуальная: слоты перебираются с шагом в один юнит по
+    /// вертикали и горизонтали, поэтому в результат попадают и ячейки, которые
+    /// сейчас пусты. След плитки ужимается под узкую сетку тем же правилом,
+    /// что и в раскладке (``TileLayoutEngine/fittingSize(_:columns:)``).
+    ///
+    /// Функция не знает о `contentOffset` и RTL: координатор и раскладка
+    /// передают начало координат контента, а зеркалирование переставляет
+    /// колонки, но множество центров оставляет тем же.
+    ///
+    /// - Parameters:
+    ///   - size: Размер перетаскиваемой плитки (D15).
+    ///   - columns: Число колонок сетки, больше нуля.
+    ///   - unit: Размер юнита в точках.
+    ///   - gap: Зазор между соседними юнитами в точках.
+    ///   - origin: Начало координат контента сетки.
+    ///   - rowCount: Число занятых строк сетки в юнитах.
+    /// - Returns: Центры слотов в том же пространстве координат, что `origin`;
+    ///   пустой массив для вырожденной геометрии.
+    static func slotCenters(
+        for size: TileSize,
+        columns: Int,
+        unit: CGFloat,
+        gap: CGFloat,
+        origin: CGPoint,
+        rowCount: Int
+    ) -> [CGPoint] {
+        guard columns > 0, unit.isFinite, unit > 0, rowCount > 0,
+              origin.x.isFinite, origin.y.isFinite else {
+            return []
+        }
+
+        let fittedSize = TileLayoutEngine.fittingSize(size, columns: columns)
+        let width = fittedSize.unitColumns
+        let height = fittedSize.unitRows
+        guard width > 0, height > 0, width <= columns, rowCount >= height else { return [] }
+
+        let spacing = gap.isFinite ? max(gap, 0) : 0
+        var centers: [CGPoint] = []
+        centers.reserveCapacity((rowCount - height + 1) * (columns - width + 1))
+
+        for row in 0...(rowCount - height) {
+            for column in 0...(columns - width) {
+                let slot = TileLayoutSlot(
+                    id: AnyHashable(0),
+                    size: fittedSize,
+                    column: column,
+                    row: row,
+                    unit: unit
+                )
+                let rect = TileLayoutEngine.rect(
+                    for: slot,
+                    unit: unit,
+                    gap: spacing,
+                    origin: origin
+                )
+                centers.append(CGPoint(x: rect.midX, y: rect.midY))
+            }
+        }
+
+        return centers
+    }
+}
+
 /// Параметры покачивания одной плитки.
 private struct TesseraJiggleSpec {
 
@@ -2149,7 +3455,13 @@ private enum HoverTarget: Equatable {
     /// Цели нет (пустое место/плитка вне сетки).
     case none
 
-    /// Перестановка к индексу элемента `id`.
+    /// Перестановка к элементу `id`.
+    ///
+    /// `index` — индекс цели в **базовом** порядке сетки (снимок на момент
+    /// захвата), а не в текущем превью: превью пересчитывается от базы на
+    /// каждом шаге (E8.4), и индекс превью зависел бы от предыдущей цели.
+    /// Он же — индекс перетаскиваемой плитки в превью и целевой индекс
+    /// `TileStore.move` при фиксации drop'а.
     case reorder(AnyHashable, index: Int)
 
     /// Добавление ярлыка в папку `id`.
@@ -2168,11 +3480,21 @@ private final class TesseraTileDragSession {
     /// Идентификатор перетаскиваемого элемента.
     let itemID: AnyHashable
 
-    /// Индекс на момент захвата — для отката при отмене/отказе.
+    /// Индекс на момент захвата.
+    ///
+    /// Нужен, чтобы не звать делегата, если drop не изменил порядок, и как
+    /// запасной индекс, если превью почему-то не применилось. Откат при отмене
+    /// идёт не через индекс, а через ``baseSnapshot`` (E8.4).
     let initialIndex: Int
 
     /// Ярлык ли это (папку нельзя бросить в папку — вложенности нет).
     let isTile: Bool
+
+    /// Размерность перетаскиваемого элемента (E8.9).
+    ///
+    /// По ней строится виртуальная сетка слотов: притягивать плитку можно
+    /// только к ячейкам той же размерности (D15).
+    let magnetSize: TileSize
 
     /// Смещение центра снимка относительно пальца.
     let grabOffset: CGPoint
@@ -2186,11 +3508,59 @@ private final class TesseraTileDragSession {
     /// Последняя точка пальца в координатах сетки.
     var lastPoint: CGPoint
 
+    /// Точка захвата в координатах сетки (E8.9).
+    ///
+    /// От неё отсчитывается стартовая зона, в которой притяжение не включается:
+    /// снимок и так стоит в исходном слоте, и без этой зоны первые ~28 pt
+    /// движения плитка не следовала бы за пальцем.
+    let originPoint: CGPoint
+
+    /// Вышел ли палец из стартовой зоны захвата (E8.9).
+    ///
+    /// Пока `false`, притяжение выключено; взводится один раз за сессию.
+    var hasLeftOriginSlot = false
+
+    /// Снимок модели на момент захвата (E8.4).
+    ///
+    /// База для превью порядка (`TileLayoutEngine.previewOrder`) и для отката
+    /// при отмене: во время drag `TileStore` не меняется, поэтому этот снимок
+    /// всё время равен модели. Заодно хранит `unpinned` — превью-снимки сетки
+    /// обязаны сохранять список ярлыков вне стола, иначе `update` сбросил бы его.
+    let baseSnapshot: TileGridSnapshot
+
     /// Текущая цель под пальцем.
     var hover: HoverTarget = .none
 
+    /// Палец сейчас над панелью раскрытой папки (D17, E8.9).
+    ///
+    /// Над панелью притяжение не работает: её место в раскладке фиксировано,
+    /// и «прилипание» снимка к сетке под панелью выглядело бы как сбой.
+    var isOverFolderPanel = false
+
+    /// Центр слота, к которому снимок притянут сейчас (E8.9).
+    ///
+    /// `nil` — притяжения нет, снимок следует за пальцем. Хранится, чтобы
+    /// покадровые обновления не перезапускали spring на каждом событии касания.
+    var magnetTarget: CGPoint?
+
+    /// Действующий spring-аниматор притяжения (E8.9).
+    ///
+    /// Удерживается, как аниматор пустышки (E8.8): следующая цель должна
+    /// остановить прошлый spring в текущем кадре, а не доиграть до конца.
+    var magnetAnimator: UIViewPropertyAnimator?
+
     /// Менялась ли модель за время drag (нужно для единственного сохранения).
+    ///
+    /// E8.4: во время drag всегда `false`; выставляется только на drop.
     var modelChanged = false
+
+    /// Базовый индекс элемента — по снимку на момент захвата.
+    ///
+    /// - Parameter itemID: Идентификатор ярлыка или папки.
+    /// - Returns: Индекс в исходном порядке или `nil`, если элемента не было.
+    func baseIndex(of itemID: AnyHashable) -> Int? {
+        baseSnapshot.items.firstIndex { $0.id == itemID }
+    }
 
     init(
         itemID: AnyHashable,
@@ -2199,7 +3569,9 @@ private final class TesseraTileDragSession {
         grabOffset: CGPoint,
         dragView: UIView,
         placeholder: UIView,
-        lastPoint: CGPoint
+        lastPoint: CGPoint,
+        baseSnapshot: TileGridSnapshot,
+        magnetSize: TileSize
     ) {
         self.itemID = itemID
         self.initialIndex = initialIndex
@@ -2208,6 +3580,9 @@ private final class TesseraTileDragSession {
         self.dragView = dragView
         self.placeholder = placeholder
         self.lastPoint = lastPoint
+        self.originPoint = lastPoint
+        self.baseSnapshot = baseSnapshot
+        self.magnetSize = magnetSize
     }
 }
 
@@ -2234,11 +3609,20 @@ private final class TesseraTileEditTickerProxy {
 /// проходит к коллекции (и дальше к хосту).
 final class TesseraTileEditControlView: UIView {
 
-    /// Нажатие на крестик.
+    /// Нажатие на кнопку открепления.
     var onUnpin: (() -> Void)?
 
     /// Нажатие на стрелку размера.
     var onResize: (() -> Void)?
+
+    /// SF Symbol кнопки «открепить» (E8.3).
+    ///
+    /// Выбрана перечёркнутая булавка, а не крестик: действие — не удаление, а
+    /// открепление с рабочего стола (ярлык остаётся в списке приложений).
+    /// `pin.slash` — канонический символ «открепить»; простая `pin` обозначает
+    /// состояние «закреплено» и читалась бы как обратное действие. Символ
+    /// доступен с iOS 13, то есть входит в целевой iOS 15.
+    private static let unpinSymbolName = "pin.slash"
 
     private let unpinButton = UIButton(type: .system)
     private let resizeButton = UIButton(type: .system)
@@ -2258,7 +3642,7 @@ final class TesseraTileEditControlView: UIView {
 
         setUpButton(
             unpinButton,
-            symbolName: "xmark",
+            symbolName: TesseraTileEditControlView.unpinSymbolName,
             action: #selector(unpinTapped)
         )
         setUpButton(
@@ -2277,7 +3661,7 @@ final class TesseraTileEditControlView: UIView {
     /// Показывает/прячет кнопки под возможности элемента.
     ///
     /// - Parameters:
-    ///   - canUnpin: Показывать ли крестик (у папки его нет).
+    ///   - canUnpin: Показывать ли кнопку открепления (у папки её нет).
     ///   - canResize: Показывать ли стрелку размера.
     func configure(canUnpin: Bool, canResize: Bool) {
         guard canUnpin != showsUnpin || canResize != showsResize else { return }
@@ -2297,8 +3681,8 @@ final class TesseraTileEditControlView: UIView {
         let side = min(diameter, max(22, min(bounds.width, bounds.height) * 0.4))
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
 
-        // Крестик — в верхнем углу по направлению чтения, стрелка — в нижнем
-        // противоположном (§9, RTL).
+        // Кнопка открепления — в верхнем углу по направлению чтения, стрелка —
+        // в нижнем противоположном (§9, RTL).
         let unpinX = isRightToLeft ? bounds.width - inset - side : inset
         let resizeX = isRightToLeft ? inset : bounds.width - inset - side
 
@@ -2339,7 +3723,7 @@ final class TesseraTileEditControlView: UIView {
         button.addTarget(self, action: action, for: .touchUpInside)
     }
 
-    /// Крестик.
+    /// Открепление.
     @objc private func unpinTapped() {
         onUnpin?()
     }
@@ -2355,6 +3739,9 @@ final class TesseraTileEditControlView: UIView {
 /// Подсветка плитки-цели при перетаскивании.
 ///
 /// Не перехватывает касания и не озвучивается: это визуальная подсказка.
+/// E8.2: цель остаётся полной яркости на фоне приглушённых соседей
+/// (``TesseraTileEditCoordinator``), поэтому рамка и заливка читаются
+/// на светлой плитке без усиления цвета.
 final class TesseraTileDropHighlightView: UIView {
 
     /// Тип цели.
@@ -2363,8 +3750,17 @@ final class TesseraTileDropHighlightView: UIView {
         /// Папка: ярлык будет добавлен.
         case folder
 
-        /// Ярлык: будет создана папка.
+        /// Ярлык: удержание ещё не выдержано, drop — обычная перестановка.
         case group
+
+        /// Ярлык: удержание выдержано, drop создаст папку (E8.6).
+        ///
+        /// Тот же акцент, что у `.group`, но рамка толще и заливка плотнее, а
+        /// координатор дополнительно увеличивает вид до
+        /// ``TesseraTileEditConfiguration/mergeHighlightScale``. Состояние
+        /// читается и без анимации: при Reduce Motion меняются только рамка и
+        /// масштаб.
+        case merge
     }
 
     /// Текущий стиль.
@@ -2398,17 +3794,35 @@ final class TesseraTileDropHighlightView: UIView {
         updateColors()
     }
 
-    /// Обновляет адаптивные цвета.
+    /// Обновляет адаптивные цвета и толщину рамки.
+    ///
+    /// Стили `.group` и `.merge` — один и тот же акцент (оранжевый): состояние
+    /// «впитывания» должно читаться как усиление той же цели, а не как другая
+    /// цель. Отличаются толщина рамки и плотность заливки — признаки, видимые
+    /// и без анимации (E8.6, Reduce Motion).
     private func updateColors() {
         let color: UIColor
+        let borderWidth: CGFloat
+        let fillAlpha: CGFloat
+
         switch style {
         case .folder:
             color = .systemBlue
+            borderWidth = 3
+            fillAlpha = 0.12
         case .group:
             color = .systemOrange
+            borderWidth = 3
+            fillAlpha = 0.12
+        case .merge:
+            color = .systemOrange
+            borderWidth = 4
+            fillAlpha = 0.24
         }
+
         layer.borderColor = color.cgColor
-        backgroundColor = color.withAlphaComponent(0.12)
+        layer.borderWidth = borderWidth
+        backgroundColor = color.withAlphaComponent(fillAlpha)
     }
 }
 

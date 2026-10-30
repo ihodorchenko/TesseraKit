@@ -26,11 +26,19 @@ import UIKit
 
 // MARK: - Снимок сетки
 
-/// Элемент сетки рабочего стола: ярлык или папка.
+/// Элемент сетки рабочего стола: ярлык, папка или панель раскрытой папки.
 ///
 /// Снимок отдаёт элементы в порядке отображения. Ярлык приходит с текущим
 /// размером и подписью, папка — со своими ярлыками, чтобы сетка и экран папки
 /// рисовались по одному снимку и не дёргали хранилище на каждый элемент.
+///
+/// ``folderContent(_:)`` — не элемент данных, а UI-состояние раскрытия (D17):
+/// `TileStore` и файл состояния её не содержат, а вью-слой **вставляет** её
+/// отдельным элементом сразу после плитки папки. Плитка папки при этом остаётся
+/// в наборе и на экране: панель — полноширинная строка под ней. Она живёт в этом
+/// же перечислении, чтобы раскладка (`TileLayoutEngine`/
+/// `TesseraTileCollectionViewLayout`) видела раскрытую панель в общем порядке
+/// элементов.
 public enum TileGridItem {
 
     /// Ярлык с текущим размером из хранилища.
@@ -39,19 +47,41 @@ public enum TileGridItem {
     /// Папка вместе с её ярлыками (в порядке папки).
     case folder(TileFolder)
 
-    /// Идентификатор элемента (ярлыка или папки).
+    /// Полноширинная панель раскрытой папки (D17, E7.1).
+    ///
+    /// Панель показывает заголовок папки и сетку её содержимого. В наборе
+    /// элементов вью-слой **вставляет** её сразу после плитки-папки: плитка
+    /// остаётся видимой, число элементов растёт на один, а панель занимает
+    /// полноширинную строку сразу после строки, в которой заканчивается папка
+    /// (``folderContent(_:)`` растягивается на всю ширину). В данных панели нет:
+    /// это представление состояния «папка раскрыта», поэтому в снимке
+    /// `TileStore` панель не появляется и между запусками не сохраняется.
+    /// Идентификатор панели совпадает с идентификатором папки — по нему
+    /// раскладка находит строку папки, после которой встаёт панель.
+    case folderContent(TileFolder)
+
+    /// Идентификатор элемента (ярлыка, папки или панели папки).
     public var id: AnyHashable {
         switch self {
         case .tile(let descriptor): return descriptor.id
         case .folder(let folder): return folder.id
+        case .folderContent(let folder): return folder.id
         }
     }
 
     /// Текущий размер элемента в юнитах (D15).
+    ///
+    /// У панели раскрытой папки собственного размера в юнитах нет: она всегда
+    /// занимает всю ширину сетки, а её высоту считает
+    /// ``TileLayoutEngine/panelHeight(for:width:columns:)``. Для единообразия
+    /// возвращается ``TileSize/wide`` — ближайший «полноширинный» размер D15.
+    /// Раскладка не упаковывает панель по этой метке: панель — отдельная строка
+    /// под папкой (``panelFolder``), а не плитка.
     public var size: TileSize {
         switch self {
         case .tile(let descriptor): return descriptor.size
         case .folder(let folder): return folder.size
+        case .folderContent: return .wide
         }
     }
 
@@ -61,13 +91,33 @@ public enum TileGridItem {
         return descriptor
     }
 
-    /// Папка, если элемент — папка.
+    /// Папка, если элемент — плитка-папка.
+    ///
+    /// Панель раскрытой папки (``folderContent(_:)``) сюда не попадает: это не
+    /// элемент данных, и её папка доступна через ``panelFolder``. Так
+    /// ``TileGridSnapshot/folders`` и обходы снимка не считают одну папку
+    /// дважды, когда панель добавлена к набору элементов вью-слоем.
     public var folder: TileFolder? {
         guard case .folder(let folder) = self else { return nil }
         return folder
     }
 
-    /// Ярлыки папки, если элемент — папка.
+    /// Папка, если элемент — панель раскрытой папки.
+    public var panelFolder: TileFolder? {
+        guard case .folderContent(let folder) = self else { return nil }
+        return folder
+    }
+
+    /// Является ли элемент полноширинной панелью раскрытой папки (D17).
+    public var isFolderPanel: Bool {
+        if case .folderContent = self { return true }
+        return false
+    }
+
+    /// Ярлыки папки, если элемент — плитка-папка.
+    ///
+    /// У панели раскрытой папки содержимое берётся из ``panelFolder``: панель —
+    /// представление, а не второй экземпляр папки.
     public var folderTiles: [TileDescriptor] {
         guard case .folder(let folder) = self else { return [] }
         return folder.tiles
@@ -93,11 +143,23 @@ public struct TileGridSnapshot {
     ///
     /// Хранилище не считает раскладку само (§3): оно отдаёт данные, а движок
     /// упаковывает их в юнитные координаты.
+    ///
+    /// Панель раскрытой папки (``TileGridItem/folderContent(_:)``) в пары не
+    /// входит: у неё нет юнитного размера, а её строку и высоту считает
+    /// раскладка по идентификатору папки. В снимке `TileStore` панели нет, но
+    /// вью-слой может добавить её к набору элементов — фильтр делает
+    /// `layoutItems` безопасным и для такого набора.
     public var layoutItems: [(id: AnyHashable, size: TileSize)] {
-        items.map { (id: $0.id, size: $0.size) }
+        items.compactMap { item in
+            guard !item.isFolderPanel else { return nil }
+            return (id: item.id, size: item.size)
+        }
     }
 
     /// Все папки в порядке сетки.
+    ///
+    /// Панель раскрытой папки не учитывается: папка уже есть в снимке как
+    /// плитка-папка, а панель — её представление (D17).
     public var folders: [TileFolder] {
         items.compactMap { $0.folder }
     }
@@ -267,6 +329,14 @@ public final class TileStore: ObservableObject {
     /// Версия схемы JSON-файла.
     private static let schemaVersion = 1
 
+    /// Каноническое число колонок сетки D15 (4).
+    ///
+    /// Нужно методам без сетки (``resize(_:to:)``): у `TileStore` нет ширины
+    /// экрана, а проектный документ §3 рассчитывает четыре размера на четыре
+    /// колонки. Реальная сетка может быть уже — тогда вызывающий передаёт своё
+    /// число колонок в ``resize(_:to:columns:)``.
+    static let defaultGridColumns = 4
+
     // MARK: - Инициализация
 
     /// Создаёт хранилище.
@@ -372,6 +442,11 @@ public final class TileStore: ObservableObject {
     /// Снимок собирается по запросу и не кешируется: сетка читает его после
     /// каждого изменения, а хранилище остаётся единственным источником истины.
     ///
+    /// Раскрытая панель папки (D17) в снимок не попадает: хранилище хранит
+    /// данные, а состояние «папка раскрыта» — представление. Хост добавляет
+    /// ``TileGridItem/folderContent(_:)`` к копии элементов сам, поэтому
+    /// персистентность не меняется.
+    ///
     /// - Returns: Согласованный снимок сетки.
     public func snapshot() -> TileGridSnapshot {
         var items: [TileGridItem] = []
@@ -463,23 +538,74 @@ public final class TileStore: ObservableObject {
     /// (в модели ярлыка нет списка поддерживаемых размеров — D12);
     /// хранилище принимает любой из четырёх.
     ///
+    /// Метод вызывает ``resize(_:to:columns:)`` с каноническим числом колонок
+    /// D15 (4): у хранилища нет сетки, поэтому по умолчанию берётся сетка
+    /// проектного документа. Если реальная сетка уже (2–3 колонки), передайте
+    /// её через `columns` — иначе выталкивание посчитается для четырёх колонок.
+    ///
     /// - Parameters:
     ///   - itemID: Идентификатор ярлыка или папки.
     ///   - size: Новый размер.
     /// - Returns: `true`, если состояние изменилось.
     @discardableResult
     public func resize(_ itemID: AnyHashable, to size: TileSize) -> Bool {
+        resize(itemID, to: size, columns: TileStore.defaultGridColumns)
+    }
+
+    /// Меняет размер элемента и переставляет конфликтующие плитки (E8.7).
+    ///
+    /// Resize в стиле WP: увеличиваемая плитка по возможности остаётся на своём
+    /// месте, а плитки справа или снизу, оказавшиеся в новом следе, уходят вниз
+    /// (``TileLayoutEngine/resizePlacement(items:resizingID:newSize:columns:)``).
+    /// Размер и порядок меняются одной операцией: единственный писатель модели
+    /// (§6) остаётся один, `onChange` и автосохранение срабатывают один раз, а
+    /// сетка анимирует перестановку существующим batch-обновлением
+    /// (`TesseraTileGridView.update(snapshot:animated:)`).
+    ///
+    /// Действует и на ярлык, и на папку. Ярлык, лежащий в папке или вне сетки,
+    /// просто меняет авторитетный размер: переставлять в снимке нечего.
+    ///
+    /// - Parameters:
+    ///   - itemID: Идентификатор ярлыка или папки.
+    ///   - size: Новый размер (D15).
+    ///   - columns: Число колонок реальной сетки, больше нуля.
+    /// - Returns: `true`, если размер изменился.
+    @discardableResult
+    public func resize(_ itemID: AnyHashable, to size: TileSize, columns: Int) -> Bool {
         let key = TileStore.storageKey(for: itemID)
 
+        // Текущий авторитетный размер: у папки он в записи, у ярлыка — в `sizes`.
+        // Ярлык без сохранённого размера (например, после ручной правки файла)
+        // тоже можно масштабировать — как и раньше, сравниваем с `nil`.
+        let currentSize: TileSize?
+        let isKnown: Bool
         if let index = folderRecords.firstIndex(where: { $0.key == key }) {
-            guard folderRecords[index].size != size else { return false }
-            folderRecords[index].size = size
-            didChange()
-            return true
+            isKnown = true
+            currentSize = folderRecords[index].size
+        } else if catalogIndex[key] != nil {
+            isKnown = true
+            currentSize = sizes[key]
+        } else {
+            isKnown = false
+            currentSize = nil
         }
+        guard isKnown, currentSize != size else { return false }
 
-        guard catalogIndex[key] != nil, sizes[key] != size else { return false }
-        sizes[key] = size
+        // Порядок считаем до записи размера: `resizePlacement` сам меняет размер
+        // у изменённого элемента и ищет конфликты по текущей раскладке.
+        let placement = TileLayoutEngine.resizePlacement(
+            items: snapshot().items,
+            resizingID: itemID,
+            newSize: size,
+            columns: columns
+        )
+
+        if let index = folderRecords.firstIndex(where: { $0.key == key }) {
+            folderRecords[index].size = size
+        } else {
+            sizes[key] = size
+        }
+        applyVisibleOrder(placement.map { TileStore.storageKey(for: $0.id) })
         didChange()
         return true
     }
@@ -801,6 +927,33 @@ public final class TileStore: ObservableObject {
         let key = folderRecords[index].key
         folderRecords.remove(at: index)
         gridOrder.removeAll { $0 == key }
+    }
+
+    /// Применяет новый порядок видимых элементов, не двигая невидимые (E8.7).
+    ///
+    /// `visibleKeys` — идентификаторы элементов снимка в новом порядке. В
+    /// `gridOrder` могут быть ключи, которых в снимке нет: ярлыки, ещё не
+    /// зарегистрированные в каталоге (``load()`` их запоминает). Их позиция в
+    /// файле состояния не должна меняться от resize'а другого элемента,
+    /// поэтому они возвращаются на прежние индексы, а видимые элементы
+    /// сохраняют новый относительный порядок.
+    ///
+    /// Если наборы ключей не совпадают (дубликаты, чужой идентификатор),
+    /// порядок не меняется: лучше оставить прежнюю раскладку, чем потерять
+    /// ярлык из `gridOrder`.
+    ///
+    /// - Parameter visibleKeys: Канонические ключи элементов снимка в новом порядке.
+    private func applyVisibleOrder(_ visibleKeys: [String]) {
+        let visibleSet = Set(visibleKeys)
+        guard visibleSet.count == visibleKeys.count else { return }
+
+        var result = visibleKeys
+        for (index, key) in gridOrder.enumerated() where !visibleSet.contains(key) {
+            result.insert(key, at: min(index, result.count))
+        }
+
+        guard result.count == gridOrder.count, Set(result) == Set(gridOrder) else { return }
+        gridOrder = result
     }
 
     /// Убирает из папок ярлыки, которых больше нет в каталоге, и распускает

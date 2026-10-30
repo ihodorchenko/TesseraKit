@@ -458,6 +458,10 @@ public final class TesseraAppsListPageViewController: UIViewController {
                     pinnedIDs.insert(tile.id)
                     catalog[tile.id] = tile
                 }
+            case .folderContent:
+                // Панель раскрытой папки — UI-состояние (D17), в данных его
+                // нет; ярлыки папки уже учтены по элементу `.folder`.
+                break
             }
         }
 

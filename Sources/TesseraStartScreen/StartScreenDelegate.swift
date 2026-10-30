@@ -95,12 +95,46 @@ public protocol StartScreenDelegate: AnyObject {
     /// передать папку в ``TesseraTileEditCoordinator/openFolder(_:)``; иначе
     /// показывает свой контроллер.
     ///
+    /// - Note: С D17 (E7.3) по умолчанию папка дополнительно раскрывается
+    ///   нативной панелью сетки, поэтому событие — «палец коснулся папки», а не
+    ///   команда показа экрана. Чтобы сохранить прежнее поведение (свой экран
+    ///   без встроенной панели), задайте перехватчик в `StartScreenView`.
+    ///
     /// - Parameters:
     ///   - screen: Контроллер-источник события.
     ///   - folder: Выбранная папка вместе с ярлыками.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didTapFolder folder: TileFolder
+    )
+
+    /// Сетка раскрыла папку нативной панелью (D17, E7.3).
+    ///
+    /// Событие приходит после анимации раскрытия: панель уже вставлена, строки
+    /// ниже сдвинуты, иконки начинают каскад. Хост может использовать его для
+    /// аналитики или синхронизации своего состояния; менять снимок сетки в
+    /// колбэке не нужно — раскрытие уже выполнено.
+    ///
+    /// - Parameters:
+    ///   - screen: Контроллер-источник события.
+    ///   - folder: Раскрытая папка.
+    func startScreen(
+        _ screen: TesseraStartScreenViewController,
+        didExpandFolder folder: TileFolder
+    )
+
+    /// Сетка свернула нативную панель папки (D17, E7.3).
+    ///
+    /// Приходит и при закрытии по повторному тапу, тапу по пустому месту,
+    /// вызову ``TesseraTileGridView/closeFolder(animated:)`` или `Back`, и при
+    /// исчезновении открытой папки из снимка (модель распустила папку).
+    ///
+    /// - Parameters:
+    ///   - screen: Контроллер-источник события.
+    ///   - folder: Свёрнутая папка.
+    func startScreen(
+        _ screen: TesseraStartScreenViewController,
+        didCollapseFolder folder: TileFolder
     )
 
     /// Пейджер завершил переход и показывает новую страницу.
@@ -157,6 +191,18 @@ public extension StartScreenDelegate {
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didTapFolder folder: TileFolder
+    ) {}
+
+    /// По умолчанию раскрытие папки не интересует делегата (D17).
+    func startScreen(
+        _ screen: TesseraStartScreenViewController,
+        didExpandFolder folder: TileFolder
+    ) {}
+
+    /// По умолчанию закрытие папки не интересует делегата (D17).
+    func startScreen(
+        _ screen: TesseraStartScreenViewController,
+        didCollapseFolder folder: TileFolder
     ) {}
 
     /// По умолчанию смена страницы не интересует делегата.

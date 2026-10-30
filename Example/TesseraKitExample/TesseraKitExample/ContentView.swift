@@ -478,10 +478,16 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
             // появляются custom actions resize/unpin и крестики.
             guard editCoordinator?.isEditing != true else { return }
             tile.action()
-        case .folder(let folder):
-            // Открытие папки — навигация хоста; координатор умеет показать
-            // минимальный экран папки (sheet) сам.
-            editCoordinator?.openFolder(folder)
+        case .folder:
+            // Нативное WP-раскрытие папки выполняет сама сетка (D17).
+            // Чтобы вернуть старое поведение (sheet экрана папки), хост задаёт
+            // gridView.folderTapHandler = { folder in
+            //     editCoordinator?.openFolder(folder); return true
+            // } — true отменяет нативное раскрытие.
+            break
+        case .folderContent:
+            // Панель раскрытой папки — внутренний элемент сетки, тап не нужен.
+            break
         }
     }
 
