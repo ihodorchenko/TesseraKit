@@ -19,6 +19,18 @@
 //  STARTSCREEN-IOS-DESIGN.md.
 //  Задача плана: E4.2-UI (live-контент подключён в E5).
 //
+//  E8.8: переезд соседей при перестановке и resize идёт bounce-кривой
+//  `cubic-bezier(0.175, 0.885, 0.32, 1.1)` (``bounceTimingParameters()``),
+//  0,26 с; при Reduce Motion изменения применяются мгновенно. Кривая панели
+//  папки (0.1, 0.9, 0.2, 1) не меняется.
+//
+//  E8.9: наружу отдаётся геометрия виртуальной сетки для магнитизма —
+//  ``magnetSlotCenters(for:)`` возвращает центры слотов той же размерности, что
+//  и перетаскиваемая плитка (координаты сетки, с учётом `contentOffset`).
+//  Верхняя граница сетки — последняя занятая строка базовой упаковки, которую
+//  даёт `TileLayoutEngine.pack`; при раскрытой папке центры не отдаются, потому
+//  что панель сдвигает строки.
+//
 //  D17 (docs/STATE.md, E7.3) — нативное WP-раскрытие папки: под плиткой папки
 //  (она остаётся видимой) вставляется полноширинная панель
 //  `TileGridItem.folderContent` — отдельная строка сразу после строки, в которой
@@ -105,6 +117,8 @@ import TesseraCore
 ///
 /// - ``frame(forItemID:)`` — рамка плитки в координатах сетки (для наложения
 ///   слоя перетаскивания и расчёта «расступания»);
+/// - ``magnetSlotCenters(for:)`` — центры виртуальных слотов той же
+///   размерности для магнитизма E8.9 (в координатах сетки);
 /// - ``item(at:)`` — хит-тест точки в координатах сетки (под пальцем/курсором);
 /// - ``snapshotView(forItemID:)`` — снимок видимой ячейки для drag; `nil`,
 ///   если ячейка не видна;
@@ -115,7 +129,8 @@ import TesseraCore
 /// - ``setItemHidden(_:forItemID:)`` — скрыть исходную ячейку, не меняя
 ///   раскладку (alpha 0 + исключение из VoiceOver);
 /// - ``update(snapshot:animated:)`` — применить новый снимок с анимацией
-///   resize/reorder (сдвиг соседних плиток анимирует UICollectionView);
+///   resize/reorder (сдвиг соседних плиток анимирует UICollectionView
+///   bounce-кривой E8.8);
 /// - ``invalidateTileLayout(animated:)`` — пересчитать геометрию без смены
 ///   снимка (например, после смены ширины контейнера или настроек сетки);
 /// - ``contentOffset``/``setContentOffset(_:animated:)``/``contentSize``/
@@ -259,6 +274,37 @@ public final class TesseraTileGridView: UIView {
     /// - Returns: Задержка старта анимации в секундах.
     public static func staggerDelay(index: Int) -> TimeInterval {
         TimeInterval(max(0, index)) * folderIconStagger
+    }
+
+    // MARK: - Bounce-кривая перемещения (E8.8)
+
+    /// Длительность переезда соседей при перестановке, секунды (E8.8).
+    ///
+    /// 0,26 с — середина диапазона 0,22–0,28 с из задачи E8.8. Прежние
+    /// движения занимали 0,24 с (пустышка координатора) и ~0,25 с (стандартный
+    /// batch UIKit), поэтому темп drag-превью не меняется — новый только
+    /// профиль скорости, с лёгким перелётом в конце. Раскрытие/закрытие панели
+    /// папки идёт своей длительностью (``folderExpansionDuration``, 0,28 с) и
+    /// своей кривой, эта константа его не затрагивает.
+    static let tileMoveDuration: TimeInterval = 0.26
+
+    /// Кривая переезда соседей — `cubic-bezier(0.175, 0.885, 0.32, 1.1)` (E8.8).
+    ///
+    /// Вторая контрольная точка по `y` больше единицы (`1.1`): кривая
+    /// перелетает цель на несколько процентов и возвращается — лёгкий
+    /// «отскок» из спецификации WP, без резких прыжков. Фабрика общая для
+    /// batch-анимации сетки (``update(snapshot:animated:)``) и переезда
+    /// пустышки в координаторе, иначе соседи и место захвата разъехались бы по
+    /// характеру движения. Объект создаётся на каждый вызов:
+    /// `UICubicTimingParameters` — неизменяемая величина, кешировать её не
+    /// нужно.
+    ///
+    /// - Returns: Параметры кривой для `UIViewPropertyAnimator`.
+    static func bounceTimingParameters() -> UICubicTimingParameters {
+        UICubicTimingParameters(
+            controlPoint1: CGPoint(x: 0.175, y: 0.885),
+            controlPoint2: CGPoint(x: 0.32, y: 1.1)
+        )
     }
 
     /// Идентификатор раскрытой папки; `nil` — все папки закрыты (D17).
@@ -540,6 +586,14 @@ public final class TesseraTileGridView: UIView {
     /// а завершение гарантированно разблокирует скролл.
     private var folderAnimator: UIViewPropertyAnimator?
 
+    /// Аниматор последнего переезда соседей (E8.8).
+    ///
+    /// Удерживается на время анимации, как ``folderAnimator``: batch-обновление
+    /// должно доехать, даже если вызывающий код не держит локальную ссылку.
+    /// Завершение очищает свойство только для своего аниматора — быстрое
+    /// повторное обновление не должно «потерять» более новый.
+    private var tileMoveAnimator: UIViewPropertyAnimator?
+
     /// Элементы, скрытые координатором редактирования.
     ///
     /// Хранятся по идентификатору, а не по индексу: после переупорядочивания
@@ -671,7 +725,9 @@ public final class TesseraTileGridView: UIView {
     ///
     /// Если состав тот же (меняются только размеры и порядок), UICollectionView
     /// анимирует перестановку ячеек, а раскладка переупаковывается через
-    /// инвалидацию с контекстом (§3). При смене состава (pin/unpin) сетка
+    /// инвалидацию с контекстом (§3). Переезд идёт bounce-кривой E8.8
+    /// (``bounceTimingParameters()``): соседи слегка перелетают цель и
+    /// возвращаются, без резких прыжков. При смене состава (pin/unpin) сетка
     /// делает кроссфейд: точечные insert/delete анимирует координатор
     /// редактирования, если ему нужен собственный эффект (E4.4).
     ///
@@ -718,12 +774,30 @@ public final class TesseraTileGridView: UIView {
                 refreshVisibleCells()
             }
 
-            collectionView.performBatchUpdates({
-                self.tileLayout.setItems(self.displayItems, reason: .items)
-                self.applyIndexMoves(from: oldIDs, to: newIDs)
-            }, completion: { [weak self] _ in
-                self?.refreshVisibleCells()
-            })
+            // E8.8: batch-обновление внутри UIViewPropertyAnimator наследует
+            // длительность и кривую — UICollectionView везёт каждую съехавшую
+            // плитку с лёгким «отскоком», а не стандартной кривой UIKit.
+            let animator = UIViewPropertyAnimator(
+                duration: TesseraTileGridView.tileMoveDuration,
+                timingParameters: TesseraTileGridView.bounceTimingParameters()
+            )
+            animator.addAnimations { [weak self] in
+                guard let self else { return }
+                self.collectionView.performBatchUpdates({
+                    self.tileLayout.setItems(self.displayItems, reason: .items)
+                    self.applyIndexMoves(from: oldIDs, to: newIDs)
+                }, completion: { [weak self] _ in
+                    self?.refreshVisibleCells()
+                })
+            }
+            animator.addCompletion { [weak self, weak animator] _ in
+                guard let self, let animator, self.tileMoveAnimator === animator else {
+                    return
+                }
+                self.tileMoveAnimator = nil
+            }
+            tileMoveAnimator = animator
+            animator.startAnimation()
         } else {
             apply(newSnapshot, animated: true)
         }
@@ -926,6 +1000,99 @@ public final class TesseraTileGridView: UIView {
     public func frame(forItemID id: AnyHashable) -> CGRect? {
         guard let contentFrame = tileLayout.frame(forItemID: id) else { return nil }
         return collectionView.convert(contentFrame, to: self)
+    }
+
+    /// Центры виртуальных слотов для плитки заданного размера (E8.9).
+    ///
+    /// Координатор редактирования строит по ним магнитизм: если палец попадает
+    /// в радиус притяжения к ближайшему центру, снимок плавно встаёт в ячейку.
+    /// Возвращаются центры всех ячеек виртуальной сетки, в которые помещается
+    /// плитка `size` (с учётом ужимания под узкую сетку), в координатах сетки.
+    ///
+    /// Сетка считается по текущей геометрии (``columns``, ``contentInsets``,
+    /// ``itemSpacing``, ``contentOffset``) и занятым строкам раскладки: слоты
+    /// перебираются с шагом в один юнит, поэтому центры находятся и над пустыми
+    /// ячейками, но не ниже последней занятой строки базовой упаковки.
+    /// Направление чтения (RTL) на результат не влияет: зеркалирование
+    /// переставляет колонки, но множество центров остаётся тем же.
+    ///
+    /// При раскрытой папке (D17) возвращается пустой массив: панель сдвигает
+    /// строки, виртуальная сетка перестала бы совпадать с фактическими слотами,
+    /// и притягивать снимок «в пустоту» под панелью нельзя.
+    ///
+    /// - Parameter size: Размер перетаскиваемой плитки (D15).
+    /// - Returns: Центры слотов в координатах сетки.
+    public func magnetSlotCenters(for size: TileSize) -> [CGPoint] {
+        // D17: раскрытая панель сдвигает строки — виртуальная сетка по базовой
+        // упаковке перестала бы совпадать с экраном.
+        guard expandedFolderID == nil else { return [] }
+
+        let insets = sanitized(contentInsets)
+        let spacing = sanitized(itemSpacing)
+        let columnCount = columns
+        let contentWidth = bounds.width - insets.left - insets.right
+        let unit = TileLayoutEngine.unit(
+            screenWidth: contentWidth,
+            columns: columnCount,
+            gaps: spacing
+        )
+        guard unit > 0 else { return [] }
+
+        // Верхняя граница виртуальной сетки — последняя занятая строка базовой
+        // упаковки: ниже неё слотов нет. Панели в снимке нет по построению, а
+        // при раскрытой папке метод вышел бы раньше.
+        let packedItems: [(id: AnyHashable, size: TileSize)] = items.map { item in
+            (
+                id: item.id,
+                size: TileLayoutEngine.fittingSize(item.size, columns: columnCount)
+            )
+        }
+        let slots = TileLayoutEngine.pack(
+            items: packedItems,
+            columns: columnCount,
+            unit: unit
+        )
+        let rowCount = slots.reduce(0) { result, slot in
+            max(result, slot.row + slot.unitRows)
+        }
+        guard rowCount > 0 else { return [] }
+
+        return TesseraTileMagnet.slotCenters(
+            for: size,
+            columns: columnCount,
+            unit: unit,
+            gap: spacing,
+            origin: CGPoint(x: insets.left, y: insets.top),
+            rowCount: rowCount
+        ).map { point in
+            collectionView.convert(point, to: self)
+        }
+    }
+
+    /// Санитизирует внешние поля сетки так же, как раскладка (E8.9).
+    ///
+    /// Отрицательные и нечисловые значения трактуются как 0: виртуальная сетка
+    /// притяжения обязана совпадать с фактическими слотами, а раскладка
+    /// считает юнит по уже санитизированным полям.
+    ///
+    /// - Parameter insets: Поля сетки из ``contentInsets``.
+    /// - Returns: Поля без отрицательных и нечисловых значений.
+    private func sanitized(_ insets: UIEdgeInsets) -> UIEdgeInsets {
+        UIEdgeInsets(
+            top: sanitized(insets.top),
+            left: sanitized(insets.left),
+            bottom: sanitized(insets.bottom),
+            right: sanitized(insets.right)
+        )
+    }
+
+    /// Санитизирует одну длину: отрицательная или нечисловая — 0 (E8.9).
+    ///
+    /// - Parameter value: Значение в точках.
+    /// - Returns: Неотрицательное конечное значение.
+    private func sanitized(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return 0 }
+        return max(0, value)
     }
 
     /// Снимок видимой ячейки для перетаскивания (E4.4).
