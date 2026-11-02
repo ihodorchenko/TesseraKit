@@ -41,12 +41,16 @@ import UIKit
 ///
 /// ## Обновление
 ///
-/// - ``PanoramaStyle`` применяется на каждом обновлении: сеттеры ядра
-///   идемпотентны, повторная установка того же стиля не перезагружает секции;
-/// - секции пересобираются только при изменении набора `id` или заголовков:
-///   сравнить поставщиков контента (`TesseraContentProviding`) нельзя, поэтому
-///   смена контента при том же `id` не подхватывается — меняйте `id` секции либо
-///   вызывайте `reload(sections:)` у контроллера напрямую (§3).
+/// - ``PanoramaStyle`` передаётся на каждом обновлении, но ядро сравнивает его
+///   с текущим и пропускает применение того же стиля (E10.13);
+/// - при изменении набора `id` или заголовков секции пересобираются
+///   (`reload(sections:)`, контроллеры с сохранившимся `id` переиспользуются);
+/// - при тех же `id` и заголовках новый контент доносится до уже загруженных
+///   секций на месте (E10.12б): контроллер SwiftUI-секции
+///   (`TesseraSwiftUIContentProvider`) получает новый `rootView`, позиция
+///   прокрутки, текущая секция и `@State` сохраняются. UIKit-поставщик
+///   (`TesseraViewControllerProvider`) обновлять готовый контроллер не умеет —
+///   его состояние меняйте через сам контроллер либо сменой `id` (§3).
 ///
 /// ## Делегат
 ///
@@ -117,8 +121,8 @@ public struct PanoramaView: UIViewControllerRepresentable {
     /// Обновляет секции, стиль и политику снапа существующего контроллера.
     ///
     /// Полная пересборка (`reload`) выполняется только при изменении `id` или
-    /// заголовков; стиль и снап применяются всегда — их сеттеры в ядре
-    /// идемпотентны.
+    /// заголовков; иначе новый контент доносится до загруженных секций на месте
+    /// (E10.12б). Стиль и снап передаются всегда — ядро пропускает тот же стиль.
     ///
     /// - Parameters:
     ///   - uiViewController: Живой ``PanoramaViewController``.
@@ -136,34 +140,9 @@ public struct PanoramaView: UIViewControllerRepresentable {
         uiViewController.style = style
         uiViewController.snapPolicy = snapPolicy
 
-        if Self.sectionsDiffer(uiViewController.sections, sections) {
-            uiViewController.reload(sections: sections)
-        }
-    }
-
-    /// Сравнивает наборы секций по тому, что можно сравнить.
-    ///
-    /// ``PanoramaSection`` не `Equatable`: поставщик контента — протокол с
-    /// фабрикой, у которой нет семантики равенства. Поэтому «то же самое»
-    /// определяется парой `id` + `title`; при одинаковых `id` и заголовках
-    /// пересборка не нужна (см. документацию ``PanoramaView``).
-    ///
-    /// - Parameters:
-    ///   - lhs: Текущие секции контроллера.
-    ///   - rhs: Новые секции из SwiftUI.
-    /// - Returns: `true`, если требуется `reload`.
-    private static func sectionsDiffer(
-        _ lhs: [PanoramaSection],
-        _ rhs: [PanoramaSection]
-    ) -> Bool {
-        guard lhs.count == rhs.count else { return true }
-
-        for (current, updated) in zip(lhs, rhs) {
-            if current.id != updated.id || current.title != updated.title {
-                return true
-            }
-        }
-        return false
+        // Тот же набор id/заголовков — контент на месте, без остановки прокрутки
+        // и сброса показа секции; иначе — reload с переиспользованием по id.
+        uiViewController.updateContent(of: sections)
     }
 
     // MARK: - Координатор

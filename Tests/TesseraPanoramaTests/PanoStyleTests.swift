@@ -6,7 +6,7 @@
 //  Проектный документ: docs/PANORAMA-IOS-DESIGN.md §3 «Концептуальная
 //  архитектура» (`PanoramaStyle`: ширина секции с peek, множитель параллакса,
 //  шрифты/цвета заголовков, поведение фона) и §4 «Геометрия и математика ядра»
-//  (peek 16…64 pt; parallaxFactor типично 0.4–0.6).
+//  (peek 16…64 pt; `0 < parallaxFactor < 1`, типично 0.4–0.6).
 //
 //  Проверяются: системные дефолты, клампы `peek` и `parallaxFactor` в
 //  инициализаторе и на каждой записи, защита от `NaN`/бесконечностей и
@@ -39,6 +39,11 @@ final class PanoStyleTests: XCTestCase {
 
         XCTAssertEqual(style.headerColor, .label)
         XCTAssertEqual(style.headerActiveColor, .systemBlue)
+        XCTAssertEqual(
+            style.contentInsetAdjustmentBehavior,
+            .never,
+            "§8: кадр полосы секций задаёт панорама — по умолчанию без подстройки"
+        )
 
         if case .none = style.backgroundBehavior {
             // Ожидаемый дефолт: фон не рисуется, пока картинка не задана (§9).
@@ -108,21 +113,28 @@ final class PanoStyleTests: XCTestCase {
         XCTAssertEqual(style.peek, 48, accuracy: 0.000_001)
     }
 
-    // MARK: - Кламп parallaxFactor (0.4...0.6), §4
+    // MARK: - Кламп parallaxFactor в (0, 1), §4 (E9.7)
 
-    /// `parallaxFactor` зажимается в `0.4...0.6` в инициализаторе: нулевой
+    /// §4: `0 < parallaxFactor < 1`, типично 0.4–0.6. Значения внутри открытого
+    /// интервала сохраняются как есть (типичный диапазон — не граница), а
+    /// границы `0`/`1` и всё за ними зажимаются внутрь: `0.01...0.99`. Нулевой
     /// фактор недостижим стилем — отключение параллакса прерогатива
     /// Reduce Motion (§7).
     func testParallaxFactorClampsAtInitialization() {
         let cases: [(input: CGFloat, expected: CGFloat)] = [
-            (-1, 0.4),
-            (0, 0.4),
-            (0.39, 0.4),
+            (-1, 0.01),
+            (0, 0.01),
+            (0.01, 0.01),
+            (0.2, 0.2),
+            (0.39, 0.39),
             (0.4, 0.4),
             (0.5, 0.5),
             (0.6, 0.6),
-            (0.61, 0.6),
-            (1, 0.6),
+            (0.61, 0.61),
+            (0.8, 0.8),
+            (0.99, 0.99),
+            (1, 0.99),
+            (3, 0.99),
         ]
 
         for entry in cases {
@@ -130,8 +142,17 @@ final class PanoStyleTests: XCTestCase {
                 PanoramaStyle(parallaxFactor: entry.input).parallaxFactor,
                 entry.expected,
                 accuracy: 0.000_001,
-                "parallaxFactor \(entry.input) должен зажиматься в 0.4...0.6"
+                "parallaxFactor \(entry.input) должен лежать в (0, 1) по §4"
             )
+        }
+    }
+
+    /// Результат клампа всегда строго внутри `(0, 1)` — ровно условие §4.
+    func testParallaxFactorStaysInsideOpenUnitInterval() {
+        for value: CGFloat in [-.greatestFiniteMagnitude, -1, 0, 1e-9, 0.5, 1 - 1e-9, 1, 2, .greatestFiniteMagnitude] {
+            let factor = PanoramaStyle(parallaxFactor: value).parallaxFactor
+            XCTAssertGreaterThan(factor, 0, "parallaxFactor \(value) → \(factor)")
+            XCTAssertLessThan(factor, 1, "parallaxFactor \(value) → \(factor)")
         }
     }
 
@@ -152,10 +173,13 @@ final class PanoStyleTests: XCTestCase {
         var style = PanoramaStyle()
 
         style.parallaxFactor = 0
-        XCTAssertEqual(style.parallaxFactor, 0.4, accuracy: 0.000_001)
+        XCTAssertEqual(style.parallaxFactor, 0.01, accuracy: 0.000_001)
 
         style.parallaxFactor = 0.7
-        XCTAssertEqual(style.parallaxFactor, 0.6, accuracy: 0.000_001)
+        XCTAssertEqual(style.parallaxFactor, 0.7, accuracy: 0.000_001)
+
+        style.parallaxFactor = 1.5
+        XCTAssertEqual(style.parallaxFactor, 0.99, accuracy: 0.000_001)
 
         style.parallaxFactor = 0.45
         XCTAssertEqual(style.parallaxFactor, 0.45, accuracy: 0.000_001)

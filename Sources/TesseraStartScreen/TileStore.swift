@@ -293,6 +293,15 @@ public final class TileStore: ObservableObject {
     /// Последняя ошибка сохранения/загрузки — для диагностики.
     public private(set) var lastPersistenceError: Error?
 
+    /// Резервная копия нечитаемого файла состояния, отложенная последним
+    /// ``load()`` (E10.3d), — для диагностики и ручного восстановления.
+    ///
+    /// Если файл не декодируется или записан более новой схемой, `load()`
+    /// переименовывает его в `<имя>.unreadable-<ISO-дата>.json` рядом с
+    /// оригиналом, чтобы первое автосохранение не затёрло данные схемой текущей
+    /// версии. `nil` — нечитаемых файлов не встречалось.
+    public private(set) var lastUnreadableFileBackupURL: URL?
+
     /// Каталог, в котором лежит JSON-файл состояния.
     public let directoryURL: URL
 
@@ -325,6 +334,18 @@ public final class TileStore: ObservableObject {
     /// закрепляются автоматически (иначе «откреплённые» пользователем ярлыки
     /// возвращались бы при каждом запуске).
     private var restoredFromDisk = false
+
+    /// Регистрировал ли хост каталог (``setCatalog(_:)``): только тогда
+    /// ``load()`` чистит папки по каталогу (E10.3c). До регистрации каталога
+    /// любой ярлык «неизвестен», и чистка удалила бы всё содержимое папок.
+    private var catalogRegistered = false
+
+    /// Нечитаемый файл состояния не удалось отложить в резервную копию:
+    /// ``save()`` повторит попытку перед записью и не затрёт файл (E10.3d).
+    private var unreadableFilePending = false
+
+    /// Источник текущей даты для имени резервной копии (подменяется в тестах).
+    var currentDate: () -> Date = { Date() }
 
     /// Версия схемы JSON-файла.
     private static let schemaVersion = 1
@@ -381,7 +402,11 @@ public final class TileStore: ObservableObject {
     /// запуске (файла состояния ещё нет) новые ярлыки сразу закрепляются в конце
     /// сетки; после восстановления файла — нет, чтобы не воскрешать откреплённые.
     /// Ярлыки, пропавшие из каталога, убираются из папок, а опустевшие папки
-    /// распускаются: удалённое приложение не оставляет «мёртвых» плиток.
+    /// распускаются: удалённое приложение не оставляет «мёртвых» плиток. Та же
+    /// чистка выполняется после ``load()``, если каталог уже зарегистрирован
+    /// (E10.3c), поэтому порядок вызовов `setCatalog`/`load` на папки не влияет.
+    /// Ярлыки вне каталога, стоящие прямо на сетке, не удаляются: они остаются
+    /// невидимыми ключами и держат своё место до возвращения в каталог.
     ///
     /// - Parameter descriptors: Каталог ярлыков в начальном порядке.
     public func setCatalog(_ descriptors: [TileDescriptor]) {
@@ -395,6 +420,7 @@ public final class TileStore: ObservableObject {
         }
 
         catalog = unique
+        catalogRegistered = true
         catalogIndex.removeAll(keepingCapacity: true)
         for (index, descriptor) in unique.enumerated() {
             catalogIndex[TileStore.storageKey(for: descriptor.id)] = index
@@ -473,23 +499,60 @@ public final class TileStore: ObservableObject {
 
     /// Закрепляет ярлык на сетке (§6: pin из списка приложений).
     ///
+    /// Вызывает ``pinTile(_:at:columns:)`` без канонизации порядка: индекс
+    /// трактуется в пространстве видимого снимка (E10.3a), см. там.
+    ///
     /// - Parameters:
     ///   - tileID: Идентификатор ярлыка из каталога.
-    ///   - index: Позиция в сетке; `nil` — в конец.
+    ///   - index: Позиция в видимом порядке снимка (`snapshot().items`);
+    ///     `nil` — в конец.
     /// - Returns: `true`, если состояние изменилось.
     @discardableResult
     public func pin(_ tileID: AnyHashable, at index: Int? = nil) -> Bool {
-        let key = TileStore.storageKey(for: tileID)
-        guard catalogIndex[key] != nil, !gridOrder.contains(key) else { return false }
-        guard folderContaining(tileID) == nil else { return false }
+        pinTile(tileID, at: index, columns: nil) != nil
+    }
 
-        if sizes[key] == nil, let index = catalogIndex[key] {
-            sizes[key] = catalog[index].size
+    /// Закрепляет ярлык на сетке и возвращает его фактическую позицию
+    /// (E10.3a/E10.3b/E10.15).
+    ///
+    /// Индекс — позиция в **видимом** порядке снимка (`snapshot().items`,
+    /// `layoutItems`), а не во внутреннем порядке хранилища: в нём бывают
+    /// невидимые ключи — ярлыки, которых нет в текущем каталоге (их место
+    /// запоминается, ``load()``). Ярлык становится видимым элементом с
+    /// индексом `index` (значение зажимается в `0...count`); невидимые ключи
+    /// сохраняют свои места.
+    ///
+    /// Если передано `columns`, видимый порядок затем приводится к порядку
+    /// чтения раскладки (``canonicalizeVisibleOrder(columns:)``) — всё одной
+    /// операцией: `onChange` и автосохранение срабатывают один раз.
+    ///
+    /// - Parameters:
+    ///   - tileID: Идентификатор ярлыка из каталога.
+    ///   - index: Позиция в видимом порядке; `nil` — в конец.
+    ///   - columns: Число колонок реальной сетки для канонизации порядка;
+    ///     `nil` — без канонизации.
+    /// - Returns: Фактический индекс ярлыка в видимом порядке после операции
+    ///   или `nil`, если ярлык нельзя закрепить (нет в каталоге, уже на сетке
+    ///   или в папке).
+    @discardableResult
+    public func pinTile(_ tileID: AnyHashable, at index: Int? = nil, columns: Int?) -> Int? {
+        let key = TileStore.storageKey(for: tileID)
+        guard let catalogPosition = catalogIndex[key], !gridOrder.contains(key) else { return nil }
+        guard folderContaining(tileID) == nil else { return nil }
+
+        if sizes[key] == nil {
+            sizes[key] = catalog[catalogPosition].size
         }
-        let position = index.map { min(max($0, 0), gridOrder.count) } ?? gridOrder.count
-        gridOrder.insert(key, at: position)
+
+        var visible = visibleGridKeys()
+        let position = index.map { min(max($0, 0), visible.count) } ?? visible.count
+        visible.insert(key, at: position)
+        applyVisibleOrder(visible)
+        if let columns = columns {
+            canonicalizeOrder(columns: columns)
+        }
         didChange()
-        return true
+        return visibleGridKeys().firstIndex(of: key)
     }
 
     /// Открепляет ярлык: убирает его с сетки, но оставляет в каталоге
@@ -605,7 +668,16 @@ public final class TileStore: ObservableObject {
         } else {
             sizes[key] = size
         }
-        applyVisibleOrder(placement.map { TileStore.storageKey(for: $0.id) })
+        // Набор видимых ключей не меняется — меняется только их порядок. Если
+        // движок вернул другой набор (не должен), порядок оставляем прежним:
+        // лучше старая раскладка, чем потерянный элемент.
+        let placementKeys = placement.map { TileStore.storageKey(for: $0.id) }
+        if Set(placementKeys) == Set(visibleGridKeys()) {
+            applyVisibleOrder(placementKeys)
+        }
+        // Порядок `resizePlacement` даёт нужную раскладку, но может не совпадать
+        // с порядком чтения (E10.15) — приводим, в той же операции.
+        canonicalizeOrder(columns: columns)
         didChange()
         return true
     }
@@ -614,25 +686,167 @@ public final class TileStore: ObservableObject {
 
     /// Переставляет элемент сетки (ярлык или папку).
     ///
+    /// Вызывает ``moveItem(_:toIndex:columns:)`` без канонизации порядка:
+    /// индекс трактуется в пространстве видимого снимка (E10.3a), см. там.
+    ///
     /// Это операция раскладки, а не группировки: D14 требует одобрения только
     /// для создания папки, добавления ярлыка и перемещения между папками,
     /// поэтому перестановка на сетке выполняется без функции одобрения.
     ///
     /// - Parameters:
     ///   - itemID: Идентификатор ярлыка или папки на сетке.
-    ///   - index: Целевая позиция; значения за границами зажимаются.
-    /// - Returns: `true`, если позиция изменилась.
+    ///   - index: Целевая позиция в видимом порядке снимка; значения за
+    ///     границами зажимаются.
+    /// - Returns: `true`, если порядок изменился.
     @discardableResult
     public func move(_ itemID: AnyHashable, toIndex index: Int) -> Bool {
-        let key = TileStore.storageKey(for: itemID)
-        guard let from = gridOrder.firstIndex(of: key), !gridOrder.isEmpty else { return false }
-        let to = min(max(index, 0), gridOrder.count - 1)
-        guard from != to else { return false }
+        performMove(itemID, toIndex: index, columns: nil).changed
+    }
 
-        gridOrder.remove(at: from)
-        gridOrder.insert(key, at: to)
+    /// Переставляет элемент сетки и возвращает его фактическую позицию
+    /// (E10.3a/E10.3b/E10.15).
+    ///
+    /// Индекс — позиция в **видимом** порядке снимка (`snapshot().items`,
+    /// `layoutItems`), в тех же координатах, что превью перетаскивания: элемент
+    /// вынимается из видимого порядка и становится видимым элементом с
+    /// индексом `index` (значение зажимается в `0..<count`; за концом — после
+    /// последнего видимого). Невидимые ключи — ярлыки, которых нет в текущем
+    /// каталоге, — сохраняют свои места во внутреннем порядке и в файле.
+    ///
+    /// Если передано `columns`, видимый порядок затем приводится к порядку
+    /// чтения раскладки (``canonicalizeVisibleOrder(columns:)``): строгая
+    /// компактная упаковка может поставить более позднюю плитку выше более
+    /// ранней, и без канонизации порядок модели расходится с экраном и с
+    /// VoiceOver. Перестановка и канонизация — одна операция: `onChange` и
+    /// автосохранение срабатывают один раз.
+    ///
+    /// - Parameters:
+    ///   - itemID: Идентификатор ярлыка или папки на сетке.
+    ///   - index: Целевая позиция в видимом порядке.
+    ///   - columns: Число колонок реальной сетки для канонизации порядка;
+    ///     `nil` — без канонизации.
+    /// - Returns: Фактический индекс элемента в видимом порядке после операции
+    ///   (после зажима и канонизации; совпадает с прежним, если порядок не
+    ///   изменился) или `nil`, если элемента нет на видимой сетке.
+    @discardableResult
+    public func moveItem(_ itemID: AnyHashable, toIndex index: Int, columns: Int?) -> Int? {
+        performMove(itemID, toIndex: index, columns: columns).index
+    }
+
+    /// Приводит видимый порядок сетки к порядку чтения раскладки (E10.15).
+    ///
+    /// Нужна после операций, которые не знают числа колонок (``unpin(_:)``,
+    /// операции с папками, ``setCatalog(_:)``, ``load()``): удаление или замена
+    /// элемента переупаковывает сетку, и более поздняя плитка может подняться
+    /// выше более ранней. Канонизация переставляет только видимые элементы;
+    /// невидимые ключи сохраняют места. Если порядок уже канонический, ничего
+    /// не происходит (нет уведомления и записи).
+    ///
+    /// - Parameter columns: Число колонок реальной сетки, больше нуля.
+    /// - Returns: `true`, если порядок изменился.
+    @discardableResult
+    public func canonicalizeVisibleOrder(columns: Int) -> Bool {
+        guard canonicalizeOrder(columns: columns) else { return false }
         didChange()
         return true
+    }
+
+    /// Порядок чтения раскладки: идентификаторы, отсортированные по строке, а
+    /// затем по колонке слотов `TileLayoutEngine.pack` (E10.15).
+    ///
+    /// Это порядок, в котором пользователь видит плитки и в котором их читает
+    /// VoiceOver. В RTL порядок тот же (логический): зеркалит только раскладка.
+    /// Элемент, который не помещается в сетку (шире `columns`) и поэтому не
+    /// получает слота, остаётся сразу за своим предшественником во входном
+    /// порядке.
+    ///
+    /// Функция чистая и делает один проход: если входной порядок далёк от
+    /// канонического, упаковка в новом порядке теоретически может отличаться;
+    /// хранилище при канонизации повторяет проход до неподвижной точки.
+    ///
+    /// - Parameters:
+    ///   - items: Пары «идентификатор — размер» в порядке модели
+    ///     (например, `snapshot().layoutItems`).
+    ///   - columns: Число колонок, больше нуля.
+    /// - Returns: Идентификаторы в порядке чтения; при `columns <= 0` — входной порядок.
+    public static func readingOrder(
+        of items: [(id: AnyHashable, size: TileSize)],
+        columns: Int
+    ) -> [AnyHashable] {
+        readingPermutation(sizes: items.map { $0.size }, columns: columns).map { items[$0].id }
+    }
+
+    /// Перестановка индексов входа в порядок чтения (см. ``readingOrder(of:columns:)``).
+    ///
+    /// - Parameters:
+    ///   - sizes: Размеры элементов в порядке модели.
+    ///   - columns: Число колонок.
+    /// - Returns: Индексы входа в порядке чтения.
+    static func readingPermutation(sizes: [TileSize], columns: Int) -> [Int] {
+        guard columns > 0 else { return Array(sizes.indices) }
+        let slots = TileLayoutEngine.pack(
+            items: sizes.enumerated().map { (id: AnyHashable($0.offset), size: $0.element) },
+            columns: columns,
+            unit: 1
+        )
+        var anchors: [Int: (row: Int, column: Int)] = [:]
+        for slot in slots {
+            guard let index = slot.id.base as? Int else { continue }
+            anchors[index] = (slot.row, slot.column)
+        }
+
+        // Ключ сортировки (строка, колонка, номер за предшественником): элемент
+        // без слота наследует якорь предыдущего и встаёт сразу за ним.
+        var keyed: [(row: Int, column: Int, tail: Int, index: Int)] = []
+        keyed.reserveCapacity(sizes.count)
+        var last = (row: -1, column: -1)
+        var tail = 0
+        for index in sizes.indices {
+            if let anchor = anchors[index] {
+                last = anchor
+                tail = 0
+            } else {
+                tail += 1
+            }
+            keyed.append((last.row, last.column, tail, index))
+        }
+        keyed.sort {
+            if $0.row != $1.row { return $0.row < $1.row }
+            if $0.column != $1.column { return $0.column < $1.column }
+            return $0.tail < $1.tail
+        }
+        return keyed.map { $0.index }
+    }
+
+    /// Перестановка с канонизацией: общая часть ``move(_:toIndex:)`` и
+    /// ``moveItem(_:toIndex:columns:)``.
+    ///
+    /// - Parameters:
+    ///   - itemID: Идентификатор элемента.
+    ///   - index: Целевая позиция в видимом порядке.
+    ///   - columns: Колонки для канонизации; `nil` — без неё.
+    /// - Returns: Изменился ли порядок и фактический видимый индекс элемента.
+    private func performMove(
+        _ itemID: AnyHashable,
+        toIndex index: Int,
+        columns: Int?
+    ) -> (changed: Bool, index: Int?) {
+        let key = TileStore.storageKey(for: itemID)
+        var visible = visibleGridKeys()
+        guard let from = visible.firstIndex(of: key) else { return (false, nil) }
+
+        visible.remove(at: from)
+        let to = min(max(index, 0), visible.count)
+        visible.insert(key, at: to)
+
+        var changed = applyVisibleOrder(visible)
+        if let columns = columns, canonicalizeOrder(columns: columns) {
+            changed = true
+        }
+        if changed {
+            didChange()
+        }
+        return (changed, visibleGridKeys().firstIndex(of: key))
     }
 
     // MARK: - Папки (D14: только через одобрение хоста)
@@ -777,8 +991,16 @@ public final class TileStore: ObservableObject {
     /// Каталог создаётся при необходимости. Запись атомарная: файл либо старый,
     /// либо новый целиком — оборванный запуск не оставит половину раскладки.
     ///
+    /// Если ``load()`` нашёл нечитаемый файл и не смог отложить его в
+    /// резервную копию, запись сначала повторяет эту попытку и при неудаче
+    /// бросает ошибку: нечитаемый файл не затирается (E10.3d).
+    ///
     /// - Throws: Ошибку файловой системы или кодирования JSON.
     public func save() throws {
+        if unreadableFilePending {
+            try backUpUnreadableFile()
+        }
+
         let document = TileStoreDocument(
             version: TileStore.schemaVersion,
             items: makeDocumentItems(),
@@ -800,25 +1022,100 @@ public final class TileStore: ObservableObject {
     ///
     /// Восстанавливаются порядок сетки, размеры, папки и закрепления; каталог
     /// ярлыков (действия) остаётся тем, что зарегистрировал хост. Ярлыки из
-    /// файла, которых нет в каталоге, сохраняются в модели, но не попадают в
-    /// снимок до регистрации; папки с неизвестными ярлыками остаются.
+    /// файла, которых нет в каталоге, стоящие прямо на сетке, сохраняются в
+    /// модели невидимыми ключами: в снимок они не попадают, но держат место до
+    /// регистрации. Если каталог уже зарегистрирован, папки чистятся по нему,
+    /// как в ``setCatalog(_:)``: неизвестные ярлыки из папок убираются, папка
+    /// без единого ярлыка каталога распускается (E10.3c). Папка, которая есть
+    /// в файле, но отсутствует в порядке сетки, не теряется — она встаёт в
+    /// конец сетки.
     ///
     /// Если файла нет — ничего не происходит (первый запуск). Ошибка чтения не
-    /// меняет текущее состояние и пробрасывается вызывающему.
+    /// меняет текущее состояние и пробрасывается вызывающему. Если файл
+    /// прочитан, но не декодируется или записан более новой схемой, он до
+    /// любой записи переименовывается в резервную копию
+    /// `<имя>.unreadable-<ISO-дата>.json` рядом (``lastUnreadableFileBackupURL``):
+    /// хранилище продолжает работу с текущим состоянием, а автосохранение
+    /// пишет новый файл, не затирая нечитаемый (E10.3d).
     ///
     /// - Throws: Ошибку чтения/декодирования или ``TileStoreError``.
     public func load() throws {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
 
+        // Ошибка ввода-вывода (нет доступа и т. п.) может быть временной:
+        // файл не трогаем, просто пробрасываем.
         let data = try Data(contentsOf: fileURL)
-        let document = try JSONDecoder().decode(TileStoreDocument.self, from: data)
-        guard document.version <= TileStore.schemaVersion else {
-            throw TileStoreError.unsupportedSchemaVersion(document.version)
+
+        let document: TileStoreDocument
+        do {
+            document = try JSONDecoder().decode(TileStoreDocument.self, from: data)
+            guard document.version <= TileStore.schemaVersion else {
+                throw TileStoreError.unsupportedSchemaVersion(document.version)
+            }
+        } catch {
+            // Содержимое прочитано, но понять его нельзя: откладываем файл в
+            // резервную копию до того, как первое автосохранение запишет схему
+            // текущей версии поверх.
+            lastPersistenceError = error
+            unreadableFilePending = true
+            try? backUpUnreadableFile()
+            throw error
         }
 
         apply(document)
+        if catalogRegistered {
+            pruneFoldersAgainstCatalog()
+        }
         restoredFromDisk = true
         notifyChange()
+    }
+
+    /// Переименовывает нечитаемый файл состояния в резервную копию (E10.3d).
+    ///
+    /// Имя — `<имя>.unreadable-<ISO-дата>.json` в том же каталоге (двоеточия
+    /// времени заменены дефисами). Переименование в пределах каталога атомарно;
+    /// существующая копия не перезаписывается — к имени добавляется `-2`, `-3`…
+    /// Если файла уже нет, откладывать нечего.
+    ///
+    /// - Throws: Ошибку файловой системы, если файл не удалось переименовать.
+    private func backUpUnreadableFile() throws {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            unreadableFilePending = false
+            return
+        }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let stamp = formatter.string(from: currentDate()).replacingOccurrences(of: ":", with: "-")
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        let fileExtension = fileURL.pathExtension.isEmpty ? "json" : fileURL.pathExtension
+
+        var lastError: Error?
+        for attempt in 1...100 {
+            let suffix = attempt == 1 ? "" : "-\(attempt)"
+            let backupURL = directoryURL.appendingPathComponent(
+                "\(baseName).unreadable-\(stamp)\(suffix).\(fileExtension)",
+                isDirectory: false
+            )
+            guard !fileManager.fileExists(atPath: backupURL.path) else { continue }
+            do {
+                // `moveItem` не перезаписывает существующий файл: если копию
+                // успели создать между проверкой и переименованием, пробуем
+                // следующее имя.
+                try fileManager.moveItem(at: fileURL, to: backupURL)
+                lastUnreadableFileBackupURL = backupURL
+                unreadableFilePending = false
+                return
+            } catch {
+                lastError = error
+                guard fileManager.fileExists(atPath: fileURL.path) else {
+                    unreadableFilePending = false
+                    return
+                }
+            }
+        }
+        throw lastError ?? CocoaError(.fileWriteFileExists)
     }
 
     /// Применяет прочитанный документ к модели.
@@ -844,10 +1141,14 @@ public final class TileStore: ObservableObject {
                 )
             }
 
-        // Ярлык принадлежит максимум одной папке: первый по порядку файла побеждает.
+        // Ярлык принадлежит максимум одной папке: первый по порядку файла
+        // побеждает. Папка не может лежать в папке — ключи папок отбрасываются.
+        let recordKeys = Set(folderRecords.map { $0.key })
         var claimed = Set<String>()
         for index in folderRecords.indices {
-            folderRecords[index].tileKeys = folderRecords[index].tileKeys.filter { claimed.insert($0).inserted }
+            folderRecords[index].tileKeys = folderRecords[index].tileKeys.filter {
+                !recordKeys.contains($0) && claimed.insert($0).inserted
+            }
         }
 
         // Пустые папки не имеют смысла на сетке — распускаем.
@@ -879,6 +1180,14 @@ public final class TileStore: ObservableObject {
         // Инвариант: ярлык из папки не дублируется на сетке.
         let tilesInFolders = Set(folderRecords.flatMap { $0.tileKeys })
         order.removeAll { tilesInFolders.contains($0) }
+
+        // «Сиротские» папки: есть в `folders`, но не в порядке сетки. Без места
+        // на сетке их ярлыки пропали бы из снимка и из списка откреплённых —
+        // ставим такие папки в конец сетки в порядке файла (E10.3c).
+        let placed = Set(order)
+        for record in folderRecords where !placed.contains(record.key) {
+            order.append(record.key)
+        }
 
         gridOrder = order
     }
@@ -929,38 +1238,109 @@ public final class TileStore: ObservableObject {
         gridOrder.removeAll { $0 == key }
     }
 
-    /// Применяет новый порядок видимых элементов, не двигая невидимые (E8.7).
+    /// Виден ли ключ сетки в снимке: папка или ярлык из текущего каталога.
     ///
-    /// `visibleKeys` — идентификаторы элементов снимка в новом порядке. В
-    /// `gridOrder` могут быть ключи, которых в снимке нет: ярлыки, ещё не
-    /// зарегистрированные в каталоге (``load()`` их запоминает). Их позиция в
-    /// файле состояния не должна меняться от resize'а другого элемента,
-    /// поэтому они возвращаются на прежние индексы, а видимые элементы
-    /// сохраняют новый относительный порядок.
+    /// Остальные ключи `gridOrder` — невидимые: ярлыки, которых нет в
+    /// каталоге (``load()`` запоминает их место до регистрации).
     ///
-    /// Если наборы ключей не совпадают (дубликаты, чужой идентификатор),
-    /// порядок не меняется: лучше оставить прежнюю раскладку, чем потерять
-    /// ярлык из `gridOrder`.
+    /// - Parameter key: Канонический ключ из `gridOrder`.
+    /// - Returns: `true`, если элемент попадает в ``snapshot()``.
+    private func isVisibleGridKey(_ key: String) -> Bool {
+        catalogIndex[key] != nil || folderRecords.contains { $0.key == key }
+    }
+
+    /// Ключи видимых элементов сетки в порядке снимка (E10.3a).
     ///
-    /// - Parameter visibleKeys: Канонические ключи элементов снимка в новом порядке.
-    private func applyVisibleOrder(_ visibleKeys: [String]) {
+    /// Индексы публичных операций порядка (``moveItem(_:toIndex:columns:)``,
+    /// ``pinTile(_:at:columns:)``) — индексы этого массива: он совпадает с
+    /// `snapshot().items` и `layoutItems`.
+    ///
+    /// - Returns: Канонические ключи видимых элементов.
+    private func visibleGridKeys() -> [String] {
+        let folderKeys = Set(folderRecords.map { $0.key })
+        return gridOrder.filter { catalogIndex[$0] != nil || folderKeys.contains($0) }
+    }
+
+    /// Применяет новый порядок видимых элементов, не двигая невидимые
+    /// (E8.7, E10.3a).
+    ///
+    /// `visibleKeys` — ключи элементов снимка в новом порядке; в нём может
+    /// быть новый ключ (закрепляемый ярлык). В `gridOrder` бывают ключи,
+    /// которых в снимке нет: ярлыки, ещё не зарегистрированные в каталоге
+    /// (``load()`` их запоминает). Их место не должно меняться от операции с
+    /// другим элементом, поэтому они остаются на прежних индексах `gridOrder`,
+    /// а видимые элементы занимают остальные позиции в новом порядке. Эту
+    /// политику разделяют resize, перестановка, закрепление и канонизация.
+    ///
+    /// Если в `visibleKeys` есть дубликаты или невидимый ключ, порядок не
+    /// меняется: лучше оставить прежнюю раскладку, чем потерять или задвоить
+    /// ключ в `gridOrder`. Проверка полноты набора — на вызывающем.
+    ///
+    /// - Parameter visibleKeys: Канонические ключи видимых элементов в новом порядке.
+    /// - Returns: `true`, если `gridOrder` изменился.
+    @discardableResult
+    private func applyVisibleOrder(_ visibleKeys: [String]) -> Bool {
         let visibleSet = Set(visibleKeys)
-        guard visibleSet.count == visibleKeys.count else { return }
+        guard visibleSet.count == visibleKeys.count else { return false }
+
+        let hidden = gridOrder.enumerated().filter { !isVisibleGridKey($0.element) }
+        guard !hidden.contains(where: { visibleSet.contains($0.element) }) else { return false }
 
         var result = visibleKeys
-        for (index, key) in gridOrder.enumerated() where !visibleSet.contains(key) {
+        for (index, key) in hidden {
             result.insert(key, at: min(index, result.count))
         }
 
-        guard result.count == gridOrder.count, Set(result) == Set(gridOrder) else { return }
+        guard result != gridOrder else { return false }
         gridOrder = result
+        return true
+    }
+
+    /// Приводит видимый порядок к порядку чтения раскладки без уведомления
+    /// (E10.15).
+    ///
+    /// Упаковка в порядке чтения теоретически может дать другие слоты, поэтому
+    /// проход повторяется до неподвижной точки (на практике хватает одного):
+    /// в результате `pack(layoutItems)` даёт слоты, отсортированные по
+    /// (строка, колонка) в порядке снимка. Невидимые ключи сохраняют места
+    /// (``applyVisibleOrder(_:)``). Уведомление и запись — на вызывающем, чтобы
+    /// операция с канонизацией оставалась одним изменением.
+    ///
+    /// - Parameter columns: Число колонок; `<= 0` — ничего не делать.
+    /// - Returns: `true`, если `gridOrder` изменился.
+    @discardableResult
+    private func canonicalizeOrder(columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        let folderSizes = Dictionary(folderRecords.map { ($0.key, $0.size) }, uniquingKeysWith: { first, _ in first })
+
+        var keys = visibleGridKeys()
+        let sizesByKey: [String: TileSize] = Dictionary(uniqueKeysWithValues: keys.map { key in
+            if let size = folderSizes[key] { return (key, size) }
+            let fallback = catalogIndex[key].map { catalog[$0].size } ?? .medium
+            return (key, sizes[key] ?? fallback)
+        })
+
+        for _ in 0...keys.count {
+            let permutation = TileStore.readingPermutation(
+                sizes: keys.map { sizesByKey[$0] ?? .medium },
+                columns: columns
+            )
+            let reordered = permutation.map { keys[$0] }
+            guard reordered != keys else { break }
+            keys = reordered
+        }
+        return applyVisibleOrder(keys)
     }
 
     /// Убирает из папок ярлыки, которых больше нет в каталоге, и распускает
     /// опустевшие папки.
     ///
-    /// Вызывается при перерегистрации каталога: удалённое приложение не должно
-    /// оставлять «мёртвые» идентификаторы в папках.
+    /// Вызывается при перерегистрации каталога и после ``load()`` при
+    /// зарегистрированном каталоге (E10.3c): удалённое приложение не должно
+    /// оставлять «мёртвые» идентификаторы в папках, а папка без единого ярлыка
+    /// каталога — пустую плитку на сетке. Политика: каталог авторитетен для
+    /// содержимого папок (неизвестные ярлыки из них удаляются), а ярлыки вне
+    /// каталога прямо на сетке остаются невидимыми ключами.
     private func pruneFoldersAgainstCatalog() {
         for index in folderRecords.indices {
             folderRecords[index].tileKeys.removeAll { catalogIndex[$0] == nil }

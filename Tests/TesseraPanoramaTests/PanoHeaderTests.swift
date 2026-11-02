@@ -292,6 +292,135 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertEqual(labels.map(\.alpha), [1, 0, 0])
         XCTAssertTrue(labels.allSatisfy { $0.transform == .identity })
     }
+
+    // MARK: - Цвет активного заголовка (E9.7)
+
+    /// Акцентная копия метки: единственная `UILabel` внутри метки заголовка.
+    private func accentLabel(of label: UILabel) -> UILabel? {
+        label.subviews.compactMap { $0 as? UILabel }.first
+    }
+
+    /// Вес акцента — «активность» секции `max(0, 1 − |i − t|)`: совпадает с
+    /// альфой фазы, линейно меняется между целыми `t`.
+    func testActiveColorWeightInterpolatesByProgress() {
+        let cases: [(index: Int, t: CGFloat, weight: CGFloat)] = [
+            (0, 0, 1), (1, 0, 0), (1, 1, 1),
+            (0, 0.25, 0.75), (1, 0.25, 0.25),
+            (0, 0.5, 0.5), (1, 0.5, 0.5),
+            (2, 0.5, 0), (0, 1, 0),
+        ]
+        for entry in cases {
+            XCTAssertEqual(
+                TesseraPanoHeaderView.activeColorWeight(index: entry.index, progress: entry.t),
+                entry.weight,
+                accuracy: 0.000_001,
+                "секция \(entry.index), t = \(entry.t)"
+            )
+        }
+    }
+
+    /// `activeTextColor` задан: у каждой метки есть акцентная копия этого цвета
+    /// с тем же текстом, её альфа — вес акцента по `t`, а основная метка
+    /// остаётся цвета `textColor`. На целом `t` активный заголовок целиком
+    /// в акценте, на середине перехода — пополам у обоих соседей.
+    func testActiveColorIsAppliedAndInterpolatedByProgress() throws {
+        let header = makeHeader()
+        header.style = TesseraPanoHeaderView.Style(textColor: .white, activeTextColor: .systemYellow)
+        header.layoutIfNeeded()
+
+        let labels = headerLabels(in: header)
+        XCTAssertEqual(labels.count, 3, "акцентные копии не должны быть соседями меток")
+        let accents = try labels.map { try XCTUnwrap(accentLabel(of: $0)) }
+        for (label, accent) in zip(labels, accents) {
+            XCTAssertEqual(label.textColor, .white)
+            XCTAssertEqual(accent.textColor, .systemYellow)
+            XCTAssertEqual(accent.text, label.text)
+            XCTAssertEqual(accent.frame, label.bounds)
+            XCTAssertFalse(accent.isAccessibilityElement)
+        }
+
+        header.apply(progress: 1, activeIndex: 1)
+        XCTAssertEqual(accents.map(\.alpha), [0, 1, 0])
+
+        header.apply(progress: 0.5, activeIndex: 0)
+        XCTAssertEqual(accents[0].alpha, 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(accents[1].alpha, 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(accents[2].alpha, 0, accuracy: 0.000_001)
+
+        header.apply(progress: 0.25, activeIndex: 0)
+        XCTAssertEqual(accents[0].alpha, 0.75, accuracy: 0.000_001)
+        XCTAssertEqual(accents[1].alpha, 0.25, accuracy: 0.000_001)
+
+        // Основная фаза (фейд/сдвиг) не изменилась от добавления акцента.
+        XCTAssertEqual(labels[0].alpha, 0.75, accuracy: 0.000_001)
+        XCTAssertEqual(labels[1].alpha, 0.25, accuracy: 0.000_001)
+    }
+
+    /// Reduce Motion: акцент у активного заголовка целиком, у остальных — нет.
+    func testActiveColorUnderReduceMotionIsStatic() throws {
+        let header = makeHeader()
+        header.style = TesseraPanoHeaderView.Style(activeTextColor: .systemRed)
+        header.isReduceMotionEnabled = { true }
+
+        header.apply(progress: 1.4, activeIndex: 1)
+
+        let accents = try headerLabels(in: header).map { try XCTUnwrap(accentLabel(of: $0)) }
+        XCTAssertEqual(accents.map(\.alpha), [0, 1, 0])
+    }
+
+    /// Без `activeTextColor` акцентных копий нет; включение и выключение цвета
+    /// на лету создаёт и убирает их, а смена заголовков пересоздаёт под новый набор.
+    func testAccentLabelsFollowStyleAndTitles() {
+        let header = makeHeader()
+        XCTAssertTrue(headerLabels(in: header).allSatisfy { accentLabel(of: $0) == nil })
+
+        header.style = TesseraPanoHeaderView.Style(activeTextColor: .systemBlue)
+        XCTAssertTrue(headerLabels(in: header).allSatisfy { accentLabel(of: $0) != nil })
+
+        header.setTitles(["A", "B"])
+        let labels = headerLabels(in: header)
+        XCTAssertEqual(labels.count, 2)
+        XCTAssertEqual(labels.map { accentLabel(of: $0)?.text }, ["A", "B"])
+
+        header.style = TesseraPanoHeaderView.Style()
+        XCTAssertTrue(headerLabels(in: header).allSatisfy { accentLabel(of: $0) == nil })
+    }
+
+    /// `PanoramaStyle.headerActiveColor` доходит до слоя заголовков панорамы;
+    /// совпадающий с `headerColor` — акцент не нужен.
+    func testPanoramaStyleHeaderActiveColorReachesHeaderLayer() {
+        let sections = (0..<3).map { index in
+            PanoramaSection(id: index, title: "S\(index)") { UIViewController() }
+        }
+        let panorama = PanoramaViewController(
+            sections: sections,
+            style: PanoramaStyle(headerColor: .white, headerActiveColor: .systemYellow)
+        )
+        panorama.loadViewIfNeeded()
+        XCTAssertEqual(panorama.headerView.style.activeTextColor, .systemYellow)
+
+        panorama.style = PanoramaStyle(headerColor: .white, headerActiveColor: .white)
+        XCTAssertNil(panorama.headerView.style.activeTextColor)
+    }
+
+    // MARK: - VoiceOver с заголовка (E9.7)
+
+    /// Трёхпальцевый свайп с фокусом на слое заголовков уходит в обработчик;
+    /// без обработчика слой жест не присваивает.
+    func testAccessibilityScrollIsRoutedToHandler() {
+        let header = makeHeader()
+        XCTAssertFalse(header.accessibilityScroll(.left))
+
+        var received: [UIAccessibilityScrollDirection] = []
+        header.accessibilityScrollHandler = { direction in
+            received.append(direction)
+            return direction == .left
+        }
+
+        XCTAssertTrue(header.accessibilityScroll(.left))
+        XCTAssertFalse(header.accessibilityScroll(.up))
+        XCTAssertEqual(received, [.left, .up])
+    }
 }
 
 #endif

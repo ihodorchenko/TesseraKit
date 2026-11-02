@@ -240,8 +240,9 @@ final class PivotSyncTests: XCTestCase {
     func testAccessibilityScrollUsesSingleWriterInLTR() throws {
         let (pivot, _) = try makeLoadedPivot()
 
-        XCTAssertFalse(pivot.accessibilityScroll(.left), "С первой секции назад некуда")
-        XCTAssertTrue(pivot.accessibilityScroll(.right))
+        // Конвенция UIKit (E9.3): в LTR свайп вправо — назад, влево — вперёд.
+        XCTAssertFalse(pivot.accessibilityScroll(.right), "С первой секции назад некуда")
+        XCTAssertTrue(pivot.accessibilityScroll(.left))
         XCTAssertEqual(pivot.currentSectionIndex, 1)
     }
 

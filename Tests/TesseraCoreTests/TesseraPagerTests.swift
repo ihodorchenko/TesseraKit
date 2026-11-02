@@ -372,19 +372,34 @@ final class TesseraPagerTests: XCTestCase {
 
         XCTAssertFalse(pager.accessibilityScroll(.up))
         XCTAssertFalse(pager.accessibilityScroll(.down))
-        // Первая страница: назад некуда.
-        XCTAssertFalse(pager.accessibilityScroll(.left))
+        // Первая страница: назад (свайп вправо в LTR) некуда.
+        XCTAssertFalse(pager.accessibilityScroll(.right))
     }
 
-    /// В LTR жест «вправо» уводит на следующую страницу.
+    /// В LTR трёхпальцевый свайп влево уводит на следующую страницу
+    /// (конвенция UIKit, E9.3), свайп вправо возвращает назад.
+    ///
+    /// Направление проверяется на границах набора, чтобы не зависеть от
+    /// анимации перехода: с первой страницы вперёд можно, назад — нет;
+    /// с последней — наоборот.
     func testAccessibilityScrollMovesForwardInLTR() throws {
         let (pager, _) = try makeLoadedPager(pageCount: 3)
 
-        XCTAssertTrue(pager.accessibilityScroll(.right))
+        XCTAssertTrue(pager.accessibilityScroll(.left), "Свайп влево в LTR листает вперёд")
+    }
+
+    /// В LTR свайп вправо листает назад: с последней страницы назад можно,
+    /// вперёд (свайп влево) — нет.
+    func testAccessibilityScrollMovesBackwardInLTR() throws {
+        let (pager, _) = try makeLoadedPager(pageCount: 3)
+        pager.go(toPage: 2, animated: false)
+
+        XCTAssertFalse(pager.accessibilityScroll(.left), "С последней страницы вперёд некуда")
+        XCTAssertTrue(pager.accessibilityScroll(.right), "Свайп вправо в LTR листает назад")
     }
 
     /// В RTL физическое направление инвертируется: с первой страницы жест
-    /// «влево» ведёт вперёд, «вправо» — назад (за границу).
+    /// «вправо» ведёт вперёд, «влево» — назад (за границу).
     func testAccessibilityScrollRespectsRTL() throws {
         let pager = TesseraPagerViewController(mode: .paged, pages: makePages(count: 3))
         pager.loadViewIfNeeded()
@@ -392,8 +407,8 @@ final class TesseraPagerTests: XCTestCase {
         pager.view.frame = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
         pager.view.layoutIfNeeded()
 
-        XCTAssertFalse(pager.accessibilityScroll(.right))
-        XCTAssertTrue(pager.accessibilityScroll(.left))
+        XCTAssertFalse(pager.accessibilityScroll(.left))
+        XCTAssertTrue(pager.accessibilityScroll(.right))
     }
 }
 

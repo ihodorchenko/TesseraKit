@@ -203,6 +203,27 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     /// Хранилище ``sectionCount`` — валидируется на записи.
     private var storedSectionCount: Int = 0
 
+    /// `contentOffset.x` на начале жеста — опора шага ±1 снапа (E10.11).
+    private var dragStartOffsetX: CGFloat?
+
+    /// Цель снапа последнего `scrollViewWillEndDragging` (E9.2б).
+    ///
+    /// При нулевой скорости UIKit игнорирует изменённый `targetContentOffset`
+    /// и не двигает offset к цели; контроллер забирает её через
+    /// ``consumePendingSnapOffsetX()`` и доводит offset сам.
+    private var pendingSnapOffsetX: CGFloat?
+
+    /// Подмена признака «идёт жест или инерция» для тестов (E10.13).
+    ///
+    /// `isDragging`/`isDecelerating` — read-only свойства UIKit, их не
+    /// выставить без настоящего касания. `nil` — фактическое состояние.
+    var interactionOverrideForTesting: Bool?
+
+    /// Идёт ли пользовательская прокрутка: жест или инерция (§8).
+    var isUserScrollInFlight: Bool {
+        interactionOverrideForTesting ?? (isDragging || isDecelerating)
+    }
+
     /// ``peek`` с гарантией диапазона (страховка для значений, полученных до init).
     private var effectivePeek: CGFloat { Self.sanitizedPeek(storedPeek) }
 
@@ -249,9 +270,9 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     ///
     /// `isPagingEnabled` выключен осознанно: пейджинг умеет только полноширинные
     /// страницы, а панорама показывает peek. `contentInsetAdjustmentBehavior =
-    /// .never` — кадр скролл-вью задаёт контроллер, а нижнюю safe area получают
-    /// child-контроллеры секций; в `PanoramaStyle` соответствующего поля нет
-    /// (отклонение от §8 задокументировано в отчёте).
+    /// .never` — исходное значение: кадр скролл-вью задаёт контроллер, а нижнюю
+    /// safe area получают child-контроллеры секций. Контроллер панорамы
+    /// переопределяет его из `PanoramaStyle.contentInsetAdjustmentBehavior` (§8).
     private func commonInit() {
         isPagingEnabled = false
         decelerationRate = .fast
@@ -376,14 +397,66 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     /// - Parameter rawOffsetX: Физический `contentOffset.x`.
     /// - Returns: Прогресс в порядке чтения; `0` при одной секции и мусорном входе.
     func readingProgress(forRawOffset rawOffsetX: CGFloat) -> CGFloat {
+        readingProgress(forRawOffset: rawOffsetX, layoutDirection: resolvedLayoutDirection)
+    }
+
+    /// Прогресс в порядке чтения для сырого offset'а в **заданном** направлении.
+    ///
+    /// Нужен при смене LTR↔RTL на лету (E10.13): offset ещё стоит в слотах
+    /// прежнего направления, а ``resolvedLayoutDirection`` уже новое —
+    /// нормализация по новому направлению открыла бы зеркальную секцию.
+    ///
+    /// - Parameters:
+    ///   - rawOffsetX: Физический `contentOffset.x`.
+    ///   - layoutDirection: Направление, в котором разложены слоты.
+    /// - Returns: Прогресс в порядке чтения; `0` при одной секции и мусорном входе.
+    func readingProgress(
+        forRawOffset rawOffsetX: CGFloat,
+        layoutDirection: UIUserInterfaceLayoutDirection
+    ) -> CGFloat {
         guard storedSectionCount > 1 else { return 0 }
         let width = itemWidth
         guard width > 0, rawOffsetX.isFinite else { return 0 }
         return TesseraRTL.normalizedProgress(
             rawOffsetX / width,
             pageCount: storedSectionCount,
-            layoutDirection: resolvedLayoutDirection
+            layoutDirection: layoutDirection
         )
+    }
+
+    /// Забирает цель снапа последнего жеста (E9.2б); повторный вызов — `nil`.
+    ///
+    /// - Returns: `contentOffset.x` цели, рассчитанной политикой, либо `nil`,
+    ///   если жест её не рассчитывал (одна секция, нулевая ширина).
+    func consumePendingSnapOffsetX() -> CGFloat? {
+        defer { pendingSnapOffsetX = nil }
+        return pendingSnapOffsetX
+    }
+
+    /// Ближайший выровненный offset для доводки после жеста без инерции (E9.2б).
+    ///
+    /// Предпочитается цель политики из `scrollViewWillEndDragging`; без неё —
+    /// ближайшая секция к текущему offset'у (та же политика с нулевой
+    /// скоростью). Результат зажат в `0...maximumOffsetX`.
+    ///
+    /// - Parameter preferred: Цель, рассчитанная политикой для жеста.
+    /// - Returns: Выровненный offset либо `nil`, если снапа нет (≤ 1 секции).
+    func alignedSnapOffsetX(preferred: CGFloat?) -> CGFloat? {
+        let width = itemWidth
+        guard storedSectionCount > 1, width > 0 else { return nil }
+
+        let target: CGFloat
+        if let preferred, preferred.isFinite {
+            target = preferred
+        } else {
+            target = snapPolicy.targetContentOffset(
+                proposedOffset: contentOffset.x,
+                velocity: 0,
+                itemWidth: width,
+                pageCount: storedSectionCount
+            )
+        }
+        return min(max(target, 0), maximumOffsetX)
     }
 
     /// Сырой offset для прогресса в порядке чтения — обратное к
@@ -447,6 +520,15 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
         observer?.panoScrollViewDidScroll(self)
     }
 
+    /// Начало жеста: запоминаем стартовый offset для снапа (E10.11).
+    ///
+    /// - Parameter scrollView: Скролл-вью-источник.
+    public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === self else { return }
+        dragStartOffsetX = contentOffset.x
+        pendingSnapOffsetX = nil
+    }
+
     /// Кастомный снап панорамы (§4, «Снап»).
     ///
     /// Расчёт цели полностью делегируется ``TesseraSnapPolicy``: скролл-вью
@@ -469,9 +551,15 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     ) {
         guard scrollView === self else { return }
 
+        // UIKit отдаёт скорость в points/ms, политика и наблюдатель — в pt/s.
+        let velocityX = velocity.x * 1000
+        let startOffsetX = dragStartOffsetX
+        dragStartOffsetX = nil
+
         let count = storedSectionCount
         let width = itemWidth
 
+        pendingSnapOffsetX = nil
         guard count > 1, width > 0 else {
             // Одна секция: снап не нужен, цель не трогаем (§8).
             if count == 1 {
@@ -479,7 +567,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
             }
             observer?.panoScrollViewWillEndDragging(
                 self,
-                velocityX: velocity.x,
+                velocityX: velocityX,
                 targetReadingIndex: 0
             )
             return
@@ -487,15 +575,17 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
 
         targetContentOffset.pointee.x = snapPolicy.targetContentOffset(
             proposedOffset: targetContentOffset.pointee.x,
-            velocity: velocity.x,
+            velocity: velocityX,
             itemWidth: width,
-            pageCount: count
+            pageCount: count,
+            startOffset: startOffsetX
         )
+        pendingSnapOffsetX = targetContentOffset.pointee.x
 
         // Prefetch (§6): цель уже известна, снап ещё не начался.
         observer?.panoScrollViewWillEndDragging(
             self,
-            velocityX: velocity.x,
+            velocityX: velocityX,
             targetReadingIndex: readingIndex(forRawOffset: targetContentOffset.pointee.x)
         )
     }

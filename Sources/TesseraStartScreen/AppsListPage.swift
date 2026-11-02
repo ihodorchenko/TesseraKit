@@ -22,6 +22,18 @@
 // pin из списка появляется в сетке через `onChange` хоста, unpin на сетке
 // меняет состояние строк здесь — по подписке на изменение того же хранилища.
 //
+// W4 (E10.5): pin идёт через `TileStore.pinTile(_:at:columns:)` с числом колонок
+// реальной сетки, которое хост сообщает фабрике (`columns`). Хранилище ставит
+// ярлык по видимому индексу (в конец видимого порядка) и одной операцией
+// канонизирует порядок к порядку чтения (E10.15), возвращая фактический индекс;
+// поэтому видимый порядок модели совпадает с экраном и VoiceOver. Если колонок
+// нет (`nil`), вставка остаётся прежней — в конец без канонизации. Unpin удаляет
+// элемент из видимого порядка; после него страница при известных колонках сама
+// зовёт `canonicalizeVisibleOrder(columns:)` — удаление переупаковывает сетку и
+// без этого порядок модели мог бы разойтись с экраном. Число колонок
+// фиксируется при создании страницы: при смене числа колонок сетки хост обязан
+// пересоздать страницу — сама она раскладку не пересчитывает.
+//
 // Подписка — на `objectWillChange` (`ObservableObject`; iOS 15 — по правилу
 // AGENTS.md), а не на `onChange`: `onChange` — единственное замыкание, его
 // держит хост и через него обновляет сетку. Подписка на objectWillChange
@@ -92,9 +104,12 @@ public struct TesseraAppsListSettingsItem {
 
 /// Локализуемые строки правой страницы.
 ///
-/// Внутри компонента строки по умолчанию русские (язык проектной документации),
-/// но хост может заменить их целиком — как и заголовки других компонентов,
-/// страница не тянет за собой собственный ресурсный бандл.
+/// Значения по умолчанию приходят из таблиц ресурсов модуля
+/// (`Resources/en.lproj|ru.lproj/Localizable.strings`) и резолвятся по языку
+/// системы (E9.8г): на русском устройстве — «Настройки», на английском —
+/// «Settings». Для неподдержанного языка действует базовая локаль `en`.
+/// Хост может заменить любую строку целиком — как и заголовки других
+/// компонентов; переданное значение используется без изменений.
 public struct TesseraAppsListTexts: Equatable {
 
     /// Заголовок секции настроек.
@@ -114,6 +129,11 @@ public struct TesseraAppsListTexts: Equatable {
 
     /// Создаёт набор строк.
     ///
+    /// Параметры сохранили сигнатуру и значения по умолчанию; сами значения
+    /// теперь берутся из таблиц ресурсов модуля по языку системы (E9.8г),
+    /// поэтому `TesseraAppsListTexts()` на русском устройстве даёт русские
+    /// подписи, а на английском — английские.
+    ///
     /// - Parameters:
     ///   - settingsSectionTitle: Заголовок секции настроек.
     ///   - emptyTitle: Текст пустого состояния.
@@ -121,11 +141,11 @@ public struct TesseraAppsListTexts: Equatable {
     ///   - unpinActionTitle: Действие «открепить».
     ///   - pinnedValue: Значение закреплённой строки для VoiceOver.
     public init(
-        settingsSectionTitle: String = "Настройки",
-        emptyTitle: String = "Нет приложений",
-        pinActionTitle: String = "Закрепить на рабочем столе",
-        unpinActionTitle: String = "Открепить",
-        pinnedValue: String = "Закреплено"
+        settingsSectionTitle: String = TesseraStartScreenStrings.appsListSettingsSectionTitle,
+        emptyTitle: String = TesseraStartScreenStrings.appsListEmptyTitle,
+        pinActionTitle: String = TesseraStartScreenStrings.appsListPinActionTitle,
+        unpinActionTitle: String = TesseraStartScreenStrings.appsListUnpinActionTitle,
+        pinnedValue: String = TesseraStartScreenStrings.appsListPinnedValue
     ) {
         self.settingsSectionTitle = settingsSectionTitle
         self.emptyTitle = emptyTitle
@@ -139,8 +159,9 @@ public struct TesseraAppsListTexts: Equatable {
 
 /// Правая опциональная страница пейджера рабочего стола (§6; D13).
 ///
-/// Страница показывает **весь каталог** ярлыков, сгруппированный по первой
-/// букве подписи, и отдельную секцию настроек. Строка ярлыка — стандартный
+/// Страница показывает **весь каталог** ярлыков, сгруппированный по буквам
+/// алфавитного указателя локали (`UILocalizedIndexedCollation`), и отдельную
+/// секцию настроек. Строка ярлыка — стандартный
 /// элемент списка: тап запускает `TileDescriptor.action` (D12: ярлык — просто
 /// действие), кнопка-«канцелярская кнопка» в аксессуаре закрепляет или
 /// открепляет ярлык, а состояние строки всегда отражает `TileStore`.
@@ -154,16 +175,21 @@ public struct TesseraAppsListTexts: Equatable {
 ///         TesseraAppsListSettingsItem(id: "settings", title: "Настройки рабочего стола") {
 ///             host.presentSettings()
 ///         }
-///     ]
+///     ],
+///     // Число колонок реальной сетки: pin ставит ярлык по видимому индексу
+///     // и канонизирует порядок к порядку чтения (E10.15).
+///     columns: screen.gridView.columns
 /// )
 /// // Хост подключает страницу замыканием: ссылок на тип пейджера страница не знает.
 /// ```
 ///
 /// Страница не подписывается на `TileStore.onChange` и не меняет каталог
 /// ярлыков: `setCatalog(_:)`, `load()` и раскладка остаются делом хоста.
-/// Всё, что она делает с хранилищем, — `snapshot()`, `pin(_:at:)` и
-/// `unpin(_:)`; операции с папками (D14) проходят через `approval` хоста
-/// и здесь не инициируются.
+/// Всё, что она делает с хранилищем, — `snapshot()`,
+/// `pinTile(_:at:columns:)` и `unpin(_:)`; операции с папками (D14) проходят
+/// через `approval` хоста и здесь не инициируются. Число колонок для
+/// канонизации страница берёт из фабрики (``make(store:settings:texts:columns:)``);
+/// сама она раскладку не считает и сетку экрана не знает (D13).
 ///
 /// Своих распознавателей жестов страница не добавляет: вертикальный скролл —
 /// это таблица, горизонталь — пейджер. Скролл-вью отдаётся наружу через
@@ -227,14 +253,34 @@ public final class TesseraAppsListPageViewController: UIViewController {
     /// - Parameters:
     ///   - store: Хранилище рабочего стола — единственный источник истины (§6).
     ///   - settings: Строки секции настроек; по умолчанию секции нет.
-    ///   - texts: Локализуемые строки; по умолчанию русские подписи.
+    ///   - texts: Локализуемые строки; по умолчанию — строки модуля,
+    ///     локализованные по языку системы (E9.8г).
+    ///   - columns: Число колонок реальной сетки (например,
+    ///     `TesseraTileGridView.columns`) на момент создания страницы. По нему
+    ///     pin ставит ярлык по видимому индексу и канонизирует порядок модели
+    ///     к порядку чтения (E10.3a/E10.15), а unpin — переупаковку после
+    ///     удаления. `nil` — хост раскладку не сообщил: pin дописывает ярлык в
+    ///     конец видимого порядка без канонизации (поведение до W4), unpin
+    ///     тоже без неё. Неположительное значение трактуется как `nil`.
+    ///
+    ///     Число колонок фиксируется при создании страницы и не обновляется
+    ///     на лету: при смене числа колонок сетки (поворот, смена ширины)
+    ///     хост обязан пересоздать страницу — фабрика правой страницы
+    ///     вызывается пейджером при её пересоздании и должна передать
+    ///     актуальное число колонок.
     /// - Returns: Готовая страница.
     public static func make(
         store: TileStore,
         settings: [TesseraAppsListSettingsItem] = [],
-        texts: TesseraAppsListTexts = TesseraAppsListTexts()
+        texts: TesseraAppsListTexts = TesseraAppsListTexts(),
+        columns: Int? = nil
     ) -> TesseraAppsListPageViewController {
-        TesseraAppsListPageViewController(store: store, settings: settings, texts: texts)
+        TesseraAppsListPageViewController(
+            store: store,
+            settings: settings,
+            texts: texts,
+            columns: columns
+        )
     }
 
     // MARK: - Данные
@@ -242,21 +288,34 @@ public final class TesseraAppsListPageViewController: UIViewController {
     /// Хранилище рабочего стола (§6: источник истины).
     private let store: TileStore
 
+    /// Число колонок реальной сетки для канонизации порядка (E10.15).
+    ///
+    /// `nil` — хост раскладку не сообщил: pin/unpin работают без канонизации,
+    /// как до W4 (``make(store:settings:texts:columns:)``). Фиксируется при
+    /// создании страницы: при смене числа колонок сетки хост пересоздаёт
+    /// страницу, иначе канонизация посчитается для устаревшей раскладки.
+    private let columns: Int?
+
     /// Таблица списка приложений и настроек.
     private let tableView = UITableView(frame: .zero, style: .plain)
 
     /// Подписка на изменения хранилища.
     private var storeSubscription: AnyCancellable?
 
-    /// Секции ярлыков по буквам в порядке отображения.
+    /// Секции ярлыков по буквам в порядке отображения (только непустые).
     private var sections: [AppSection] = []
+
+    /// Алфавитный указатель текущей локали (§6: «секции по буквам +
+    /// `sectionIndexTitles`» — нативный паттерн). Обновляется при каждой
+    /// пересборке секций, чтобы смена языка не оставляла старый алфавит.
+    private var collation = UILocalizedIndexedCollation.current()
 
     /// Структура последней отрисованной таблицы — чтобы отличить смену состава
     /// строк (нужна перезагрузка) от смены состояния (достаточно видимых ячеек).
     private var lastStructure: [SectionSignature] = []
 
-    /// Состояние «закреплён» по строкам последней отрисовки.
-    private var lastPinnedFlags: [[Bool]] = []
+    /// Состояние строк ярлыков (закреплён, иконка) последней отрисовки.
+    private var lastRowStates: [[RowState]] = []
 
     /// Кэш миниатюр иконок: стандартная ячейка берёт размер картинки в layout,
     /// поэтому крупные иконки приложения приводятся к размеру строки один раз.
@@ -278,10 +337,6 @@ public final class TesseraAppsListPageViewController: UIViewController {
     /// Идентификаторы переиспользования ячеек.
     private static let defaultCellIdentifier = "TesseraAppsListDefaultCell"
     private static let subtitleCellIdentifier = "TesseraAppsListSubtitleCell"
-
-    /// Заголовок секции для подписей, начинающихся не с буквы (цифры, символы,
-    /// эмодзи): в iOS-списках такая секция традиционно называется «#».
-    private static let otherSectionTitle = "#"
 
     // MARK: - Модель строк
 
@@ -305,8 +360,12 @@ public final class TesseraAppsListPageViewController: UIViewController {
 
     /// Секция ярлыков одной буквы.
     private struct AppSection {
-        /// Буква-заголовок секции (или «#»).
+        /// Буква-заголовок секции (или «#») — заголовок секции collation.
         let title: String
+
+        /// Индекс секции в `UILocalizedIndexedCollation.sectionTitles`: по нему
+        /// jump-list находит ближайшую непустую секцию.
+        let collationIndex: Int
 
         /// Строки в алфавитном порядке.
         var entries: [AppEntry]
@@ -316,6 +375,31 @@ public final class TesseraAppsListPageViewController: UIViewController {
     private struct RowSignature: Equatable {
         let id: AnyHashable
         let title: String
+    }
+
+    /// Изменяемое состояние строки ярлыка при неизменном составе: смена
+    /// любого поля пересобирает видимые строки на месте (без `reloadData`).
+    ///
+    /// Иконка сравнивается по **идентичности** объекта `UIImage`: хост,
+    /// заменивший иконку при тех же `id`/`title`, получает перерисованную
+    /// строку, а сравнение не платит за сравнение пикселей.
+    private struct RowState: Equatable {
+        let isPinned: Bool
+        let icon: UIImage?
+
+        static func == (lhs: RowState, rhs: RowState) -> Bool {
+            lhs.isPinned == rhs.isPinned && lhs.icon === rhs.icon
+        }
+    }
+
+    /// Обёртка подписи для `UILocalizedIndexedCollation`: collation читает
+    /// строку объекта через Objective-C селектор.
+    private final class CollationKey: NSObject {
+        @objc let title: String
+
+        init(_ title: String) {
+            self.title = title
+        }
     }
 
     /// Состояние секции для сравнения «изменилась ли таблица по составу».
@@ -332,24 +416,30 @@ public final class TesseraAppsListPageViewController: UIViewController {
     ///   - store: Хранилище рабочего стола.
     ///   - settings: Строки секции настроек.
     ///   - texts: Локализуемые строки.
+    ///   - columns: Число колонок реальной сетки; `nil` — неизвестно.
     private init(
         store: TileStore,
         settings: [TesseraAppsListSettingsItem],
-        texts: TesseraAppsListTexts
+        texts: TesseraAppsListTexts,
+        columns: Int?
     ) {
         self.store = store
         self.settingsItems = settings
         self.texts = texts
+        // У сетки всегда есть хотя бы одна колонка: неположительное значение
+        // не описывает раскладку и трактуется как «колонки неизвестны».
+        self.columns = columns.flatMap { $0 > 0 ? $0 : nil }
         super.init(nibName: nil, bundle: nil)
     }
 
     /// Страница не поддерживает создание из архива/сториборда: ей нужно
-    /// хранилище, которое передаётся только через ``make(store:settings:texts:)``.
+    /// хранилище, которое передаётся только через
+    /// ``make(store:settings:texts:columns:)``.
     ///
     /// - Parameter coder: Декодер архива.
     @available(*, unavailable)
     public required init?(coder: NSCoder) {
-        fatalError("TesseraAppsListPageViewController создаётся через make(store:settings:texts:)")
+        fatalError("TesseraAppsListPageViewController создаётся через make(store:settings:texts:columns:)")
     }
 
     // MARK: - Жизненный цикл
@@ -475,23 +565,23 @@ public final class TesseraAppsListPageViewController: UIViewController {
                 lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
             }
 
-        var grouped: [String: [AppEntry]] = [:]
-        var order: [String] = []
+        // Секции — по `UILocalizedIndexedCollation` текущей локали (§6,
+        // нативный паттерн): «É» попадает к «E», иероглифы не дают по секции
+        // на символ, цифры и символы — в «#». Порядок строк внутри секции —
+        // `localizedStandardCompare`: раскладка по корзинам сохраняет порядок
+        // уже отсортированного массива.
+        let collation = UILocalizedIndexedCollation.current()
+        self.collation = collation
+        let titles = collation.sectionTitles
+        var buckets = [[AppEntry]](repeating: [], count: titles.count)
         for entry in entries {
-            let letter = Self.sectionTitle(for: entry.title)
-            if grouped[letter] == nil {
-                order.append(letter)
-            }
-            grouped[letter, default: []].append(entry)
+            let index = Self.collationSection(for: entry.title, collation: collation)
+            buckets[index].append(entry)
         }
 
-        let sortedLetters = order.sorted { lhs, rhs in
-            if lhs == Self.otherSectionTitle { return false }
-            if rhs == Self.otherSectionTitle { return true }
-            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        sections = buckets.enumerated().compactMap { index, entries in
+            entries.isEmpty ? nil : AppSection(title: titles[index], collationIndex: index, entries: entries)
         }
-
-        sections = sortedLetters.map { AppSection(title: $0, entries: grouped[$0] ?? []) }
     }
 
     /// Пересобирает таблицу по хранилищу.
@@ -502,32 +592,37 @@ public final class TesseraAppsListPageViewController: UIViewController {
         guard isViewLoaded else { return }
 
         let previousStructure = lastStructure
-        let previousPinnedFlags = lastPinnedFlags
+        let previousRowStates = lastRowStates
 
         rebuildSections()
         let structure = makeStructure()
-        let pinnedFlags = makePinnedFlags()
+        let rowStates = makeRowStates()
 
-        if !forceReload, structure == previousStructure, pinnedFlags == previousPinnedFlags {
+        if !forceReload, structure == previousStructure, rowStates == previousRowStates {
             return
         }
 
         lastStructure = structure
-        lastPinnedFlags = pinnedFlags
+        lastRowStates = rowStates
 
         if forceReload || structure != previousStructure {
             let previousOffset = tableView.contentOffset
             tableView.reloadData()
             updateEmptyState()
             // §6, двусторонняя связь: unpin на сетке не должен «прыгать»
-            // списком в начало — возвращаем позицию чтения, если UIKit её сбросил.
-            if tableView.contentOffset != previousOffset {
-                tableView.setContentOffset(previousOffset, animated: false)
+            // списком в начало — возвращаем позицию чтения, если UIKit её
+            // сбросил. Но только в пределах нового контента: если каталог
+            // сократился, прежний offset может указывать за его конец.
+            // `contentSize` reloadData пересчитывает синхронно (по оценкам
+            // высот), отдельный layout-проход здесь не нужен.
+            let target = clampedContentOffset(previousOffset)
+            if tableView.contentOffset != target {
+                tableView.setContentOffset(target, animated: false)
             }
         } else {
-            // Изменилось только состояние (pin/unpin): собираем видимые строки
-            // заново. reloadData здесь не нужен, а в режиме VoiceOver он ещё и
-            // сбросил бы фокус с читаемой строки.
+            // Изменилось только состояние (pin/unpin, иконка): собираем
+            // видимые строки заново. reloadData здесь не нужен, а в режиме
+            // VoiceOver он ещё и сбросил бы фокус с читаемой строки.
             for indexPath in tableView.indexPathsForVisibleRows ?? [] {
                 guard let cell = tableView.cellForRow(at: indexPath) else { continue }
                 configure(cell, at: indexPath)
@@ -554,24 +649,70 @@ public final class TesseraAppsListPageViewController: UIViewController {
         return result
     }
 
-    /// Флаги «закреплён» по строкам ярлыков — состояние, которое меняется через
-    /// сетку (unpin) и через саму страницу (pin), без изменения состава строк.
-    private func makePinnedFlags() -> [[Bool]] {
-        sections.map { $0.entries.map(\.isPinned) }
+    /// Состояние строк ярлыков — то, что меняется без изменения состава строк:
+    /// «закреплён» (unpin через сетку, pin через страницу) и иконка ярлыка.
+    private func makeRowStates() -> [[RowState]] {
+        sections.map { section in
+            section.entries.map { RowState(isPinned: $0.isPinned, icon: $0.icon) }
+        }
+    }
+
+    /// Зажимает offset в допустимый диапазон текущего контента таблицы.
+    ///
+    /// - Parameter offset: Желаемый offset (позиция чтения до перезагрузки).
+    /// - Returns: Ближайший offset в пределах `contentSize` с учётом
+    ///   `adjustedContentInset`.
+    private func clampedContentOffset(_ offset: CGPoint) -> CGPoint {
+        let inset = tableView.adjustedContentInset
+        let size = tableView.contentSize
+        let visible = tableView.bounds.size
+        let minX = -inset.left
+        let minY = -inset.top
+        let maxX = max(minX, size.width + inset.right - visible.width)
+        let maxY = max(minY, size.height + inset.bottom - visible.height)
+        return CGPoint(
+            x: min(max(offset.x, minX), maxX),
+            y: min(max(offset.y, minY), maxY)
+        )
     }
 
     /// Закрепляет или открепляет ярлык через хранилище (§6).
+    ///
+    /// Pin идёт через ``TileStore/pinTile(_:at:columns:)`` с `nil`-индексом —
+    /// «в конец видимого порядка»: хранилище ставит ярлык по видимому индексу
+    /// (не по внутреннему `gridOrder`, где бывают невидимые ключи) и, если
+    /// колонки известны, одной операцией канонизирует порядок к порядку
+    /// чтения (E10.3a/E10.15). Возвращённый фактический индекс странице не
+    /// нужен: секции списка строятся по каталогу и от позиции на сетке не
+    /// зависят — сетка узнаёт новый порядок через `onChange` хоста.
+    ///
+    /// Unpin удаляет элемент из видимого порядка, после чего при известных
+    /// колонках страница канонизирует порядок явно
+    /// (``TileStore/canonicalizeVisibleOrder(columns:)``): удаление
+    /// переупаковывает сетку, и без этого порядок модели мог бы разойтись с
+    /// экраном. Хранилище не объединяет unpin и канонизацию в одну операцию,
+    /// поэтому в случае переупаковки это два изменения модели (второе —
+    /// no-op без уведомления, если порядок и так канонический).
+    ///
+    /// Метод внутренний (не `private`), потому что это же действие выполняют
+    /// кнопка строки и кастомное действие VoiceOver; тесты страницы вызывают
+    /// его напрямую (UI-события в тест-раннере ненадёжны) и отдельно
+    /// проверяют обвязку кнопки метаданными (target-action, accessibility).
     ///
     /// - Parameters:
     ///   - pinned: `true` — закрепить, `false` — открепить.
     ///   - tileID: Идентификатор ярлыка из каталога.
     /// - Returns: `true`, если хранилище изменило состояние.
     @discardableResult
-    private func setPinned(_ pinned: Bool, for tileID: AnyHashable) -> Bool {
+    func setPinned(_ pinned: Bool, for tileID: AnyHashable) -> Bool {
         if pinned {
-            return store.pin(tileID)
+            return store.pinTile(tileID, at: nil, columns: columns) != nil
         }
-        return store.unpin(tileID)
+        guard store.unpin(tileID) else { return false }
+        if let columns {
+            store.canonicalizeVisibleOrder(columns: columns)
+        }
+        return true
     }
 
     // MARK: - Пустое состояние
@@ -766,27 +907,26 @@ public final class TesseraAppsListPageViewController: UIViewController {
 
     // MARK: - Алфавитный указатель
 
-    /// Заголовок секции по подписи ярлыка.
+    /// Индекс секции collation для подписи ярлыка.
     ///
-    /// Берётся первый символ подписи в верхнем регистре; подписи, начинающиеся
-    /// не с буквы (цифры, символы, эмодзи), попадают в общую секцию «#».
-    /// Транслитерация не выполняется: сортировка идёт по текущей локали
-    /// (`localizedStandardCompare`), поэтому кириллица и латиница образуют
-    /// свои секции без смешивания.
+    /// Группировку делает `UILocalizedIndexedCollation` текущей локали: она
+    /// сворачивает диакритику («É» → «E»), относит иероглифы к секциям своего
+    /// алфавита (в en/ru — «#», в zh — по пиньиню) и складывает цифры, символы
+    /// и эмодзи в последнюю секцию «#». Пустая подпись — тоже в «#».
     ///
-    /// - Parameter title: Подпись ярлыка.
-    /// - Returns: Буква-заголовок секции или «#».
-    private static func sectionTitle(for title: String) -> String {
+    /// - Parameters:
+    ///   - title: Подпись ярлыка.
+    ///   - collation: Указатель текущей локали.
+    /// - Returns: Индекс в `collation.sectionTitles`.
+    private static func collationSection(for title: String, collation: UILocalizedIndexedCollation) -> Int {
+        let lastIndex = max(0, collation.sectionTitles.count - 1)
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let first = trimmed.first else { return otherSectionTitle }
-        // Верхний регистр может дать больше одного символа (например, «ß» → «SS»),
-        // поэтому от результата снова берём первый символ.
-        let letter = String(String(first).uppercased().prefix(1))
-        guard let scalar = letter.unicodeScalars.first,
-              CharacterSet.letters.contains(scalar) else {
-            return otherSectionTitle
-        }
-        return letter
+        guard !trimmed.isEmpty else { return lastIndex }
+        let index = collation.section(
+            for: CollationKey(trimmed),
+            collationStringSelector: #selector(getter: CollationKey.title)
+        )
+        return min(max(0, index), lastIndex)
     }
 }
 
@@ -828,18 +968,23 @@ extension TesseraAppsListPageViewController: UITableViewDataSource {
         return settingsItems.isEmpty ? nil : texts.settingsSectionTitle
     }
 
-    /// Заголовки jump-list (§6, §9): только буквы ярлыков, без настроек.
+    /// Заголовки jump-list (§6, §9): полный алфавит
+    /// `UILocalizedIndexedCollation` текущей локали, как в системных списках;
+    /// секция настроек в указатель не входит.
     ///
     /// - Parameter tableView: Таблица страницы.
     /// - Returns: Заголовки указателя или `nil`, если ярлыков нет.
     public func sectionIndexTitles(for tableView: UITableView) -> [String]? {
-        sections.isEmpty ? nil : sections.map(\.title)
+        sections.isEmpty ? nil : collation.sectionIndexTitles
     }
 
     /// Обрабатывает прыжок по jump-list.
     ///
     /// Возвращённого индекса достаточно: UITableView сам прокручивает таблицу
     /// к секции (документ §6 — «нативный паттерн, ничего изобретать не надо»).
+    /// Указатель показывает весь алфавит, а таблица — только непустые секции,
+    /// поэтому буква без ярлыков ведёт к ближайшей следующей непустой секции
+    /// (после последней непустой — к последней).
     ///
     /// - Parameters:
     ///   - tableView: Таблица страницы.
@@ -851,10 +996,9 @@ extension TesseraAppsListPageViewController: UITableViewDataSource {
         sectionForSectionIndexTitle title: String,
         at index: Int
     ) -> Int {
-        guard sections.indices.contains(index) else {
-            return max(0, sections.count - 1)
-        }
-        return index
+        guard !sections.isEmpty else { return 0 }
+        let target = collation.section(forSectionIndexTitle: index)
+        return sections.firstIndex { $0.collationIndex >= target } ?? sections.count - 1
     }
 
     /// Создаёт и настраивает строку списка.

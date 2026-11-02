@@ -11,6 +11,11 @@
 //  VoiceOver в LTR и RTL: физические `.left`/`.right` инвертируются, порядковые
 //  `.next`/`.previous` — нет (иначе получится двойное зеркалирование).
 //
+//  Конвенция физических направлений (E9.3): трёхпальцевый свайп влево
+//  (`.left`) в LTR листает вперёд, как системный `UIPageViewController`
+//  (его accessibility-реализация на `.left` берёт следующий контроллер,
+//  на `.right` — предыдущий).
+//
 
 #if canImport(UIKit)
 
@@ -25,17 +30,18 @@ final class TesseraAccessibilityTests: XCTestCase {
 
     // MARK: - Физические направления
 
-    /// LTR: свайп вправо — следующая страница, влево — предыдущая.
+    /// LTR: свайп влево — следующая страница, вправо — предыдущая
+    /// (конвенция UIKit, как у `UIPageViewController`).
     func testPhysicalDirectionsInLTR() {
-        XCTAssertEqual(TesseraAccessibility.pageStep(for: .right, layoutDirection: ltr), 1)
-        XCTAssertEqual(TesseraAccessibility.pageStep(for: .left, layoutDirection: ltr), -1)
+        XCTAssertEqual(TesseraAccessibility.pageStep(for: .left, layoutDirection: ltr), 1)
+        XCTAssertEqual(TesseraAccessibility.pageStep(for: .right, layoutDirection: ltr), -1)
     }
 
-    /// RTL: физические направления инвертируются — «вперёд» по направлению
-    /// чтения это влево.
+    /// RTL: физические направления инвертируются — следующая страница по
+    /// направлению чтения лежит слева, поэтому вперёд ведёт свайп вправо.
     func testPhysicalDirectionsInRTL() {
-        XCTAssertEqual(TesseraAccessibility.pageStep(for: .right, layoutDirection: rtl), -1)
-        XCTAssertEqual(TesseraAccessibility.pageStep(for: .left, layoutDirection: rtl), 1)
+        XCTAssertEqual(TesseraAccessibility.pageStep(for: .right, layoutDirection: rtl), 1)
+        XCTAssertEqual(TesseraAccessibility.pageStep(for: .left, layoutDirection: rtl), -1)
     }
 
     // MARK: - Порядковые направления
@@ -83,10 +89,10 @@ final class TesseraAccessibilityTests: XCTestCase {
         let cases: [(direction: UIAccessibilityScrollDirection,
                      layout: UIUserInterfaceLayoutDirection,
                      expected: Int)] = [
-            (.right, ltr, 1),
-            (.right, rtl, -1),
-            (.left, ltr, -1),
-            (.left, rtl, 1),
+            (.left, ltr, 1),
+            (.left, rtl, -1),
+            (.right, ltr, -1),
+            (.right, rtl, 1),
             (.next, ltr, 1),
             (.next, rtl, 1),
             (.previous, ltr, -1),
