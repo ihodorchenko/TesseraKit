@@ -81,18 +81,30 @@ public enum TesseraStartScreenPage: Hashable {
 /// Пейджер владеет горизонталью, вертикаль — детям. Контроллер подписывается
 /// на пан пейджера и по доминирующей оси
 /// (``TesseraGestureArbiter/axisDecision(forVelocity:)``) на время
-/// горизонтального жеста блокирует прокрутку детей через
-/// ``TesseraGestureArbiter``, возвращая прежнее состояние по завершении.
-/// Вертикальный жест остаётся детям и не блокируется.
+/// горизонтального жеста блокирует прокрутку детей, возвращая её по
+/// завершении: сетку START — выключением её пан-жеста (её `isScrollEnabled`
+/// принадлежит анимации папки и редактированию), скроллы боковых страниц —
+/// через ``TesseraGestureArbiter``. Вертикальный жест остаётся детям и не
+/// блокируется.
 ///
 /// Арбитраж трёхсторонний (§1): вертикальных владельцев двое — сетка START и
 /// скролл боковой страницы (хук §7 или список приложений §6). Сетка START
 /// регистрируется автоматически: она есть в любой конфигурации (D13). Скроллы
 /// опциональных страниц создаёт хост, поэтому контроллер их не знает — хост
-/// регистрирует их сам через ``registerVerticalOwner(_:)`` после появления
-/// страницы и снимает через ``unregisterVerticalOwner(_:)``, если скролл
+/// регистрирует их сам через ``registerVerticalOwner(_:)`` из `viewDidLoad`
+/// контроллера страницы и снимает через ``unregisterVerticalOwner(_:)``, если скролл
 /// перестал использоваться. Оба метода — холодный путь: они не выполняются из
 /// `scrollViewDidScroll` и не трогают layout.
+///
+/// ## События (§2, §7)
+///
+/// ``currentPage`` и события ``delegate`` идут от подтверждения пейджера
+/// (завершение перехода). Страница-хук получает `quickPanelWillAppear`, как
+/// только начинает появляться (свайп, программный показ, появление экрана с
+/// открытым хуком), и `quickPanelDidDisappear` — когда полностью ушла с экрана
+/// или экран скрылся; делегат получает те же переходы как
+/// `didChangeHookVisibility`. Пока START за кадром, live-плитки сетки стоят на
+/// паузе (§4).
 ///
 /// ## Параллакс (§8)
 ///
@@ -106,7 +118,8 @@ public enum TesseraStartScreenPage: Hashable {
 ///
 /// - `accessibilityScroll` листает страницы в порядке чтения с учётом RTL;
 /// - по завершении перехода озвучивается название страницы
-///   (``TesseraAccessibility/announcePageChange(_:)``);
+///   (``TesseraAccessibility/announcePageChange(_:)``) — только смена
+///   страницы на показанном экране, стартовая страница не озвучивается;
 /// - названия страниц задаются свойствами ``quickPanelTitle``,
 ///   ``startPageTitle`` и ``applicationsPageTitle`` — хост их локализует.
 ///
@@ -116,14 +129,30 @@ public final class TesseraStartScreenViewController: UIViewController {
 
     // MARK: - Идентификаторы страниц
 
-    /// Идентификатор страницы-хука для пейджера Core.
-    private static let quickPanelPageID = AnyHashable("TesseraStartScreen.quickPanel")
-
     /// Идентификатор START-страницы для пейджера Core.
     private static let startPageID = AnyHashable("TesseraStartScreen.start")
 
-    /// Идентификатор правой страницы для пейджера Core.
-    private static let applicationsPageID = AnyHashable("TesseraStartScreen.applications")
+    /// Идентификатор страницы-хука для пейджера Core.
+    ///
+    /// Пейджер после W1 переиспользует контроллеры страниц с тем же `id`
+    /// (docs/CORE-IOS-DESIGN.md, «Отступления реализации», п. 7). Замена
+    /// поставщика в ``configure(leftPanel:rightPage:)`` поэтому меняет
+    /// поколение в `id`: иначе пейджер оставил бы на экране контроллер
+    /// прежнего поставщика.
+    private var quickPanelPageID: AnyHashable {
+        AnyHashable("TesseraStartScreen.quickPanel#\(quickPanelPageGeneration)")
+    }
+
+    /// Идентификатор правой страницы для пейджера Core (поколение — как у хука).
+    private var applicationsPageID: AnyHashable {
+        AnyHashable("TesseraStartScreen.applications#\(applicationsPageGeneration)")
+    }
+
+    /// Поколение страницы-хука: растёт при замене поставщика.
+    private var quickPanelPageGeneration = 0
+
+    /// Поколение правой страницы: растёт при каждой новой фабрике.
+    private var applicationsPageGeneration = 0
 
     // MARK: - Публичная конфигурация
 
@@ -209,6 +238,22 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// смены страницы и как `title` описания страницы пейджера.
     public var quickPanelTitle: String = "Quick panel"
 
+    /// Наблюдатель смены страницы и видимости хука (UIKit-канал событий).
+    ///
+    /// Контроллер сообщает ``StartScreenDelegate/startScreen(_:didChangePage:index:)``
+    /// по подтверждённому пейджером переходу (жест, программный показ,
+    /// уход с исчезнувшей после ``configure(leftPanel:rightPage:)`` страницы) и
+    /// ``StartScreenDelegate/startScreen(_:didChangeHookVisibility:)`` — при
+    /// смене видимости страницы-хука, включая появление и уход самого экрана.
+    /// Показ стартовой страницы событием не является.
+    ///
+    /// Тапы по сетке контроллер делегату не пересылает: в UIKit их отдаёт
+    /// `gridView.onTap`, который остаётся за хостом (тот же делегат получает
+    /// тапы в `StartScreenView` — фасад подписывается на `onTap` сам).
+    ///
+    /// Ссылка слабая: делегата удерживает хост (в SwiftUI — координатор фасада).
+    public weak var delegate: StartScreenDelegate?
+
     /// Название START-страницы для VoiceOver (§9).
     public var startPageTitle: String = "Start"
 
@@ -218,8 +263,11 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// Текущая страница в порядке чтения.
     ///
     /// До загрузки вида — ``TesseraStartScreenPage/start`` либо страница,
-    /// запрошенная через ``showPage(_:animated:)`` до показа. Обновляется по
-    /// завершении перехода пейджера (источник истины — Core, §2).
+    /// запрошенная через ``showPage(_:animated:)`` до показа. После загрузки
+    /// обновляется только по подтверждению пейджера — по завершении перехода
+    /// (источник истины — Core, §2): анимированный ``showPage(_:animated:)``
+    /// не меняет значение, пока переход не завершился, а перехваченный
+    /// пальцем переход оставляет ту страницу, на которой пейджер остановился.
     public private(set) var currentPage: TesseraStartScreenPage = .start
 
     /// Сетка START-страницы.
@@ -254,6 +302,28 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// пейджером по завершении переходов.
     private var currentPageIndex = 0
 
+    /// Цель программного перехода, ещё не подтверждённая пейджером.
+    ///
+    /// Нужна только хуку: страница-хук считается видимой с момента запроса
+    /// (колбэк `quickPanelWillAppear` — до появления, §7), а отложенная
+    /// «заморозка» хука при политике края не должна убрать страницу, к которой
+    /// идёт анимация. Снимается подтверждением, пересборкой страниц и
+    /// перехватом перехода пальцем (`.began` пана пейджера).
+    private var pendingPage: TesseraStartScreenPage?
+
+    /// Последний прогресс пейджера `t` в порядке чтения.
+    ///
+    /// Видимость хука считается по нему: страница видна, пока
+    /// `|t − индекс хука| < 1`. `nil` — прогресса ещё не было (нулевая ширина),
+    /// тогда видимость берётся по ``currentPage``.
+    private var lastPagerProgress: CGFloat?
+
+    /// Показан ли экран (между `viewWillAppear` и `viewDidDisappear`).
+    ///
+    /// Колбэки хука (§7), события видимости и озвучивание страниц (§9) до
+    /// показа экрана не отправляются: `viewDidLoad` — не появление.
+    private var isScreenVisible = false
+
     // MARK: - Состояние страницы-хука
 
     /// Поставщик левой страницы (§7). `nil` — страницы нет (D13).
@@ -262,8 +332,16 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// Фабрика правой страницы (§6). `nil` — страницы нет (D13).
     private var rightPageFactory: (() -> UIViewController)?
 
-    /// Показывается ли страница-хук сейчас (для колбэков §7).
+    /// Видима ли страница-хук сейчас (для делегата, §7).
     private var isQuickPanelOnScreen = false
+
+    /// Поставщик, получивший `quickPanelWillAppear` без парного
+    /// `quickPanelDidDisappear`.
+    ///
+    /// `didDisappear` уходит именно ему: при замене или удалении поставщика,
+    /// пока хук на экране, колбэки остаются симметричными (прежний получает
+    /// `didDisappear`, новый — `willAppear`).
+    private var appearedQuickPanel: QuickPanelProviding?
 
     /// Открыта ли страница-хук программно при политике ``yieldsLeftEdgeToSystemGesture``.
     ///
@@ -277,9 +355,11 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// по отношению к пейджеру, поэтому выносится на следующий проход run loop.
     private var isQuickPanelLockScheduled = false
 
-    /// Последняя озвученная страница — защита от повторного анонса после
-    /// пересборки страниц (пейджер заново сообщает текущую страницу).
-    private var lastAnnouncedPage: TesseraStartScreenPage?
+    /// Озвучивание названия страницы (§9).
+    ///
+    /// Внутренний шов для тестов: по умолчанию —
+    /// ``TesseraAccessibility/announcePageChange(_:)``.
+    var pageAnnouncer: (String) -> Void = { TesseraAccessibility.announcePageChange($0) }
 
     // MARK: - Политика края
 
@@ -311,6 +391,13 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// выгруженному контенту.
     private var gestureArbiter: TesseraGestureArbiter?
 
+    /// Пан сетки START, выключенный контроллером на время горизонтального
+    /// жеста (`nil` — контроллер его не выключал).
+    ///
+    /// Сетка блокируется флагом жеста, а не `isScrollEnabled`: тот флаг
+    /// принадлежит анимации папки и координатору редактирования (E10.6).
+    private weak var lockedGridPan: UIGestureRecognizer?
+
     /// Слабая ссылка на вертикальный скролл-вью боковой страницы.
     ///
     /// Боковые страницы опциональны (D13) и выгружаются пейджером, поэтому
@@ -322,8 +409,8 @@ public final class TesseraStartScreenViewController: UIViewController {
 
     /// Зарегистрированные хостом вертикальные владельцы боковых страниц (§1).
     ///
-    /// Сетка START сюда не входит: она есть всегда и добавляется в арбитр
-    /// автоматически (``verticalOwnersForArbitration``).
+    /// Сетка START сюда не входит: она есть всегда и блокируется
+    /// автоматически, отдельным флагом жеста (``lockedGridPan``).
     private var extraVerticalOwners: [WeakVerticalOwner] = []
 
     // MARK: - Инициализация
@@ -349,18 +436,19 @@ public final class TesseraStartScreenViewController: UIViewController {
     // MARK: - Жизненный цикл
 
     /// Собирает иерархию и стартовую страницу.
+    ///
+    /// Колбэков хука, событий делегата и озвучивания здесь нет: загрузка вида —
+    /// не появление экрана (§7, §9). Стартовая страница не озвучивается вовсе —
+    /// VoiceOver сам объявит появившийся экран.
     public override func viewDidLoad() {
         super.viewDidLoad()
 
         view.backgroundColor = .systemBackground
         configureSubviews()
 
+        // Пересборка сама ставит пейджер на ``currentPage`` (в том числе на
+        // страницу, запрошенную через `showPage` до загрузки).
         rebuildPages()
-        showCurrentPageWithoutAnimation()
-
-        // Стартовая страница уже на экране — озвучивать её как «смену»
-        // не нужно; VoiceOver сам объявит появившийся экран.
-        lastAnnouncedPage = currentPage
     }
 
     /// Раскладывает пейджер и применяет политику края.
@@ -375,21 +463,35 @@ public final class TesseraStartScreenViewController: UIViewController {
         applySystemEdgePriorityIfNeeded()
     }
 
-    /// Сообщает хуку о появлении и повторяет попытку включить политику края:
-    /// навигационный контроллер может стать доступен только к показу.
+    /// Экран вот-вот появится: хук на текущей странице получает
+    /// `quickPanelWillAppear` до появления, делегат — видимость хука (§7).
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        isScreenVisible = true
+        updateQuickPanelVisibility()
+    }
+
+    /// Повторяет попытку включить политику края: навигационный контроллер
+    /// может стать доступен только к показу.
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        setQuickPanelOnScreen(currentPage == .quickPanel)
+        // Страховка на случай appearance без `viewWillAppear`.
+        if !isScreenVisible {
+            isScreenVisible = true
+            updateQuickPanelVisibility()
+        }
         resolvePagerScrollViewIfNeeded()
         applySystemEdgePriorityIfNeeded()
     }
 
-    /// Экран ушёл с экрана — хук получает колбэк скрытия (§7).
+    /// Экран ушёл с экрана — хук получает колбэк скрытия, делегат — видимость (§7).
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
 
-        setQuickPanelOnScreen(false)
+        isScreenVisible = false
+        updateQuickPanelVisibility()
     }
 
     deinit {
@@ -420,10 +522,19 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// - `rightPage` добавляет правую страницу (список приложений/настройки);
     /// - `nil` убирает соответствующую страницу.
     ///
-    /// Текущая страница сохраняется по идентификатору (это делает Core): если
-    /// пользователь стоял на START, после добавления хука он остаётся на START,
-    /// а не перескакивает на первую страницу. Если текущая страница исчезла из
-    /// нового набора, контроллер переходит на START.
+    /// Текущая страница сохраняется: если пользователь стоял на START, после
+    /// добавления хука он остаётся на START, а не перескакивает на первую
+    /// страницу (пейджер Core сохраняет страницу по `id`, контроллер после
+    /// пересборки ещё и явно ставит пейджер на фактический индекс). Если
+    /// текущая страница исчезла из нового набора, контроллер переходит на
+    /// START и сообщает делегату о смене страницы.
+    ///
+    /// Новый поставщик хука (другой экземпляр) и новая фабрика правой страницы
+    /// пересоздают соответствующую страницу — пейджер не оставит на экране
+    /// контроллер прежнего поставщика. Если хук в этот момент на экране,
+    /// прежний поставщик получает `quickPanelDidDisappear`, новый —
+    /// `quickPanelWillAppear` (§7); для делегата хук остаётся видимым, событий
+    /// видимости нет.
     ///
     /// - Parameters:
     ///   - leftPanel: Поставщик страницы-хука (§7); `nil` — страницы нет.
@@ -432,11 +543,25 @@ public final class TesseraStartScreenViewController: UIViewController {
     ///     ±1) и должна возвращать контроллер, который можно встроить заново.
     ///
     /// - Note: Вертикальный скролл боковой страницы регистрируется отдельно —
-    ///   через ``registerVerticalOwner(_:)`` после появления страницы (§1).
+    ///   через ``registerVerticalOwner(_:)`` из `viewDidLoad` контроллера
+    ///   страницы (§1).
     public func configure(
         leftPanel: QuickPanelProviding?,
         rightPage: (() -> UIViewController)?
     ) {
+        if !Self.isSameProvider(self.leftPanel, leftPanel) {
+            // Прежний поставщик уходит: парный `didDisappear` — до замены,
+            // иначе он ушёл бы новому (или никому при удалении хука).
+            sendQuickPanelDidDisappearIfNeeded()
+            if leftPanel != nil {
+                quickPanelPageGeneration += 1
+            }
+        }
+        if rightPage != nil {
+            // Замыкания несравнимы: новая фабрика — новая страница.
+            applicationsPageGeneration += 1
+        }
+
         self.leftPanel = leftPanel
         self.rightPageFactory = rightPage
 
@@ -447,13 +572,45 @@ public final class TesseraStartScreenViewController: UIViewController {
         rebuildPages()
     }
 
+    /// Обновляет источники боковых страниц без пересборки пейджера.
+    ///
+    /// Путь SwiftUI-фасада (E10.8): поставщик хука и фабрика правой страницы,
+    /// созданные в `body`, приходят новыми экземплярами на каждой перерисовке.
+    /// Пересборка пейджера на каждый кадр остановила бы идущий свайп, поэтому
+    /// при неизменном наличии страниц источники заменяются «тихо»: уже
+    /// загруженные страницы остаются, новые экземпляры используются при
+    /// следующем создании страницы и для колбэков хука (логически это тот же
+    /// поставщик — его актуальное описание).
+    ///
+    /// - Precondition: Наличие хука и правой страницы не меняется; иначе нужен
+    ///   ``configure(leftPanel:rightPage:)``.
+    func updateSidePageSources(
+        leftPanel: QuickPanelProviding?,
+        rightPage: (() -> UIViewController)?
+    ) {
+        guard (leftPanel != nil) == (self.leftPanel != nil),
+              (rightPage != nil) == (rightPageFactory != nil) else {
+            configure(leftPanel: leftPanel, rightPage: rightPage)
+            return
+        }
+
+        self.leftPanel = leftPanel
+        self.rightPageFactory = rightPage
+        if appearedQuickPanel != nil {
+            appearedQuickPanel = leftPanel
+        }
+    }
+
     /// Программно показывает страницу в порядке чтения.
     ///
     /// Единственный способ открыть страницу-хук при
     /// ``yieldsLeftEdgeToSystemGesture == true``: страница на время показа
     /// добавляется в пейджер, поэтому первое открытие пересобирает набор
-    /// страниц (ленивые страницы могут быть пересозданы — это цена
-    /// «только программно»).
+    /// страниц. Переход сообщается так же, как свайп: `quickPanelWillAppear`
+    /// (до появления), событие делегата и анонс VoiceOver — по завершении.
+    ///
+    /// ``currentPage`` меняется по подтверждению пейджера: без анимации — сразу,
+    /// с анимацией — по её завершении (палец может перехватить переход).
     ///
     /// При Reduce Motion анимация перехода отключается (§9). Если запрошенной
     /// страницы нет (нет хука или фабрики правой страницы), вызов — no-op,
@@ -489,9 +646,18 @@ public final class TesseraStartScreenViewController: UIViewController {
 
         guard let index = pageOrder.firstIndex(of: page) else { return }
 
-        currentPage = page
-        currentPageIndex = index
+        // Цель — до перехода: хук получает `willAppear` до появления (§7).
+        pendingPage = page == currentPage ? nil : page
+        updateQuickPanelVisibility()
+
         pagerViewController.go(toPage: index, animated: shouldAnimate)
+
+        // Переход без анимации синхронен: подтверждение (если страница
+        // сменилась) уже пришло через `didShowPageAt`.
+        if !shouldAnimate {
+            pendingPage = nil
+            updateQuickPanelVisibility()
+        }
     }
 
     // MARK: - Регистрация вертикальных владельцев (§1)
@@ -504,15 +670,18 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// опциональных страниц создаёт хост, поэтому о них нужно сообщить:
     ///
     /// ```swift
-    /// // В контроллере боковой страницы, после её появления:
-    /// override func viewDidAppear(_ animated: Bool) {
-    ///     super.viewDidAppear(animated)
+    /// // В контроллере боковой страницы:
+    /// override func viewDidLoad() {
+    ///     super.viewDidLoad()
     ///     startScreen.registerVerticalOwner(listPage.scrollView)
     /// }
     /// ```
     ///
-    /// Регистрируйте страницу после её появления (например, из `viewDidAppear`
-    /// её контроллера), когда скролл-вью уже существует. На время
+    /// Регистрируйте скролл в `viewDidLoad` контроллера страницы, когда
+    /// скролл-вью уже существует. Не полагайтесь на `viewDidAppear`: после W1
+    /// пейджер пересылает appearance только текущей странице, а соседи ±1
+    /// загружаются без него — свайп с START начинается раньше, чем боковая
+    /// страница «появится». На время
     /// горизонтального жеста пейджера прокрутка владельца блокируется и по
     /// завершении жеста получает прежнее `isScrollEnabled`
     /// (``TesseraGestureArbiter``). Вертикальный жест не блокируется — он
@@ -610,18 +779,6 @@ public final class TesseraStartScreenViewController: UIViewController {
         pagerViewController.delegate = self
     }
 
-    /// Встаёт на ``currentPage`` без анимации после первого layout.
-    private func showCurrentPageWithoutAnimation() {
-        guard !pageOrder.isEmpty else { return }
-
-        let target = pageOrder.firstIndex(of: currentPage)
-            ?? pageOrder.firstIndex(of: .start)
-            ?? 0
-        currentPageIndex = target
-        currentPage = pageOrder[target]
-        pagerViewController.go(toPage: target, animated: false)
-    }
-
     // MARK: - Пересборка страниц
 
     /// Пересобирает набор страниц пейджера из текущей конфигурации (D13).
@@ -630,47 +787,52 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// `pageOrder` и набор пейджера всегда строятся вместе, поэтому индексы
     /// озвучивания и `accessibilityScroll` не расходятся с пейджером.
     ///
+    /// После `reload(pages:)` пейджер явно ставится на фактический индекс
+    /// подтверждённой страницы (`go(toPage:animated: false)`): Core сохраняет
+    /// страницу по `id`, но смена поколения `id` (замена поставщика), зажим
+    /// индекса при исчезновении страницы и прерванная анимация не должны
+    /// оставить на экране не ту страницу, о которой знает контроллер (E10.6).
+    /// Незавершённый программный переход при этом отменяется.
+    ///
     /// Пересборка вызывается только из «холодных» путей (конфигурация,
     /// программный показ, уход со страницы-хука) — не из `scrollViewDidScroll`.
     private func rebuildPages() {
-        let previousPage = currentPage
         let built = makePages()
         let order = built.map { $0.page }
         pageOrder = order
 
-        let isCurrentStillAvailable = order.contains(previousPage)
-        if !isCurrentStillAvailable {
-            if previousPage == .quickPanel {
+        var anchor = currentPage
+        if !order.contains(anchor) {
+            if anchor == .quickPanel {
                 isQuickPanelUnlocked = false
             }
-            setQuickPanelOnScreen(false)
-            currentPage = .start
+            anchor = order.contains(.start) ? .start : (order.first ?? .start)
         }
 
         guard isViewLoaded else {
-            currentPageIndex = order.firstIndex(of: currentPage) ?? 0
+            currentPage = anchor
+            currentPageIndex = order.firstIndex(of: anchor) ?? 0
             return
         }
 
-        // Пейджер сохраняет текущую страницу по `id`; если её больше нет —
-        // зажимает прежний индекс, а мы явно доводим переход до START.
+        // Перезагрузка отменяет анимацию пейджера — цель больше не ждём.
+        pendingPage = nil
+        // Свежий прогресс придёт из `reload` (восстановление offset'а).
+        lastPagerProgress = nil
         pagerViewController.reload(pages: built.map { $0.descriptor })
 
-        if !isCurrentStillAvailable, let startIndex = order.firstIndex(of: .start) {
-            currentPage = .start
-            currentPageIndex = startIndex
-            pagerViewController.go(toPage: startIndex, animated: false)
-            return
+        let index = order.firstIndex(of: anchor) ?? 0
+        if anchor != currentPage {
+            // Текущая страница исчезла: это смена страницы для делегата и
+            // VoiceOver, даже если пейджер не успеет подтвердить её сам
+            // (например, при нулевой ширине до первого layout'а).
+            confirmPage(anchor, at: index)
+        } else {
+            currentPageIndex = index
         }
 
-        if let index = order.firstIndex(of: currentPage) {
-            currentPageIndex = index
-        } else {
-            // Защитный путь: набор всегда содержит START, но не полагаемся на
-            // это молча — иначе accessibilityScroll остался бы с битым индексом.
-            currentPageIndex = 0
-            currentPage = order.first ?? .start
-        }
+        pagerViewController.go(toPage: index, animated: false)
+        updateQuickPanelVisibility()
     }
 
     /// Собирает пары «страница в порядке чтения — описание для пейджера».
@@ -685,7 +847,7 @@ public final class TesseraStartScreenViewController: UIViewController {
         // после программного разворота.
         if leftPanel != nil, !yieldsLeftEdgeToSystemGesture || isQuickPanelUnlocked {
             let descriptor = TesseraPageDescriptor(
-                id: Self.quickPanelPageID,
+                id: quickPanelPageID,
                 title: quickPanelTitle,
                 makeContent: { [weak self] in
                     guard let self, let panel = self.leftPanel else {
@@ -708,7 +870,7 @@ public final class TesseraStartScreenViewController: UIViewController {
 
         if rightPageFactory != nil {
             let descriptor = TesseraPageDescriptor(
-                id: Self.applicationsPageID,
+                id: applicationsPageID,
                 title: applicationsPageTitle,
                 makeContent: { [weak self] in
                     self?.rightPageFactory?() ?? UIViewController()
@@ -720,17 +882,105 @@ public final class TesseraStartScreenViewController: UIViewController {
         return result
     }
 
+    // MARK: - Подтверждение страницы
+
+    /// Фиксирует страницу, подтверждённую пейджером, и рассылает события.
+    ///
+    /// Единственное место записи ``currentPage`` после загрузки вида: смена
+    /// страницы сообщается делегату и озвучивается (только если экран
+    /// показан, §9), повторное подтверждение той же страницы (пейджер заново
+    /// сообщает её после `reload`) — нет.
+    private func confirmPage(_ page: TesseraStartScreenPage, at index: Int) {
+        currentPageIndex = index
+        if pendingPage == page {
+            pendingPage = nil
+        }
+
+        let changed = page != currentPage
+        currentPage = page
+        updateQuickPanelVisibility()
+
+        if changed {
+            delegate?.startScreen(self, didChangePage: page, index: index)
+            if isScreenVisible {
+                pageAnnouncer(pageTitle(for: page))
+            }
+        }
+
+        scheduleQuickPanelLockIfNeeded(after: page)
+    }
+
     // MARK: - Страница-хук (§7)
 
-    /// Сообщает поставщику хука о появлении/скрытии ровно один раз за переход.
-    private func setQuickPanelOnScreen(_ isOnScreen: Bool) {
-        guard isOnScreen != isQuickPanelOnScreen else { return }
-        isQuickPanelOnScreen = isOnScreen
+    /// Видна ли страница-хук сейчас.
+    ///
+    /// Хук виден, если экран показан и страница хотя бы частично в окне
+    /// пейджера (`|t − индекс хука| < 1`) либо к ней идёт программный переход
+    /// (тогда `willAppear` приходит до появления).
+    private var isQuickPanelVisible: Bool {
+        guard isScreenVisible,
+              leftPanel != nil,
+              let index = pageOrder.firstIndex(of: .quickPanel) else {
+            return false
+        }
+        if pendingPage == .quickPanel {
+            return true
+        }
+        guard let progress = lastPagerProgress, progress.isFinite else {
+            return currentPage == .quickPanel
+        }
+        return abs(progress - CGFloat(index)) < 1 - Self.pageVisibilityEpsilon
+    }
 
-        if isOnScreen {
-            leftPanel?.quickPanelWillAppear()
+    /// Доля страницы, при которой она считается ушедшей с экрана.
+    private static let pageVisibilityEpsilon: CGFloat = 0.001
+
+    /// Приводит колбэки хука и событие делегата к текущей видимости (§7).
+    ///
+    /// Поставщику — `quickPanelWillAppear` при появлении и
+    /// `quickPanelDidDisappear` тому же экземпляру при скрытии; делегату —
+    /// `didChangeHookVisibility` только при смене значения. Вызывается и из
+    /// колбэка прогресса пейджера: здесь нет layout'а, только сравнение и
+    /// (раз за переход) колбэки.
+    private func updateQuickPanelVisibility() {
+        let visible = isQuickPanelVisible
+
+        if visible {
+            if appearedQuickPanel == nil, let panel = leftPanel {
+                appearedQuickPanel = panel
+                panel.quickPanelWillAppear()
+            }
         } else {
-            leftPanel?.quickPanelDidDisappear()
+            sendQuickPanelDidDisappearIfNeeded()
+        }
+
+        guard visible != isQuickPanelOnScreen else { return }
+        isQuickPanelOnScreen = visible
+        delegate?.startScreen(self, didChangeHookVisibility: visible)
+    }
+
+    /// Отправляет `quickPanelDidDisappear` поставщику, получившему `willAppear`.
+    private func sendQuickPanelDidDisappearIfNeeded() {
+        guard let appeared = appearedQuickPanel else { return }
+        appearedQuickPanel = nil
+        appeared.quickPanelDidDisappear()
+    }
+
+    /// Тот же ли это поставщик хука.
+    ///
+    /// Классовые поставщики сравниваются по ссылке; значимые типы сравнить
+    /// нельзя (бокс каждый раз новый) — они считаются новым поставщиком.
+    private static func isSameProvider(
+        _ lhs: QuickPanelProviding?,
+        _ rhs: QuickPanelProviding?
+    ) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (lhs?, rhs?):
+            return (lhs as AnyObject) === (rhs as AnyObject)
+        default:
+            return false
         }
     }
 
@@ -739,7 +989,8 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// Пересборка страниц отложена: `didShowPageAt` вызывается пейджером из
     /// завершения его перехода, и менять набор страниц прямо в этом колбэке —
     /// реентерабельность. К следующему проходу run loop пользователь уже не на
-    /// панели (или успел вернуться — тогда панель остаётся открытой).
+    /// панели (или успел вернуться, или к панели идёт программный переход —
+    /// тогда панель остаётся открытой).
     private func scheduleQuickPanelLockIfNeeded(after page: TesseraStartScreenPage) {
         guard yieldsLeftEdgeToSystemGesture,
               isQuickPanelUnlocked,
@@ -755,9 +1006,11 @@ public final class TesseraStartScreenViewController: UIViewController {
             self.isQuickPanelLockScheduled = false
 
             guard self.yieldsLeftEdgeToSystemGesture, self.isQuickPanelUnlocked else { return }
-            // Пользователь успел вернуться на панель — оставляем её в наборе,
-            // следующая попытка ухода снова сюда попадёт.
-            guard self.currentPage != .quickPanel else { return }
+            // Пользователь успел вернуться на панель (или к ней идёт
+            // программный переход) — оставляем её в наборе, следующая
+            // попытка ухода снова сюда попадёт.
+            guard self.currentPage != .quickPanel,
+                  self.pendingPage != .quickPanel else { return }
 
             self.isQuickPanelUnlocked = false
             self.rebuildPages()
@@ -823,13 +1076,19 @@ public final class TesseraStartScreenViewController: UIViewController {
         observedPagerPan = pan
     }
 
-    /// Реакция на пан пейджера: блокировка/разблокировка вертикальной сетки.
+    /// Реакция на пан пейджера: блокировка/разблокировка вертикальных детей.
     ///
-    /// Layout здесь не выполняется — только флаг прокрутки.
+    /// Layout здесь не выполняется — только флаги прокрутки. `.began` во время
+    /// программной анимации означает перехват перехода пальцем: цель
+    /// `showPage` больше не ждём, страницу подтвердит сам пейджер.
     @objc private func pagerPanDidChange(_ pan: UIPanGestureRecognizer) {
         switch pan.state {
         case .began:
-            beginHorizontalScroll(with: pan)
+            if pendingPage != nil {
+                pendingPage = nil
+                updateQuickPanelVisibility()
+            }
+            beginHorizontalScroll(isHorizontal: isHorizontalPan(pan))
         case .ended, .cancelled, .failed:
             endHorizontalScroll()
         case .possible, .changed:
@@ -841,9 +1100,19 @@ public final class TesseraStartScreenViewController: UIViewController {
 
     /// Начинает горизонтальный жест: на время жеста дети не прокручиваются.
     ///
-    /// Детей двое (§1): сетка START (регистрируется автоматически) и скроллы
+    /// Детей двое (§1): сетка START (блокируется автоматически) и скроллы
     /// боковых страниц, зарегистрированные хостом через
-    /// ``registerVerticalOwner(_:)`` (``verticalOwnersForArbitration``).
+    /// ``registerVerticalOwner(_:)``.
+    ///
+    /// Сетка START блокируется не через `isScrollEnabled`, а выключением её
+    /// пан-жеста (`panGestureRecognizer.isEnabled`): `isScrollEnabled` сетки
+    /// пишут и анимация панели папки (D17), и координатор редактирования, оба
+    /// со своим снимком «было/стало». Снимок арбитра поверх их снимков
+    /// гонялся с ними и мог навсегда оставить сетку выключенной (E10.6).
+    /// Отдельный флаг жеста с ними не пересекается: контроллер включает пан
+    /// обратно, только если сам его выключил. Скроллы боковых страниц
+    /// по-прежнему блокирует ``TesseraGestureArbiter`` (их флаг больше никто
+    /// не трогает).
     ///
     /// Решение по доминирующей оси принимается по первому доступному вектору
     /// пана (как в Pivot): заменить делегата пана пейджера нельзя, поэтому
@@ -851,27 +1120,33 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// вертикальный, дети остаются прокручиваемыми — иначе выключение
     /// скролл-вью остановило бы начавшуюся вертикальную прокрутку (§1,
     /// CORE-IOS-DESIGN.md §2 «Арбитраж»).
-    private func beginHorizontalScroll(with pan: UIPanGestureRecognizer) {
-        guard let pagerScrollView else { return }
-
-        guard isHorizontalPan(pan) else {
+    ///
+    /// - Parameter isHorizontal: Доминирует ли горизонталь в начавшемся жесте.
+    func beginHorizontalScroll(isHorizontal: Bool) {
+        guard isHorizontal else {
             // Вертикаль принадлежит детям: снимаем возможную прошлую
-            // блокировку и не трогаем `isScrollEnabled`.
+            // блокировку и не трогаем их прокрутку.
             endHorizontalScroll()
             return
         }
 
-        // Защита от наложения жестов: незавершённый арбитр сначала возвращает
-        // детям исходное состояние, иначе снимок `isScrollEnabled` потеряется.
-        if gestureArbiter != nil {
+        // Защита от наложения жестов: незавершённая блокировка сначала
+        // снимается, иначе исходные состояния потеряются.
+        if gestureArbiter != nil || lockedGridPan != nil {
             endHorizontalScroll()
         }
 
+        if let gridPan = startPageController.gridScrollView?.panGestureRecognizer,
+           gridPan.isEnabled {
+            gridPan.isEnabled = false
+            lockedGridPan = gridPan
+        }
+
+        guard let pagerScrollView else { return }
         pruneExtraVerticalOwners()
-        let verticalOwners = verticalOwnersForArbitration
         let arbiter = TesseraGestureArbiter(
             horizontalOwner: pagerScrollView,
-            verticalOwners: verticalOwners
+            verticalOwners: sidePageVerticalOwners
         )
         arbiter.prepareForHorizontalScroll()
         gestureArbiter = arbiter
@@ -887,35 +1162,37 @@ public final class TesseraStartScreenViewController: UIViewController {
         return TesseraGestureArbiter.axisDecision(forVelocity: vector) == .horizontal
     }
 
-    /// Завершает горизонтальный жест: возвращает детям исходную прокрутку.
+    /// Завершает горизонтальный жест: возвращает детям прокрутку.
     ///
-    /// После этого арбитр освобождается: сильных ссылок на скролл-вью боковых
-    /// страниц между жестами контроллер не держит, выгруженные страницы (D13)
-    /// не живут в арбитре.
-    private func endHorizontalScroll() {
+    /// Пан сетки включается безусловно, если его выключил контроллер: его
+    /// флаг больше никто не пишет, а `isScrollEnabled` сетки остаётся за её
+    /// собственными владельцами. После этого арбитр освобождается: сильных
+    /// ссылок на скролл-вью боковых страниц между жестами контроллер не
+    /// держит, выгруженные страницы (D13) не живут в арбитре.
+    func endHorizontalScroll() {
+        if let gridPan = lockedGridPan {
+            gridPan.isEnabled = true
+            lockedGridPan = nil
+        }
         gestureArbiter?.endHorizontalScroll()
         gestureArbiter = nil
         pruneExtraVerticalOwners()
     }
 
-    /// Вертикальные владельцы для арбитра: сетка START плюс зарегистрированные
-    /// хостом скроллы боковых страниц.
+    /// Вертикальные владельцы боковых страниц для арбитра.
     ///
-    /// Сетка START — автоматический владелец: она есть в любой конфигурации
-    /// (D13), поэтому её не нужно регистрировать. Порядок — сетка первой: она
-    /// участвует в жесте чаще остальных, а порядок влияет только на очерёдность
-    /// блокировки. Повторы и сам скролл-вью пейджера отсекаем здесь, не
-    /// полагаясь на внутреннюю фильтрацию ``TesseraGestureArbiter``.
-    private var verticalOwnersForArbitration: [UIScrollView] {
+    /// Сетка START сюда не входит — её блокирует отдельный флаг жеста (см.
+    /// ``beginHorizontalScroll(isHorizontal:)``). Повторы и сам скролл-вью
+    /// пейджера отсекаем здесь, не полагаясь на внутреннюю фильтрацию
+    /// ``TesseraGestureArbiter``.
+    private var sidePageVerticalOwners: [UIScrollView] {
         var owners: [UIScrollView] = []
-
-        if let gridScrollView = startPageController.gridScrollView {
-            owners.append(gridScrollView)
-        }
+        let gridScrollView = startPageController.gridScrollView
 
         for owner in extraVerticalOwners {
             guard let scrollView = owner.scrollView,
                   scrollView !== pagerScrollView,
+                  scrollView !== gridScrollView,
                   !owners.contains(where: { $0 === scrollView }) else {
                 continue
             }
@@ -970,11 +1247,11 @@ public final class TesseraStartScreenViewController: UIViewController {
 
 extension TesseraStartScreenViewController: TesseraPagerDelegate {
 
-    /// Завершение перехода: синхронизация индекса, колбэки хука и озвучивание.
+    /// Завершение перехода: подтверждение страницы, события делегата и
+    /// озвучивание (``confirmPage(_:at:)``).
     ///
-    /// Прогресс (`didChangeProgress`) контроллеру не нужен: единственный
-    /// потребитель непрерывного `t` на этом экране — пейджер, а параллакс
-    /// привязан к вертикальному offset сетки, а не к горизонтальному.
+    /// Контроллер — постоянный делегат пейджера; SwiftUI-фасад получает
+    /// события через ``delegate`` и пейджер не перехватывает.
     ///
     /// - Parameters:
     ///   - pager: Пейджер-источник события.
@@ -985,20 +1262,26 @@ extension TesseraStartScreenViewController: TesseraPagerDelegate {
     ) {
         guard pageOrder.indices.contains(index) else { return }
 
-        let page = pageOrder[index]
-        currentPageIndex = index
-        currentPage = page
-
-        setQuickPanelOnScreen(page == .quickPanel)
-        announcePageIfNeeded(page)
-        scheduleQuickPanelLockIfNeeded(after: page)
+        lastPagerProgress = CGFloat(index)
+        confirmPage(pageOrder[index], at: index)
     }
 
-    /// Озвучивает название страницы, не повторяя его после пересборки набора.
-    private func announcePageIfNeeded(_ page: TesseraStartScreenPage) {
-        guard lastAnnouncedPage != page else { return }
-        lastAnnouncedPage = page
-        TesseraAccessibility.announcePageChange(pageTitle(for: page))
+    /// Прогресс прокрутки: только видимость страницы-хука (§7).
+    ///
+    /// Вызывается из `scrollViewDidScroll` пейджера, поэтому здесь нет layout'а:
+    /// сохраняется `t`, а колбэки хука и делегата уходят только при смене
+    /// видимости (раз за переход). Параллакс обоев привязан к вертикальному
+    /// offset'у сетки, а не к `t`.
+    ///
+    /// - Parameters:
+    ///   - pager: Пейджер-источник события.
+    ///   - t: Нормализованный прогресс в порядке чтения.
+    public func pager(
+        _ pager: TesseraPagerViewController,
+        didChangeProgress t: CGFloat
+    ) {
+        lastPagerProgress = t
+        updateQuickPanelVisibility()
     }
 }
 
@@ -1015,7 +1298,14 @@ extension TesseraStartScreenViewController: TesseraPagerDelegate {
 /// `contentSize` (Core §2, «Параллакс»), картинка занимает видимое окно за всю
 /// прокрутку, а `update(withContentOffset:)` на каждом кадре меняет только
 /// `transform`. Reduce Motion замораживает слой внутри Core; собственного
-/// ветвления по настройке здесь нет.
+/// ветвления по настройке здесь нет. Запас слоя пересчитывается и при росте
+/// контента без нового снимка (раскрытие папки, `grid.update`): страница
+/// наблюдает `contentSize` коллекции (KVO) и помечает себя для layout'а.
+///
+/// Live-плитки (§4, «Паузы»): пока страница не показана пейджером (после
+/// `viewDidDisappear` и до `viewWillAppear` — пейджер пересылает appearance
+/// только текущей странице), видимые ячейки сетки стоят на паузе — START за
+/// кадром не флипается.
 private final class TesseraStartPageViewController: UIViewController {
 
     // MARK: - Метрики
@@ -1047,6 +1337,20 @@ private final class TesseraStartPageViewController: UIViewController {
 
     /// Обои внутри слоя.
     private let backgroundImageView = UIImageView()
+
+    /// Наблюдение `contentSize` коллекции сетки (§8: запас обоев при росте
+    /// контента без `reload`).
+    private var contentSizeObservation: NSKeyValueObservation?
+
+    /// Высота контента, под которую последний раз разложен слой обоев.
+    private var backgroundContentHeight: CGFloat?
+
+    /// Идёт ли `layoutPage()` — KVO изнутри собственного прохода не
+    /// перезапрашивает layout.
+    private var isLayingOutPage = false
+
+    /// Стоят ли live-плитки на паузе (§4): `true`, пока страница не показана.
+    private var areLiveTilesPaused = true
 
     // MARK: - Конфигурация
 
@@ -1105,11 +1409,73 @@ private final class TesseraStartPageViewController: UIViewController {
         parallaxLayer.addSubview(backgroundImageView)
         view.addSubview(parallaxLayer)
         view.addSubview(gridView)
+
+        // §8: высота контента растёт и без нового снимка (панель папки D17,
+        // `grid.update` от хоста или координатора). Сам пересчёт — в
+        // ближайшем layout-проходе, а не в колбэке: KVO приходит из layout'а
+        // коллекции, и здесь только помечается страница.
+        contentSizeObservation = gridScrollView?.observe(
+            \.contentSize,
+            options: [.new]
+        ) { [weak self] _, _ in
+            self?.contentSizeDidChange()
+        }
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         layoutPage()
+    }
+
+    /// START-страница становится текущей: live-плитки возобновляются (§4).
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        setLiveTilesPaused(false)
+    }
+
+    /// START-страница ушла (пейджер показал другую или экран скрыт):
+    /// live-плитки на паузу (§4).
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        setLiveTilesPaused(true)
+    }
+
+    // MARK: - Live-плитки (§4, «Паузы»)
+
+    /// Ставит live-плитки и idle-флип папок START на паузу или снимает её.
+    ///
+    /// Используется тот же путь, что у сетки при уходе ячейки с экрана
+    /// (`setLiveTileVisible`): движок не флипает невидимую плитку и сбрасывает
+    /// незавершённый флип, подписки провайдеров сохраняются. Ячейки, скрытые
+    /// на время drag (`setItemHidden`), не возобновляются.
+    private func setLiveTilesPaused(_ paused: Bool) {
+        areLiveTilesPaused = paused
+        applyLiveTilePause()
+    }
+
+    /// Применяет паузу к видимым ячейкам коллекции.
+    ///
+    /// Вызывается и после layout'а: `willDisplay` сетки (новый снимок, рост
+    /// контента) регистрирует ячейки видимыми, и START за кадром снова
+    /// флипался бы.
+    private func applyLiveTilePause() {
+        guard let collectionView = gridScrollView as? UICollectionView else { return }
+        for case let cell as TesseraTileCell in collectionView.visibleCells {
+            if areLiveTilesPaused {
+                cell.setLiveTileVisible(false)
+            } else if !cell.accessibilityElementsHidden {
+                cell.setLiveTileVisible(true)
+            }
+        }
+    }
+
+    /// Высота контента сетки изменилась: запас обоев пересчитается в
+    /// ближайшем layout-проходе (§8).
+    private func contentSizeDidChange() {
+        guard isViewLoaded, !isLayingOutPage else { return }
+        let height = gridView.contentSize.height
+        guard height != backgroundContentHeight else { return }
+        view.setNeedsLayout()
     }
 
     // MARK: - Данные
@@ -1136,6 +1502,9 @@ private final class TesseraStartPageViewController: UIViewController {
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
 
+        isLayingOutPage = true
+        defer { isLayingOutPage = false }
+
         if gridView.frame != bounds {
             gridView.frame = bounds
         }
@@ -1159,6 +1528,11 @@ private final class TesseraStartPageViewController: UIViewController {
         gridView.layoutIfNeeded()
 
         layoutBackground(in: bounds)
+
+        // Ячейки, показанные этим проходом, сетка регистрирует видимыми.
+        if areLiveTilesPaused {
+            applyLiveTilePause()
+        }
     }
 
     /// Раскладывает слой обоев под вертикальный параллакс (§8).
@@ -1183,6 +1557,7 @@ private final class TesseraStartPageViewController: UIViewController {
     /// достаточным, если настройку включат «на лету».
     private func layoutBackground(in bounds: CGRect) {
         let factor = Self.sanitizedFactor(parallaxFactor)
+        backgroundContentHeight = gridView.contentSize.height
         let contentHeight = max(gridView.contentSize.height, bounds.height)
         let maximumOffset = max(0, contentHeight - bounds.height)
         let shift = maximumOffset * factor
