@@ -194,6 +194,144 @@ public final class TesseraLiveTileBadgeView: UIView {
     }
 }
 
+// MARK: - Кеш изображений плитки
+
+/// Кеш изображений сторон, декодированных под размер плитки (§4, «Память»).
+///
+/// Хост отдаёт иконку «как есть» — нередко 1024×1024 пикселя. Показанная в
+/// `UIImageView` 28 pt, она всё равно держит в памяти полный декодированный
+/// буфер (~4 МБ), и десяток живых плиток съедает десятки мегабайт. Кеш рисует
+/// уменьшенную копию под запрошенный бокс × scale экрана
+/// (`UIGraphicsImageRenderer`, iOS 10+) и отдаёт её повторно всем плиткам с
+/// той же иконкой и тем же размером.
+///
+/// Ключ — **идентичность** объекта `UIImage` (не содержимое: сравнивать
+/// пиксели дороже, чем рисовать), размер результата в пикселях и режим
+/// отрисовки. Исходная картинка в ключе держится слабо: кеш не продлевает
+/// жизнь «сырой» иконке, а запись умершей иконки не совпадает ни с одной
+/// новой, даже если та заняла тот же адрес памяти.
+///
+/// Иконка, которая уже помещается в бокс, не перерисовывается: кеш отдаёт её
+/// с нужным режимом отрисовки (SF Symbols остаются векторными).
+///
+/// - Note: Только главный поток — как и вся отрисовка плитки. Рендер
+///   выполняется при раскладке стороны (смена размера или контента), а не в
+///   горячем пути скролла/флипа: при переиспользовании ячейки с той же
+///   иконкой и размером это попадание в кеш.
+final class TesseraLiveTileImageCache {
+
+    /// Общий кеш плиток.
+    static let shared = TesseraLiveTileImageCache()
+
+    /// Ключ записи: слабая ссылка на исходник + пиксельный размер + режим.
+    private final class Key: NSObject {
+
+        weak var source: UIImage?
+        let sourceID: ObjectIdentifier
+        let pixelWidth: Int
+        let pixelHeight: Int
+        let renderingMode: Int
+
+        init(source: UIImage, pixelWidth: Int, pixelHeight: Int, renderingMode: UIImage.RenderingMode) {
+            self.source = source
+            self.sourceID = ObjectIdentifier(source)
+            self.pixelWidth = pixelWidth
+            self.pixelHeight = pixelHeight
+            self.renderingMode = renderingMode.rawValue
+        }
+
+        override var hash: Int {
+            var hasher = Hasher()
+            hasher.combine(sourceID)
+            hasher.combine(pixelWidth)
+            hasher.combine(pixelHeight)
+            hasher.combine(renderingMode)
+            return hasher.finalize()
+        }
+
+        override func isEqual(_ object: Any?) -> Bool {
+            guard let other = object as? Key,
+                  let source,
+                  let otherSource = other.source
+            else { return false }
+            return source === otherSource
+                && pixelWidth == other.pixelWidth
+                && pixelHeight == other.pixelHeight
+                && renderingMode == other.renderingMode
+        }
+    }
+
+    private let cache = NSCache<Key, UIImage>()
+
+    /// Число фактических перерисовок (промахов кеша с рендером) — для тестов.
+    private(set) var renderCount = 0
+
+    /// Создаёт кеш.
+    ///
+    /// - Parameters:
+    ///   - countLimit: Максимум записей; по умолчанию 256.
+    ///   - totalCostLimit: Лимит памяти в байтах декодированных буферов; по
+    ///     умолчанию 32 МБ.
+    init(countLimit: Int = 256, totalCostLimit: Int = 32 * 1024 * 1024) {
+        cache.countLimit = countLimit
+        cache.totalCostLimit = totalCostLimit
+    }
+
+    /// Изображение, вписанное в `box` с сохранением пропорций.
+    ///
+    /// - Parameters:
+    ///   - source: Исходная иконка.
+    ///   - box: Бокс показа в точках.
+    ///   - scale: Масштаб экрана; пиксельный размер результата ≤ `box × scale`.
+    ///   - renderingMode: Режим отрисовки результата (шаблон для глифа).
+    /// - Returns: Уменьшенная копия из кеша или новая; исходник с нужным
+    ///   режимом, если он уже помещается в бокс.
+    func image(
+        for source: UIImage,
+        fitting box: CGSize,
+        scale: CGFloat,
+        renderingMode: UIImage.RenderingMode
+    ) -> UIImage {
+        let scale = max(1, scale)
+        let sourceSize = source.size
+        guard sourceSize.width > 0, sourceSize.height > 0, box.width > 0, box.height > 0 else {
+            return source.withRenderingMode(renderingMode)
+        }
+
+        // Вписываем с сохранением пропорций, не увеличивая исходник.
+        let fit = min(box.width / sourceSize.width, box.height / sourceSize.height, 1)
+        let targetPoints = CGSize(width: sourceSize.width * fit, height: sourceSize.height * fit)
+        let pixelWidth = max(1, Int((targetPoints.width * scale).rounded(.down)))
+        let pixelHeight = max(1, Int((targetPoints.height * scale).rounded(.down)))
+
+        let key = Key(source: source, pixelWidth: pixelWidth, pixelHeight: pixelHeight, renderingMode: renderingMode)
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+
+        let result: UIImage
+        let sourcePixelWidth = sourceSize.width * source.scale
+        let sourcePixelHeight = sourceSize.height * source.scale
+        if sourcePixelWidth <= CGFloat(pixelWidth) + 0.5, sourcePixelHeight <= CGFloat(pixelHeight) + 0.5 {
+            // Уже в размер (в том числе векторные символы): не перерисовываем.
+            result = source.withRenderingMode(renderingMode)
+        } else {
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = scale
+            format.opaque = false
+            let size = CGSize(width: CGFloat(pixelWidth) / scale, height: CGFloat(pixelHeight) / scale)
+            let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                source.draw(in: CGRect(origin: .zero, size: size))
+            }
+            result = rendered.withRenderingMode(renderingMode)
+            renderCount += 1
+        }
+
+        cache.setObject(result, forKey: key, cost: pixelWidth * pixelHeight * 4)
+        return result
+    }
+}
+
 // MARK: - Сторона плитки
 
 /// Внутреннее представление одной стороны: фон, иконка, заголовок, подпись.
@@ -219,6 +357,11 @@ final class TesseraLiveTileFaceView: UIView {
     private let detailLabel = UILabel()
 
     private(set) var face: TesseraLiveTileFace?
+
+    /// Исходная иконка, уменьшенная копия которой сейчас показана, и её
+    /// пиксельный размер: повторная раскладка без изменений кеш не трогает.
+    private weak var displayedIconSource: UIImage?
+    private var displayedIconPixelSize: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -284,6 +427,8 @@ final class TesseraLiveTileFaceView: UIView {
             backgroundColor = .clear
             iconView.image = nil
             iconView.isHidden = true
+            displayedIconSource = nil
+            displayedIconPixelSize = .zero
             titleLabel.text = nil
             detailLabel.text = nil
             setNeedsLayout()
@@ -293,12 +438,14 @@ final class TesseraLiveTileFaceView: UIView {
         backgroundColor = face.backgroundColor
 
         // Иконки рисуются шаблоном в цвете текста стороны: на плитке нужен
-        // одноцветный глиф, а не цветная картинка.
-        if let icon = face.icon {
-            iconView.image = icon.withRenderingMode(.alwaysTemplate)
-            iconView.tintColor = face.foregroundColor
-        } else {
+        // одноцветный глиф, а не цветная картинка. Саму картинку ставит
+        // раскладка (`layoutFace`): только там известен размер слота, под
+        // который иконка декодируется (§4, «Память»).
+        iconView.tintColor = face.foregroundColor
+        if face.icon !== displayedIconSource {
             iconView.image = nil
+            displayedIconSource = nil
+            displayedIconPixelSize = .zero
         }
 
         titleLabel.text = face.title
@@ -313,15 +460,6 @@ final class TesseraLiveTileFaceView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layoutFace()
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-
-        // §9: в RTL иконка переезжает к правому краю — пересчитать раскладку.
-        if previousTraitCollection?.layoutDirection != traitCollection.layoutDirection {
-            setNeedsLayout()
-        }
     }
 
     private func layoutFace() {
@@ -350,10 +488,11 @@ final class TesseraLiveTileFaceView: UIView {
         iconView.isHidden = !hasIcon
 
         var textTop = inset
-        if hasIcon {
+        if hasIcon, let icon = face.icon {
             let iconX = isRightToLeft ? width - inset - iconSide : inset
             iconView.frame = CGRect(x: iconX, y: inset, width: iconSide, height: iconSide)
             textTop = inset + iconSide + 6
+            applyIcon(icon, side: iconSide)
         }
 
         let availableHeight = max(0, height - textTop - inset)
@@ -399,8 +538,40 @@ final class TesseraLiveTileFaceView: UIView {
         )
     }
 
+    /// Ставит иконку, декодированную под слот `side × side` × scale (§4).
+    ///
+    /// Повторный вызов с той же иконкой и тем же пиксельным размером ничего
+    /// не делает; иначе картинка берётся из ``TesseraLiveTileImageCache``,
+    /// так что одинаковые плитки делят один буфер.
+    private func applyIcon(_ icon: UIImage, side: CGFloat) {
+        let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : UIScreen.main.scale
+        let pixelSize = CGSize(width: (side * scale).rounded(), height: (side * scale).rounded())
+        guard icon !== displayedIconSource || pixelSize != displayedIconPixelSize || iconView.image == nil else {
+            return
+        }
+        iconView.image = TesseraLiveTileImageCache.shared.image(
+            for: icon,
+            fitting: CGSize(width: side, height: side),
+            scale: scale,
+            renderingMode: .alwaysTemplate
+        )
+        displayedIconSource = icon
+        displayedIconPixelSize = pixelSize
+    }
+
     @objc private func contentSizeCategoryDidChange() {
         setNeedsLayout()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+
+        // §9: в RTL иконка переезжает к правому краю; при смене масштаба
+        // экрана иконку нужно декодировать заново — пересчитать раскладку.
+        if previousTraitCollection?.layoutDirection != traitCollection.layoutDirection
+            || previousTraitCollection?.displayScale != traitCollection.displayScale {
+            setNeedsLayout()
+        }
     }
 }
 
@@ -781,8 +952,21 @@ public final class TesseraLiveTileView: UIView {
     public override func layoutSubviews() {
         super.layoutSubviews()
 
-        frontView.frame = bounds
-        backView.frame = bounds
+        // Посреди флипа у стороны неединичный 3D-`layer.transform`, а `frame`
+        // при неединичном трансформе не определён (документация UIView):
+        // присваивание `frame` даёт значение, зависящее от реализации UIKit.
+        // Геометрию сторон задаём через `bounds` + `center` — они от
+        // трансформа не зависят, и флип продолжается с той же фазы.
+        let faceBounds = CGRect(origin: .zero, size: bounds.size)
+        let faceCenter = CGPoint(x: bounds.midX, y: bounds.midY)
+        for face in [frontView, backView] {
+            if face.bounds != faceBounds {
+                face.bounds = faceBounds
+            }
+            if face.center != faceCenter {
+                face.center = faceCenter
+            }
+        }
 
         // Бэйдж не участвует во флипе и позиционируется отдельно. В RTL
         // верхний угол зеркалится (§9): WP-бэйдж живёт в правом верхнем углу
