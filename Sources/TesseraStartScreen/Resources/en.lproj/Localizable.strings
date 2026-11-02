@@ -68,7 +68,7 @@
 /* Причины отказа функции одобрения. */
 "a11y.grouping.reason.addDenied" = "adding to a folder is denied";
 "a11y.grouping.reason.createDenied" = "creating a folder is denied";
-"a11y.grouping.reason.tileAddDenied" = "the folder was created, but adding the shortcut is denied";
+"a11y.grouping.reason.tileAddDenied" = "adding the shortcut to the new folder is denied";
 "a11y.grouping.reason.moveDenied" = "moving the shortcut is denied";
 
 /* MARK: - Custom actions режима редактирования (§9) */
@@ -76,8 +76,17 @@
 /* Действие «открепить ярлык». */
 "a11y.action.unpin" = "Unpin";
 
-/* Действие «изменить размер плитки». */
+/* Change tile size. */
 "a11y.action.resize" = "Change size";
+
+/* Add to a folder (%@ — folder title). */
+"a11y.action.addToFolderFormat" = "Add to folder %@";
+
+/* Move a shortcut out of its folder onto the start screen. */
+"a11y.action.removeFromFolder" = "Remove from folder";
+
+/* Move a shortcut to another folder (%@ — folder title). */
+"a11y.action.moveToFolderFormat" = "Move to folder %@";
 
 /* MARK: - Экран папки (TesseraFolderViewController) */
 

@@ -124,7 +124,8 @@ enum TesseraStartScreenStrings {
         /// Причина отказа: создание папки запрещено.
         case a11yGroupingReasonCreateDenied = "a11y.grouping.reason.createDenied"
 
-        /// Причина отказа: папка создана, но добавление ярлыка запрещено.
+        /// Причина отказа: добавление ярлыка в новую папку запрещено (E11.6:
+        /// создание откатывается целиком).
         case a11yGroupingReasonTileAddDenied = "a11y.grouping.reason.tileAddDenied"
 
         /// Причина отказа: перенос ярлыка из папки запрещён (E11.1).
@@ -137,6 +138,15 @@ enum TesseraStartScreenStrings {
 
         /// Действие «изменить размер плитки».
         case a11yActionResize = "a11y.action.resize"
+
+        /// Действие «добавить ярлык в папку» (`%1$@` — название папки, E11.5).
+        case a11yActionAddToFolderFormat = "a11y.action.addToFolderFormat"
+
+        /// Действие «убрать ярлык из папки на рабочий стол» (E11.5).
+        case a11yActionRemoveFromFolder = "a11y.action.removeFromFolder"
+
+        /// Действие «переместить ярлык в другую папку» (`%1$@` — название папки, E11.5).
+        case a11yActionMoveToFolderFormat = "a11y.action.moveToFolderFormat"
 
         // MARK: Экран папки
 

@@ -753,8 +753,15 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Ячейки, которым координатор выставил custom actions (чтобы снять их в конце).
     private var cellsWithEditActions: [ObjectIdentifier: TesseraTileCell] = [:]
 
-    /// Идентификатор, для которого ячейке выставлены custom actions (пропуск повторов).
-    private var editActionsItemByCell: [ObjectIdentifier: AnyHashable] = [:]
+    /// Подпись custom actions ячейки: идентификатор плитки, папка-владелец (для
+    /// ярлыка панели) и состав доступных папок — пропуск повторов, но не
+    /// устаревших действий после создания/удаления папки (E11.5).
+    private var editActionsItemByCell: [ObjectIdentifier: [AnyHashable]] = [:]
+
+    /// Максимум пунктов «в папку»/«в другую папку» у одной плитки (E11.5):
+    /// ротор VoiceOver с десятками действий неудобен, поэтому берутся первые
+    /// папки в порядке сетки.
+    static let maxFolderActions = 6
 
     /// Подсветка плитки-цели при перетаскивании.
     private var dropHighlightView: TesseraTileDropHighlightView?
@@ -832,9 +839,15 @@ public final class TesseraTileEditCoordinator: NSObject {
         observeScrollView()
         observeStore()
         observeNotifications()
+        // E11.5: панель раскрытой папки переконфигурируется при каждом снимке —
+        // custom actions её ярлыков добираются отложенной сверкой.
+        grid.panelShortcutsDidConfigure = { [weak self] _, _ in
+            self?.scheduleReconcile()
+        }
     }
 
     deinit {
+        grid.panelShortcutsDidConfigure = nil
         NotificationCenter.default.removeObserver(self)
         scrollObservation?.invalidate()
         scrollObservation = nil
@@ -3255,19 +3268,27 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// «впитывание» уже показано пользователю. Drop на центр без удержания
     /// сюда не попадает: он возвращает ярлык на исходное место (no-op, E9.5).
     ///
-    /// Операция D14 состоит из двух одобряемых шагов: создание папки из
-    /// целевого ярлыка и добавление перетаскиваемого. Если второй шаг запрещён,
-    /// папка остаётся с целевым ярлыком, а перетаскиваемый возвращается на
-    /// исходное место — документированное ограничение двухшаговой операции.
+    /// Операция D14 состоит из двух одобряемых шагов (создание папки из
+    /// целевого ярлыка, добавление перетаскиваемого), но выполняется атомарно
+    /// (E11.6): ``TileStore`` откатывает первый шаг, если хост отказал второму,
+    /// — модель остаётся ровно как до drop'а, а делегат получает только
+    /// `didFailGrouping` (папки не существовало, поэтому `folderID == nil`).
+    /// `didCreateFolder` приходит только после успеха обоих шагов, перед
+    /// `didAdd`.
     ///
     /// - Parameters:
     ///   - session: Drag-сессия.
     ///   - targetID: Ярлык, на центр которого бросили.
     private func dropIntoNewFolder(_ session: TesseraTileDragSession, targetID: AnyHashable) {
-        guard let folder = store.createFolder(
+        let folder: TileFolder
+        switch store.createFolder(
             withTile: targetID,
+            adding: session.itemID,
             title: configuration.folderTitle
-        ) else {
+        ) {
+        case .created(let created):
+            folder = created
+        case .createDenied:
             failGroupingDrop(
                 .createFolder,
                 session: session,
@@ -3275,27 +3296,23 @@ public final class TesseraTileEditCoordinator: NSObject {
                 reason: TesseraStartScreenStrings.string(.a11yGroupingReasonCreateDenied)
             )
             return
-        }
-
-        session.modelChanged = true
-        delegate?.tileEditCoordinator(self, didCreateFolder: folder)
-
-        guard store.addToFolder(session.itemID, folderID: folder.id) else {
-            render(animated: true)
+        case .addDenied:
             failGroupingDrop(
                 .addToFolder,
                 session: session,
-                folderID: folder.id,
+                folderID: nil,
                 reason: TesseraStartScreenStrings.string(.a11yGroupingReasonTileAddDenied)
             )
             return
         }
 
+        session.modelChanged = true
         canonicalizeVisibleOrderIfNeeded()
         render(animated: true)
         // E11.3: рамку папки читаем после канонизации и `render` — до них новой
         // плитки в сетке нет, и снимок летел бы в старый слот плейсхолдера.
         let folderFrame = grid.frame(forItemID: folder.id) ?? session.placeholder.frame
+        delegate?.tileEditCoordinator(self, didCreateFolder: folder)
         delegate?.tileEditCoordinator(self, didAdd: session.itemID, toFolder: folder.id)
         announce(TesseraStartScreenStrings.string(.a11yFolderCreatedFromTwoTiles))
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -3308,10 +3325,11 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Возвращает ярлык на место после отказа функции одобрения (D14).
     ///
-    /// E8.4: превью порядка в модель не писало, но отказ мог случиться после
-    /// первой мутации двухшаговой операции с папкой (папка создана, ярлык ещё
-    /// нет), поэтому сетку синхронизируем с текущим состоянием `TileStore`, а не
-    /// с базовым снимком: иначе экран разошёлся бы с моделью.
+    /// E8.4: превью порядка в модель не писало; сетку синхронизируем с текущим
+    /// состоянием `TileStore`, а не с базовым снимком: модель могла измениться
+    /// извне, иначе экран разошёлся бы с ней. Двухшаговое создание папки
+    /// откатывается в хранилище целиком (E11.6), так что при его отказе модель
+    /// совпадает с состоянием до drop'а.
     ///
     /// - Parameters:
     ///   - action: Отклонённая операция.
@@ -3593,6 +3611,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         editControls = editControls.filter { actualIDs.contains($0.key) }
 
         let reduceMotion = isReduceMotionEnabled()
+        let folderTargets = store.snapshot().folders
         // Оверлеи создаются только для плиток у экрана (и одной экранной высоты
         // запаса): держать кнопки для сотни далёких ярлыков незачем.
         let creationBounds = grid.bounds.insetBy(dx: 0, dy: -grid.bounds.height)
@@ -3651,8 +3670,9 @@ public final class TesseraTileEditCoordinator: NSObject {
                 )
             }
             applyJiggle(to: control, itemID: item.id, enabled: !reduceMotion)
-            applyEditActions(to: item)
+            applyEditActions(to: item, folders: folderTargets)
         }
+        applyPanelEditActions(folders: folderTargets)
 
         // E8.2: после конфигурации ячеек — снова выставить прозрачность.
         applyEditDimming(animated: dimAnimated)
@@ -3812,20 +3832,28 @@ public final class TesseraTileEditCoordinator: NSObject {
         return spec
     }
 
-    /// Выставляет ячейке custom actions resize/unpin (§9).
+    /// Выставляет ячейке custom actions resize/unpin/«в папку» (§9, E11.5).
     ///
     /// Ячейка — один accessibility-элемент, поэтому кнопки-подвью VoiceOver не
-    /// видит; действия добавляются к самой ячейке.
+    /// видит; действия добавляются к самой ячейке. Для ярлыка на сетке к
+    /// «Открепить»/«Изменить размер» добавляется «Добавить в папку <название>»
+    /// по одному на папку (не больше ``maxFolderActions``). Операции идут через
+    /// публичный ``addToFolder(_:folderID:)`` — функция одобрения хоста (D14),
+    /// озвучивание и фокус уже там. У плитки-папки новых действий нет.
     ///
-    /// - Parameter item: Элемент сетки.
-    private func applyEditActions(to item: TileGridItem) {
+    /// - Parameters:
+    ///   - item: Элемент сетки.
+    ///   - folders: Папки модели в порядке сетки.
+    private func applyEditActions(to item: TileGridItem, folders: [TileFolder]) {
         guard let cell = grid.cellView(forItemID: item.id) as? TesseraTileCell,
               cell.itemID == item.id else {
             return
         }
 
         let key = ObjectIdentifier(cell)
-        guard editActionsItemByCell[key] != item.id else { return }
+        let targets = item.tile != nil ? Array(folders.prefix(TesseraTileEditCoordinator.maxFolderActions)) : []
+        let signature: [AnyHashable] = [item.id] + targets.map { $0.id }
+        guard editActionsItemByCell[key] != signature else { return }
 
         var actions: [UIAccessibilityCustomAction] = []
         if item.tile != nil {
@@ -3846,10 +3874,79 @@ public final class TesseraTileEditCoordinator: NSObject {
                 }
             )
         }
+        for folder in targets {
+            let name = String(
+                format: TesseraStartScreenStrings.string(.a11yActionAddToFolderFormat),
+                folderActionTitle(folder)
+            )
+            let folderID = folder.id
+            actions.append(
+                UIAccessibilityCustomAction(name: name, image: nil) { [weak self] _ in
+                    guard let self else { return false }
+                    return self.addToFolder(item.id, folderID: folderID)
+                }
+            )
+        }
 
         cell.accessibilityCustomActions = actions.isEmpty ? nil : actions
         cellsWithEditActions[key] = cell
-        editActionsItemByCell[key] = item.id
+        editActionsItemByCell[key] = signature
+    }
+
+    /// Выставляет custom actions ярлыкам панели раскрытой папки (E11.5).
+    ///
+    /// «Убрать из папки» — ``moveBetweenFolders(_:to:at:)`` с `nil`: ярлык
+    /// встаёт сразу после папки (или на её месте, если она распалась).
+    /// «Переместить в папку <название>» — по одному на другую папку (не больше
+    /// ``maxFolderActions``). Вне режима редактирования действий нет.
+    ///
+    /// - Parameter folders: Папки модели в порядке сетки.
+    private func applyPanelEditActions(folders: [TileFolder]) {
+        guard isEditing, let panel = grid.panelShortcuts() else { return }
+
+        let targets = folders
+            .filter { $0.id != panel.folder.id }
+            .prefix(TesseraTileEditCoordinator.maxFolderActions)
+        for (index, cell) in panel.cells.enumerated() where panel.folder.tiles.indices.contains(index) {
+            let tileID = panel.folder.tiles[index].id
+            let key = ObjectIdentifier(cell)
+            let signature: [AnyHashable] = [tileID, panel.folder.id] + targets.map { $0.id }
+            guard editActionsItemByCell[key] != signature else { continue }
+
+            var actions: [UIAccessibilityCustomAction] = [
+                UIAccessibilityCustomAction(
+                    name: TesseraStartScreenStrings.string(.a11yActionRemoveFromFolder),
+                    image: nil
+                ) { [weak self] _ in
+                    guard let self else { return false }
+                    return self.moveBetweenFolders(tileID, to: nil)
+                },
+            ]
+            for folder in targets {
+                let name = String(
+                    format: TesseraStartScreenStrings.string(.a11yActionMoveToFolderFormat),
+                    folderActionTitle(folder)
+                )
+                let folderID = folder.id
+                actions.append(
+                    UIAccessibilityCustomAction(name: name, image: nil) { [weak self] _ in
+                        guard let self else { return false }
+                        return self.moveBetweenFolders(tileID, to: folderID)
+                    }
+                )
+            }
+            cell.accessibilityCustomActions = actions
+            cellsWithEditActions[key] = cell
+            editActionsItemByCell[key] = signature
+        }
+    }
+
+    /// Название папки для пунктов custom actions: пустое — из конфигурации,
+    /// затем общая подпись папки без названия.
+    private func folderActionTitle(_ folder: TileFolder) -> String {
+        if !folder.title.isEmpty { return folder.title }
+        if !configuration.folderTitle.isEmpty { return configuration.folderTitle }
+        return TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
     }
 
     /// Озвучивает сообщение VoiceOver.

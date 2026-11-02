@@ -33,6 +33,10 @@
 //    удержанию, no-op без удержания / на родной папке / при отмене), тап по
 //    папке в режиме редактирования открывает панель.
 //
+//  - E11.6: атомарное создание папки drop'ом — отказ второго шага откатывает
+//    первый (модель как до drop'а, только `didFailGrouping`), `didCreateFolder`
+//    приходит после обоих шагов и перед `didAdd`.
+//
 //  Детерминизм: без `sleep`; завершение — прокруткой run loop (`waitUntil`),
 //  таймеры удержания в тестах укорачиваются через конфигурацию.
 //
@@ -71,6 +75,9 @@ final class DragSessionTests: XCTestCase {
         /// События `didFailGrouping`.
         var failures: [TileGroupingAction] = []
 
+        /// Порядок делегатных событий папок: "create" / "add" (E11.6).
+        var folderEventLog: [String] = []
+
         /// Сколько раз координатор вошёл/вышел из редактирования.
         var beginEditingCount = 0
         var endEditingCount = 0
@@ -105,6 +112,7 @@ final class DragSessionTests: XCTestCase {
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TileFolder) {
             createdFolders.append(folder)
+            folderEventLog.append("create")
         }
 
         func tileEditCoordinator(
@@ -113,6 +121,7 @@ final class DragSessionTests: XCTestCase {
             toFolder folderID: AnyHashable
         ) {
             additions.append((tileID, folderID))
+            folderEventLog.append("add")
         }
 
         func tileEditCoordinator(
@@ -1938,6 +1947,133 @@ final class DragSessionTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
+
+    // MARK: - E11.6: атомарное создание папки
+
+    /// Drop на центр ярлыка с выдержанным удержанием.
+    private func dropOnCenterAfterHold(_ host: TesseraTestDragHost, dragged: AnyHashable, target: AnyHashable) throws {
+        XCTAssertTrue(host.startDrag(dragged))
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point(target, fx: 0.5, fy: 0.5)))
+        XCTAssertTrue(
+            host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
+            "Удержание над центром ярлыка выдержано"
+        )
+        host.coordinator.finishDrag(commit: true)
+    }
+
+    /// Отказ второго шага (`addToFolder`) откатывает создание папки: модель и
+    /// сетка как до drop'а, делегат получает только `didFailGrouping`
+    /// (без `didCreateFolder`/`didAdd`), хост не получает `onChange` ни для
+    /// промежуточного состояния, ни для отката.
+    func testDeniedSecondStepRollsBackFolderCreation() throws {
+        let host = TesseraTestDragHost(
+            descriptors: [
+                tesseraTestTile("a", size: .small),
+                tesseraTestTile("x", size: .small),
+                tesseraTestTile("b", size: .small),
+            ],
+            configuration: TesseraTileEditConfiguration(
+                mergeHoverDuration: 0.05,
+                magnetSnapRadius: 0
+            )
+        )
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        host.store.approval = { _, _, action in action != .addToFolder }
+        let before = host.storeIDs
+        var changeCount = 0
+        host.store.onChange = { _ in changeCount += 1 }
+
+        try dropOnCenterAfterHold(host, dragged: "a", target: "b")
+
+        XCTAssertTrue(host.waitUntil { recorder.failures.count == 1 })
+        XCTAssertEqual(recorder.failures, [.addToFolder])
+        XCTAssertTrue(recorder.createdFolders.isEmpty, "didCreateFolder не отправляется")
+        XCTAssertTrue(recorder.additions.isEmpty)
+        XCTAssertEqual(host.storeIDs, before, "Порядок модели прежний")
+        XCTAssertTrue(host.folders.isEmpty, "Записи папки нет")
+        XCTAssertEqual(host.store.snapshot().items.map { $0.id }, before)
+        XCTAssertEqual(changeCount, 0, "Ни промежуточного состояния, ни отката")
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
+        XCTAssertEqual(host.gridIDs, before, "Сетка как до drop'а")
+    }
+
+    /// Откат возвращает целевой ярлык на его место и сохраняет его размер.
+    func testRollbackKeepsTargetSizeAndPosition() throws {
+        let host = TesseraTestDragHost(
+            descriptors: [
+                tesseraTestTile("a", size: .small),
+                tesseraTestTile("b", size: .wide),
+            ],
+            configuration: TesseraTileEditConfiguration(
+                mergeHoverDuration: 0.05,
+                magnetSnapRadius: 0
+            )
+        )
+        host.store.approval = { _, _, action in action != .addToFolder }
+        let before = host.store.snapshot()
+
+        let result = host.store.createFolder(withTile: "b", adding: "a")
+        guard case .addDenied = result else {
+            return XCTFail("Ожидался откат второго шага, получено \(result)")
+        }
+        let after = host.store.snapshot()
+        XCTAssertEqual(after.items.map { $0.id }, before.items.map { $0.id })
+        XCTAssertEqual(after.items.last?.tile?.size, .wide)
+        XCTAssertTrue(after.folders.isEmpty)
+        // Хранилище остаётся рабочим: повторное создание после снятия запрета.
+        host.store.approval = { _, _, _ in true }
+        guard case .created(let folder) = host.store.createFolder(withTile: "b", adding: "a") else {
+            return XCTFail("Повторное создание должно пройти")
+        }
+        XCTAssertEqual(folder.tiles.map { $0.id }, ["b", "a"] as [AnyHashable])
+    }
+
+    /// Отказ первого шага: делегат получает `didFailGrouping(.createFolder)`,
+    /// модель нетронута.
+    func testDeniedFirstStepLeavesModelUntouched() throws {
+        let host = TesseraTestDragHost(
+            descriptors: [tesseraTestTile("a", size: .small), tesseraTestTile("b", size: .small)],
+            configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.05, magnetSnapRadius: 0)
+        )
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        host.store.approval = { _, _, action in action != .createFolder }
+        let before = host.storeIDs
+
+        try dropOnCenterAfterHold(host, dragged: "a", target: "b")
+
+        XCTAssertTrue(host.waitUntil { recorder.failures.count == 1 })
+        XCTAssertEqual(recorder.failures, [.createFolder])
+        XCTAssertTrue(recorder.createdFolders.isEmpty)
+        XCTAssertEqual(host.storeIDs, before)
+    }
+
+    /// Успех: `didCreateFolder` приходит после обоих шагов и строго перед
+    /// `didAdd`; `onChange` хоста срабатывает один раз.
+    func testSuccessfulCreationSendsCreateThenAddAfterBothSteps() throws {
+        let host = TesseraTestDragHost(
+            descriptors: [
+                tesseraTestTile("a", size: .small),
+                tesseraTestTile("b", size: .small),
+            ],
+            configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.05, magnetSnapRadius: 0)
+        )
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        var changeCount = 0
+        host.store.onChange = { _ in changeCount += 1 }
+
+        try dropOnCenterAfterHold(host, dragged: "a", target: "b")
+
+        XCTAssertTrue(host.waitUntil { recorder.additions.count == 1 })
+        XCTAssertEqual(recorder.folderEventLog, ["create", "add"])
+        XCTAssertEqual(recorder.createdFolders.first?.tiles.map { $0.id }, ["b", "a"] as [AnyHashable],
+                       "К моменту didCreateFolder в папке оба ярлыка")
+        XCTAssertTrue(recorder.failures.isEmpty)
+        XCTAssertEqual(changeCount, 1, "Одно уведомление за операцию")
+        XCTAssertEqual(host.folders.count, 1)
+    }
 }
 
 #endif

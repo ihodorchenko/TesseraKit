@@ -68,7 +68,7 @@
 /* Причины отказа функции одобрения. */
 "a11y.grouping.reason.addDenied" = "добавление в папку запрещено";
 "a11y.grouping.reason.createDenied" = "создание папки запрещено";
-"a11y.grouping.reason.tileAddDenied" = "папка создана, но добавление ярлыка запрещено";
+"a11y.grouping.reason.tileAddDenied" = "добавление ярлыка в новую папку запрещено";
 "a11y.grouping.reason.moveDenied" = "перенос ярлыка из папки запрещён";
 
 /* MARK: - Custom actions режима редактирования (§9) */
@@ -78,6 +78,15 @@
 
 /* Действие «изменить размер плитки». */
 "a11y.action.resize" = "Изменить размер";
+
+/* Действие «добавить ярлык в папку» (%@ — название папки). */
+"a11y.action.addToFolderFormat" = "Добавить в папку %@";
+
+/* Действие «убрать ярлык из папки на рабочий стол». */
+"a11y.action.removeFromFolder" = "Убрать из папки";
+
+/* Действие «переместить ярлык в другую папку» (%@ — название папки). */
+"a11y.action.moveToFolderFormat" = "Переместить в папку %@";
 
 /* MARK: - Экран папки (TesseraFolderViewController) */
 
