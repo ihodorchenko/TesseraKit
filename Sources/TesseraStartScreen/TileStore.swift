@@ -893,6 +893,87 @@ public final class TileStore: ObservableObject {
         return materialize(record)
     }
 
+    /// Итог атомарного создания папки из двух ярлыков (E11.6).
+    enum AtomicFolderResult {
+
+        /// Оба шага одобрены: папка создана, второй ярлык лежит в ней.
+        case created(TileFolder)
+
+        /// Хост отклонил создание папки (первый шаг) либо ярлыков нет на сетке.
+        case createDenied
+
+        /// Хост отклонил добавление второго ярлыка (второй шаг); первый шаг
+        /// откатан без следов.
+        case addDenied
+    }
+
+    /// Создаёт папку из ярлыка-цели и сразу добавляет в неё второй ярлык —
+    /// атомарно (E11.6).
+    ///
+    /// Хост одобряет оба шага по очереди (`.createFolder`, затем `.addToFolder`,
+    /// как и при раздельных вызовах). Первый шаг применяется к модели только на
+    /// время второго одобрения: при отказе он откатывается (слот в сетке и
+    /// запись папки возвращаются), `onChange`, автосохранение и
+    /// `objectWillChange` не срабатывают ни для промежуточного состояния, ни
+    /// для отката. При успехе уведомление и сохранение — один раз, для
+    /// итогового состояния.
+    ///
+    /// - Parameters:
+    ///   - targetID: Ярлык на сетке, на месте которого встанет папка.
+    ///   - tileID: Второй ярлык (перетаскиваемый), тоже на сетке.
+    ///   - title: Название папки.
+    /// - Returns: Итог операции.
+    func createFolder(
+        withTile targetID: AnyHashable,
+        adding tileID: AnyHashable,
+        title: String = ""
+    ) -> AtomicFolderResult {
+        let targetKey = TileStore.storageKey(for: targetID)
+        let tileKey = TileStore.storageKey(for: tileID)
+        guard targetKey != tileKey,
+              let targetCatalog = catalogIndex[targetKey],
+              let tileCatalog = catalogIndex[tileKey],
+              let targetPosition = gridOrder.firstIndex(of: targetKey),
+              gridOrder.contains(tileKey) else {
+            return .createDenied
+        }
+        let targetDescriptor = catalog[targetCatalog]
+        guard approval(nil, targetDescriptor, .createFolder) else { return .createDenied }
+
+        let folderID = AnyHashable("folder-" + UUID().uuidString)
+        let record = FolderRecord(
+            key: TileStore.storageKey(for: folderID),
+            id: folderID,
+            title: title,
+            size: sizes[targetKey] ?? targetDescriptor.size,
+            tileKeys: [targetKey]
+        )
+
+        // Шаг 1 — только в памяти, без уведомлений: хост ещё может отказать.
+        folderRecords.append(record)
+        gridOrder[targetPosition] = record.key
+
+        let intermediate = materialize(record)
+        guard approval(intermediate, catalog[tileCatalog], .addToFolder) else {
+            // Откат: слот цели и список папок — ровно как до вызова.
+            gridOrder[targetPosition] = targetKey
+            folderRecords.removeAll { $0.key == record.key }
+            return .addDenied
+        }
+
+        // Шаг 2: второй ярлык уходит с сетки в папку; одно уведомление.
+        if let tilePosition = gridOrder.firstIndex(of: tileKey) {
+            gridOrder.remove(at: tilePosition)
+        }
+        if let index = folderRecords.firstIndex(where: { $0.key == record.key }) {
+            folderRecords[index].tileKeys.append(tileKey)
+            let folder = materialize(folderRecords[index])
+            didChange()
+            return .created(folder)
+        }
+        return .createDenied
+    }
+
     /// Добавляет ярлык с сетки в существующую папку.
     ///
     /// - Parameters:

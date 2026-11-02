@@ -732,6 +732,12 @@ public final class TesseraTileGridView: UIView {
         UIAccessibility.post(notification: $0, argument: $1)
     }
 
+    /// Вызывается после конфигурации панели раскрытой папки (E11.5).
+    ///
+    /// Внутренний шов координатора редактирования: получает папку и ячейки её
+    /// ярлыков, чтобы выставить им custom actions VoiceOver.
+    var panelShortcutsDidConfigure: ((TileFolder, [TesseraTileCell]) -> Void)?
+
     /// Аниматор раскрытия/закрытия панели (D17).
     ///
     /// Удерживается, пока идёт анимация: так её нельзя потерять между кадрами,
@@ -1297,6 +1303,23 @@ public final class TesseraTileGridView: UIView {
         if isFolderChangeAnimating {
             cell.prepareIconCascade()
         }
+        // E11.5: координатор редактирования вешает на ярлыки панели custom
+        // actions VoiceOver; панель переконфигурируется при каждом снимке.
+        panelShortcutsDidConfigure?(folder, cell.shortcutCells)
+    }
+
+    /// Ярлыки видимой панели раскрытой папки (E11.5).
+    ///
+    /// - Returns: Папка из снимка и ячейки её ярлыков (по порядку состава) или
+    ///   `nil`, если панели нет.
+    func panelShortcuts() -> (folder: TileFolder, cells: [TesseraTileCell])? {
+        guard expandedFolderID != nil, let folder = expandedFolder,
+              let panel = collectionView.visibleCells
+                  .compactMap({ $0 as? TesseraFolderPanelCell }).first,
+              panel.shortcutCells.count == folder.tiles.count else {
+            return nil
+        }
+        return (folder, panel.shortcutCells)
     }
 
     /// Настраивает ячейку под элемент и подписывает её активацию VoiceOver.
