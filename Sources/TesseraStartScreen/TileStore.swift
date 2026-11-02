@@ -854,7 +854,8 @@ public final class TileStore: ObservableObject {
     /// Создаёт папку из ярлыка, стоящего на сетке.
     ///
     /// Ярлык немедленно переезжает в новую папку, а на его месте в сетке
-    /// появляется плитка-папка (размер по умолчанию — 2×2). Это единственный
+    /// появляется плитка-папка того же размера, что у ярлыка (E11.4: размер
+    /// наследуется, поэтому соседи не переупаковываются). Это единственный
     /// способ создать папку: пустая папка в v1 не создаётся, потому что функция
     /// одобрения D14 получает ярлык-инициатор.
     ///
@@ -873,12 +874,17 @@ public final class TileStore: ObservableObject {
         let descriptor = catalog[catalogPosition]
         guard approval(nil, descriptor, .createFolder) else { return nil }
 
+        // E11.4: папка занимает слот ярлыка и наследует его актуальный размер
+        // (сохранённый или из дескриптора). Ярлык уже помещался в сетку с этим
+        // размером, поэтому кламп по числу колонок не нужен: слот не меняется.
+        let inheritedSize = sizes[tileKey] ?? descriptor.size
+
         let folderID = AnyHashable("folder-" + UUID().uuidString)
         let record = FolderRecord(
             key: TileStore.storageKey(for: folderID),
             id: folderID,
             title: title,
-            size: .medium,
+            size: inheritedSize,
             tileKeys: [tileKey]
         )
         folderRecords.append(record)
@@ -918,13 +924,40 @@ public final class TileStore: ObservableObject {
 
     /// Перемещает ярлык между папками или из папки на рабочий стол.
     ///
+    /// Вызывает ``moveBetweenFolders(_:to:at:)`` с позицией по умолчанию.
+    ///
     /// - Parameters:
     ///   - tileID: Ярлык, лежащий в папке.
-    ///   - folderID: Папка-цель; `nil` — вернуть ярлык на рабочий стол (в конец сетки).
+    ///   - folderID: Папка-цель; `nil` — вернуть ярлык на рабочий стол (сразу
+    ///     после папки-источника, E11.2).
     /// - Returns: `true`, если состояние изменилось. `false` — ярлыка нет ни в
     ///   одной папке, целевая папка совпадает с текущей или хост запретил операцию.
     @discardableResult
     public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable?) -> Bool {
+        moveBetweenFolders(tileID, to: folderID, at: nil)
+    }
+
+    /// Перемещает ярлык между папками или из папки на рабочий стол с позицией.
+    ///
+    /// E11.2: ярлык, вынесенный на рабочий стол, встаёт не в конец сетки, а
+    /// на позицию `index` (в пространстве видимого снимка, как у
+    /// ``moveItem(_:toIndex:columns:)``, значение зажимается в границы) либо,
+    /// если индекс не задан, сразу после папки-источника; если папка
+    /// распалась (вынесен последний ярлык), ярлык занимает её место. Порядок
+    /// чтения под число колонок приводит вызывающий
+    /// (``canonicalizeVisibleOrder(columns:)``).
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - folderID: Папка-цель; `nil` — вернуть ярлык на рабочий стол.
+    ///   - index: Позиция на рабочем столе; игнорируется, если `folderID != nil`.
+    /// - Returns: `true`, если состояние изменилось.
+    @discardableResult
+    public func moveBetweenFolders(
+        _ tileID: AnyHashable,
+        to folderID: AnyHashable?,
+        at index: Int?
+    ) -> Bool {
         let tileKey = TileStore.storageKey(for: tileID)
 
         guard let catalogPosition = catalogIndex[tileKey],
@@ -944,14 +977,26 @@ public final class TileStore: ObservableObject {
 
         guard approval(target, catalog[catalogPosition], .moveBetweenFolders) else { return false }
 
+        let sourceKey = folderRecords[sourceIndex].key
         folderRecords[sourceIndex].tileKeys.removeAll { $0 == tileKey }
         if let target = target,
            let targetIndex = folderRecords.firstIndex(where: { $0.id == target.id }) {
             folderRecords[targetIndex].tileKeys.append(tileKey)
         } else {
-            gridOrder.append(tileKey)
+            // Вставляем сразу после папки-источника: если папка распадётся,
+            // ярлык окажется ровно на её месте.
+            let afterFolder = (gridOrder.firstIndex(of: sourceKey) ?? (gridOrder.count - 1)) + 1
+            gridOrder.insert(tileKey, at: min(afterFolder, gridOrder.count))
         }
         dissolveFolderIfEmpty(at: sourceIndex)
+        if target == nil, let index = index {
+            var visible = visibleGridKeys()
+            if let from = visible.firstIndex(of: tileKey) {
+                visible.remove(at: from)
+                visible.insert(tileKey, at: min(max(index, 0), visible.count))
+                applyVisibleOrder(visible)
+            }
+        }
         didChange()
         return true
     }

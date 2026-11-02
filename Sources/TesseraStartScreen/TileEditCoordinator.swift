@@ -688,6 +688,9 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// таймер ещё не взведён или удержание уже сброшено).
     private(set) var mergeTracker: TesseraMergeHoverTracker?
 
+    /// Рамка, в которую последний раз схлопывался снимок drag (E11.3); шов для тестов.
+    private(set) var lastCollapseTargetFrame: CGRect?
+
     /// Таймер удержания (E8.6); `nil` — отсчёт не идёт.
     ///
     /// Отдельный `Timer`, а не тикер автопрокрутки: `CADisplayLink` крутится
@@ -1365,7 +1368,28 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Returns: `true`, если перемещение выполнено.
     @discardableResult
     public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable?) -> Bool {
-        guard store.moveBetweenFolders(tileID, to: folderID) else {
+        moveBetweenFolders(tileID, to: folderID, at: nil)
+    }
+
+    /// Перемещает ярлык между папками или на рабочий стол с позицией (E11.2).
+    ///
+    /// Без `index` ярлык, вынесенный из папки, встаёт сразу после неё; с
+    /// `index` — на эту позицию видимого порядка (см.
+    /// ``TileStore/moveBetweenFolders(_:to:at:)``). Порядок чтения под число
+    /// колонок приводится после операции, фокус VoiceOver — на ярлыке.
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - folderID: Папка-цель; `nil` — на рабочий стол.
+    ///   - index: Позиция на рабочем столе.
+    /// - Returns: `true`, если перемещение выполнено.
+    @discardableResult
+    public func moveBetweenFolders(
+        _ tileID: AnyHashable,
+        to folderID: AnyHashable?,
+        at index: Int?
+    ) -> Bool {
+        guard store.moveBetweenFolders(tileID, to: folderID, at: index) else {
             notifyGroupingFailure(.moveBetweenFolders, tileID: tileID, folderID: folderID)
             return false
         }
@@ -2947,9 +2971,11 @@ public final class TesseraTileEditCoordinator: NSObject {
             return
         }
 
-        let folderFrame = grid.frame(forItemID: folder.id) ?? session.placeholder.frame
         canonicalizeVisibleOrderIfNeeded()
         render(animated: true)
+        // E11.3: рамку папки читаем после канонизации и `render` — до них новой
+        // плитки в сетке нет, и снимок летел бы в старый слот плейсхолдера.
+        let folderFrame = grid.frame(forItemID: folder.id) ?? session.placeholder.frame
         delegate?.tileEditCoordinator(self, didAdd: session.itemID, toFolder: folder.id)
         announce(TesseraStartScreenStrings.string(.a11yFolderCreatedFromTwoTiles))
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -3095,6 +3121,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         into frame: CGRect,
         completion: @escaping () -> Void
     ) {
+        lastCollapseTargetFrame = frame
         let reduceMotion = isReduceMotionEnabled()
         UIView.animate(
             withDuration: reduceMotion ? 0.12 : 0.22,

@@ -292,6 +292,41 @@ final class DragSessionTests: XCTestCase {
         )
     }
 
+    /// E11.3: при создании папки снимок схлопывается в рамку новой плитки-папки,
+    /// а не в слот плейсхолдера (рамка читается после `render`).
+    func testNewFolderDropCollapsesIntoFolderFrame() throws {
+        let host = TesseraTestDragHost(
+            descriptors: [
+                tesseraTestTile("a", size: .small),
+                tesseraTestTile("x", size: .small),
+                tesseraTestTile("b", size: .small),
+            ],
+            configuration: TesseraTileEditConfiguration(
+                mergeHoverDuration: 0.05,
+                magnetSnapRadius: 0
+            )
+        )
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+
+        XCTAssertTrue(host.startDrag("a"))
+        let placeholderFrame = try XCTUnwrap(host.coordinator.dragSession?.placeholder.frame)
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("b", fx: 0.5, fy: 0.5)))
+        XCTAssertTrue(
+            host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
+            "Удержание над центром ярлыка выдержано"
+        )
+        host.coordinator.finishDrag(commit: true)
+        XCTAssertTrue(host.waitUntil { recorder.additions.count == 1 })
+
+        let folderID = try XCTUnwrap(host.firstFolderID)
+        let target = try XCTUnwrap(host.coordinator.lastCollapseTargetFrame)
+        let folderFrame = try XCTUnwrap(host.host.grid.frame(forItemID: folderID))
+        XCTAssertEqual(target, folderFrame, "Цель полёта — рамка новой папки")
+        XCTAssertNotEqual(target, placeholderFrame, "Не старый слот плейсхолдера")
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil }, "Drag завершён")
+    }
+
     // MARK: - A2: магнит от центра снимка (grabOffset)
 
     /// Магнит считает расстояние от центра снимка, а не от пальца: плитка,
@@ -956,6 +991,29 @@ final class DragSessionTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
         XCTAssertEqual(host.folders.isEmpty, true, "Опустевшая папка распущена")
         XCTAssertFalse(host.storeIDs.contains(folderID))
+    }
+
+    /// E11.2: вынос из папки без индекса ставит ярлык сразу после папки, а не в
+    /// конец; фокус и канонизация сохраняются.
+    func testMoveOutOfFolderLandsAfterFolderThroughCoordinator() throws {
+        let host = TesseraTestDragHost(
+            descriptors: [
+                tesseraTestTile("a", size: .small),
+                tesseraTestTile("b", size: .small),
+                tesseraTestTile("c", size: .small),
+                tesseraTestTile("d", size: .small),
+            ],
+            prepare: { store in
+                if let folder = store.createFolder(withTile: "a") {
+                    _ = store.addToFolder("b", folderID: folder.id)
+                }
+            }
+        )
+        let folderID = try XCTUnwrap(host.firstFolderID)
+
+        XCTAssertTrue(host.coordinator.moveBetweenFolders("b", to: nil))
+        XCTAssertEqual(host.storeIDs, [folderID, "b", "c", "d"])
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
     }
 
     // MARK: - C3: экран папки через onTap
