@@ -1545,6 +1545,104 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
+    /// Ключ геометрии базовой раскладки (E11.7).
+    ///
+    /// Всё, от чего зависят рамки ``baseContentFrames(for:)``: размер сетки,
+    /// число колонок, направление чтения, масштаб экрана, поля и зазор.
+    /// Координатор drag хранит рамки в сессии и перестраивает их, когда ключ
+    /// изменился (поворот, смена колонок/полей на лету).
+    struct BaseFramesKey: Equatable {
+        var size: CGSize
+        var columns: Int
+        var isRightToLeft: Bool
+        var scale: CGFloat
+        var insets: UIEdgeInsets
+        var spacing: CGFloat
+    }
+
+    /// Текущий ключ геометрии базовой раскладки (E11.7).
+    func baseFramesKey() -> BaseFramesKey {
+        BaseFramesKey(
+            size: collectionView.bounds.size,
+            columns: columns,
+            isRightToLeft: collectionView.effectiveUserInterfaceLayoutDirection == .rightToLeft,
+            scale: tileLayout.displayScaleOverride
+                ?? TesseraTileCollectionViewLayout.resolvedDisplayScale(traitCollection.displayScale),
+            insets: sanitized(contentInsets),
+            spacing: sanitized(itemSpacing)
+        )
+    }
+
+    /// Рамки элементов, как их раскладывает сетка без панели и превью (E11.7).
+    ///
+    /// Нужны хит-тесту drag: рамки `frame(forItemID:)` уже сдвинуты push-превью,
+    /// а цель (центр/край, группировка) решается по тому, что пользователь
+    /// видел до сдвига, — то есть по раскладке базового порядка. Геометрия
+    /// повторяет `TesseraTileCollectionViewLayout.rebuild` без панели: пиксельные
+    /// края контента, `gridMetrics`, упаковка `TileLayoutEngine.pack` по
+    /// ужатым размерам и зеркалирование RTL внутри ширины сетки.
+    ///
+    /// Рамки — в **координатах контента**: при прокрутке они не меняются,
+    /// в координаты сетки их переводит ``gridFrame(fromContentFrame:)``.
+    ///
+    /// - Parameter items: Элементы в базовом порядке (без панели).
+    /// - Returns: Рамки по идентификатору или `nil`, если геометрию не
+    ///   посчитать (нулевая ширина).
+    func baseContentFrames(for items: [TileGridItem]) -> [AnyHashable: CGRect]? {
+        let key = baseFramesKey()
+        let contentLeft = TileLayoutEngine.pixelRound(key.insets.left, scale: key.scale)
+        let contentRight = TileLayoutEngine.pixelRound(
+            key.size.width - key.insets.right,
+            scale: key.scale
+        )
+        let contentWidth = contentRight - contentLeft
+        guard contentWidth.isFinite, contentWidth > 0,
+              let metrics = TileLayoutEngine.gridMetrics(
+                  contentWidth: contentWidth,
+                  columns: key.columns,
+                  spacing: key.spacing,
+                  scale: key.scale
+              ) else {
+            return nil
+        }
+
+        let gridLeft = contentLeft + metrics.leading
+        let top = TileLayoutEngine.pixelRound(key.insets.top, scale: key.scale)
+        let packed: [(id: AnyHashable, size: TileSize)] = items.map { item in
+            (id: item.id, size: TileLayoutEngine.fittingSize(item.size, columns: key.columns))
+        }
+        let slots = TileLayoutEngine.pack(items: packed, columns: key.columns, unit: metrics.unit)
+        guard slots.count == items.count else { return nil }
+
+        var result: [AnyHashable: CGRect] = [:]
+        result.reserveCapacity(items.count)
+        for (item, slot) in zip(items, slots) {
+            var rect = TileLayoutEngine.rect(
+                for: slot,
+                unit: metrics.unit,
+                gap: metrics.spacing,
+                origin: CGPoint(x: gridLeft, y: top)
+            )
+            if key.isRightToLeft {
+                let localX = rect.minX - gridLeft
+                rect.origin.x = gridLeft + metrics.width - localX - rect.width
+            }
+            result[item.id] = rect
+        }
+        return result
+    }
+
+    /// Переводит рамку из координат контента в координаты сетки (E11.7).
+    ///
+    /// Учитывает текущий `contentOffset`, поэтому кадр автопрокрутки видит
+    /// те же базовые рамки, сдвинутые на актуальное смещение.
+    ///
+    /// - Parameter frame: Рамка в координатах контента.
+    /// - Returns: Рамка в координатах сетки.
+    func gridFrame(fromContentFrame frame: CGRect) -> CGRect {
+        collectionView.convert(frame, to: self)
+    }
+
     /// Санитизирует внешние поля сетки так же, как раскладка (E8.9).
     ///
     /// Отрицательные и нечисловые значения трактуются как 0: виртуальная сетка

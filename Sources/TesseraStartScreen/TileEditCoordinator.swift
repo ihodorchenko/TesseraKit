@@ -2085,8 +2085,9 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Пересчитывает цель под пальцем, превью порядка и подсветку.
     ///
-    /// Решение принимается по рамкам сетки, а не по `grid.item(at:)`: исходная
-    /// ячейка скрыта, но остаётся в раскладке и перехватила бы хит-тест.
+    /// Решение принимается по базовой раскладке (E11.7, ``hitTestTarget(at:session:)``),
+    /// а не по `grid.item(at:)`: исходная ячейка скрыта, но остаётся в раскладке
+    /// и перехватила бы хит-тест, а рамки сетки уже сдвинуты превью.
     ///
     /// E8.4: цель `.reorder` хранит **базовый** индекс плитки-цели (порядок
     /// снимка на момент захвата), а не индекс в текущем превью — иначе индекс
@@ -2116,9 +2117,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         var target: HoverTarget = .none
 
         if grid.bounds.insetBy(dx: -8, dy: -8).contains(point),
-           let hovered = item(under: point, excluding: session.itemID)
-               ?? panelItem(under: point, excluding: session.itemID),
-           let frame = grid.frame(forItemID: hovered.id),
+           let (hovered, frame) = hitTestTarget(at: point, session: session),
            let baseIndex = session.baseIndex(of: hovered.id) {
 
             switch hovered {
@@ -2492,7 +2491,72 @@ public final class TesseraTileEditCoordinator: NSObject {
         placeholderAnimator = nil
     }
 
-    /// Элемент под точкой, кроме перетаскиваемого.
+    /// Элемент-цель под пальцем и рамка, по которой решается зона (E11.7).
+    ///
+    /// Хит-тест идёт по **базовой** раскладке (порядок
+    /// ``TesseraTileDragSession/baseSnapshot`` — тот же, что у `.reorder` и
+    /// `baseIndex`), а не по рамкам сетки: те уже сдвинуты push-превью, и
+    /// плитка, уехавшая из-под пальца, делала центр папки/ярлыка недостижимым
+    /// при подходе в сторону сдвига. Центр/край (25%) считаются по базовой
+    /// рамке. Над собственным базовым слотом цель — `nil` (остаёмся на
+    /// последнем превью, E8.4/«c»). Подсветка по-прежнему рисуется на видимой
+    /// (сдвинутой) рамке цели — её берёт ``showDropHighlight(for:style:)``.
+    ///
+    /// Пока раскрыта панель папки (в т. ч. во время анимированного закрытия),
+    /// раскладка сетки не совпадает с базовой — действует прежний хит-тест по
+    /// рамкам сетки.
+    ///
+    /// - Parameters:
+    ///   - point: Точка в координатах сетки.
+    ///   - session: Активная drag-сессия.
+    /// - Returns: Элемент и рамка для расчёта зоны или `nil`.
+    private func hitTestTarget(
+        at point: CGPoint,
+        session: TesseraTileDragSession
+    ) -> (TileGridItem, CGRect)? {
+        if grid.expandedFolderID == nil, let frames = baseFrames(for: session) {
+            for item in session.baseSnapshot.items {
+                guard let contentFrame = frames[item.id] else { continue }
+                let frame = grid.gridFrame(fromContentFrame: contentFrame)
+                guard frame.contains(point) else { continue }
+                // Собственный базовый слот — не цель (нет перестановки с собой).
+                return item.id == session.itemID ? nil : (item, frame)
+            }
+            return nil
+        }
+
+        guard let hovered = item(under: point, excluding: session.itemID)
+                ?? panelItem(under: point, excluding: session.itemID),
+              let frame = grid.frame(forItemID: hovered.id) else {
+            return nil
+        }
+        return (hovered, frame)
+    }
+
+    /// Базовые рамки элементов сессии в координатах контента (E11.7).
+    ///
+    /// Считаются один раз за сессию и перестраиваются, если изменилась
+    /// геометрия сетки (ширина, колонки, поля, направление). Смещение
+    /// прокрутки в кэш не входит: рамки хранятся в координатах контента и на
+    /// каждом шаге (в т. ч. на кадре автопрокрутки) переводятся
+    /// `grid.gridFrame(fromContentFrame:)` с актуальным `contentOffset`.
+    ///
+    /// - Parameter session: Активная drag-сессия.
+    /// - Returns: Рамки по идентификатору или `nil`, если посчитать нельзя.
+    private func baseFrames(for session: TesseraTileDragSession) -> [AnyHashable: CGRect]? {
+        let key = grid.baseFramesKey()
+        if let cached = session.baseFrames, cached.key == key {
+            return cached.frames
+        }
+        guard let frames = grid.baseContentFrames(for: session.baseSnapshot.items) else {
+            session.baseFrames = nil
+            return nil
+        }
+        session.baseFrames = (key: key, frames: frames)
+        return frames
+    }
+
+    /// Элемент под точкой, кроме перетаскиваемого (рамки сетки; запасной путь).
     ///
     /// - Parameters:
     ///   - point: Точка в координатах сетки.
@@ -4689,6 +4753,11 @@ final class TesseraTileDragSession {
     /// Удерживается, как аниматор пустышки (E8.8): следующая цель должна
     /// остановить прошлый spring в текущем кадре, а не доиграть до конца.
     var magnetAnimator: UIViewPropertyAnimator?
+
+    /// Кэш базовых рамок хит-теста в координатах контента (E11.7).
+    ///
+    /// Строится лениво и сбрасывается при смене ключа геометрии сетки.
+    var baseFrames: (key: TesseraTileGridView.BaseFramesKey, frames: [AnyHashable: CGRect])?
 
     /// Менялась ли модель за время drag (нужно для единственного сохранения).
     ///
