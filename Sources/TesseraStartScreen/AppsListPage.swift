@@ -22,6 +22,18 @@
 // pin из списка появляется в сетке через `onChange` хоста, unpin на сетке
 // меняет состояние строк здесь — по подписке на изменение того же хранилища.
 //
+// W4 (E10.5): pin идёт через `TileStore.pinTile(_:at:columns:)` с числом колонок
+// реальной сетки, которое хост сообщает фабрике (`columns`). Хранилище ставит
+// ярлык по видимому индексу (в конец видимого порядка) и одной операцией
+// канонизирует порядок к порядку чтения (E10.15), возвращая фактический индекс;
+// поэтому видимый порядок модели совпадает с экраном и VoiceOver. Если колонок
+// нет (`nil`), вставка остаётся прежней — в конец без канонизации. Unpin удаляет
+// элемент из видимого порядка; после него страница при известных колонках сама
+// зовёт `canonicalizeVisibleOrder(columns:)` — удаление переупаковывает сетку и
+// без этого порядок модели мог бы разойтись с экраном. Число колонок
+// фиксируется при создании страницы: при смене числа колонок сетки хост обязан
+// пересоздать страницу — сама она раскладку не пересчитывает.
+//
 // Подписка — на `objectWillChange` (`ObservableObject`; iOS 15 — по правилу
 // AGENTS.md), а не на `onChange`: `onChange` — единственное замыкание, его
 // держит хост и через него обновляет сетку. Подписка на objectWillChange
@@ -155,16 +167,21 @@ public struct TesseraAppsListTexts: Equatable {
 ///         TesseraAppsListSettingsItem(id: "settings", title: "Настройки рабочего стола") {
 ///             host.presentSettings()
 ///         }
-///     ]
+///     ],
+///     // Число колонок реальной сетки: pin ставит ярлык по видимому индексу
+///     // и канонизирует порядок к порядку чтения (E10.15).
+///     columns: screen.gridView.columns
 /// )
 /// // Хост подключает страницу замыканием: ссылок на тип пейджера страница не знает.
 /// ```
 ///
 /// Страница не подписывается на `TileStore.onChange` и не меняет каталог
 /// ярлыков: `setCatalog(_:)`, `load()` и раскладка остаются делом хоста.
-/// Всё, что она делает с хранилищем, — `snapshot()`, `pin(_:at:)` и
-/// `unpin(_:)`; операции с папками (D14) проходят через `approval` хоста
-/// и здесь не инициируются.
+/// Всё, что она делает с хранилищем, — `snapshot()`,
+/// `pinTile(_:at:columns:)` и `unpin(_:)`; операции с папками (D14) проходят
+/// через `approval` хоста и здесь не инициируются. Число колонок для
+/// канонизации страница берёт из фабрики (``make(store:settings:texts:columns:)``);
+/// сама она раскладку не считает и сетку экрана не знает (D13).
 ///
 /// Своих распознавателей жестов страница не добавляет: вертикальный скролл —
 /// это таблица, горизонталь — пейджер. Скролл-вью отдаётся наружу через
@@ -229,19 +246,46 @@ public final class TesseraAppsListPageViewController: UIViewController {
     ///   - store: Хранилище рабочего стола — единственный источник истины (§6).
     ///   - settings: Строки секции настроек; по умолчанию секции нет.
     ///   - texts: Локализуемые строки; по умолчанию русские подписи.
+    ///   - columns: Число колонок реальной сетки (например,
+    ///     `TesseraTileGridView.columns`) на момент создания страницы. По нему
+    ///     pin ставит ярлык по видимому индексу и канонизирует порядок модели
+    ///     к порядку чтения (E10.3a/E10.15), а unpin — переупаковку после
+    ///     удаления. `nil` — хост раскладку не сообщил: pin дописывает ярлык в
+    ///     конец видимого порядка без канонизации (поведение до W4), unpin
+    ///     тоже без неё. Неположительное значение трактуется как `nil`.
+    ///
+    ///     Число колонок фиксируется при создании страницы и не обновляется
+    ///     на лету: при смене числа колонок сетки (поворот, смена ширины)
+    ///     хост обязан пересоздать страницу — фабрика правой страницы
+    ///     вызывается пейджером при её пересоздании и должна передать
+    ///     актуальное число колонок.
     /// - Returns: Готовая страница.
     public static func make(
         store: TileStore,
         settings: [TesseraAppsListSettingsItem] = [],
-        texts: TesseraAppsListTexts = TesseraAppsListTexts()
+        texts: TesseraAppsListTexts = TesseraAppsListTexts(),
+        columns: Int? = nil
     ) -> TesseraAppsListPageViewController {
-        TesseraAppsListPageViewController(store: store, settings: settings, texts: texts)
+        TesseraAppsListPageViewController(
+            store: store,
+            settings: settings,
+            texts: texts,
+            columns: columns
+        )
     }
 
     // MARK: - Данные
 
     /// Хранилище рабочего стола (§6: источник истины).
     private let store: TileStore
+
+    /// Число колонок реальной сетки для канонизации порядка (E10.15).
+    ///
+    /// `nil` — хост раскладку не сообщил: pin/unpin работают без канонизации,
+    /// как до W4 (``make(store:settings:texts:columns:)``). Фиксируется при
+    /// создании страницы: при смене числа колонок сетки хост пересоздаёт
+    /// страницу, иначе канонизация посчитается для устаревшей раскладки.
+    private let columns: Int?
 
     /// Таблица списка приложений и настроек.
     private let tableView = UITableView(frame: .zero, style: .plain)
@@ -363,24 +407,30 @@ public final class TesseraAppsListPageViewController: UIViewController {
     ///   - store: Хранилище рабочего стола.
     ///   - settings: Строки секции настроек.
     ///   - texts: Локализуемые строки.
+    ///   - columns: Число колонок реальной сетки; `nil` — неизвестно.
     private init(
         store: TileStore,
         settings: [TesseraAppsListSettingsItem],
-        texts: TesseraAppsListTexts
+        texts: TesseraAppsListTexts,
+        columns: Int?
     ) {
         self.store = store
         self.settingsItems = settings
         self.texts = texts
+        // У сетки всегда есть хотя бы одна колонка: неположительное значение
+        // не описывает раскладку и трактуется как «колонки неизвестны».
+        self.columns = columns.flatMap { $0 > 0 ? $0 : nil }
         super.init(nibName: nil, bundle: nil)
     }
 
     /// Страница не поддерживает создание из архива/сториборда: ей нужно
-    /// хранилище, которое передаётся только через ``make(store:settings:texts:)``.
+    /// хранилище, которое передаётся только через
+    /// ``make(store:settings:texts:columns:)``.
     ///
     /// - Parameter coder: Декодер архива.
     @available(*, unavailable)
     public required init?(coder: NSCoder) {
-        fatalError("TesseraAppsListPageViewController создаётся через make(store:settings:texts:)")
+        fatalError("TesseraAppsListPageViewController создаётся через make(store:settings:texts:columns:)")
     }
 
     // MARK: - Жизненный цикл
@@ -619,16 +669,41 @@ public final class TesseraAppsListPageViewController: UIViewController {
 
     /// Закрепляет или открепляет ярлык через хранилище (§6).
     ///
+    /// Pin идёт через ``TileStore/pinTile(_:at:columns:)`` с `nil`-индексом —
+    /// «в конец видимого порядка»: хранилище ставит ярлык по видимому индексу
+    /// (не по внутреннему `gridOrder`, где бывают невидимые ключи) и, если
+    /// колонки известны, одной операцией канонизирует порядок к порядку
+    /// чтения (E10.3a/E10.15). Возвращённый фактический индекс странице не
+    /// нужен: секции списка строятся по каталогу и от позиции на сетке не
+    /// зависят — сетка узнаёт новый порядок через `onChange` хоста.
+    ///
+    /// Unpin удаляет элемент из видимого порядка, после чего при известных
+    /// колонках страница канонизирует порядок явно
+    /// (``TileStore/canonicalizeVisibleOrder(columns:)``): удаление
+    /// переупаковывает сетку, и без этого порядок модели мог бы разойтись с
+    /// экраном. Хранилище не объединяет unpin и канонизацию в одну операцию,
+    /// поэтому в случае переупаковки это два изменения модели (второе —
+    /// no-op без уведомления, если порядок и так канонический).
+    ///
+    /// Метод внутренний (не `private`), потому что это же действие выполняют
+    /// кнопка строки и кастомное действие VoiceOver; тесты страницы вызывают
+    /// его напрямую (UI-события в тест-раннере ненадёжны) и отдельно
+    /// проверяют обвязку кнопки метаданными (target-action, accessibility).
+    ///
     /// - Parameters:
     ///   - pinned: `true` — закрепить, `false` — открепить.
     ///   - tileID: Идентификатор ярлыка из каталога.
     /// - Returns: `true`, если хранилище изменило состояние.
     @discardableResult
-    private func setPinned(_ pinned: Bool, for tileID: AnyHashable) -> Bool {
+    func setPinned(_ pinned: Bool, for tileID: AnyHashable) -> Bool {
         if pinned {
-            return store.pin(tileID)
+            return store.pinTile(tileID, at: nil, columns: columns) != nil
         }
-        return store.unpin(tileID)
+        guard store.unpin(tileID) else { return false }
+        if let columns {
+            store.canonicalizeVisibleOrder(columns: columns)
+        }
+        return true
     }
 
     // MARK: - Пустое состояние
