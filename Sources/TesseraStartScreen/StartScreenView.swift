@@ -118,15 +118,19 @@ public struct StartScreenStyle {
 ///
 /// ## Обновление
 ///
-/// - снимок сетки применяется, только если состав/размеры/подписи/бейджи
-///   элементов действительно изменились (сравнение по значению) — перерисовка
-///   SwiftUI не вызывает `reloadData` и не сбрасывает позицию прокрутки и фокус
-///   VoiceOver;
-/// - боковые страницы пересобираются при смене «есть/нет»; замена классового
-///   `QuickPanelProviding` другим экземпляром тоже подхватывается — провайдер
-///   сравнивается по ссылке. А вот фабрику `rightPage` и значимые (`struct`)
-///   провайдеры сравнить нельзя, поэтому их замена при том же наличии не
-///   обнаруживается: пересоздайте представление (например, `.id(…)`) или
+/// - снимок сетки применяется, только если видимое состояние элементов
+///   действительно изменилось: состав, размеры, подписи, бейджи, иконки,
+///   live-провайдер (`liveContent`, по ссылке) и то же самое для ярлыков внутри
+///   папок — перерисовка SwiftUI не вызывает `reloadData` и не сбрасывает
+///   позицию прокрутки и фокус VoiceOver. Замыкание `action` сравнить нельзя,
+///   и ради него сетка не перезагружается: делегат получает ярлык (и папку)
+///   из последнего снимка по `id`, то есть с актуальным `action`;
+/// - боковые страницы пересобираются при смене «есть/нет» и при смене типа
+///   поставщика хука. Новый экземпляр того же типа (например,
+///   `QuickPanelProvider`, созданный в `body`) и новая фабрика `rightPage`
+///   пейджер не пересобирают: они подменяются «тихо» и используются при
+///   следующем создании страницы и для колбэков хука. Чтобы пересоздать уже
+///   загруженную боковую страницу, пересоздайте представление (`.id(…)`) или
 ///   временно передайте `nil`;
 /// - стиль применяется всегда, но каждое поле сравнивается с текущим
 ///   значением контроллера, поэтому лишних layout-проходов нет. Обои
@@ -168,11 +172,12 @@ public struct StartScreenStyle {
 /// - плитка — один элемент VoiceOver с заголовком и счётчиком бэйджа, вход и
 ///   выход из режима редактирования озвучиваются, а `resize`/`unpin` доступны
 ///   как `UIAccessibilityCustomAction` (E4.2, E4.4);
-/// - чтобы делегат получал переходы страниц, координатор на время жизни
-///   представления становится делегатом пейджера **и пробрасывает событие
-///   контроллеру**: без этого перестали бы работать `accessibilityScroll`,
-///   озвучивание названия страницы и колбэки страницы-хука (§7, §9).
-///   Контроллер остаётся единственным писателем своего состояния;
+/// - переходы страниц и видимость хука приходят от контроллера через его
+///   UIKit-``TesseraStartScreenViewController/delegate`` (координатор фасада —
+///   этот делегат): пейджер не перехватывается, поэтому `accessibilityScroll`,
+///   озвучивание названия страницы и колбэки страницы-хука (§7, §9) работают
+///   так же, как в UIKit. Контроллер остаётся единственным писателем своего
+///   состояния;
 /// - VoiceOver-активация плитки идёт тем же путём, что тап пальцем
 ///   (`gridView.onTap` → делегат), поэтому хост обрабатывает оба способа
 ///   одинаково;
@@ -302,16 +307,15 @@ public struct StartScreenView: UIViewControllerRepresentable {
         context.coordinator.screenViewController = uiViewController
 
         context.coordinator.applyConfiguration(self, to: uiViewController, isInitial: false)
-        // Страховка: контроллер ставит себя делегатом пейджера в `viewDidLoad`;
-        // если вид когда-либо перезагрузится, подмена восстановится.
-        context.coordinator.ensurePagerDelegate(on: uiViewController)
+        // Страховка: хост мог переназначить UIKit-делегата контроллера.
+        context.coordinator.ensureScreenDelegate(on: uiViewController)
     }
 
     /// Отпускает связи координатора при разборе представления.
     ///
-    /// Делегат пейджера возвращается контроллеру (а не остаётся висящим на
-    /// координаторе), чтобы экран, переживший представление, продолжал
-    /// обрабатывать прокрутку и VoiceOver-жесты штатно.
+    /// Координатор снимается с UIKit-делегата контроллера и отпускает
+    /// замыкания сетки: экран, переживший представление, не удерживает
+    /// состояние SwiftUI.
     ///
     /// - Parameters:
     ///   - uiViewController: Разбираемый контроллер.
@@ -325,25 +329,48 @@ public struct StartScreenView: UIViewControllerRepresentable {
 
     // MARK: - Сравнение снимков
 
+    /// Сравниваемые признаки ярлыка: то, что видно, озвучивается и живёт.
+    ///
+    /// `action` не входит: замыкания несравнимы, а сетка действие не исполняет
+    /// — делегат получает ярлык из последнего снимка (см. `Coordinator`).
+    /// `liveContent` сравнивается по ссылке: смена провайдера (или его
+    /// появление) должна дойти до сетки, иначе плитка не станет живой (E10.8).
+    fileprivate struct ShortcutSignature: Equatable {
+        let id: AnyHashable
+        let size: TileSize
+        let title: String
+        let badge: TileBadge
+        let iconIdentifier: ObjectIdentifier?
+        let liveContentIdentifier: ObjectIdentifier?
+
+        init(shortcut: TileDescriptor) {
+            id = shortcut.id
+            size = shortcut.size
+            title = shortcut.title
+            badge = shortcut.badge
+            iconIdentifier = shortcut.icon.map { ObjectIdentifier($0) }
+            liveContentIdentifier = shortcut.liveContent.map { ObjectIdentifier($0) }
+        }
+    }
+
     /// Сравниваемые признаки элемента сетки.
     ///
     /// `TileGridSnapshot` и `TileGridItem` не `Equatable`: в ярлыке есть
     /// замыкание `action`, у которого нет семантики равенства. Поэтому «то же
     /// самое» определяется тем, что видно и озвучивается: идентификатор,
-    /// размер (D15), подпись, бейдж (D12), ссылка на иконку и состав папки.
-    /// Признак панели раскрытой папки (D17) входит в подпись отдельным полем:
-    /// панель и плитка-папка имеют один идентификатор, но это разные состояния
-    /// экрана.
-    /// Действие и порядок сравниваются по идентификатору — если хост заменил
-    /// `action` у ярлыка с тем же `id`, перезагрузка не нужна: сетка действие не
-    /// хранит.
+    /// размер (D15), подпись, бейдж (D12), ссылка на иконку, live-провайдер и
+    /// содержимое папки — с подписями и бейджами её ярлыков (превью и панель
+    /// папки их показывают, E9.8б). Признак панели раскрытой папки (D17)
+    /// входит в подпись отдельным полем: панель и плитка-папка имеют один
+    /// идентификатор, но это разные состояния экрана.
     fileprivate struct ItemSignature: Equatable {
         let id: AnyHashable
         let size: TileSize
         let title: String
         let badge: TileBadge
         let iconIdentifier: ObjectIdentifier?
-        let folderTileIdentifiers: [AnyHashable]
+        let liveContentIdentifier: ObjectIdentifier?
+        let folderContents: [ShortcutSignature]
         let isFolderPanel: Bool
 
         init(item: TileGridItem) {
@@ -355,20 +382,23 @@ public struct StartScreenView: UIViewControllerRepresentable {
                 title = shortcut.title
                 badge = shortcut.badge
                 iconIdentifier = shortcut.icon.map { ObjectIdentifier($0) }
-                folderTileIdentifiers = []
+                liveContentIdentifier = shortcut.liveContent.map { ObjectIdentifier($0) }
+                folderContents = []
                 isFolderPanel = false
             case .folder(let folder):
                 title = folder.title
                 // У папки бейджа нет (§4): счётчик внимания — свойство ярлыка.
                 badge = .none
                 iconIdentifier = folder.icon.map { ObjectIdentifier($0) }
-                folderTileIdentifiers = folder.tiles.map { $0.id }
+                liveContentIdentifier = nil
+                folderContents = folder.tiles.map { ShortcutSignature(shortcut: $0) }
                 isFolderPanel = false
             case .folderContent(let folder):
                 title = folder.title
                 badge = .none
                 iconIdentifier = folder.icon.map { ObjectIdentifier($0) }
-                folderTileIdentifiers = folder.tiles.map { $0.id }
+                liveContentIdentifier = nil
+                folderContents = folder.tiles.map { ShortcutSignature(shortcut: $0) }
                 isFolderPanel = true
             }
         }
@@ -388,15 +418,15 @@ public struct StartScreenView: UIViewControllerRepresentable {
         return min(max(value, 0.4), 0.6)
     }
 
-    /// Ссылочная идентичность классового значения, если она есть.
+    /// Тип поставщика хука — стабильный признак для сравнения между
+    /// перерисовками.
     ///
-    /// `QuickPanelProviding` не требует классовой связности, а значимые типы
-    /// нельзя сравнивать по ссылке (бокс каждый раз новый). Поэтому для структур
-    /// возвращается `nil`, и смена провайдера при том же наличии не
-    /// обнаруживается — это задокументированное ограничение ``StartScreenView``.
-    fileprivate static func referenceIdentity(of value: Any) -> ObjectIdentifier? {
-        guard Mirror(reflecting: value).displayStyle == .class else { return nil }
-        return ObjectIdentifier(value as AnyObject)
+    /// Экземпляр поставщика, созданного в `body`, новый на каждой перерисовке,
+    /// поэтому сравнение по ссылке пересобирало бы пейджер на каждый кадр
+    /// (E10.8). Смена типа — это смена страницы; новый экземпляр того же типа
+    /// подменяется без пересборки.
+    fileprivate static func providerType(of value: QuickPanelProviding) -> ObjectIdentifier {
+        ObjectIdentifier(type(of: value))
     }
 
     // MARK: - Координатор
@@ -404,9 +434,11 @@ public struct StartScreenView: UIViewControllerRepresentable {
     /// Мост событий UIKit-ядра в ``StartScreenDelegate``.
     ///
     /// Живёт столько же, сколько представление: его удерживает SwiftUI, поэтому
-    /// слабые ссылки контроллера и пейджера не теряют наблюдателя между
-    /// перерисовками.
-    public final class Coordinator: NSObject, TesseraPagerDelegate {
+    /// слабая ссылка контроллера (``TesseraStartScreenViewController/delegate``)
+    /// не теряет наблюдателя между перерисовками. Сам координатор — UIKit-делегат
+    /// контроллера: страницы и видимость хука пересылаются хосту как есть, а
+    /// тапы сетки (`onTap`) — с ярлыком из последнего снимка.
+    public final class Coordinator: NSObject, StartScreenDelegate, TesseraPagerDelegate {
 
         /// Последняя версия описания из SwiftUI: источник делегата и конфигурации.
         fileprivate var parent: StartScreenView
@@ -414,26 +446,15 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// Контроллер экрана. Слабо: иерархией владеет SwiftUI.
         fileprivate weak var screenViewController: TesseraStartScreenViewController?
 
-        /// Пейджер Core внутри контроллера — прокси делегата (см. `attach`).
-        ///
-        /// Слабо: пейджер удерживается контроллером как child-VC.
-        private weak var pagerViewController: TesseraPagerViewController?
-
         /// Наличие боковых страниц в последней применённой конфигурации (D13).
         ///
         /// Нужно, чтобы не пересобирать страницы на каждой перерисовке SwiftUI:
-        /// `configure` пересоздаёт загруженные контроллеры пейджера.
+        /// пересборка останавливает идущий свайп пейджера.
         private var appliedHasLeftPanel: Bool?
         private var appliedHasRightPage: Bool?
 
-        /// Ссылочная идентичность последнего применённого поставщика хука.
-        private var appliedLeftPanelIdentity: ObjectIdentifier?
-
-        /// Последняя страница, о которой сообщили делегату.
-        private var reportedPage: TesseraStartScreenPage?
-
-        /// Последняя сообщённая видимость хука (§7).
-        private var reportedHookVisibility = false
+        /// Тип последнего применённого поставщика хука (стабильный признак).
+        private var appliedLeftPanelType: ObjectIdentifier?
 
         /// Создаёт координатор поверх описания рабочего стола.
         ///
@@ -508,8 +529,11 @@ public struct StartScreenView: UIViewControllerRepresentable {
 
         /// Пересобирает боковые страницы только при смене конфигурации (D13).
         ///
-        /// `configure` — «холодный» путь: он пересоздаёт загруженные страницы
-        /// пейджера, поэтому вызывать его на каждой перерисовке нельзя.
+        /// `configure` — «холодный» путь: он пересобирает пейджер (и
+        /// останавливает идущий свайп), поэтому вызывается только при смене
+        /// наличия страниц или типа поставщика хука. Новые экземпляры при той же
+        /// конфигурации (поставщик и фабрика, созданные в `body`) подменяются
+        /// без пересборки (E10.8).
         private func applySidePages(
             leftPanel: QuickPanelProviding?,
             rightPage: (() -> UIViewController)?,
@@ -518,23 +542,22 @@ public struct StartScreenView: UIViewControllerRepresentable {
         ) {
             let hasLeftPanel = leftPanel != nil
             let hasRightPage = rightPage != nil
-            let leftPanelIdentity = leftPanel.flatMap {
-                StartScreenView.referenceIdentity(of: $0)
-            }
+            let leftPanelType = leftPanel.map { StartScreenView.providerType(of: $0) }
 
             let needsRebuild = force
                 || appliedHasLeftPanel != hasLeftPanel
                 || appliedHasRightPage != hasRightPage
-                || (hasLeftPanel &&
-                    leftPanelIdentity != nil &&
-                    leftPanelIdentity != appliedLeftPanelIdentity)
-
-            guard needsRebuild else { return }
+                || leftPanelType != appliedLeftPanelType
 
             appliedHasLeftPanel = hasLeftPanel
             appliedHasRightPage = hasRightPage
-            appliedLeftPanelIdentity = leftPanelIdentity
-            screen.configure(leftPanel: leftPanel, rightPage: rightPage)
+            appliedLeftPanelType = leftPanelType
+
+            if needsRebuild {
+                screen.configure(leftPanel: leftPanel, rightPage: rightPage)
+            } else {
+                screen.updateSidePageSources(leftPanel: leftPanel, rightPage: rightPage)
+            }
         }
 
         /// Применяет снимок сетки, если он отличается от показанного (§3).
@@ -576,7 +599,8 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// замыкание себе: иначе ни тап пальцем, ни активация VoiceOver не
         /// дошли бы до делегата. Хосту, которому нужно своё поведение тапа,
         /// следует использовать ``StartScreenDelegate``, а не переопределять
-        /// `onTap` (см. документацию ``StartScreenView``).
+        /// `onTap` (см. документацию ``StartScreenView``). Переходы страниц и
+        /// видимость хука приходят через UIKit-делегат контроллера.
         ///
         /// - Parameter screen: Контроллер, созданный в `makeUIViewController`.
         fileprivate func attach(to screen: TesseraStartScreenViewController) {
@@ -589,56 +613,26 @@ public struct StartScreenView: UIViewControllerRepresentable {
             screen.gridView.onFolderExpansionChanged = { [weak self] folder, expanded in
                 self?.handleFolderExpansion(folder, expanded: expanded)
             }
-
-            // Вид нужен, чтобы найти пейджер и подключить прокси делегата.
-            screen.loadViewIfNeeded()
-            installPagerDelegate(on: screen)
-
-            // Хук не показан на старте: первая страница — START (D13).
-            reportedHookVisibility = false
+            ensureScreenDelegate(on: screen)
         }
 
         /// Отпускает связи при разборе представления.
         fileprivate func detach() {
-            if let pager = pagerViewController, pager.delegate === self {
-                // Возвращаем делегата контроллеру, а не оставляем `nil`: экран
-                // мог пережить представление (например, его удерживает хост).
-                pager.delegate = screenViewController
+            if let screen = screenViewController, screen.delegate === self {
+                screen.delegate = nil
             }
             screenViewController?.gridView.onTap = nil
             screenViewController?.gridView.onFolderExpansionChanged = nil
             // Перехватчик принадлежит хосту-представлению: экран, переживший
             // SwiftUI, не должен удерживать замыкание с его состоянием.
             screenViewController?.gridView.folderTapHandler = nil
-            pagerViewController = nil
             screenViewController = nil
         }
 
-        /// Ставит координатор делегатом пейджера.
-        ///
-        /// Пейджер находится по композиции контроллера (§2): единственный
-        /// прямой child — `TesseraPagerViewController`. Если иерархия ядра
-        /// изменится, поиск вернёт `nil`, и переходы страниц не будут
-        /// пробрасываться — экран продолжит работать, а `pageChanged` просто
-        /// не будет приходить (та же деградация, что у политики края в E4.1).
-        private func installPagerDelegate(on screen: TesseraStartScreenViewController) {
-            guard let pager = screen.children
-                .compactMap({ $0 as? TesseraPagerViewController })
-                .first else {
-                return
-            }
-            pager.delegate = self
-            pagerViewController = pager
-        }
-
-        /// Восстанавливает прокси делегата, если контроллер его переустановил.
-        fileprivate func ensurePagerDelegate(on screen: TesseraStartScreenViewController) {
-            guard let pager = pagerViewController else {
-                installPagerDelegate(on: screen)
-                return
-            }
-            if pager.delegate !== self {
-                pager.delegate = self
+        /// Ставит координатор UIKit-делегатом контроллера (если его сменили).
+        fileprivate func ensureScreenDelegate(on screen: TesseraStartScreenViewController) {
+            if screen.delegate !== self {
+                screen.delegate = self
             }
         }
 
@@ -648,17 +642,20 @@ public struct StartScreenView: UIViewControllerRepresentable {
         ///
         /// Действие ярлыка не выполняется (D12): компонент сообщает событие, а
         /// `TileDescriptor.action` вызывает хост — иначе действие выполнилось бы
-        /// дважды, если хост тоже на него подписан.
+        /// дважды, если хост тоже на него подписан. Ярлык и папка берутся из
+        /// последнего снимка SwiftUI по `id`: сетка не перезагружается ради
+        /// нового замыкания `action` (оно несравнимо), но делегат получает
+        /// актуальное (E10.8).
         private func handleTap(_ item: TileGridItem) {
             guard let screen = screenViewController else { return }
 
             switch item {
             case .tile(let shortcut):
-                parent.delegate?.startScreen(screen, didTapShortcut: shortcut)
+                parent.delegate?.startScreen(screen, didTapShortcut: latestShortcut(for: shortcut))
             case .folder(let folder):
                 // D14/D17: событие тапа по папке. Нативное раскрытие панели
                 // выполняет сетка (если перехватчик не запретил).
-                parent.delegate?.startScreen(screen, didTapFolder: folder)
+                parent.delegate?.startScreen(screen, didTapFolder: latestFolder(for: folder))
             case .folderContent:
                 // Панель раскрытой папки (D17): тап по её заголовку/пустому
                 // месту ничего не меняет; ярлыки внутри обрабатывает панель.
@@ -673,50 +670,87 @@ public struct StartScreenView: UIViewControllerRepresentable {
         ///   - expanded: `true` — панель раскрыта, `false` — свёрнута.
         private func handleFolderExpansion(_ folder: TileFolder, expanded: Bool) {
             guard let screen = screenViewController else { return }
+            let latest = latestFolder(for: folder)
             if expanded {
-                parent.delegate?.startScreen(screen, didExpandFolder: folder)
+                parent.delegate?.startScreen(screen, didExpandFolder: latest)
             } else {
-                parent.delegate?.startScreen(screen, didCollapseFolder: folder)
+                parent.delegate?.startScreen(screen, didCollapseFolder: latest)
             }
         }
 
-        /// Завершение перехода пейджера.
+        /// Ярлык с тем же `id` из последнего снимка (в том числе внутри папки).
+        private func latestShortcut(for shortcut: TileDescriptor) -> TileDescriptor {
+            for item in parent.snapshot.items {
+                switch item {
+                case .tile(let candidate) where candidate.id == shortcut.id:
+                    return candidate
+                case .folder(let folder), .folderContent(let folder):
+                    if let candidate = folder.tiles.first(where: { $0.id == shortcut.id }) {
+                        return candidate
+                    }
+                default:
+                    continue
+                }
+            }
+            return shortcut
+        }
+
+        /// Папка с тем же `id` из последнего снимка.
+        private func latestFolder(for folder: TileFolder) -> TileFolder {
+            for item in parent.snapshot.items {
+                if case .folder(let candidate) = item, candidate.id == folder.id {
+                    return candidate
+                }
+            }
+            return folder
+        }
+
+        // MARK: StartScreenDelegate (мост UIKit → хост)
+
+        /// Смена страницы — пересылается делегату хоста как есть.
         ///
-        /// Сначала событие отдаётся контроллеру: его реализация обновляет
-        /// `currentPage`, сообщает хуку о появлении/скрытии (§7), озвучивает
-        /// название страницы и пересобирает набор страниц при политике края
-        /// (§9). Только после этого событие уходит во внешний делегат, уже с
-        /// согласованным состоянием контроллера.
+        /// - Parameters:
+        ///   - screen: Контроллер-источник события.
+        ///   - page: Показанная страница.
+        ///   - index: Индекс в порядке чтения.
+        public func startScreen(
+            _ screen: TesseraStartScreenViewController,
+            didChangePage page: TesseraStartScreenPage,
+            index: Int
+        ) {
+            parent.delegate?.startScreen(screen, didChangePage: page, index: index)
+        }
+
+        /// Видимость хука — пересылается делегату хоста как есть (в том числе
+        /// при появлении и уходе экрана, §7).
+        ///
+        /// - Parameters:
+        ///   - screen: Контроллер-источник события.
+        ///   - isVisible: Видна ли страница-хук.
+        public func startScreen(
+            _ screen: TesseraStartScreenViewController,
+            didChangeHookVisibility isVisible: Bool
+        ) {
+            parent.delegate?.startScreen(screen, didChangeHookVisibility: isVisible)
+        }
+
+        // MARK: Устаревший прокси пейджера
+
+        /// Устаревший путь: координатор больше не делегат пейджера.
+        ///
+        /// Переходы приходят через ``TesseraStartScreenViewController/delegate``
+        /// (E10.8). Метод оставлен ради стабильности публичной поверхности и
+        /// лишь пересылает событие контроллеру.
         ///
         /// - Parameters:
         ///   - pager: Пейджер-источник события.
-        ///   - index: Показанная страница в порядке чтения (RTL уже учтён Core).
+        ///   - index: Показанная страница в порядке чтения.
+        @available(*, deprecated, message: "Переходы страниц приходят через TesseraStartScreenViewController.delegate")
         public func pager(
             _ pager: TesseraPagerViewController,
             didShowPageAt index: Int
         ) {
-            guard let screen = screenViewController else { return }
-
-            screen.pager(pager, didShowPageAt: index)
-
-            let page = screen.currentPage
-            if page != reportedPage {
-                reportedPage = page
-                parent.delegate?.startScreen(
-                    screen,
-                    didChangePage: page,
-                    index: index
-                )
-            }
-
-            let isHookVisible = page == .quickPanel
-            if isHookVisible != reportedHookVisibility {
-                reportedHookVisibility = isHookVisible
-                parent.delegate?.startScreen(
-                    screen,
-                    didChangeHookVisibility: isHookVisible
-                )
-            }
+            screenViewController?.pager(pager, didShowPageAt: index)
         }
     }
 }
