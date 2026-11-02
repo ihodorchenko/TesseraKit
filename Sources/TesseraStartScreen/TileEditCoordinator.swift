@@ -966,7 +966,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         scheduleReconcile()
 
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        announce("Режим редактирования.")
+        announce(TesseraStartScreenStrings.string(.a11yEditingEntered))
         delegate?.tileEditCoordinatorDidBeginEditing(self)
     }
 
@@ -1001,7 +1001,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         // скрытых координатором ячеек нет.
         applyEditDimming(animated: true)
 
-        announce("Режим редактирования завершён.")
+        announce(TesseraStartScreenStrings.string(.a11yEditingExited))
         delegate?.tileEditCoordinatorDidEndEditing(self)
     }
 
@@ -1172,7 +1172,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 self.delegate?.tileEditCoordinator(self, didUnpin: tileID)
                 self.postLayoutChanged(afterUnpinningAtIndex: removedIndex)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
-                self.announce("Ярлык откреплён.")
+                self.announce(TesseraStartScreenStrings.string(.a11yTileUnpinned))
             }
         )
     }
@@ -1193,7 +1193,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         delegate?.tileEditCoordinator(self, didUnpin: tileID)
         postLayoutChanged(afterUnpinningAtIndex: nil)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
-        announce("Ярлык откреплён.")
+        announce(TesseraStartScreenStrings.string(.a11yTileUnpinned))
     }
 
     // MARK: - Resize
@@ -1238,7 +1238,8 @@ public final class TesseraTileEditCoordinator: NSObject {
         // разложена).
         postLayoutChanged(focusing: itemID)
         UISelectionFeedbackGenerator().selectionChanged()
-        announce("Размер: \(TesseraTileEditCoordinator.name(for: next)).")
+        let sizeName = TesseraTileEditCoordinator.name(for: next)
+        announce(String(format: TesseraStartScreenStrings.string(.a11yResizeFormat), sizeName))
         return next
     }
 
@@ -1331,7 +1332,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         render(animated: true)
         delegate?.tileEditCoordinator(self, didCreateFolder: folder)
         postLayoutChanged(focusing: folder.id)
-        announce("Папка создана.")
+        announce(TesseraStartScreenStrings.string(.a11yFolderCreated))
         return folder
     }
 
@@ -1352,7 +1353,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         render(animated: true)
         delegate?.tileEditCoordinator(self, didAdd: tileID, toFolder: folderID)
         postLayoutChanged(focusing: folderID)
-        announce("Ярлык добавлен в папку.")
+        announce(TesseraStartScreenStrings.string(.a11yFolderTileAdded))
         return true
     }
 
@@ -1377,7 +1378,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         } else if let folderID = folderID {
             postLayoutChanged(focusing: folderID)
         }
-        announce(folderID == nil ? "Ярлык на рабочем столе." : "Ярлык перемещён в папку.")
+        announce(TesseraStartScreenStrings.string(folderID == nil ? .a11yFolderTileOnStart : .a11yFolderTileMoved))
         return true
     }
 
@@ -1460,7 +1461,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         folderID: AnyHashable?
     ) {
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
-        announce("Операция с папкой недоступна.")
+        announce(TesseraStartScreenStrings.string(.a11yFolderUnavailable))
         delegate?.tileEditCoordinator(
             self,
             didFailGrouping: action,
@@ -1687,7 +1688,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         syncGridWithModel(animated: true)
         reconcileEditControls(animated: false)
         endDragStoreTransaction(saveIfNeeded: true)
-        announce("Перетаскивание отменено: состояние изменилось.")
+        announce(TesseraStartScreenStrings.string(.a11yDragCancelled))
     }
 
     // MARK: - Drag: старт и движение
@@ -1885,14 +1886,16 @@ public final class TesseraTileEditCoordinator: NSObject {
             return
         }
 
-        // E8.9: признак пересчитывается на каждом шаге, а не только при смене
-        // цели: панель могла уехать вместе с автопрокруткой.
-        session.isOverFolderPanel = false
+        // E8.9/m7: признак пересчитывается на каждом шаге, а не только при
+        // смене цели: панель могла уехать вместе с автопрокруткой. Хит-тест
+        // сетки нужен потому, что `item(under:)` видит только элементы модели.
+        session.isOverFolderPanel = isPointOverFolderPanel(point)
 
         var target: HoverTarget = .none
 
         if grid.bounds.insetBy(dx: -8, dy: -8).contains(point),
-           let hovered = item(under: point, excluding: session.itemID),
+           let hovered = item(under: point, excluding: session.itemID)
+               ?? panelItem(under: point, excluding: session.itemID),
            let frame = grid.frame(forItemID: hovered.id),
            let baseIndex = session.baseIndex(of: hovered.id) {
 
@@ -2274,6 +2277,40 @@ public final class TesseraTileEditCoordinator: NSObject {
         return nil
     }
 
+    /// Лежит ли точка над панелью раскрытой папки (m7, W5-фикс).
+    ///
+    /// `item(under:)` перебирает только элементы модели, а панель — элемент
+    /// представления, поэтому её ищем хит-тестом сетки (`grid.item(at:)`):
+    /// панель имеет собственный `IndexPath` в коллекции. Нужно и в
+    /// ``updateHoverTargets(at:)`` (снять магнит/показать, что цель не плитка),
+    /// и в ``finishDrag(commit:)`` (drop над панелью — no-op, E9.5-семантика).
+    ///
+    /// - Parameter point: Точка в координатах сетки.
+    /// - Returns: `true`, если точка попадает в панель раскрытой папки.
+    private func isPointOverFolderPanel(_ point: CGPoint) -> Bool {
+        guard grid.expandedFolderID != nil else { return false }
+        return grid.item(at: point)?.isFolderPanel == true
+    }
+
+    /// Элемент-панель под точкой (для переиспользования существующей ветки
+    /// `.folderContent` в ``updateHoverTargets(at:)``).
+    ///
+    /// - Parameters:
+    ///   - point: Точка в координатах сетки.
+    ///   - excludedID: Идентификатор перетаскиваемого элемента.
+    /// - Returns: `.folderContent`, если точка над панелью, иначе `nil`.
+    private func panelItem(
+        under point: CGPoint,
+        excluding excludedID: AnyHashable
+    ) -> TileGridItem? {
+        guard isPointOverFolderPanel(point),
+              let item = grid.item(at: point),
+              item.id != excludedID else {
+            return nil
+        }
+        return item
+    }
+
     /// Попадает ли точка в центральную половину рамки (зона удержания E8.6).
     ///
     /// Центральная зона используется для двух целей: центр ярлыка — создание
@@ -2413,9 +2450,9 @@ public final class TesseraTileEditCoordinator: NSObject {
         // остаётся: это не движение, а обратная связь.
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if case .folder = session.hover {
-            announce("Отпустите, чтобы добавить ярлык в папку.")
+            announce(TesseraStartScreenStrings.string(.a11yDragHoldToAddToFolder))
         } else {
-            announce("Отпустите, чтобы создать папку.")
+            announce(TesseraStartScreenStrings.string(.a11yDragHoldToCreateFolder))
         }
     }
 
@@ -2723,6 +2760,18 @@ public final class TesseraTileEditCoordinator: NSObject {
             return
         }
 
+        // m7 (W5-фикс): панель раскрытой папки — не drop-цель. Если хост открыл
+        // панель во время drag (долгое нажатие её обычно закрывает, но хост
+        // вправе открыть её сам), hover остаётся `.none`, и default-ветка
+        // зафиксировала бы последнее push-превью. Отпускание над панелью
+        // возвращает ярлык на исходное место: store и делегат не трогаем.
+        // Проверка по последней точке нужна, если панель появилась под пальцем
+        // уже после последнего шага drag.
+        if session.isOverFolderPanel || isPointOverFolderPanel(session.lastPoint) {
+            returnAfterNoOpDrop(session)
+            return
+        }
+
         switch session.hover {
         case .folder(let folderID) where session.isTile && isMergeReady:
             // E10.5-A1/E8.6: центр папки с выдержанным удержанием — добавляем
@@ -2764,7 +2813,8 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Возврат ярлыка на исходное место при no-op drop (E9.5).
     ///
     /// Вызывается, когда drop отпущен над центром ярлыка/папки без выдержанного
-    /// удержания E8.6: модель не меняется, делегат не получает `didMove`.
+    /// удержания E8.6 (E9.5), а также над панелью раскрытой папки (m7).
+    /// Модель не меняется, делегат не получает `didMove`.
     /// Сетка возвращается к порядку модели (если палец успел побывать в зоне
     /// перестановки, превью снимается), снимок уезжает на место.
     ///
@@ -2831,7 +2881,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 .addToFolder,
                 session: session,
                 folderID: folderID,
-                reason: "добавление в папку запрещено"
+                reason: TesseraStartScreenStrings.string(.a11yGroupingReasonAddDenied)
             )
             return
         }
@@ -2845,7 +2895,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         // папку вверх, и снимок должен лететь в её актуальный слот.
         let folderFrame = grid.frame(forItemID: folderID) ?? session.placeholder.frame
         delegate?.tileEditCoordinator(self, didAdd: session.itemID, toFolder: folderID)
-        announce("Ярлык добавлен в папку.")
+        announce(TesseraStartScreenStrings.string(.a11yFolderTileAdded))
         UINotificationFeedbackGenerator().notificationOccurred(.success)
 
         collapseDragView(session, into: folderFrame) {
@@ -2878,7 +2928,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 .createFolder,
                 session: session,
                 folderID: nil,
-                reason: "создание папки запрещено"
+                reason: TesseraStartScreenStrings.string(.a11yGroupingReasonCreateDenied)
             )
             return
         }
@@ -2892,7 +2942,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 .addToFolder,
                 session: session,
                 folderID: folder.id,
-                reason: "папка создана, но добавление ярлыка запрещено"
+                reason: TesseraStartScreenStrings.string(.a11yGroupingReasonTileAddDenied)
             )
             return
         }
@@ -2901,7 +2951,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         canonicalizeVisibleOrderIfNeeded()
         render(animated: true)
         delegate?.tileEditCoordinator(self, didAdd: session.itemID, toFolder: folder.id)
-        announce("Создана папка из двух ярлыков.")
+        announce(TesseraStartScreenStrings.string(.a11yFolderCreatedFromTwoTiles))
         UINotificationFeedbackGenerator().notificationOccurred(.success)
 
         collapseDragView(session, into: folderFrame) {
@@ -2930,7 +2980,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     ) {
         render(animated: true)
         UINotificationFeedbackGenerator().notificationOccurred(.error)
-        announce("Не удалось: \(reason).")
+        announce(String(format: TesseraStartScreenStrings.string(.a11yGroupingFailedFormat), reason))
         delegate?.tileEditCoordinator(
             self,
             didFailGrouping: action,
@@ -3433,7 +3483,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         var actions: [UIAccessibilityCustomAction] = []
         if item.tile != nil {
             actions.append(
-                UIAccessibilityCustomAction(name: "Открепить", image: nil) { [weak self] _ in
+                UIAccessibilityCustomAction(name: TesseraStartScreenStrings.string(.a11yActionUnpin), image: nil) { [weak self] _ in
                     guard let self else { return false }
                     self.unpin(item.id)
                     return true
@@ -3442,7 +3492,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
         if supportedSizes(for: item).count > 1 {
             actions.append(
-                UIAccessibilityCustomAction(name: "Изменить размер", image: nil) { [weak self] _ in
+                UIAccessibilityCustomAction(name: TesseraStartScreenStrings.string(.a11yActionResize), image: nil) { [weak self] _ in
                     guard let self else { return false }
                     self.cycleSize(of: item.id)
                     return true
@@ -3457,7 +3507,7 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Озвучивает сообщение VoiceOver.
     ///
-    /// - Parameter message: Готовая строка (локализация — забота хоста в v1).
+    /// - Parameter message: Готовая локализованная строка (``TesseraStartScreenStrings``).
     private func announce(_ message: String) {
         guard UIAccessibility.isVoiceOverRunning else { return }
         UIAccessibility.post(notification: .announcement, argument: message)
@@ -3630,16 +3680,16 @@ public final class TesseraTileEditCoordinator: NSObject {
         return animation
     }
 
-    /// Русское название размера для озвучивания.
+    /// Локализованное название размера для озвучивания.
     ///
     /// - Parameter size: Размер ярлыка.
     /// - Returns: Название для VoiceOver.
     private static func name(for size: TileSize) -> String {
         switch size {
-        case .small: return "маленький"
-        case .medium: return "средний"
-        case .wide: return "широкий"
-        case .large: return "большой"
+        case .small: return TesseraStartScreenStrings.string(.a11ySizeSmall)
+        case .medium: return TesseraStartScreenStrings.string(.a11ySizeMedium)
+        case .wide: return TesseraStartScreenStrings.string(.a11ySizeWide)
+        case .large: return TesseraStartScreenStrings.string(.a11ySizeLarge)
         }
     }
 }
@@ -4537,10 +4587,10 @@ final class TesseraFolderViewController: UIViewController {
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = .secondaryLabel
 
-        closeButton.setTitle("Готово", for: .normal)
+        closeButton.setTitle(TesseraStartScreenStrings.string(.folderScreenDone), for: .normal)
         closeButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.accessibilityLabel = "Закрыть папку"
+        closeButton.accessibilityLabel = TesseraStartScreenStrings.string(.folderScreenClose)
 
         scrollView.alwaysBounceVertical = true
         scrollView.showsVerticalScrollIndicator = true
@@ -4615,7 +4665,7 @@ final class TesseraFolderViewController: UIViewController {
             return
         }
 
-        titleLabel.text = folder.title.isEmpty ? "Папка" : folder.title
+        titleLabel.text = folder.title.isEmpty ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle) : folder.title
         subtitleLabel.text = TesseraFolderViewController.tilesText(folder.tiles.count)
 
         for arranged in stackView.arrangedSubviews {
@@ -4678,7 +4728,7 @@ final class TesseraFolderViewController: UIViewController {
         tileView.addGestureRecognizer(longPress)
 
         tileView.accessibilityCustomActions = [
-            UIAccessibilityCustomAction(name: "Переместить", image: nil) { [weak self, weak tileView] _ in
+            UIAccessibilityCustomAction(name: TesseraStartScreenStrings.string(.folderScreenMoveAction), image: nil) { [weak self, weak tileView] _ in
                 guard let self, let tileView, let tile = tileView.tile else { return false }
                 self.presentMoveMenu(for: tile, sourceView: tileView)
                 return true
@@ -4751,23 +4801,30 @@ final class TesseraFolderViewController: UIViewController {
     ///   - sourceView: Вид-источник для popover на iPad.
     private func presentMoveMenu(for tile: TileDescriptor, sourceView: UIView) {
         let alert = UIAlertController(
-            title: "Переместить «\(tile.title)»",
+            title: String(
+                format: TesseraStartScreenStrings.string(.folderScreenMoveMenuTitleFormat),
+                tile.title
+            ),
             message: nil,
             preferredStyle: .actionSheet
         )
 
         let otherFolders = store.snapshot().folders.filter { $0.id != folderID }
         for folder in otherFolders {
-            let name = folder.title.isEmpty ? "Папка" : folder.title
-            alert.addAction(UIAlertAction(title: "В «\(name)»", style: .default) { [weak self] _ in
+            let name = folder.title.isEmpty ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle) : folder.title
+            let title = String(
+                format: TesseraStartScreenStrings.string(.folderScreenMoveMenuIntoFormat),
+                name
+            )
+            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
                 self?.move(tileID: tile.id, to: folder.id)
             })
         }
 
-        alert.addAction(UIAlertAction(title: "На рабочий стол", style: .default) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: TesseraStartScreenStrings.string(.folderScreenMoveMenuToStart), style: .default) { [weak self] _ in
             self?.move(tileID: tile.id, to: nil)
         })
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: TesseraStartScreenStrings.string(.commonCancel), style: .cancel, handler: nil))
 
         if let popover = alert.popoverPresentationController {
             popover.sourceView = sourceView
@@ -4798,22 +4855,13 @@ final class TesseraFolderViewController: UIViewController {
 
     /// Склоняет число ярлыков для подзаголовка.
     ///
+    /// Правила словоформ и сами формы — в ``TesseraStartScreenStrings``: у
+    /// русского языка три формы, у английского две (E9.8г).
+    ///
     /// - Parameter count: Число ярлыков.
-    /// - Returns: Строка вида «3 ярлыка».
+    /// - Returns: Строка вида «3 ярлыка» / "3 shortcuts".
     private static func tilesText(_ count: Int) -> String {
-        let remainder100 = count % 100
-        let remainder10 = count % 10
-        let word: String
-        if (11...14).contains(remainder100) {
-            word = "ярлыков"
-        } else if remainder10 == 1 {
-            word = "ярлык"
-        } else if (2...4).contains(remainder10) {
-            word = "ярлыка"
-        } else {
-            word = "ярлыков"
-        }
-        return "\(count) \(word)"
+        TesseraStartScreenStrings.folderTilesCountText(count)
     }
 }
 

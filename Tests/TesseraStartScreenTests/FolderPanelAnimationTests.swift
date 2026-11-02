@@ -386,7 +386,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertEqual(cell.accessibilityValue, "3")
 
         cell.setFolderExpanded(true)
-        XCTAssertEqual(cell.accessibilityValue, "3, раскрыта")
+        XCTAssertEqual(cell.accessibilityValue, "3, \(TesseraStartScreenStrings.string(.panelExpanded))")
 
         cell.setFolderExpanded(false)
         XCTAssertEqual(cell.accessibilityValue, "3")
@@ -396,7 +396,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         cell.configure(with: .folder(empty), liveTileEngine: nil, isVisible: false)
         XCTAssertNil(cell.accessibilityValue)
         cell.setFolderExpanded(true)
-        XCTAssertEqual(cell.accessibilityValue, "раскрыта")
+        XCTAssertEqual(cell.accessibilityValue, TesseraStartScreenStrings.string(.panelExpanded))
     }
 
     /// Та же пара «число ярлыков + раскрыта» приходит на реальной ячейке после
@@ -410,7 +410,7 @@ final class FolderPanelAnimationTests: XCTestCase {
 
         XCTAssertEqual(
             host.cell(folder.id)?.accessibilityValue,
-            "5, раскрыта"
+            "5, \(TesseraStartScreenStrings.string(.panelExpanded))"
         )
     }
 

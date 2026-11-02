@@ -2999,7 +2999,7 @@ final class TesseraTileCell: UICollectionViewCell {
             parts.append(folderAccessibilityCountText)
         }
         if isFolderExpanded {
-            parts.append("раскрыта")
+            parts.append(TesseraStartScreenStrings.string(.panelExpanded))
         }
         accessibilityValue = parts.isEmpty ? nil : parts.joined(separator: ", ")
     }

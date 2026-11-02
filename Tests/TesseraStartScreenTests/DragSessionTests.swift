@@ -1438,6 +1438,117 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(host.host.grid.items.map { $0.id }, host.storeIDs)
     }
 
+    // MARK: - m7: drop над панелью раскрытой папки — no-op
+
+    /// Drop над панелью раскрытой папки не фиксирует последнее push-превью:
+    /// хост открывает панель во время drag, отпускание возвращает ярлык на
+    /// исходное место (m7, E9.5-семантика; STARTSCREEN §30).
+    func testDropOverExpandedFolderPanelIsNoOp() throws {
+        let host = makeFolderHost(
+            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
+        )
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        let folderID = try XCTUnwrap(host.firstFolderID)
+        let folder = try XCTUnwrap(host.folders.first)
+
+        XCTAssertTrue(host.startDrag("a"))
+        // Пуш-превью перестановки: ярлык встаёт на место папки.
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point(folderID, fx: 0.1, fy: 0.5)))
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .reorder(folderID, index: 1)
+        )
+        XCTAssertNotEqual(host.gridIDs, host.storeIDs, "Превью отличается от модели")
+
+        // Хост открывает панель уже во время drag (long-press её бы закрыл).
+        host.host.grid.openFolder(folder, animated: true)
+        XCTAssertTrue(host.host.waitForFolderTransition())
+        host.host.layout()
+        let panelCell = try XCTUnwrap(host.host.panelCell(folderID: folderID))
+        let panelPoint = panelCell.convert(
+            CGPoint(x: panelCell.bounds.midX, y: panelCell.bounds.midY),
+            to: host.host.grid
+        )
+
+        host.coordinator.updateDrag(to: panelPoint)
+        XCTAssertTrue(
+            host.coordinator.dragSession?.isOverFolderPanel == true,
+            "Признак «над панелью» выставлен"
+        )
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            HoverTarget.none,
+            "Панель — не цель drop"
+        )
+        XCTAssertNotEqual(
+            host.gridIDs,
+            host.storeIDs,
+            "Сетка всё ещё показывает push-превью — именно его нельзя фиксировать"
+        )
+
+        host.coordinator.finishDrag(commit: true)
+
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
+        XCTAssertEqual(
+            host.storeIDs,
+            [AnyHashable("a"), folderID],
+            "Store не изменился: drop над панелью — no-op"
+        )
+        XCTAssertTrue(recorder.moves.isEmpty, "didMove не пришёл")
+        XCTAssertTrue(recorder.createdFolders.isEmpty)
+        XCTAssertTrue(host.waitForDragCleanup("a"))
+        XCTAssertEqual(
+            host.host.grid.expandedFolderID,
+            folderID,
+            "Панель остаётся раскрытой — drop её не закрывает"
+        )
+    }
+
+    /// Панель, открытая хостом уже **под пальцем** (без шага drag после
+    /// открытия), тоже даёт no-op при отпускании: признак проверяется и по
+    /// последней точке, а не только по последнему `updateDrag` (m7).
+    func testDropOverPanelOpenedUnderFingerIsNoOp() throws {
+        let host = makeFolderHost(
+            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
+        )
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        let folderID = try XCTUnwrap(host.firstFolderID)
+        let folder = try XCTUnwrap(host.folders.first)
+
+        // Запоминаем координаты центра панели в той же раскладке, затем
+        // закрываем её: во время drag панель откроется там же.
+        host.host.grid.openFolder(folder, animated: false)
+        host.host.layout()
+        let panelCell = try XCTUnwrap(host.host.panelCell(folderID: folderID))
+        let panelPoint = panelCell.convert(
+            CGPoint(x: panelCell.bounds.midX, y: panelCell.bounds.midY),
+            to: host.host.grid
+        )
+        host.host.grid.closeFolder(animated: false)
+        host.host.layout()
+
+        XCTAssertTrue(host.startDrag("a"))
+        // Превью перестановки, затем палец — в пустое место, где появится панель.
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point(folderID, fx: 0.1, fy: 0.5)))
+        host.coordinator.updateDrag(to: panelPoint)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.none)
+        XCTAssertFalse(host.coordinator.dragSession?.isOverFolderPanel == true)
+
+        // Панель появляется под пальцем без нового шага drag.
+        host.host.grid.openFolder(folder, animated: false)
+        host.host.layout()
+        XCTAssertEqual(host.host.grid.expandedFolderID, folderID)
+
+        host.coordinator.finishDrag(commit: true)
+
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
+        XCTAssertEqual(host.storeIDs, [AnyHashable("a"), folderID])
+        XCTAssertTrue(recorder.moves.isEmpty, "didMove не пришёл")
+        XCTAssertTrue(host.waitForDragCleanup("a"))
+    }
+
 }
 
 #endif
