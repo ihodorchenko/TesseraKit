@@ -1104,6 +1104,9 @@ final class DragSessionTests: XCTestCase {
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder
         let baseIDs = host.storeIDs
+        // E11.7: центр «b» берём по базовой раскладке — после превью «b» нарисована
+        // на слоте «a», а зона решается по базовой рамке.
+        let baseCenterOfB = try XCTUnwrap(host.point("b", fx: 0.5, fy: 0.5))
 
         XCTAssertTrue(host.startDrag("a"))
         // Сначала — над краем c: превью перестановки [b, c, a].
@@ -1112,7 +1115,7 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(host.coordinator.dragSession?.hover, .reorder(AnyHashable("c"), index: 2))
 
         // Затем — центр b: зона E8.6, удержание не выдержано.
-        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("b", fx: 0.5, fy: 0.5)))
+        host.coordinator.updateDrag(to: baseCenterOfB)
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group(AnyHashable("b")))
         host.coordinator.finishDrag(commit: true)
 
@@ -1354,12 +1357,9 @@ final class DragSessionTests: XCTestCase {
             host.coordinator.dragSession?.hover,
             .reorder(AnyHashable("b"), index: 1)
         )
-        let movedFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "b"))
-        let movedCentral = movedFrame.insetBy(
-            dx: movedFrame.width * 0.25,
-            dy: movedFrame.height * 0.25
-        )
-        host.coordinator.updateDrag(to: CGPoint(x: movedCentral.midX, y: movedCentral.maxY))
+        // E11.7: зона решается по БАЗОВОЙ рамке «b» (она не сдвигается вместе с
+        // превью), поэтому нижняя граница считается от той же `frame`/`central`.
+        host.coordinator.updateDrag(to: CGPoint(x: central.midX, y: central.maxY))
         XCTAssertEqual(
             host.coordinator.dragSession?.hover,
             .reorder(AnyHashable("b"), index: 1)
@@ -2073,6 +2073,139 @@ final class DragSessionTests: XCTestCase {
         XCTAssertTrue(recorder.failures.isEmpty)
         XCTAssertEqual(changeCount, 1, "Одно уведомление за операцию")
         XCTAssertEqual(host.folders.count, 1)
+    }
+
+    // MARK: - E11.7: хит-тест по базовой раскладке
+
+    /// Стенд E11.7: ряд `a b c d` (small) и папка F (small) с ярлыками `f`, `g`
+    /// во втором ряду, 4 колонки.
+    private func makeBaseHitHost() -> TesseraTestDragHost {
+        TesseraTestDragHost(
+            descriptors: ["a", "b", "c", "d", "f", "g"].map { tesseraTestTile($0, size: .small) },
+            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0),
+            prepare: { store in
+                if let folder = store.createFolder(withTile: "f") {
+                    _ = store.addToFolder("g", folderID: folder.id)
+                }
+            }
+        )
+    }
+
+    /// Репро E11.7: папка, уехавшая из-под пальца push-превью, остаётся целью
+    /// по базовой рамке — центр достижим при подходе в сторону сдвига.
+    func testFolderCenterReachableAfterPreviewShiftedItAway() throws {
+        let host = makeBaseHitHost()
+        let folderID = try XCTUnwrap(host.firstFolderID)
+        let baseCenter = try XCTUnwrap(host.point(folderID, fx: 0.5, fy: 0.5))
+        let baseEdge = try XCTUnwrap(host.point(folderID, fx: 0.1, fy: 0.5))
+        let baseFrame = try XCTUnwrap(host.host.grid.frame(forItemID: folderID))
+
+        XCTAssertTrue(host.startDrag("a"))
+        host.coordinator.updateDrag(to: baseEdge)
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .reorder(folderID, index: 4),
+            "Край папки — перестановка, превью сдвигает папку"
+        )
+        XCTAssertTrue(host.waitUntil {
+            host.host.grid.frame(forItemID: folderID) != baseFrame
+        }, "Папка уехала с базового слота")
+
+        host.coordinator.updateDrag(to: baseCenter)
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .folder(folderID),
+            "Центр базовой рамки папки — .folder, а не .none над плейсхолдером"
+        )
+
+        // Подсветка стоит на видимой (сдвинутой) рамке папки.
+        let highlight = try XCTUnwrap(
+            host.host.grid.subviews.compactMap { $0 as? TesseraTileDropHighlightView }
+                .first { !$0.isHidden }
+        )
+        let shifted = try XCTUnwrap(host.host.grid.frame(forItemID: folderID))
+        XCTAssertEqual(highlight.center.x, shifted.midX, accuracy: 0.5)
+        XCTAssertEqual(highlight.center.y, shifted.midY, accuracy: 0.5)
+        XCTAssertEqual(highlight.bounds.size, shifted.size)
+
+        host.coordinator.finishDrag(commit: false)
+        XCTAssertTrue(host.waitForDragCleanup("a"))
+    }
+
+    /// `.group` срабатывает только внутри центра БАЗОВОЙ рамки цели; на месте,
+    /// куда цель уехала после превью, и над собственным слотом — нет.
+    func testGroupFiresOnlyInsideBaseFrameCenter() throws {
+        let host = makeBaseHitHost()
+        let baseCenter = try XCTUnwrap(host.point("b", fx: 0.5, fy: 0.5))
+        let baseEdge = try XCTUnwrap(host.point("b", fx: 0.9, fy: 0.5))
+        let ownSlotCenter = try XCTUnwrap(host.point("a", fx: 0.5, fy: 0.5))
+
+        XCTAssertTrue(host.startDrag("a"))
+        host.coordinator.updateDrag(to: baseEdge)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .reorder("b", index: 1))
+        XCTAssertTrue(host.waitUntil {
+            let frame = host.host.grid.frame(forItemID: "b")
+            return frame.map { abs($0.midX - ownSlotCenter.x) < 1 } ?? false
+        }, "«b» переехала на слот «a»")
+
+        // Центр видимой «b» (= базовый слот «a») — своя позиция: не группа.
+        host.coordinator.updateDrag(to: ownSlotCenter)
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            HoverTarget.none,
+            "Над собственным базовым слотом — .none, превью остаётся"
+        )
+
+        // Центр базовой рамки «b» — группа, хотя «b» сейчас нарисована левее.
+        host.coordinator.updateDrag(to: baseCenter)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("b"))
+
+        // Базовый край «b» — по-прежнему перестановка.
+        host.coordinator.updateDrag(to: baseEdge)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .reorder("b", index: 1))
+
+        host.coordinator.finishDrag(commit: false)
+        XCTAssertTrue(host.waitForDragCleanup("a"))
+    }
+
+    /// Автопрокрутка/`contentOffset`: базовые рамки хранятся в координатах
+    /// контента, поэтому после прокрутки цель находится по той же плитке.
+    func testBaseHitTestFollowsContentOffset() throws {
+        let host = TesseraTestDragHost(
+            descriptors: (0..<48).map { tesseraTestTile("t\($0)", size: .small) },
+            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
+        )
+        XCTAssertTrue(host.startDrag("t0"))
+        let grid = host.host.grid
+
+        grid.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
+        host.host.layout()
+        let centerBefore = try XCTUnwrap(host.point("t21", fx: 0.5, fy: 0.5))
+        host.coordinator.updateDrag(to: centerBefore)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t21"))
+
+        // Превью сдвигает сетку; затем контент уезжает ещё на 100 pt.
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("t21", fx: 0.9, fy: 0.5)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .reorder("t21", index: 21))
+        grid.setContentOffset(CGPoint(x: 0, y: 300), animated: false)
+        host.host.layout()
+
+        let session = try XCTUnwrap(host.coordinator.dragSession)
+        let content = try XCTUnwrap(grid.baseContentFrames(for: session.baseSnapshot.items))
+        let frame = grid.gridFrame(fromContentFrame: try XCTUnwrap(content["t21"]))
+        XCTAssertEqual(frame.midY, centerBefore.y - 100, accuracy: 0.5, "Рамка сместилась с offset")
+
+        host.coordinator.updateDrag(to: CGPoint(x: frame.midX, y: frame.midY))
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .group("t21"),
+            "Хит-тест учитывает актуальный contentOffset"
+        )
+
+        host.coordinator.finishDrag(commit: false)
+        grid.setContentOffset(.zero, animated: false)
+        host.host.layout()
+        XCTAssertTrue(host.waitForDragCleanup("t0"))
     }
 }
 
