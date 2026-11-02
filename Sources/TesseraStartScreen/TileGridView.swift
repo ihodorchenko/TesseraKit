@@ -362,6 +362,7 @@ public final class TesseraTileGridView: UIView {
         // сама плитка остаётся в наборе.
         guard let insertionIndex = TileLayoutEngine.folderPanelInsertionIndex(
             items: baseItems,
+            columns: columns,
             expandedFolderID: currentFolder.id
         ) else {
             return
@@ -1250,6 +1251,7 @@ public final class TesseraTileGridView: UIView {
               let folder = snapshot.items.compactMap({ $0.folder }).first(where: { $0.id == expandedID }),
               let insertionIndex = TileLayoutEngine.folderPanelInsertionIndex(
                   items: snapshot.items,
+                  columns: columns,
                   expandedFolderID: expandedID
               ) else {
             return snapshot.items
@@ -1614,7 +1616,11 @@ extension TesseraTileGridView: UICollectionViewDataSource {
             )
             if let panelCell = cell as? TesseraFolderPanelCell,
                let folder = item.panelFolder {
-                panelCell.configure(folder: folder, columns: tileLayout.columns)
+                panelCell.configure(
+                    folder: folder,
+                    columns: tileLayout.columns,
+                    spacing: tileLayout.itemSpacing
+                )
                 // D17: тап по фону/заголовку панели закрывает папку. Ярлыки
                 // внутри панели обрабатывает сама ячейка: её жест сначала
                 // проверяет попадание в иконку.
@@ -2487,8 +2493,9 @@ final class TesseraTileCell: UICollectionViewCell {
 ///
 /// Внутри переиспользуется ``TesseraTileCell`` — та же плитка, что и на сетке:
 /// подложка, иконка, заголовок, бэйдж. Ячейка настраивается так же, как на
-/// рабочем столе (фон не обнуляется), а её сторона равна юниту сетки
-/// (``TileLayoutEngine/panelTileSide(width:columns:)``), поэтому ярлык в панели
+/// рабочем столе (фон не обнуляется), а её сторона и колонки — те же, что у
+/// сетки (``TileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``
+/// с `itemSpacing` сетки, E10.1), поэтому ярлык в панели
 /// — настоящая small-плитка 1×1, совпадающая с плитками под панелью по размеру
 /// и колонкам. Тап по ярлыку вызывает ``TileDescriptor/action`` и **не**
 /// закрывает папку (D17); VoiceOver-активация идёт тем же путём через
@@ -2524,7 +2531,6 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         static let padding = TileLayoutEngine.panelPadding
         static let headerHeight = TileLayoutEngine.panelHeaderHeight
         static let headerSpacing = TileLayoutEngine.panelHeaderSpacing
-        static let cellSpacing = TileLayoutEngine.panelContentSpacing
         static let cascadeDuration: TimeInterval = 0.18
         static let cascadeOffset: CGFloat = 10
         static let collapseDuration: TimeInterval = 0.12
@@ -2543,6 +2549,10 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
 
     /// Число колонок сетки содержимого (по D17 — 4 по умолчанию).
     private var columnCount = 4
+
+    /// Зазор сетки рабочего стола (`itemSpacing`, E10.1): ярлыки панели
+    /// встают в те же колонки, что и плитки сетки.
+    private var contentSpacing = TileLayoutEngine.panelContentSpacing
 
     /// Тап по фону или заголовку панели (D17): сетка закрывает папку.
     ///
@@ -2575,6 +2585,12 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
 
         /// Число ярлыков: от него зависит набор рамок.
         var tileCount: Int
+
+        /// Зазор сетки (E10.1).
+        var spacing: CGFloat
+
+        /// Масштаб пиксельного выравнивания (E10.1).
+        var scale: CGFloat
 
         /// Рамка заголовка.
         var titleFrame: CGRect
@@ -2645,8 +2661,14 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     ///   - folder: Раскрытая папка.
     ///   - columns: Число колонок сетки содержимого (число колонок рабочего
     ///     стола; по умолчанию 4).
-    func configure(folder: TileFolder, columns: Int) {
+    ///   - spacing: Зазор сетки рабочего стола (`itemSpacing`, E10.1).
+    func configure(
+        folder: TileFolder,
+        columns: Int,
+        spacing: CGFloat = TileLayoutEngine.panelContentSpacing
+    ) {
         columnCount = max(1, columns)
+        contentSpacing = spacing
         // D17: заголовок показывается в нижнем регистре — WP-стиль; исходная
         // подпись остаётся в accessibility label ячейки папки.
         titleLabel.text = folder.title.lowercased()
@@ -2831,7 +2853,9 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
            cached.width == width,
            cached.columns == max(1, columnCount),
            cached.rightToLeft == isRightToLeft,
-           cached.tileCount == shortcutCells.count {
+           cached.tileCount == shortcutCells.count,
+           cached.spacing == contentSpacing,
+           cached.scale == displayScale {
             layout = cached
         } else if let computed = makeContentLayout(width: width) {
             contentLayout = computed
@@ -2865,10 +2889,11 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
 
     /// Считает внутреннюю раскладку по ширине панели.
     ///
-    /// Сторона ярлыка — юнит сетки (``TileLayoutEngine/panelTileSide(width:columns:)``):
-    /// та же формула, что у плитки 1×1 на рабочем столе. Юнит считается по всей
-    /// ширине панели и зазору `Metrics.cellSpacing`, поэтому по горизонтали
-    /// ярлыки занимают ширину целиком и встают в те же колонки, что и плитки под
+    /// Сторона ярлыка и колонки — геометрия сетки
+    /// (``TileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``):
+    /// юнит по всей ширине панели (она равна ширине контента сетки) и зазору
+    /// сетки `itemSpacing`, на пиксельной сетке, остаток — поровну на поля
+    /// (E10.1). Поэтому ярлыки встают в те же колонки, что и плитки под
     /// панелью. Поля `Metrics.padding` действуют по вертикали и для заголовка.
     ///
     /// Высота в расчёт не входит: содержимое прижато к верхнему краю, а рост
@@ -2880,9 +2905,20 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         let padding = Metrics.padding
         let innerWidth = max(0, width - padding * 2)
         let columns = max(1, columnCount)
-        let spacing = Metrics.cellSpacing
-        let side = TileLayoutEngine.panelTileSide(width: width, columns: columns)
-        guard side.isFinite, side > 0 else { return nil }
+        let scale = displayScale
+        // E10.1: та же геометрия, что у сетки (юнит и зазор на пиксельной
+        // сетке, остаток ширины — поровну на поля), поэтому колонки ярлыков
+        // совпадают с колонками плиток до пикселя.
+        guard let metrics = TileLayoutEngine.gridMetrics(
+            contentWidth: width,
+            columns: columns,
+            spacing: contentSpacing,
+            scale: scale
+        ) else {
+            return nil
+        }
+        let side = metrics.unit
+        let spacing = metrics.spacing
 
         let titleFrame = CGRect(
             x: padding,
@@ -2902,7 +2938,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             let column = rightToLeft ? columns - 1 - logicalColumn : logicalColumn
             tileFrames.append(
                 CGRect(
-                    x: CGFloat(column) * (side + spacing),
+                    x: metrics.columnOffset(column),
                     y: originY + CGFloat(row) * (side + spacing),
                     width: side,
                     height: side
@@ -2915,6 +2951,8 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             columns: columns,
             rightToLeft: rightToLeft,
             tileCount: shortcutCells.count,
+            spacing: contentSpacing,
+            scale: scale,
             titleFrame: titleFrame,
             tileFrames: tileFrames
         )
@@ -2924,6 +2962,12 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     private func invalidateContentLayout() {
         contentLayout = nil
         appliedContentLayout = nil
+    }
+
+    /// Масштаб пиксельного выравнивания — то же правило, что у раскладки
+    /// сетки (E10.1).
+    private var displayScale: CGFloat {
+        TesseraTileCollectionViewLayout.resolvedDisplayScale(traitCollection.displayScale)
     }
 
     /// Направление чтения панели (§9, RTL).

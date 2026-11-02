@@ -251,7 +251,8 @@ final class FolderPanelInsertionTests: XCTestCase {
     }
 
     /// Элемент, начинающийся ниже строки папки, уходит под панель: отступ
-    /// равен её высоте.
+    /// равен её высоте плюс зазор сетки (по умолчанию 8 pt) — ровно на столько
+    /// раскладка сдвигает первый ряд под панелью (E10.1).
     func testRowsBelowOffsetShiftsItemsBelowFolder() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
@@ -266,7 +267,7 @@ final class FolderPanelInsertionTests: XCTestCase {
                 expandedFolderID: folder.id,
                 panelHeight: 120
             ),
-            120,
+            128,
             accuracy: accuracy
         )
     }
@@ -314,7 +315,7 @@ final class FolderPanelInsertionTests: XCTestCase {
     }
 
     /// Несколько элементов под панелью не суммируются: отступ считается один
-    /// раз, на одну высоту панели.
+    /// раз, на одну высоту панели (плюс зазор сетки).
     func testRowsBelowOffsetCountsPanelOnceForSeveralItemsBelow() {
         let folder = makeFolder("f")
         let items: [TileGridItem] = [
@@ -332,7 +333,7 @@ final class FolderPanelInsertionTests: XCTestCase {
                 expandedFolderID: folder.id,
                 panelHeight: 120
             ),
-            120,
+            128,
             accuracy: accuracy
         )
     }
@@ -415,6 +416,196 @@ final class FolderPanelInsertionTests: XCTestCase {
                 "Некорректная высота \(height) не должна сдвигать строки"
             )
         }
+    }
+
+    /// Отступ учитывает фактический зазор сетки (E10.1): `itemSpacing = 12`
+    /// даёт `panelHeight + 12`; отрицательный и нечисловой зазор — 0.
+    func testRowsBelowOffsetUsesGivenSpacing() {
+        let folder = makeFolder("f")
+        let items: [TileGridItem] = [
+            .folder(folder),
+            .tile(tesseraTestTile("below", size: .wide)),
+        ]
+
+        XCTAssertEqual(
+            TileLayoutEngine.rowsBelowOffset(
+                items: items,
+                columns: 4,
+                expandedFolderID: folder.id,
+                panelHeight: 120,
+                spacing: 12
+            ),
+            132,
+            accuracy: accuracy
+        )
+        for spacing in [CGFloat(-4), .nan] {
+            XCTAssertEqual(
+                TileLayoutEngine.rowsBelowOffset(
+                    items: items,
+                    columns: 4,
+                    expandedFolderID: folder.id,
+                    panelHeight: 120,
+                    spacing: spacing
+                ),
+                120,
+                accuracy: accuracy
+            )
+        }
+    }
+
+    // MARK: - Полоса папки (E10.1)
+
+    /// «Ступенька» `[папка 2×2, small, small, ярлык 2×2]`: ярлык — в строках
+    /// 1–2, полоса папки — строки 0–2. Под панелью ничего нет, ярлык остаётся
+    /// над ней, панель вставляется после ярлыка.
+    func testStepTileIsPartOfFolderBand() {
+        let folder = makeFolder("f")
+        let items: [TileGridItem] = [
+            .folder(folder),
+            .tile(tesseraTestTile("s1", size: .small)),
+            .tile(tesseraTestTile("s2", size: .small)),
+            .tile(tesseraTestTile("m", size: .medium)),
+        ]
+
+        XCTAssertEqual(
+            TileLayoutEngine.folderPanelInsertionIndex(
+                items: items,
+                columns: 4,
+                expandedFolderID: folder.id
+            ),
+            4
+        )
+        XCTAssertEqual(
+            TileLayoutEngine.rowsBelowOffset(
+                items: items,
+                columns: 4,
+                expandedFolderID: folder.id,
+                panelHeight: 120
+            ),
+            0,
+            accuracy: accuracy
+        )
+
+        // Плитка после «ступеньки» начинается ниже полосы — под панелью.
+        let withBelow = items + [.tile(tesseraTestTile("w", size: .wide))]
+        XCTAssertEqual(
+            TileLayoutEngine.folderPanelInsertionIndex(
+                items: withBelow,
+                columns: 4,
+                expandedFolderID: folder.id
+            ),
+            4
+        )
+        XCTAssertEqual(
+            TileLayoutEngine.rowsBelowOffset(
+                items: withBelow,
+                columns: 4,
+                expandedFolderID: folder.id,
+                panelHeight: 120
+            ),
+            128,
+            accuracy: accuracy
+        )
+    }
+
+    /// `[папка small, ярлык 2×2]`: 2×2 занимает строки 0–1, полоса — тоже;
+    /// панель вставляется после ярлыка.
+    func testTallNeighbourOfSmallFolderIsPartOfBand() {
+        let folder = makeFolder("f", size: .small)
+        let items: [TileGridItem] = [
+            .folder(folder),
+            .tile(tesseraTestTile("m", size: .medium)),
+            .tile(tesseraTestTile("w", size: .wide)),
+        ]
+
+        XCTAssertEqual(
+            TileLayoutEngine.folderPanelInsertionIndex(
+                items: items,
+                columns: 4,
+                expandedFolderID: folder.id
+            ),
+            2
+        )
+        XCTAssertEqual(
+            TileLayoutEngine.rowsBelowOffset(
+                items: items,
+                columns: 4,
+                expandedFolderID: folder.id,
+                panelHeight: 120,
+                spacing: 8
+            ),
+            128,
+            accuracy: accuracy
+        )
+    }
+
+    /// Индекс вставки с колонками не раньше «сразу после папки» и идёт после
+    /// элементов, поднятых компактностью в строки полосы.
+    func testInsertionIndexWithColumnsFollowsLastBandItem() {
+        let folder = makeFolder("f")
+        // Папка (0,0)–(1,1); wide не помещается справа — строка 2; small
+        // поднимается в (2,0): он в полосе, хотя в массиве после wide.
+        let items: [TileGridItem] = [
+            .folder(folder),
+            .tile(tesseraTestTile("w", size: .wide)),
+            .tile(tesseraTestTile("s", size: .small)),
+        ]
+
+        XCTAssertEqual(
+            TileLayoutEngine.folderPanelInsertionIndex(
+                items: items,
+                columns: 4,
+                expandedFolderID: folder.id
+            ),
+            3
+        )
+        // Без соседей в полосе — сразу после папки, как устаревший вход.
+        let alone: [TileGridItem] = [.folder(folder), .tile(tesseraTestTile("w", size: .wide))]
+        XCTAssertEqual(
+            TileLayoutEngine.folderPanelInsertionIndex(items: alone, columns: 4, expandedFolderID: folder.id),
+            TileLayoutEngine.folderPanelInsertionIndex(items: alone, expandedFolderID: folder.id)
+        )
+        // Вырожденные колонки — устаревший индекс; нет папки или панель уже
+        // есть — nil.
+        XCTAssertEqual(
+            TileLayoutEngine.folderPanelInsertionIndex(items: items, columns: 0, expandedFolderID: folder.id),
+            1
+        )
+        XCTAssertNil(
+            TileLayoutEngine.folderPanelInsertionIndex(items: items, columns: 4, expandedFolderID: nil)
+        )
+        XCTAssertNil(
+            TileLayoutEngine.folderPanelInsertionIndex(
+                items: items + [.folderContent(folder)],
+                columns: 4,
+                expandedFolderID: folder.id
+            )
+        )
+    }
+
+    /// Высота панели с зазором сетки (E10.1): ярлыки — юнит и зазор сетки.
+    func testPanelHeightUsesGridSpacingAndScale() {
+        let five = makeFolder("f", tiles: (0..<5).map { tesseraTestTile("t\($0)") })
+
+        // 390 pt, зазор 12: юнит (390 − 36) / 4 = 88.5; 2 строки:
+        // 68 + 8 + (2×88.5 + 12) = 265.
+        XCTAssertEqual(
+            TileLayoutEngine.panelHeight(for: five, width: 390, columns: 4, spacing: 12, scale: 0),
+            265,
+            accuracy: accuracy
+        )
+        // 3×: юнит 88.5 → 88⅓; 68 + 8 + (2×88⅓ + 12) = 264⅔.
+        XCTAssertEqual(
+            TileLayoutEngine.panelHeight(for: five, width: 390, columns: 4, spacing: 12, scale: 3),
+            264 + 2.0 / 3.0,
+            accuracy: accuracy
+        )
+        // Устаревший вход — зазор 8 без выравнивания.
+        XCTAssertEqual(
+            TileLayoutEngine.panelHeight(for: five, width: 390, columns: 4),
+            TileLayoutEngine.panelHeight(for: five, width: 390, columns: 4, spacing: 8, scale: 0),
+            accuracy: accuracy
+        )
     }
 
     // MARK: - Высота панели (panelHeight)

@@ -748,6 +748,146 @@ final class TileLayoutEngineTests: XCTestCase {
         )
         XCTAssertEqual(nanUnit.frame, .zero)
     }
+
+    // MARK: - Пиксельное выравнивание (E10.1)
+
+    /// 393 pt без полей 16 pt: «сырой» юнит 84.25, выровненный вниз — 84 на
+    /// 2× и 3×; 390 pt: 83.5 остаётся на 2× и становится 83⅓ на 3×.
+    func testUnitWithScaleFloorsToPixelGrid() {
+        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8), 84.25, accuracy: 1e-9)
+        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: 3), 84, accuracy: 1e-9)
+        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: 2), 84, accuracy: 1e-9)
+        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 358, columns: 4, gaps: 8, scale: 2), 83.5, accuracy: 1e-9)
+        XCTAssertEqual(
+            TileLayoutEngine.unit(screenWidth: 358, columns: 4, gaps: 8, scale: 3),
+            250.0 / 3.0,
+            accuracy: 1e-9
+        )
+    }
+
+    /// Нулевой, отрицательный и нечисловой масштаб — без выравнивания;
+    /// вырожденная геометрия по-прежнему даёт 0.
+    func testUnitWithScaleIgnoresInvalidScale() {
+        for scale in [CGFloat(0), -2, .nan, .infinity] {
+            XCTAssertEqual(
+                TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: scale),
+                84.25,
+                accuracy: 1e-9,
+                "Масштаб \(scale)"
+            )
+        }
+        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 20, columns: 4, gaps: 10, scale: 3), 0)
+        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 0, gaps: 8, scale: 3), 0)
+    }
+
+    /// Геометрия сетки: юнит вниз до пикселя, зазор — к ближайшему пикселю,
+    /// остаток — поровну на поля (левое — вниз до пикселя).
+    func testGridMetricsCentersRemainder() throws {
+        let metrics = try XCTUnwrap(
+            TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8, scale: 3)
+        )
+        XCTAssertEqual(metrics.unit, 84, accuracy: 1e-9)
+        XCTAssertEqual(metrics.spacing, 8, accuracy: 1e-9)
+        XCTAssertEqual(metrics.width, 360, accuracy: 1e-9)
+        XCTAssertEqual(metrics.leading, 1.0 / 3.0, accuracy: 1e-9)
+        XCTAssertEqual(metrics.columnOffset(3), 1.0 / 3.0 + 3 * 92, accuracy: 1e-9)
+
+        // Дробный зазор встаёт на пиксель: 8.2 на 2× — 8.0.
+        let fractional = try XCTUnwrap(
+            TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8.2, scale: 2)
+        )
+        XCTAssertEqual(fractional.spacing, 8, accuracy: 1e-9)
+
+        // Без масштаба — точная формула §3, без остатка.
+        let exact = try XCTUnwrap(
+            TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8, scale: 0)
+        )
+        XCTAssertEqual(exact.unit, 84.25, accuracy: 1e-9)
+        XCTAssertEqual(exact.leading, 0)
+
+        XCTAssertNil(TileLayoutEngine.gridMetrics(contentWidth: 0, columns: 4, spacing: 8, scale: 3))
+        XCTAssertNil(TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 0, spacing: 8, scale: 3))
+    }
+
+    // MARK: - Полоса папки (E10.1)
+
+    /// Нижняя граница полосы папки по юнитной упаковке.
+    ///
+    /// - Parameters:
+    ///   - items: Пары «идентификатор — размер».
+    ///   - folderID: Идентификатор папки.
+    ///   - columns: Число колонок.
+    /// - Returns: Первая строка после полосы.
+    private func bandEnd(
+        _ items: [(id: AnyHashable, size: TileSize)],
+        folderID: AnyHashable,
+        columns: Int = 4
+    ) throws -> Int {
+        let slots = TileLayoutEngine.pack(items: items, columns: columns, unit: 1)
+        let folderSlot = try XCTUnwrap(slots.first { $0.id == folderID })
+        return TileLayoutEngine.folderBandEndRow(for: folderSlot, in: slots)
+    }
+
+    /// `[папка 2×2, small, small, 2×2]`: 2×2 в строках 1–2 расширяет полосу
+    /// до строки 3.
+    func testFolderBandExtendsOverStepTile() throws {
+        let end = try bandEnd(
+            [
+                (id: AnyHashable("f"), size: .medium),
+                (id: AnyHashable("s1"), size: .small),
+                (id: AnyHashable("s2"), size: .small),
+                (id: AnyHashable("m"), size: .medium),
+            ],
+            folderID: "f"
+        )
+        XCTAssertEqual(end, 3)
+    }
+
+    /// `[папка small, 2×2]`: 2×2 в строках 0–1 расширяет полосу до строки 2.
+    func testFolderBandExtendsOverTallerNeighbour() throws {
+        let end = try bandEnd(
+            [(id: AnyHashable("f"), size: .small), (id: AnyHashable("m"), size: .medium)],
+            folderID: "f"
+        )
+        XCTAssertEqual(end, 2)
+    }
+
+    /// Расширение итеративное: «лесенка» из 2×2 цепляет следующую плитку.
+    ///
+    /// 4 колонки: папка small (0,0), s (1,0), m1 2×2 (2,0)–(3,1), m2 2×2
+    /// (0,1)–(1,2), m3 2×2 (2,2)–(3,3): полоса 0 → 2 (m1, m2) → 3 (m2) → 4 (m3).
+    func testFolderBandExpandsToFixedPoint() throws {
+        let items: [(id: AnyHashable, size: TileSize)] = [
+            (id: AnyHashable("f"), size: .small),
+            (id: AnyHashable("s"), size: .small),
+            (id: AnyHashable("m1"), size: .medium),
+            (id: AnyHashable("m2"), size: .medium),
+            (id: AnyHashable("m3"), size: .medium),
+        ]
+        let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 1)
+        let byID = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
+        XCTAssertEqual(byID["m1"].map { [$0.column, $0.row] }, [2, 0])
+        XCTAssertEqual(byID["m2"].map { [$0.column, $0.row] }, [0, 1])
+        XCTAssertEqual(byID["m3"].map { [$0.column, $0.row] }, [2, 2])
+
+        XCTAssertEqual(try bandEnd(items, folderID: "f"), 4)
+    }
+
+    /// Соседи в строках папки, не выходящие ниже, полосу не расширяют; плитка
+    /// целиком ниже — тоже.
+    func testFolderBandKeepsFolderRowsWhenNothingSticksOut() throws {
+        let end = try bandEnd(
+            [
+                (id: AnyHashable("f"), size: .medium),
+                (id: AnyHashable("s1"), size: .small),
+                (id: AnyHashable("s2"), size: .small),
+                (id: AnyHashable("s3"), size: .small),
+                (id: AnyHashable("w"), size: .wide),
+            ],
+            folderID: "f"
+        )
+        XCTAssertEqual(end, 2)
+    }
 }
 
 #endif
