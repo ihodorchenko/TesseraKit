@@ -1,0 +1,137 @@
+/*
+  Localizable.strings (English) — TesseraStartScreen default user-facing strings.
+
+  E9.8г: строки по умолчанию вынесены из Swift-литералов в ресурсы SPM.
+  Ключи — стабильные идентификаторы в таблицах en/ru; переводятся только
+  значения. Ключ не переименовывать без правки TesseraStartScreenStrings.Key
+  и тестов паритета (Tests/TesseraStartScreenTests/LocalizationTests.swift).
+
+  Плейсхолдеры: %1$@ — строка, %1$ld — целое число.
+*/
+
+/* MARK: - Режим редактирования (VoiceOver) */
+
+/* Вход в режим редактирования. */
+"a11y.editing.entered" = "Editing mode.";
+
+/* Выход из режима редактирования. */
+"a11y.editing.exited" = "Editing mode finished.";
+
+/* Ярлык откреплён с рабочего стола. */
+"a11y.tile.unpinned" = "Shortcut unpinned.";
+
+/* Новый размер плитки: %1$@ — название размера. */
+"a11y.resize.format" = "Size: %1$@.";
+
+/* Названия размеров для озвучивания. */
+"a11y.size.small" = "small";
+"a11y.size.medium" = "medium";
+"a11y.size.wide" = "wide";
+"a11y.size.large" = "large";
+
+/* MARK: - Папки (VoiceOver) */
+
+/* Папка создана. */
+"a11y.folder.created" = "Folder created.";
+
+/* Ярлык добавлен в папку. */
+"a11y.folder.tileAdded" = "Shortcut added to the folder.";
+
+/* Ярлык перемещён в другую папку. */
+"a11y.folder.tileMoved" = "Shortcut moved to the folder.";
+
+/* Ярлык перемещён из папки на рабочий стол. */
+"a11y.folder.tileOnStart" = "Shortcut on the Start screen.";
+
+/* Функция одобрения хоста запретила операцию с папкой. */
+"a11y.folder.unavailable" = "Folder operation unavailable.";
+
+/* Папка создана перетаскиванием одного ярлыка на другой. */
+"a11y.folder.createdFromTwoTiles" = "Folder created from two shortcuts.";
+
+/* MARK: - Перетаскивание (VoiceOver) */
+
+/* Внешнее изменение модели отменило перетаскивание. */
+"a11y.drag.cancelled" = "Drag cancelled: the state has changed.";
+
+/* Удержание над папкой: отпускание добавит ярлык в папку. */
+"a11y.drag.holdToAddToFolder" = "Release to add the shortcut to the folder.";
+
+/* Удержание над центром ярлыка: отпускание создаст папку. */
+"a11y.drag.holdToCreateFolder" = "Release to create a folder.";
+
+/* MARK: - Отказ функции одобрения (D14) */
+
+/* Шаблон сообщения об отказе: %1$@ — причина (см. a11y.grouping.reason.*). */
+"a11y.grouping.failedFormat" = "Failed: %1$@.";
+
+/* Причины отказа функции одобрения. */
+"a11y.grouping.reason.addDenied" = "adding to a folder is denied";
+"a11y.grouping.reason.createDenied" = "creating a folder is denied";
+"a11y.grouping.reason.tileAddDenied" = "the folder was created, but adding the shortcut is denied";
+
+/* MARK: - Custom actions режима редактирования (§9) */
+
+/* Действие «открепить ярлык». */
+"a11y.action.unpin" = "Unpin";
+
+/* Действие «изменить размер плитки». */
+"a11y.action.resize" = "Change size";
+
+/* MARK: - Экран папки (TesseraFolderViewController) */
+
+/* Кнопка закрытия экрана папки. */
+"folderScreen.done" = "Done";
+
+/* Accessibility label кнопки закрытия: что именно закрывается. */
+"folderScreen.close" = "Close folder";
+
+/* Подпись папки без названия. */
+"folderScreen.defaultTitle" = "Folder";
+
+/* VoiceOver-действие «переместить ярлык». */
+"folderScreen.moveAction" = "Move";
+
+/* Заголовок меню перемещения: %1$@ — подпись ярлыка. */
+"folderScreen.moveMenu.titleFormat" = "Move “%1$@”";
+
+/* Пункт меню перемещения в папку: %1$@ — название папки. */
+"folderScreen.moveMenu.intoFormat" = "Into “%1$@”";
+
+/* Пункт меню «переместить на рабочий стол». */
+"folderScreen.moveMenu.toStart" = "To the Start screen";
+
+/* Подзаголовок экрана папки: %1$ld — число ярлыков, %2$@ — слово. */
+"folderScreen.tiles.countFormat" = "%1$ld %2$@";
+
+/* Слово «ярлык» в нужной числовой форме (en: одна/множественная). */
+"folderScreen.tiles.word.one" = "shortcut";
+"folderScreen.tiles.word.few" = "shortcuts";
+"folderScreen.tiles.word.many" = "shortcuts";
+
+/* MARK: - Список приложений (TesseraAppsListTexts) */
+
+/* Заголовок секции настроек. */
+"appsList.settingsSectionTitle" = "Settings";
+
+/* Пустое состояние: в каталоге нет ни ярлыков, ни настроек. */
+"appsList.emptyTitle" = "No apps";
+
+/* Действие «закрепить ярлык на рабочем столе». */
+"appsList.pinActionTitle" = "Pin to Start";
+
+/* Действие «открепить ярлык с рабочего стола». */
+"appsList.unpinActionTitle" = "Unpin";
+
+/* Значение строки закреплённого ярлыка для VoiceOver. */
+"appsList.pinnedValue" = "Pinned";
+
+/* MARK: - Сетка плиток */
+
+/* Состояние раскрытой папки в accessibilityValue ячейки. */
+"panel.expanded" = "expanded";
+
+/* MARK: - Общие строки */
+
+/* Кнопка отмены в меню. */
+"common.cancel" = "Cancel";

@@ -104,9 +104,12 @@ public struct TesseraAppsListSettingsItem {
 
 /// Локализуемые строки правой страницы.
 ///
-/// Внутри компонента строки по умолчанию русские (язык проектной документации),
-/// но хост может заменить их целиком — как и заголовки других компонентов,
-/// страница не тянет за собой собственный ресурсный бандл.
+/// Значения по умолчанию приходят из таблиц ресурсов модуля
+/// (`Resources/en.lproj|ru.lproj/Localizable.strings`) и резолвятся по языку
+/// системы (E9.8г): на русском устройстве — «Настройки», на английском —
+/// «Settings». Для неподдержанного языка действует базовая локаль `en`.
+/// Хост может заменить любую строку целиком — как и заголовки других
+/// компонентов; переданное значение используется без изменений.
 public struct TesseraAppsListTexts: Equatable {
 
     /// Заголовок секции настроек.
@@ -126,6 +129,11 @@ public struct TesseraAppsListTexts: Equatable {
 
     /// Создаёт набор строк.
     ///
+    /// Параметры сохранили сигнатуру и значения по умолчанию; сами значения
+    /// теперь берутся из таблиц ресурсов модуля по языку системы (E9.8г),
+    /// поэтому `TesseraAppsListTexts()` на русском устройстве даёт русские
+    /// подписи, а на английском — английские.
+    ///
     /// - Parameters:
     ///   - settingsSectionTitle: Заголовок секции настроек.
     ///   - emptyTitle: Текст пустого состояния.
@@ -133,11 +141,11 @@ public struct TesseraAppsListTexts: Equatable {
     ///   - unpinActionTitle: Действие «открепить».
     ///   - pinnedValue: Значение закреплённой строки для VoiceOver.
     public init(
-        settingsSectionTitle: String = "Настройки",
-        emptyTitle: String = "Нет приложений",
-        pinActionTitle: String = "Закрепить на рабочем столе",
-        unpinActionTitle: String = "Открепить",
-        pinnedValue: String = "Закреплено"
+        settingsSectionTitle: String = TesseraStartScreenStrings.appsListSettingsSectionTitle,
+        emptyTitle: String = TesseraStartScreenStrings.appsListEmptyTitle,
+        pinActionTitle: String = TesseraStartScreenStrings.appsListPinActionTitle,
+        unpinActionTitle: String = TesseraStartScreenStrings.appsListUnpinActionTitle,
+        pinnedValue: String = TesseraStartScreenStrings.appsListPinnedValue
     ) {
         self.settingsSectionTitle = settingsSectionTitle
         self.emptyTitle = emptyTitle
@@ -245,7 +253,8 @@ public final class TesseraAppsListPageViewController: UIViewController {
     /// - Parameters:
     ///   - store: Хранилище рабочего стола — единственный источник истины (§6).
     ///   - settings: Строки секции настроек; по умолчанию секции нет.
-    ///   - texts: Локализуемые строки; по умолчанию русские подписи.
+    ///   - texts: Локализуемые строки; по умолчанию — строки модуля,
+    ///     локализованные по языку системы (E9.8г).
     ///   - columns: Число колонок реальной сетки (например,
     ///     `TesseraTileGridView.columns`) на момент создания страницы. По нему
     ///     pin ставит ярлык по видимому индексу и канонизирует порядок модели
