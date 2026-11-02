@@ -664,19 +664,6 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// ``dimmingTargetAlpha(for:)``).
     private var dimmingFocusID: AnyHashable?
 
-    /// Прозрачность невыбранной плитки в режиме редактирования (E8.2).
-    ///
-    /// 0,7 — из спеки WP: плитки остаются читаемыми и доступными для действий,
-    /// но фон визуально уходит назад, а выбранная/перетаскиваемая — вперёд.
-    private static let dimmedTileAlpha: CGFloat = 0.7
-
-    /// Длительность перехода димминга (E8.2).
-    ///
-    /// Короткая, чтобы режим «включался» без паузы; при Reduce Motion не
-    /// используется — прозрачность меняется мгновенно (сам дим остаётся, это не
-    /// движение).
-    private static let dimmingDuration: TimeInterval = 0.18
-
     /// Отложенная сверка кнопок: не выполняет layout внутри колбэка прокрутки.
     private var hasScheduledReconcile = false
 
@@ -771,17 +758,14 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         for item in grid.items {
             if let cell = grid.cellView(forItemID: item.id) as? TesseraTileCell {
+                // «Желе» живёт на слое содержимого ячейки (см. applyJiggle).
                 cell.contentView.layer.removeAnimation(
                     forKey: TesseraTileEditCoordinator.jiggleKey
                 )
-                // E8.2: не оставляем плитки в дим-поле после ухода координатора.
-                // Полностью скрытую (alpha 0) плитку не трогаем: этим состоянием
-                // владеет сетка (`setSourceHidden`), а не димминг.
-                if cell.contentView.alpha > 0 {
-                    cell.contentView.alpha = 1
-                }
             }
         }
+        // E8.2/E10.4: дим снимает сетка — она владелец прозрачности.
+        grid.setEditDimming(liftedDimmingTargets(), animated: false)
         dimmingFocusID = nil
     }
 
@@ -864,7 +848,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Общая реализация входа с указанием «выбранной» плитки (E8.2).
     ///
     /// - Parameter itemID: Плитка, по которой вошли long-press'ом; она остаётся
-    ///   полной яркости, остальные гаснут до ``dimmedTileAlpha``. `nil` — вход
+    ///   полной яркости, остальные гаснут до ``TesseraTileGridView/dimmedTileAlpha``. `nil` — вход
     ///   с пустого места, гаснут все плитки.
     private func beginEditing(focusing itemID: AnyHashable?) {
         guard !isEditing, isEnabled else { return }
@@ -1335,13 +1319,12 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         // E8.2: плитка под пальцем становится «выбранной» и полной яркости.
         // «Желе» снимаем до снимка: копия не должна унаследовать ни дим, ни
-        // текущий угол покачивания.
+        // текущий угол покачивания. Прозрачность меняет сетка — владелец дима
+        // (E10.4).
         if let cell = grid.cellView(forItemID: itemID) as? TesseraTileCell {
             cell.contentView.layer.removeAnimation(forKey: TesseraTileEditCoordinator.jiggleKey)
-            if cell.contentView.alpha > 0 {
-                cell.contentView.alpha = 1
-            }
         }
+        grid.setEditDimming([itemID: 1], animated: false)
         guard let dragView = makeDragView(forItemID: itemID) else {
             // Снимок не удался: возвращаем дим, чтобы плитка не осталась ярче
             // соседей без начатого drag.
@@ -2109,58 +2092,53 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - плитка-цель под пальцем (папка или центр ярлыка) — чтобы существующая
     ///   подсветка drop'а не утонула в дим-поле.
     ///
-    /// Остальные гаснут до ``dimmedTileAlpha`` (0,7). Скрытые координатором
-    /// ячейки (`contentView.alpha == 0`: drag/unpin) не трогаем — их
+    /// Остальные гаснут до ``TesseraTileGridView/dimmedTileAlpha`` (0,7). Скрытые
+    /// координатором ячейки (`alpha == 0`: drag/unpin) не трогаем — их
     /// видимостью владеет `TesseraTileGridView.setItemHidden`, и «поднять»
-    /// такую плитку до 0,7 значило бы показать её раньше времени.
+    /// такую плитку до 0,7 значило бы показать её раньше времени. Само
+    /// применение и хранение дима — в сетке (E10.4,
+    /// `TesseraTileGridView.setEditDimming(_:animated:)`): `configure` ячейки
+    /// больше не сбрасывает прозрачность, поэтому дим переживает
+    /// update/resize/drop.
     ///
     /// - Parameters:
-    ///   - animated: Анимировать переход ``dimmingDuration`` или выставить
-    ///     прозрачность сразу. При Reduce Motion анимации нет, но сам дим
-    ///     применяется: это не движение, его убирать нельзя.
+    ///   - animated: Анимировать переход или выставить прозрачность сразу.
+    ///     При Reduce Motion анимации нет, но сам дим применяется: это не
+    ///     движение, его убирать нельзя (длительность — у сетки).
     ///   - itemIDs: Ограничение набора ячеек (горячий путь прокрутки передаёт
     ///     только плитки с кнопками). `nil` — все элементы снимка.
     private func applyEditDimming(animated: Bool, limitedTo itemIDs: [AnyHashable]? = nil) {
-        // Собираем изменения до анимации: `grid.cellView` во время анимации
-        // может вернуть уже другую (переиспользованную) ячейку.
-        var changes: [(cell: TesseraTileCell, alpha: CGFloat)] = []
-
+        // E10.4: владелец дима — сетка. Координатор только считает цели:
+        // сетка применяет их к видимым ячейкам и хранит, поэтому `configure`
+        // (update/resize/drop/переиспользование) больше не стирает дим.
         let candidates = itemIDs ?? grid.items.map { $0.id }
+        var targets: [AnyHashable: CGFloat] = [:]
+        targets.reserveCapacity(candidates.count)
+
         for itemID in candidates {
-            // alpha скрытой перетаскиваемой ячейки принадлежит drag-сессии.
+            // alpha скрытой перетаскиваемой ячейки принадлежит drag-сессии:
+            // скрытие сильнее дима, сетка сама оставит её прозрачной.
             if itemID == dragSession?.itemID { continue }
-            guard let cell = grid.cellView(forItemID: itemID) as? TesseraTileCell,
-                  cell.itemID == itemID else {
-                continue
-            }
-            // Ячейка скрыта сеткой (drag/unpin): не «воскрешаем» её диммингом.
-            guard cell.contentView.alpha > 0.001 else { continue }
-
-            let target = dimmingTargetAlpha(for: itemID)
-            guard abs(cell.contentView.alpha - target) > 0.001 else { continue }
-            changes.append((cell, target))
+            targets[itemID] = dimmingTargetAlpha(for: itemID)
         }
 
-        guard !changes.isEmpty else { return }
+        guard !targets.isEmpty else { return }
+        grid.setEditDimming(targets, animated: animated && !isReduceMotionEnabled())
+    }
 
-        let apply: () -> Void = {
-            for change in changes {
-                change.cell.contentView.alpha = change.alpha
-            }
+    /// Цели полной яркости для всех элементов сетки (E8.2, E10.4).
+    ///
+    /// Используется при снятии дима: сетка — владелец прозрачности, координатор
+    /// только передаёт «все 1».
+    ///
+    /// - Returns: Прозрачность 1 по идентификатору каждого элемента снимка.
+    private func liftedDimmingTargets() -> [AnyHashable: CGFloat] {
+        var targets: [AnyHashable: CGFloat] = [:]
+        targets.reserveCapacity(grid.items.count)
+        for item in grid.items {
+            targets[item.id] = 1
         }
-
-        guard animated, !isReduceMotionEnabled() else {
-            apply()
-            return
-        }
-
-        UIView.animate(
-            withDuration: TesseraTileEditCoordinator.dimmingDuration,
-            delay: 0,
-            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
-            animations: apply,
-            completion: nil
-        )
+        return targets
     }
 
     /// Целевая прозрачность содержимого плитки в текущем состоянии.
@@ -2169,7 +2147,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// пальцем; вне drag — плитка, через которую вошли в редактирование.
     ///
     /// - Parameter itemID: Идентификатор плитки.
-    /// - Returns: 1 для полной яркости, ``dimmedTileAlpha`` для дима.
+    /// - Returns: 1 для полной яркости, ``TesseraTileGridView/dimmedTileAlpha`` для дима.
     private func dimmingTargetAlpha(for itemID: AnyHashable) -> CGFloat {
         guard isEditing else { return 1 }
 
@@ -2182,11 +2160,11 @@ public final class TesseraTileEditCoordinator: NSObject {
             case .none, .reorder:
                 break
             }
-            return TesseraTileEditCoordinator.dimmedTileAlpha
+            return TesseraTileGridView.dimmedTileAlpha
         }
 
         if itemID == dimmingFocusID { return 1 }
-        return TesseraTileEditCoordinator.dimmedTileAlpha
+        return TesseraTileGridView.dimmedTileAlpha
     }
 
     // MARK: - Drag: финал
@@ -2635,9 +2613,9 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// переиспользования ячеек и ездят вместе с плиткой обновлением `frame`
     /// в обработчике прокрутки (без layout сетки).
     ///
-    /// Тут же переприменяется димминг (E8.2): конфигурация и переиспользование
-    /// ячеек возвращают `contentView.alpha` к 1, поэтому прозрачность нужно
-    /// выставлять после них.
+    /// Тут же переприменяется димминг (E8.2): новые и переиспользованные ячейки
+    /// могли появиться с полной яркостью, поэтому прозрачность выставляется
+    /// после конфигурации. Владелец дима — сетка (E10.4).
     ///
     /// - Parameters:
     ///   - animated: Анимировать ли переезд кнопок при resize/reorder.
