@@ -28,12 +28,12 @@ final class PanoParallaxBackgroundTests: XCTestCase {
     /// Размер экрана панорамы.
     private let screenSize = CGSize(width: 390, height: 700)
 
-    /// Множитель параллакса: верхняя граница клампа стиля (0.4...0.6), при ней
-    /// ход фона максимален.
+    /// Множитель параллакса: верхняя граница типичного диапазона §4 (0.4–0.6).
     private let factor: CGFloat = 0.6
 
     /// Загруженная и разложенная панорама из четырёх секций с картинкой фона.
-    private func makePanorama() -> PanoramaViewController {
+    private func makePanorama(factor: CGFloat? = nil) -> PanoramaViewController {
+        let factor = factor ?? self.factor
         let sections = (0..<4).map { index in
             PanoramaSection(id: index, title: "Section \(index)") { UIViewController() }
         }
@@ -139,6 +139,21 @@ final class PanoParallaxBackgroundTests: XCTestCase {
 
         scroll(panorama, toX: panorama.scrollView.maximumOffsetX + bounce)
         try assertBackgroundCoversScreen(panorama, "bounce за концом ленты")
+    }
+
+    /// Покрытие держится на всём допустимом диапазоне фактора (E9.7: кламп
+    /// `(0, 1)` вместо `0.4…0.6`), включая крайние 0.01 и 0.99 — в том числе на
+    /// «резине» в полэкрана за обоими краями.
+    func testBackgroundCoversScreenForWholeFactorRange() throws {
+        let bounce = screenSize.width / 2
+        for factor: CGFloat in [0.01, 0.2, 0.8, 0.99] {
+            let panorama = makePanorama(factor: factor)
+            let maximum = panorama.scrollView.maximumOffsetX
+            for x in [-bounce, 0, maximum / 2, maximum, maximum + bounce] {
+                scroll(panorama, toX: x)
+                try assertBackgroundCoversScreen(panorama, "factor \(factor), offset \(x)")
+            }
+        }
     }
 }
 
