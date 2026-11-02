@@ -736,9 +736,10 @@ public enum TileLayoutEngine {
     ///   слот, а перетаскиваемая встаёт на место цели.
     ///
     /// Индекс вставки совпадает с индексом перетаскиваемой плитки в превью,
-    /// поэтому фиксация drop'а — это `TileStore.move(draggingID,
-    /// toIndex: indexOfDraggingInPreview)`: `TileStore` вынимает элемент и
-    /// вставляет его по тому же правилу, и порядок совпадает с превью
+    /// поэтому фиксация drop'а — это `TileStore.moveItem(draggingID,
+    /// toIndex: indexOfDraggingInPreview, columns: grid.columns)`: `TileStore`
+    /// вынимает элемент и вставляет его по тому же правилу, и порядок совпадает
+    /// с превью
     /// (проверяется тестом `TileDragPushTests`).
     ///
     /// Функция чистая: `TileStore` не трогает, от геометрии не зависит и

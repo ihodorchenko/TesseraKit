@@ -283,8 +283,9 @@ final class TileDragPushTests: XCTestCase {
 
     // MARK: - Контракт фиксации drop'а
 
-    /// `TileStore.move` по индексу перетаскиваемой плитки в превью даёт ровно
-    /// превью-порядок — на этом стоит `finishDrag(commit: true)`.
+    /// `TileStore.moveItem(_:toIndex:columns:)` по индексу перетаскиваемой плитки
+    /// в превью даёт ровно превью-порядок и возвращает фактический индекс — на
+    /// этом стоит `finishDrag(commit: true)` (E10.5-C1).
     func testStoreMoveReproducesPreviewOrder() {
         let directory = TesseraTestDirectory()
         let cases: [(dragging: String, target: String, expected: [AnyHashable])] = [
@@ -315,9 +316,19 @@ final class TileDragPushTests: XCTestCase {
                 continue
             }
 
-            XCTAssertTrue(
-                store.move(AnyHashable(testCase.dragging), toIndex: previewIndex),
-                "\(testCase.dragging) → \(testCase.target): move должен изменить порядок"
+            let actualIndex = store.moveItem(
+                AnyHashable(testCase.dragging),
+                toIndex: previewIndex,
+                columns: 4
+            )
+            XCTAssertNotNil(
+                actualIndex,
+                "\(testCase.dragging) → \(testCase.target): moveItem должен переставить"
+            )
+            XCTAssertEqual(
+                actualIndex,
+                previewIndex,
+                "Индекс перетаскиваемой плитки в превью совпадает с фактическим"
             )
             XCTAssertEqual(
                 tesseraTestIDs(store.snapshot().items),

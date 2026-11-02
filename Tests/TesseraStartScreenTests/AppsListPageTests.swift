@@ -2,10 +2,16 @@
 //  AppsListPageTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты правой страницы — списка приложений (E10.9, трек T2).
+//  Тесты правой страницы — списка приложений (E10.9, трек T2; W4-B, E10.5).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §6 «Страница справа:
 //  список приложений + настройки» — `UITableView` с секциями по буквам и
 //  `sectionIndexTitles` (нативный паттерн), источник истины — `TileStore`.
+//
+//  W4: pin из списка идёт через `TileStore.pinTile(_:at:columns:)` с числом
+//  колонок сетки: ярлык встаёт по видимому индексу, а хранилище возвращает
+//  фактический (канонизированный) индекс. Unpin удаляет ярлык из видимого
+//  порядка, после чего страница канонизирует порядок при известных колонках;
+//  секции списка и позиция чтения при этом не меняются.
 //
 //  Страница поднимается в настоящем окне: видимые ячейки и `contentSize`
 //  таблицы существуют только после layout в иерархии окна.
@@ -43,8 +49,13 @@ final class AppsListPageTests: XCTestCase {
         return store
     }
 
-    private func tile(_ title: String, id: String? = nil, icon: UIImage? = nil) -> TileDescriptor {
-        TileDescriptor(id: id ?? title, title: title, icon: icon, action: {})
+    private func tile(
+        _ title: String,
+        id: String? = nil,
+        icon: UIImage? = nil,
+        size: TileSize = .medium
+    ) -> TileDescriptor {
+        TileDescriptor(id: id ?? title, title: title, icon: icon, action: {}, size: size)
     }
 
     /// Поднимает страницу в окне и возвращает её таблицу.
@@ -245,6 +256,345 @@ final class AppsListPageTests: XCTestCase {
         let maxY = max(minY, table.contentSize.height + inset.bottom - table.bounds.height)
         XCTAssertLessThanOrEqual(table.contentOffset.y, maxY + 0.5, message, file: file, line: line)
         XCTAssertGreaterThanOrEqual(table.contentOffset.y, minY - 0.5, message, file: file, line: line)
+    }
+
+    // MARK: - Pin/unpin через колонки сетки (W4, E10.5)
+
+    // Pin/unpin выполняется production-методом страницы `setPinned(_:for:)` —
+    // тем же, который вызывают кнопка-аксессуар строки и кастомное действие
+    // VoiceOver. UI-события (тапы) в тест-раннере ненадёжны, поэтому тест не
+    // симулирует касания, а вызывает production-вход напрямую; UI-обвязка
+    // строки проверяется отдельно метаданными: кнопка на месте, подпись
+    // соответствует состоянию, target-action зарегистрирован, у строки
+    // актуальные accessibility value/custom action.
+
+    /// Идентификаторы элементов видимого порядка сетки.
+    private func ids(_ store: TileStore) -> [AnyHashable] {
+        store.snapshot().items.map { $0.id }
+    }
+
+    /// Заголовки секций таблицы по порядку.
+    private func sectionTitles(
+        _ page: TesseraAppsListPageViewController,
+        _ table: UITableView
+    ) -> [String?] {
+        (0..<page.numberOfSections(in: table)).map {
+            page.tableView(table, titleForHeaderInSection: $0)
+        }
+    }
+
+    /// Позиция строки с подписью `title` (через data source страницы).
+    private func indexPath(
+        of title: String,
+        page: TesseraAppsListPageViewController,
+        table: UITableView
+    ) -> IndexPath? {
+        for section in 0..<page.numberOfSections(in: table) {
+            for row in 0..<page.tableView(table, numberOfRowsInSection: section) {
+                let indexPath = IndexPath(row: row, section: section)
+                let cell = page.tableView(table, cellForRowAt: indexPath)
+                if cell.textLabel?.text == title { return indexPath }
+            }
+        }
+        return nil
+    }
+
+    /// Ячейка строки: видимая — тот же путь, что у пользователя; для строки вне
+    /// экрана — ячейка data source (без прокрутки, чтобы не менять позицию
+    /// чтения в тестах про offset).
+    private func cell(
+        forTitle title: String,
+        page: TesseraAppsListPageViewController,
+        table: UITableView
+    ) -> UITableViewCell? {
+        guard let indexPath = indexPath(of: title, page: page, table: table) else {
+            return nil
+        }
+        return table.cellForRow(at: indexPath)
+            ?? page.tableView(table, cellForRowAt: indexPath)
+    }
+
+    /// Проверяет UI-обвязку строки закрепления: кнопка-аксессуар, её подпись и
+    /// зарегистрированный target-action, accessibility-состояние строки.
+    private func assertPinButton(
+        forTitle title: String,
+        pinned: Bool,
+        page: TesseraAppsListPageViewController,
+        table: UITableView,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let cell = cell(forTitle: title, page: page, table: table) else {
+            return XCTFail("В списке нет строки «\(title)»", file: file, line: line)
+        }
+        guard let button = cell.accessoryView as? UIButton else {
+            return XCTFail("У строки «\(title)» нет кнопки закрепления", file: file, line: line)
+        }
+        let expectedTitle = pinned ? page.texts.unpinActionTitle : page.texts.pinActionTitle
+        XCTAssertEqual(button.accessibilityLabel, expectedTitle, file: file, line: line)
+        let selectors = button.actions(forTarget: button, forControlEvent: .touchUpInside) ?? []
+        XCTAssertFalse(
+            selectors.isEmpty,
+            "у кнопки строки «\(title)» не зарегистрирован target-action",
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            cell.accessibilityValue,
+            pinned ? page.texts.pinnedValue : nil,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            cell.accessibilityCustomActions?.first?.name,
+            expectedTitle,
+            file: file,
+            line: line
+        )
+    }
+
+    /// Закрепляет или открепляет ярлык тем же методом страницы, что и кнопка
+    /// (``TesseraAppsListPageViewController/setPinned(_:for:)``).
+    @discardableResult
+    private func pin(
+        _ pinned: Bool,
+        forTileID id: AnyHashable,
+        title: String,
+        page: TesseraAppsListPageViewController,
+        table: UITableView
+    ) -> Bool {
+        assertPinButton(forTitle: title, pinned: !pinned, page: page, table: table)
+        return page.setPinned(pinned, for: id)
+    }
+
+    /// Проверяет, что порядок снимка — порядок чтения компактной раскладки:
+    /// слоты `pack` идут строго по (строка, колонка) в порядке снимка (E10.15).
+    private func assertReadingOrder(
+        _ store: TileStore,
+        columns: Int,
+        _ message: @autoclosure () -> String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let items = store.snapshot().layoutItems
+        let slots = TileLayoutEngine.pack(items: items, columns: columns, unit: 1)
+        XCTAssertEqual(slots.count, items.count, message(), file: file, line: line)
+        for (previous, next) in zip(slots, slots.dropFirst()) {
+            let ordered = previous.row < next.row
+                || (previous.row == next.row && previous.column < next.column)
+            XCTAssertTrue(
+                ordered,
+                "\(message()) порядок снимка не совпадает с порядком чтения: "
+                    + "\(previous.id)(\(previous.row),\(previous.column)) → "
+                    + "\(next.id)(\(next.row),\(next.column))",
+                file: file,
+                line: line
+            )
+        }
+    }
+
+    /// Pin из списка передаёт в хранилище число колонок сетки: ярлык встаёт по
+    /// видимому индексу (в конец видимого порядка), хранилище возвращает
+    /// фактический канонизированный индекс — одной операцией (E10.3a/E10.15).
+    ///
+    /// «Aurora» (2×2) и «Wide» (4×2) на 4 колонках; «Spark» (1×1) откреплён.
+    /// После pin видимый порядок модели — [A, W, S], но компактная упаковка
+    /// читается A(0,0), S(0,2), W(2,0), поэтому канонический индекс Spark — 1,
+    /// а не позиция вставки 2.
+    func testPinFromListUsesGridColumnsAndReturnsCanonicalIndex() {
+        let store = makeStore([
+            tile("Aurora", id: "a", size: .medium),
+            tile("Wide", id: "w", size: .wide),
+            tile("Spark", id: "s", size: .small),
+        ])
+        XCTAssertTrue(store.unpin("s"))
+        XCTAssertEqual(ids(store), ["a", "w"])
+        XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["s"])
+
+        let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
+        let table = host(page)
+        let structureBefore = rowTitles(page, table)
+        let sectionsBefore = sectionTitles(page, table)
+
+        var changes = 0
+        store.onChange = { _ in changes += 1 }
+        XCTAssertTrue(pin(true, forTileID: "s", title: "Spark", page: page, table: table))
+
+        XCTAssertEqual(changes, 1, "pin и канонизация — одна операция модели (E10.15)")
+        XCTAssertTrue(store.isPinned("s"))
+        XCTAssertTrue(store.snapshot().unpinned.isEmpty)
+        XCTAssertEqual(ids(store), ["a", "s", "w"], "порядок модели должен стать каноническим")
+        XCTAssertEqual(
+            store.snapshot().items.firstIndex { $0.id == AnyHashable("s") },
+            1,
+            "фактический канонизированный индекс ярлыка"
+        )
+        assertReadingOrder(store, columns: 4, "после pin из списка")
+        XCTAssertEqual(rowTitles(page, table), structureBefore, "pin не меняет секции списка")
+        XCTAssertEqual(sectionTitles(page, table), sectionsBefore)
+        // Двусторонняя связь §6: строка сразу отражает новое состояние.
+        assertPinButton(forTitle: "Spark", pinned: true, page: page, table: table)
+    }
+
+    /// Кнопка строки действительно запускает pin: её зарегистрированный
+    /// target-action (`handleTap` → `onTap` → `setPinned`) меняет хранилище.
+    ///
+    /// UI-событие не симулируется (касания в тест-раннере ненадёжны), поэтому
+    /// зарегистрированный target-action вызывается напрямую — это ровно тот
+    /// метод, который вызывает UIKit при тапе.
+    func testPinButtonHandlerPinsTile() {
+        let store = makeStore([
+            tile("Aurora", id: "a", size: .medium),
+            tile("Wide", id: "w", size: .wide),
+            tile("Spark", id: "s", size: .small),
+        ])
+        XCTAssertTrue(store.unpin("s"))
+
+        let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
+        let table = host(page)
+        guard let cell = cell(forTitle: "Spark", page: page, table: table),
+              let button = cell.accessoryView as? UIButton
+        else {
+            return XCTFail("У строки Spark нет кнопки закрепления")
+        }
+        XCTAssertTrue(button.isEnabled)
+        guard let selectorName = button.actions(
+            forTarget: button,
+            forControlEvent: .touchUpInside
+        )?.first else {
+            return XCTFail("У кнопки нет target-action для touchUpInside")
+        }
+
+        _ = button.perform(NSSelectorFromString(selectorName))
+
+        XCTAssertTrue(store.isPinned("s"))
+        XCTAssertEqual(ids(store), ["a", "s", "w"])
+    }
+
+    /// Фолбэк `columns == nil`: хост не сообщил раскладку — pin остаётся
+    /// прежним, ярлык дописывается в конец видимого порядка без канонизации
+    /// (поведение до W4; фиксируется контрактом фабрики).
+    func testPinWithoutColumnsAppendsWithoutCanonicalization() {
+        let store = makeStore([
+            tile("Aurora", id: "a", size: .medium),
+            tile("Wide", id: "w", size: .wide),
+            tile("Spark", id: "s", size: .small),
+        ])
+        XCTAssertTrue(store.unpin("s"))
+
+        let page = TesseraAppsListPageViewController.make(store: store)
+        let table = host(page)
+        XCTAssertTrue(pin(true, forTileID: "s", title: "Spark", page: page, table: table))
+
+        XCTAssertTrue(store.isPinned("s"))
+        XCTAssertEqual(ids(store), ["a", "w", "s"], "без колонок порядок не канонизируется")
+        XCTAssertEqual(store.snapshot().items.firstIndex { $0.id == AnyHashable("s") }, 2)
+    }
+
+    /// Unpin из списка переупаковывает сетку: без канонизации порядок модели
+    /// разошёлся бы с экраном, поэтому при известных колонках страница
+    /// канонизирует видимый порядок (E10.15). Секции списка и их строки при
+    /// этом не меняются — ярлык остаётся в каталоге, меняется только состояние.
+    ///
+    /// «Alpha» (1×1), «Bravo» (2×2), «Whiskey» (4×2), «Charlie» (2×2) на
+    /// 4 колонках читаются Alpha, Bravo, Whiskey, Charlie. После удаления
+    /// Alpha порядок [Bravo, Whiskey, Charlie] переупаковывается так, что
+    /// Charlie поднимается выше Whiskey — канонический порядок Bravo, Charlie,
+    /// Whiskey.
+    func testUnpinFromListCanonicalizesVisibleOrder() {
+        let store = makeStore([
+            tile("Alpha", id: "a", size: .small),
+            tile("Bravo", id: "b", size: .medium),
+            tile("Whiskey", id: "w", size: .wide),
+            tile("Charlie", id: "c", size: .medium),
+        ])
+        XCTAssertEqual(ids(store), ["a", "b", "w", "c"])
+        assertReadingOrder(store, columns: 4, "до unpin")
+
+        let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
+        let table = host(page)
+        let structureBefore = rowTitles(page, table)
+        let sectionsBefore = sectionTitles(page, table)
+
+        var changes = 0
+        store.onChange = { _ in changes += 1 }
+        XCTAssertTrue(pin(false, forTileID: "a", title: "Alpha", page: page, table: table))
+
+        XCTAssertEqual(changes, 2, "unpin и канонизация — два изменения модели")
+        XCTAssertFalse(store.isPinned("a"))
+        XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["a"])
+        XCTAssertEqual(ids(store), ["b", "c", "w"], "порядок после unpin должен стать каноническим")
+        assertReadingOrder(store, columns: 4, "после unpin из списка")
+        XCTAssertEqual(rowTitles(page, table), structureBefore, "unpin не меняет секции списка")
+        XCTAssertEqual(sectionTitles(page, table), sectionsBefore)
+        assertPinButton(forTitle: "Alpha", pinned: false, page: page, table: table)
+    }
+
+    /// Unpin из списка не перезагружает таблицу: состав строк (секции) не
+    /// меняется, позиция чтения сохраняется (§6, T2: unpin не «прыгает»).
+    func testUnpinFromListKeepsSectionsAndOffset() {
+        let titles = (0..<60).map { String(format: "App %02d", $0) }
+        let store = makeStore(titles.map { tile($0, size: .small) })
+        let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
+        let table = host(page)
+
+        table.setContentOffset(CGPoint(x: table.contentOffset.x, y: 300), animated: false)
+        table.layoutIfNeeded()
+
+        let structureBefore = rowTitles(page, table)
+        let sectionsBefore = sectionTitles(page, table)
+        let offsetBefore = table.contentOffset
+
+        var changes = 0
+        store.onChange = { _ in changes += 1 }
+        XCTAssertTrue(pin(false, forTileID: "App 00", title: "App 00", page: page, table: table))
+
+        XCTAssertEqual(changes, 1, "порядок уже канонический — unpin одно изменение")
+        XCTAssertFalse(store.isPinned("App 00"))
+        XCTAssertEqual(ids(store).count, titles.count - 1)
+        XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["App 00"])
+        XCTAssertEqual(rowTitles(page, table), structureBefore, "unpin не меняет строки списка")
+        XCTAssertEqual(sectionTitles(page, table), sectionsBefore)
+        XCTAssertEqual(table.contentOffset.y, offsetBefore.y, accuracy: 0.5, "позиция чтения сохраняется")
+        assertOffsetInRange(table, "после unpin из списка")
+        XCTAssertGreaterThan(table.contentOffset.y, 250, "список не должен прыгать в начало")
+    }
+
+    /// Unpin ярлыка из папки: папка не распускается (в ней второй ярлык),
+    /// строки и секции списка не меняются — ярлык остаётся в каталоге с
+    /// состоянием «не закреплён», а хранилище остаётся согласованным.
+    func testUnpinFromFolderKeepsSectionsStable() {
+        let store = makeStore([
+            tile("Alpha", id: "a", size: .small),
+            tile("Bravo", id: "b", size: .small),
+        ])
+        guard let folder = store.createFolder(withTile: "a", title: "Группа") else {
+            return XCTFail("Не удалось создать папку")
+        }
+        XCTAssertTrue(store.addToFolder("b", folderID: folder.id))
+        XCTAssertEqual(ids(store), [folder.id])
+
+        let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
+        let table = host(page)
+        let structureBefore = rowTitles(page, table)
+        let sectionsBefore = sectionTitles(page, table)
+        XCTAssertEqual(structureBefore.flatMap { $0 }, ["Alpha", "Bravo"])
+
+        XCTAssertTrue(pin(false, forTileID: "a", title: "Alpha", page: page, table: table))
+
+        XCTAssertFalse(store.isPinned("a"))
+        XCTAssertTrue(store.isPinned("b"))
+        XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["a"])
+        XCTAssertEqual(
+            store.snapshot().folders.first?.tiles.map { $0.id },
+            ["b"],
+            "папка остаётся: в ней второй ярлык"
+        )
+        assertReadingOrder(store, columns: 4, "после unpin из папки")
+        XCTAssertEqual(rowTitles(page, table), structureBefore)
+        XCTAssertEqual(sectionTitles(page, table), sectionsBefore)
+        assertPinButton(forTitle: "Alpha", pinned: false, page: page, table: table)
+        assertPinButton(forTitle: "Bravo", pinned: true, page: page, table: table)
     }
 }
 
