@@ -11,8 +11,10 @@
 // обычная раскладка и edit/drag дают одинаковый визуал.
 //
 // D17 (docs/STATE.md) — панель раскрытой папки: чистые функции индекса вставки
-// панели после строки папки, отступа строк под панелью и её высоты — в конце
-// файла. Основная часть движка остаётся без UIKit и без состояния.
+// панели после полосы папки (E10.1), отступа строк под панелью и её высоты — в
+// конце файла. E10.1 — пиксельное выравнивание юнита и геометрия сетки
+// (``TileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
+// Основная часть движка остаётся без UIKit и без состояния.
 //
 // E8.4 — ``previewOrder(items:draggingID:targetID:)``: чистое превью порядка
 // при перетаскивании (push-физика без записи в `TileStore`). Функция работает
@@ -173,6 +175,196 @@ public enum TileLayoutEngine {
         guard available.isFinite, available > 0 else { return 0 }
 
         return available / CGFloat(columns)
+    }
+
+    // MARK: - Пиксельное выравнивание (E10.1)
+
+    /// Размер юнита, выровненный вниз по пиксельной сетке экрана (E10.1).
+    ///
+    /// Формула та же, что у ``unit(screenWidth:columns:gaps:)``, но результат
+    /// округляется **вниз** до кратного `1 / scale`: при ширине 393 pt
+    /// (контент 361 pt, зазор 8) «сырой» юнит 84.25 pt даёт дробные пиксели и
+    /// размытые края плиток, выровненный — 84 pt на 3× и 84 pt на 2×. Остаток
+    /// ширины раскладка делит поровну на поля (сетка центрируется, см.
+    /// ``gridMetrics(contentWidth:columns:spacing:scale:)``).
+    ///
+    /// `scale <= 0` или нечисловой масштаб — выравнивания нет, результат равен
+    /// ``unit(screenWidth:columns:gaps:)``.
+    ///
+    /// - Parameters:
+    ///   - screenWidth: Доступная ширина сетки в точках (без внешних полей).
+    ///   - columns: Число колонок, больше нуля.
+    ///   - gaps: Зазор между соседними колонками в точках.
+    ///   - scale: Масштаб экрана (`displayScale`): пикселей в точке.
+    /// - Returns: Юнит в точках, кратный `1 / scale`, или `0` для вырожденной
+    ///   геометрии.
+    public static func unit(
+        screenWidth: CGFloat,
+        columns: Int,
+        gaps: CGFloat,
+        scale: CGFloat
+    ) -> CGFloat {
+        pixelFloor(unit(screenWidth: screenWidth, columns: columns, gaps: gaps), scale: scale)
+    }
+
+    /// Допуск округления по пиксельной сетке: гасит ошибку плавающей точки
+    /// (`84 × 3` может прийти как `251.99999999`).
+    private static let pixelEpsilon: CGFloat = 1e-6
+
+    /// Выравнивает масштаб: положительный и конечный — как есть, иначе `0`
+    /// («не выравнивать»).
+    private static func alignmentScale(_ scale: CGFloat) -> CGFloat {
+        scale.isFinite && scale > 0 ? scale : 0
+    }
+
+    /// Округляет значение вниз до кратного `1 / scale` (E10.1).
+    ///
+    /// - Parameters:
+    ///   - value: Длина в точках.
+    ///   - scale: Масштаб экрана; `<= 0` — значение не меняется.
+    /// - Returns: Выровненная длина.
+    static func pixelFloor(_ value: CGFloat, scale: CGFloat) -> CGFloat {
+        let scale = alignmentScale(scale)
+        guard scale > 0, value.isFinite else { return value }
+        return (value * scale + pixelEpsilon).rounded(.down) / scale
+    }
+
+    /// Округляет значение к ближайшему кратному `1 / scale` (E10.1).
+    ///
+    /// - Parameters:
+    ///   - value: Длина или координата в точках.
+    ///   - scale: Масштаб экрана; `<= 0` — значение не меняется.
+    /// - Returns: Выровненное значение.
+    static func pixelRound(_ value: CGFloat, scale: CGFloat) -> CGFloat {
+        let scale = alignmentScale(scale)
+        guard scale > 0, value.isFinite else { return value }
+        return (value * scale).rounded(.toNearestOrAwayFromZero) / scale
+    }
+
+    /// Горизонтальная геометрия сетки в точках (E10.1).
+    ///
+    /// Одна и та же для плиток рабочего стола и для ярлыков панели раскрытой
+    /// папки: обе стороны считают её по ширине контента, зазору и масштабу,
+    /// поэтому колонки совпадают до пикселя.
+    struct GridMetrics: Equatable {
+
+        /// Число колонок.
+        var columns: Int
+
+        /// Юнит в точках (выровнен по пикселям, если масштаб задан).
+        var unit: CGFloat
+
+        /// Зазор между юнитами в точках (санитизирован и выровнен).
+        var spacing: CGFloat
+
+        /// Отступ сетки от начала ширины контента: половина остатка после
+        /// выравнивания юнита (сетка центрируется).
+        var leading: CGFloat
+
+        /// Ширина, которую занимают `columns` юнитов с зазорами.
+        var width: CGFloat
+
+        /// Смещение колонки от начала ширины контента в LTR-координатах.
+        ///
+        /// - Parameter column: Номер колонки, с нуля.
+        /// - Returns: Левый край колонки в точках.
+        func columnOffset(_ column: Int) -> CGFloat {
+            leading + CGFloat(column) * (unit + spacing)
+        }
+    }
+
+    /// Считает горизонтальную геометрию сетки с пиксельным выравниванием
+    /// (E10.1).
+    ///
+    /// 1. Зазор санитизируется (отрицательный и нечисловой — 0) и округляется
+    ///    к ближайшему пикселю.
+    /// 2. Юнит — ``unit(screenWidth:columns:gaps:scale:)``: формула §3 с
+    ///    округлением вниз до пикселя.
+    /// 3. Остаток ширины (`contentWidth − columns × юнит − зазоры`) делится
+    ///    поровну на поля: левому полю — половина, округлённая вниз до пикселя,
+    ///    правому — всё остальное.
+    ///
+    /// Без масштаба (`scale <= 0`) выравнивания нет: юнит — точная формула §3,
+    /// остаток нулевой, `leading == 0`.
+    ///
+    /// - Parameters:
+    ///   - contentWidth: Ширина контента сетки (без внешних полей).
+    ///   - columns: Число колонок, больше нуля.
+    ///   - spacing: Зазор между юнитами в точках.
+    ///   - scale: Масштаб экрана; `<= 0` — не выравнивать.
+    /// - Returns: Геометрия или `nil` для вырожденной ширины/колонок.
+    static func gridMetrics(
+        contentWidth: CGFloat,
+        columns: Int,
+        spacing: CGFloat,
+        scale: CGFloat
+    ) -> GridMetrics? {
+        guard columns > 0, contentWidth.isFinite, contentWidth > 0 else { return nil }
+
+        let alignedSpacing = pixelRound(spacing.isFinite ? max(spacing, 0) : 0, scale: scale)
+        let alignedUnit = unit(
+            screenWidth: contentWidth,
+            columns: columns,
+            gaps: alignedSpacing,
+            scale: scale
+        )
+        guard alignedUnit.isFinite, alignedUnit > 0 else { return nil }
+
+        let width = CGFloat(columns) * alignedUnit + CGFloat(columns - 1) * alignedSpacing
+        let leading: CGFloat
+        if alignmentScale(scale) > 0 {
+            leading = pixelFloor(max(0, contentWidth - width) / 2, scale: scale)
+        } else {
+            leading = 0
+        }
+
+        return GridMetrics(
+            columns: columns,
+            unit: alignedUnit,
+            spacing: alignedSpacing,
+            leading: leading,
+            width: width
+        )
+    }
+
+    // MARK: - Полоса раскрытой папки (E10.1)
+
+    /// Нижняя граница «полосы папки» в юнитных строках (E10.1, D17).
+    ///
+    /// Панель раскрытой папки — полноширинная строка, поэтому она не может
+    /// встать сразу под последней строкой папки, если рядом стоит плитка,
+    /// которая начинается в строках папки, а заканчивается ниже (например,
+    /// 2×2-ярлык со строки 1 при 2×2-папке в строках 0–1): панель перекрыла бы
+    /// её нижнюю половину. Полоса начинается с `[folder.row, folder.row +
+    /// unitRows)` и расширяет нижнюю границу до `max(row + unitRows)` всех
+    /// плиток, пересекающих полосу, итеративно до неподвижной точки (расширение
+    /// может зацепить следующую плитку).
+    ///
+    /// На неподвижной точке разбиение «остаётся / уходит под панель» по
+    /// верхней строке `slot.row < bandEnd` точное: плитка с `row < bandEnd`
+    /// либо целиком выше полосы, либо пересекает её — и тогда уже целиком в
+    /// ней.
+    ///
+    /// - Parameters:
+    ///   - folderSlot: Слот плитки раскрытой папки.
+    ///   - slots: Слоты всех плиток раскладки (папка может входить).
+    /// - Returns: Первая строка после полосы: с неё начинается панель.
+    static func folderBandEndRow(for folderSlot: TileLayoutSlot, in slots: [TileLayoutSlot]) -> Int {
+        let start = folderSlot.row
+        var end = folderSlot.row + folderSlot.unitRows
+        var changed = true
+
+        while changed {
+            changed = false
+            for slot in slots where slot.row < end && slot.row + slot.unitRows > start {
+                let bottom = slot.row + slot.unitRows
+                if bottom > end {
+                    end = bottom
+                    changed = true
+                }
+            }
+        }
+        return end
     }
 
     /// Упаковывает плитки строго компактно
@@ -780,87 +972,96 @@ public enum TileLayoutEngine {
     /// Зазор между заголовком и сеткой содержимого панели в точках.
     static let panelHeaderSpacing: CGFloat = 8
 
-    /// Зазор между ячейками сетки содержимого панели в точках.
+    /// Зазор между ячейками сетки содержимого панели по умолчанию, в точках.
     ///
-    /// Совпадает с зазором сетки рабочего стола (`itemSpacing` раскладки по
-    /// умолчанию), поэтому ярлыки панели встают в те же колонки, что и плитки
-    /// под панелью.
+    /// Совпадает с `itemSpacing` раскладки по умолчанию. Раскладка и ячейка
+    /// панели (E10.1) берут фактический зазор сетки (`itemSpacing`), чтобы
+    /// ярлыки панели вставали в те же колонки, что и плитки под панелью; это
+    /// значение — только для устаревших входов без зазора
+    /// (``panelHeight(for:width:columns:)``, ``panelHeight(tileCount:width:columns:)``).
     static let panelContentSpacing: CGFloat = 8
 
-    /// Сторона ярлыка панели раскрытой папки в точках (D17, E7).
+    /// Высота полноширинной панели раскрытой папки в точках с зазором по
+    /// умолчанию и без пиксельного выравнивания (D17, E7.1).
     ///
-    /// Ярлык в панели — та же плитка small, что и на рабочем столе, поэтому его
-    /// сторона считается **той же формулой юнита**, что у сетки
-    /// (``unit(screenWidth:columns:gaps:)``):
-    ///
-    /// `юнит = (ширина − зазор × (N − 1)) / N`.
-    ///
-    /// Доступной шириной служит вся ширина панели, которая уже равна ширине
-    /// контента сетки (без внешних полей раскладки), а зазор —
-    /// ``panelContentSpacing``. Горизонтальных полей панель не добавляет, иначе
-    /// ярлык стал бы меньше плитки 1×1 и разъехался бы с колонками сетки.
+    /// Устаревший вход: равен
+    /// ``panelHeight(tileCount:width:columns:spacing:scale:)`` с зазором
+    /// ``panelContentSpacing`` и `scale == 0`.
     ///
     /// - Parameters:
+    ///   - tileCount: Число ярлыков в сетке содержимого панели; отрицательное
+    ///     трактуется как 0.
     ///   - width: Полная ширина панели в точках (ширина контента сетки).
-    ///   - columns: Число колонок сетки содержимого, больше нуля.
-    /// - Returns: Сторона квадратного ярлыка в точках или `0` для вырожденной
-    ///   геометрии.
-    static func panelTileSide(width: CGFloat, columns: Int) -> CGFloat {
-        unit(screenWidth: width, columns: columns, gaps: panelContentSpacing)
+    ///   - columns: Число колонок сетки содержимого панели, больше нуля.
+    /// - Returns: Высота панели в точках.
+    static func panelHeight(tileCount: Int, width: CGFloat, columns: Int) -> CGFloat {
+        panelHeight(
+            tileCount: tileCount,
+            width: width,
+            columns: columns,
+            spacing: panelContentSpacing,
+            scale: 0
+        )
     }
 
-    /// Высота полноширинной панели раскрытой папки в точках (D17, E7.1).
+    /// Высота полноширинной панели раскрытой папки в точках (D17, E7.1, E10.1).
     ///
     /// Панель состоит из строки заголовка и квадратной сетки содержимого:
     ///
     /// - внешние поля сверху и снизу — по 12 pt (`panelPadding`);
     /// - заголовок — 44 pt: высота фиксирована, потому что заголовок занимает
     ///   ровно одну строку;
-    /// - зазор между заголовком и сеткой — 8 pt;
-    /// - ярлыки содержимого квадратные, их сторона равна юниту сетки
-    ///   (``panelTileSide(width:columns:)``), зазоры между строками — 8 pt;
-    /// - по горизонтали ярлыки занимают всю ширину панели: тот же юнит и тот же
-    ///   зазор, что у сетки, дают ровно `columns` колонок без остатка.
+    /// - зазор между заголовком и сеткой — 8 pt (`panelHeaderSpacing`);
+    /// - ярлыки содержимого квадратные: их сторона и зазоры между ними — юнит и
+    ///   зазор **сетки рабочего стола** с тем же пиксельным выравниванием
+    ///   (``gridMetrics(contentWidth:columns:spacing:scale:)``), поэтому ярлык
+    ///   панели — та же плитка 1×1 в тех же колонках, что и плитки под панелью.
     ///
     /// Итоговая формула (строки — `ceil(count / columns)`):
     ///
-    /// `высота = padding × 2 + заголовок + зазор + строки × юнит +
-    /// (строки − 1) × зазор`.
+    /// `высота = padding × 2 + заголовок + зазор заголовка + строки × юнит +
+    /// (строки − 1) × зазор сетки`.
     ///
     /// Формула обязана совпадать с метриками `TesseraFolderPanelCell`: ячейка
     /// раскладывает содержимое по этим же числам, поэтому высота панели точно
     /// вмещает последнюю строку ярлыков.
-    ///
-    /// Метод не зависит от модели ярлыка: раскладка передаёт только число
-    /// ярлыков папки (``panelHeight(tileCount:width:columns:)``), чтобы не
-    /// удерживать `TileFolder` с замыканиями и картинками.
     ///
     /// Вырожденная геометрия (нечисловая/неположительная ширина, ширина, где
     /// зазоры съедают всё место, `columns <= 0`) даёт `0`: панель без высоты,
     /// как и плитка без места.
     ///
     /// - Parameters:
-    ///   - tileCount: Число ярлыков в сетке содержимого панели; отрицательное
-    ///     трактуется как 0.
+    ///   - tileCount: Число ярлыков; отрицательное трактуется как 0.
     ///   - width: Полная ширина панели в точках (ширина контента сетки без
     ///     внешних полей раскладки).
     ///   - columns: Число колонок сетки содержимого панели, больше нуля.
+    ///   - spacing: Зазор сетки рабочего стола (`itemSpacing`).
+    ///   - scale: Масштаб экрана; `<= 0` — без пиксельного выравнивания.
     /// - Returns: Высота панели в точках.
-    static func panelHeight(tileCount: Int, width: CGFloat, columns: Int) -> CGFloat {
-        guard columns > 0, width.isFinite, width > 0 else { return 0 }
-
-        let columnCount = max(1, columns)
-        let side = panelTileSide(width: width, columns: columnCount)
-        guard side.isFinite, side > 0 else { return 0 }
+    static func panelHeight(
+        tileCount: Int,
+        width: CGFloat,
+        columns: Int,
+        spacing: CGFloat,
+        scale: CGFloat
+    ) -> CGFloat {
+        guard let metrics = gridMetrics(
+            contentWidth: width,
+            columns: columns,
+            spacing: spacing,
+            scale: scale
+        ) else {
+            return 0
+        }
 
         let count = max(0, tileCount)
-        let rows = count == 0 ? 0 : (count + columnCount - 1) / columnCount
+        let rows = count == 0 ? 0 : (count + columns - 1) / columns
         let headerHeight = panelPadding * 2 + panelHeaderHeight
 
-        guard rows > 0 else { return headerHeight }
+        guard rows > 0 else { return pixelRound(headerHeight, scale: scale) }
 
-        let contentHeight = CGFloat(rows) * side + CGFloat(rows - 1) * panelContentSpacing
-        return headerHeight + panelHeaderSpacing + contentHeight
+        let contentHeight = CGFloat(rows) * metrics.unit + CGFloat(rows - 1) * metrics.spacing
+        return pixelRound(headerHeight + panelHeaderSpacing + contentHeight, scale: scale)
     }
 
     /// Ужимает след плитки под узкую сетку, не меняя модель (D15).
@@ -1020,13 +1221,15 @@ public enum TileLayoutEngine {
 /// Панель раскрытой папки: чистые функции места и сдвига (D17, E7).
 ///
 /// Раскрытие папки в WP-стиле (D17) вставляет панель
-/// ``TileGridItem/folderContent(_:)`` **после** строки, в которой заканчивается
-/// плитка ``TileGridItem/folder(_:)``. Сама плитка папки остаётся на своём месте
-/// и видна всё время, пока папка раскрыта: панель — отдельная полноширинная
-/// строка под ней, а не замена плитки. Панель растягивается на всю ширину сетки
-/// и растёт вниз до ``panelHeight(for:width:columns:)``; всё, что начинается
-/// ниже строки папки, встаёт под панелью — визуально строки сдвигаются вниз на
-/// её высоту. Саму геометрию в точках собирает
+/// ``TileGridItem/folderContent(_:)`` **после полосы папки** — строк плитки
+/// ``TileGridItem/folder(_:)``, расширенных вниз на плитки, которые начинаются
+/// в этих строках и заканчиваются ниже (``folderBandEndRow(for:in:)``, E10.1).
+/// Сама плитка папки остаётся на своём месте и видна всё время, пока папка
+/// раскрыта: панель — отдельная полноширинная строка под полосой, а не замена
+/// плитки. Панель растягивается на всю ширину сетки и растёт вниз до
+/// ``panelHeight(for:width:columns:spacing:scale:)``; всё, что начинается ниже
+/// полосы, встаёт под панелью — визуально строки сдвигаются вниз на её высоту и
+/// зазор сетки. Саму геометрию в точках собирает
 /// `TesseraTileCollectionViewLayout`.
 ///
 /// Функции этого расширения ничего не знают о UICollectionView: они по модели,
@@ -1044,22 +1247,24 @@ extension TileLayoutEngine {
     /// Геометрия раскрытия в юнитных координатах.
     ///
     /// `slots` — слоты всех элементов набора, кроме самой панели (панель не
-    /// упаковывается как плитка); `folderEndRow` — первая строка, идущая
-    /// **после** папки: с неё начинается полноширинная строка панели.
+    /// упаковывается как плитка); `bandEndRow` — первая строка после «полосы
+    /// папки» (``folderBandEndRow(for:in:)``): с неё начинается
+    /// полноширинная строка панели.
     private struct FolderPanelGeometry {
 
         /// Слоты элементов по идентификатору.
         var slots: [AnyHashable: TileLayoutSlot]
 
-        /// Первая строка после папки (номер строки, идущей сразу за её
-        /// последней строкой): с неё начинается панель.
-        var folderEndRow: Int
+        /// Первая строка после полосы папки (E10.1): с неё начинается панель.
+        /// Всё, что начинается выше, остаётся на месте; всё, что начинается с
+        /// неё и ниже, уходит под панель.
+        var bandEndRow: Int
 
         /// Индекс папки в исходном массиве элементов.
         var folderIndex: Int
     }
 
-    /// Считает юнитные координаты элементов и первую строку после папки.
+    /// Считает юнитные координаты элементов и нижнюю границу полосы папки.
     ///
     /// - Parameters:
     ///   - items: Элементы сетки в порядке отображения.
@@ -1098,32 +1303,24 @@ extension TileLayoutEngine {
 
         return FolderPanelGeometry(
             slots: slots,
-            folderEndRow: folderSlot.row + folderSlot.unitRows,
+            bandEndRow: folderBandEndRow(for: folderSlot, in: packedSlots),
             folderIndex: folderIndex
         )
     }
 
-    /// Индекс массива, с которого панель вставляется в набор элементов (D17, E7).
+    /// Индекс массива для панели без учёта раскладки (D17, E7).
     ///
-    /// Панель — отдельный элемент набора, а не замена плитки: плитка папки
-    /// остаётся на своём индексе, поэтому `displayItems.count == items.count + 1`.
-    /// Вставлять панель логично сразу после плитки папки: она идёт следующей в
-    /// порядке элементов, а **геометрически** раскладка ставит её полноширинной
-    /// строкой сразу после строки, в которой заканчивается папка (см.
-    /// ``rowsBelowOffset(items:columns:expandedFolderID:panelHeight:)`` и
-    /// `TesseraTileCollectionViewLayout`).
-    ///
-    /// Число колонок здесь не нужно: смещение панели в массиве не зависит от
-    /// раскладки, а строку панели считает геометрия вью-слоя. Так сигнатура
-    /// остаётся чистой и тестируемой без UI.
+    /// Устаревший вход: панель встаёт сразу после плитки папки (индекс папки
+    /// + 1), соседи по полосе папки (E10.1) не учитываются, поэтому порядок
+    /// элементов может не совпасть с визуальным. Сетка пользуется
+    /// ``folderPanelInsertionIndex(items:columns:expandedFolderID:)``.
     ///
     /// - Parameters:
     ///   - items: Базовые элементы сетки в порядке отображения (снимок
     ///     `TileStore`, без панели).
     ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
-    /// - Returns: Индекс для вставки `.folderContent(folder)` в массив (индекс
-    ///   плитки-папки + 1) либо `nil`, если такой папки нет или панель уже
-    ///   присутствует в наборе.
+    /// - Returns: Индекс плитки-папки + 1 либо `nil`, если такой папки нет или
+    ///   панель уже присутствует в наборе.
     public static func folderPanelInsertionIndex(
         items: [TileGridItem],
         expandedFolderID: AnyHashable?
@@ -1139,18 +1336,74 @@ extension TileLayoutEngine {
         return folderIndex + 1
     }
 
-    /// Отступ строк под панелью от её верхнего края в точках (D17, E7).
+    /// Индекс массива, с которого панель вставляется в набор элементов
+    /// (D17, E7, E10.1).
     ///
-    /// Панель встаёт полноширинной строкой сразу после строки, в которой
-    /// заканчивается плитка папки, и растёт вниз. Всё, что **начинается** ниже
-    /// этой строки, оказывается под панелью, поэтому первый ряд под панелью
-    /// начинается ровно на её высоту (плюс обычный зазор сетки) от верхнего края
-    /// панели. Элементы, стоящие в тех же строках, что и папка (например, small
-    /// справа от 2×2-папки), остаются на месте: панель начинается ниже них.
+    /// Панель — отдельный элемент набора, а не замена плитки: плитка папки
+    /// остаётся на своём индексе, поэтому `displayItems.count == items.count + 1`.
+    /// Геометрически панель встаёт полноширинной строкой под **полосой папки**
+    /// (``folderBandEndRow(for:in:)``): плитки, которые начинаются в строках
+    /// папки и заканчиваются ниже, остаются над панелью вместе с папкой. Чтобы
+    /// порядок элементов совпадал с визуальным (VoiceOver, индексы коллекции),
+    /// панель вставляется после **последнего** по массиву элемента, который
+    /// остаётся над панелью (`row < bandEnd`), — но не раньше, чем сразу после
+    /// плитки папки.
+    ///
+    /// Пример (4 колонки): `[папка 2×2, small, small, ярлык 2×2]` — ярлык
+    /// стоит в строках 1–2, полоса — строки 0–2, индекс вставки 4 (после
+    /// ярлыка), а не 1.
+    ///
+    /// - Parameters:
+    ///   - items: Базовые элементы сетки в порядке отображения (снимок
+    ///     `TileStore`, без панели).
+    ///   - columns: Число колонок сетки. При `columns <= 0` геометрии нет, и
+    ///     результат совпадает с ``folderPanelInsertionIndex(items:expandedFolderID:)``.
+    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
+    /// - Returns: Индекс для вставки `.folderContent(folder)` либо `nil`, если
+    ///   такой папки нет или панель уже присутствует в наборе.
+    public static func folderPanelInsertionIndex(
+        items: [TileGridItem],
+        columns: Int,
+        expandedFolderID: AnyHashable?
+    ) -> Int? {
+        guard let fallback = folderPanelInsertionIndex(
+            items: items,
+            expandedFolderID: expandedFolderID
+        ) else {
+            return nil
+        }
+        guard let expandedFolderID,
+              let geometry = folderPanelGeometry(
+                  items: items,
+                  columns: columns,
+                  expandedFolderID: expandedFolderID
+              ) else {
+            return fallback
+        }
+
+        var lastIndexAbovePanel = geometry.folderIndex
+        for (index, item) in items.enumerated() {
+            guard let slot = geometry.slots[item.id],
+                  slot.row < geometry.bandEndRow else { continue }
+            lastIndexAbovePanel = max(lastIndexAbovePanel, index)
+        }
+        return lastIndexAbovePanel + 1
+    }
+
+    /// Отступ строк под панелью от её верхнего края в точках (D17, E7, E10.1).
+    ///
+    /// Панель встаёт полноширинной строкой сразу после **полосы папки**
+    /// (``folderBandEndRow(for:in:)``) и растёт вниз. Всё, что **начинается**
+    /// с этой строки и ниже, раскладка кладёт под панель: первый ряд под
+    /// панелью начинается на `panelHeight + spacing` от её верхнего края —
+    /// ровно на столько сдвигаются вниз строки, которые до раскрытия
+    /// начинались на месте панели. Элементы полосы (например, small справа от
+    /// 2×2-папки или 2×2-ярлык, начинающийся в строках папки) остаются на
+    /// месте: панель начинается ниже них.
     ///
     /// Функция нужна тестам E7.4 и хосту, который считает прокрутку: сама
     /// раскладка кладёт элементы под панель тем же правилом. Если под панелью
-    /// ничего нет (папка в последней строке), сдвиг `0`; если панель уже
+    /// ничего нет (полоса папки — последняя), сдвиг `0`; если панель уже
     /// есть в наборе, тоже `0`: её влияние уже учтено раскладкой.
     ///
     /// - Parameters:
@@ -1158,13 +1411,17 @@ extension TileLayoutEngine {
     ///   - columns: Число колонок сетки, больше нуля.
     ///   - expandedFolderID: Идентификатор раскрытой папки.
     ///   - panelHeight: Высота панели в точках, вычисленная
-    ///     ``panelHeight(for:width:columns:)``.
-    /// - Returns: `panelHeight`, если под панелью есть что сдвигать, иначе `0`.
+    ///     ``panelHeight(for:width:columns:spacing:scale:)``.
+    ///   - spacing: Зазор сетки (`itemSpacing`), по умолчанию 8 pt — зазор
+    ///     раскладки по умолчанию; отрицательный и нечисловой — 0.
+    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
+    ///   иначе `0`.
     public static func rowsBelowOffset(
         items: [TileGridItem],
         columns: Int,
         expandedFolderID: AnyHashable?,
-        panelHeight: CGFloat
+        panelHeight: CGFloat,
+        spacing: CGFloat = 8
     ) -> CGFloat {
         guard panelHeight.isFinite, panelHeight > 0 else { return 0 }
         guard columns > 0, let expandedFolderID else { return 0 }
@@ -1177,24 +1434,25 @@ extension TileLayoutEngine {
             return 0
         }
 
-        // Под панель уходит всё, что начинается со строки сразу после папки.
-        // Саму папку не считаем: панель встаёт под ней, а не вместо неё.
+        // Под панель уходит всё, что начинается со строки сразу после полосы
+        // папки. Саму папку не считаем: панель встаёт под ней, а не вместо неё.
         for (index, item) in items.enumerated() where !item.isFolderPanel {
             guard index != geometry.folderIndex,
                   let slot = geometry.slots[item.id] else { continue }
-            if slot.row >= geometry.folderEndRow {
-                return panelHeight
+            if slot.row >= geometry.bandEndRow {
+                return panelHeight + (spacing.isFinite ? max(spacing, 0) : 0)
             }
         }
         return 0
     }
 
-    /// Высота полноширинной панели раскрытой папки в точках (D17, E7.1).
+    /// Высота полноширинной панели раскрытой папки в точках с зазором по
+    /// умолчанию и без пиксельного выравнивания (D17, E7.1).
     ///
-    /// Складывает строку заголовка и сетку содержимого папки; константы и
-    /// формула описаны в ``panelHeight(tileCount:width:columns:)``. Число
-    /// колонок — это число колонок сетки содержимого панели: раскладка передаёт
-    /// сюда число колонок рабочего стола (по §3 — 4).
+    /// Устаревший вход: зазор содержимого — 8 pt (зазор раскладки по
+    /// умолчанию), юнит не выравнивается по пикселям. Раскладка сетки считает
+    /// высоту по ``panelHeight(for:width:columns:spacing:scale:)`` с
+    /// фактическим `itemSpacing` и масштабом экрана.
     ///
     /// - Parameters:
     ///   - folder: Раскрытая папка.
@@ -1207,6 +1465,36 @@ extension TileLayoutEngine {
         columns: Int
     ) -> CGFloat {
         panelHeight(tileCount: folder.tiles.count, width: width, columns: columns)
+    }
+
+    /// Высота полноширинной панели раскрытой папки в точках (D17, E10.1).
+    ///
+    /// Ярлыки панели — плитки 1×1 той же сетки: сторона и зазор — юнит и
+    /// зазор сетки рабочего стола с пиксельным выравниванием; формула — в
+    /// ``panelHeight(tileCount:width:columns:spacing:scale:)``. Число колонок —
+    /// число колонок рабочего стола (по §3 — 4).
+    ///
+    /// - Parameters:
+    ///   - folder: Раскрытая папка.
+    ///   - width: Полная ширина панели в точках (ширина контента сетки).
+    ///   - columns: Число колонок сетки содержимого, больше нуля.
+    ///   - spacing: Зазор сетки (`itemSpacing`).
+    ///   - scale: Масштаб экрана; `<= 0` — без пиксельного выравнивания.
+    /// - Returns: Высота панели в точках; `0` для вырожденной геометрии.
+    public static func panelHeight(
+        for folder: TileFolder,
+        width: CGFloat,
+        columns: Int,
+        spacing: CGFloat,
+        scale: CGFloat
+    ) -> CGFloat {
+        panelHeight(
+            tileCount: folder.tiles.count,
+            width: width,
+            columns: columns,
+            spacing: spacing,
+            scale: scale
+        )
     }
 }
 
