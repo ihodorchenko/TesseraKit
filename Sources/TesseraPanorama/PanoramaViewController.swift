@@ -119,6 +119,9 @@ public final class PanoramaViewController: UIViewController {
         /// Боковой отступ текста заголовков.
         static let headerSideInset: CGFloat = 20
 
+        /// Допуск «offset уже выровнен», в точках (доводка снапа, E9.2б).
+        static let alignmentTolerance: CGFloat = 0.5
+
         /// Минимальный запас фонового слоя под «резину» на границах (§4).
         ///
         /// При bounce `contentOffset` уходит за край ленты, и фон сдвигается
@@ -139,10 +142,17 @@ public final class PanoramaViewController: UIViewController {
 
     /// Внешний вид панорамы (§3).
     ///
-    /// Присваивание применяется сразу: peek и шрифт заголовков уходят в слои, а
-    /// раскладка перезапускается в ближайшем layout-проходе (вне скролла).
+    /// Присваивание применяется сразу: шрифт и цвета заголовков, фон и
+    /// подстройка отступов уходят в слои, а peek и раскладка — в ближайший
+    /// layout-проход (вне скролла), где текущая секция восстанавливается под
+    /// новую ширину (§8).
+    ///
+    /// Присваивание того же стиля (все поля совпадают, картинка фона — тот же
+    /// экземпляр) ничего не делает: SwiftUI-фасад присваивает стиль на каждом
+    /// обновлении (E10.13).
     public var style: PanoramaStyle {
         didSet {
+            guard !oldValue.isEquivalent(to: style) else { return }
             applyStyle()
         }
     }
@@ -294,6 +304,22 @@ public final class PanoramaViewController: UIViewController {
 
     // MARK: - Жизненный цикл
 
+    /// Корневой вид, который замечает смену `semanticContentAttribute` на лету
+    /// (§7, «RTL»; E10.13).
+    public override func loadView() {
+        view = PanoramaRootView()
+    }
+
+    /// Смена направления чтения через trait-окружение перераскладывает слоты
+    /// (§7, «RTL»; E10.13). Текущая секция сохраняется по прогрессу в прежнем
+    /// направлении — см. `layoutPanorama()`.
+    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard isViewLoaded,
+              previousTraitCollection?.layoutDirection != traitCollection.layoutDirection else { return }
+        view.setNeedsLayout()
+    }
+
     /// Собирает иерархию слоёв и подписки (§3).
     public override func viewDidLoad() {
         super.viewDidLoad()
@@ -331,16 +357,21 @@ public final class PanoramaViewController: UIViewController {
     /// Пересобирает панораму под новый набор секций.
     ///
     /// Текущая секция сохраняется по `id`, если он есть в новом наборе; иначе
-    /// сохраняется прежний индекс с зажимом в новые границы. Загруженные
-    /// контроллеры освобождаются, `contentSize` и кадры пересчитываются в
-    /// `viewDidLayoutSubviews` (единственное место layout'а, §4).
+    /// сохраняется прежний индекс с зажимом в новые границы. Контроллеры
+    /// секций, чей `id` сохранился и попадает в новое окно ±1, переиспользуются
+    /// (тот же экземпляр — вертикальная позиция и `@State` не теряются;
+    /// SwiftUI-контент обновляется на месте), выгружаются только исчезнувшие и
+    /// вышедшие из окна (E10.13, как пейджер Core в W1). `contentSize` и кадры
+    /// пересчитываются в `viewDidLayoutSubviews` (единственное место layout'а, §4).
     ///
     /// - Parameter newSections: Новые секции в порядке чтения; пустой массив
     ///   допустим (§8).
     public func reload(sections newSections: [PanoramaSection]) {
+        // Текущий id — из СТАРОГО набора: по нему секция ищется в новом.
+        let oldSections = sections
         let previousIndex = clampedSectionIndex(currentSectionIndex)
-        let previousID: AnyHashable? = sections.indices.contains(previousIndex)
-            ? sections[previousIndex].id
+        let previousID: AnyHashable? = oldSections.indices.contains(previousIndex)
+            ? oldSections[previousIndex].id
             : nil
 
         // Останавливаем инерцию/анимацию до выгрузки секций: `contentOffset`
@@ -348,12 +379,18 @@ public final class PanoramaViewController: UIViewController {
         if isViewLoaded {
             scrollView.setContentOffset(scrollView.contentOffset, animated: false)
         }
+        _ = scrollView.consumePendingSnapOffsetX()
 
-        for controller in loadedSections.values {
-            detach(controller)
+        // Загруженные контроллеры — по id старого набора.
+        var survivors: [(id: AnyHashable, controller: UIViewController)] = []
+        for (index, controller) in loadedSections.sorted(by: { $0.key < $1.key }) {
+            if oldSections.indices.contains(index) {
+                survivors.append((oldSections[index].id, controller))
+            } else {
+                detach(controller)
+            }
         }
         loadedSections.removeAll()
-        contentHosting.removeAll()
 
         self.sections = newSections
 
@@ -364,6 +401,27 @@ public final class PanoramaViewController: UIViewController {
             currentSectionIndex = preservedIndex
         } else {
             currentSectionIndex = min(max(previousIndex, 0), newSections.count - 1)
+        }
+
+        // Выжившие в новом окне ±1 остаются (тот же экземпляр из реестра,
+        // SwiftUI-поставщик обновляет rootView); остальные выгружаются.
+        let window = sectionWindow(around: currentSectionIndex)
+        for survivor in survivors {
+            if let newIndex = newSections.firstIndex(where: { $0.id == survivor.id }),
+               window.contains(newIndex),
+               loadedSections[newIndex] == nil {
+                loadedSections[newIndex] = survivor.controller
+                _ = contentHosting.viewController(
+                    for: survivor.id,
+                    provider: newSections[newIndex].content
+                )
+            } else {
+                detach(survivor.controller)
+                contentHosting.removeContent(for: survivor.id)
+            }
+        }
+        if newSections.isEmpty {
+            contentHosting.removeAll()
         }
 
         lastShownSectionIndex = nil
@@ -378,6 +436,53 @@ public final class PanoramaViewController: UIViewController {
         view.layoutIfNeeded()
     }
 
+    /// Доносит новый контент до секций с тем же набором `id` и заголовков
+    /// (E10.12б).
+    ///
+    /// Путь SwiftUI-фасада: при перерисовке ``PanoramaView`` с теми же `id` и
+    /// заголовками полный ``reload(sections:)`` не нужен (он останавливает
+    /// прокрутку и сбрасывает показ секции), но поставщики контента новые —
+    /// их замыкания захватили свежее состояние. Здесь заменяется только модель,
+    /// а загруженные контроллеры получают новый контент через
+    /// ``TesseraContentHosting``: SwiftUI-контроллер обновляет `rootView` на
+    /// месте (тот же экземпляр, позиция и `@State` сохраняются); UIKit-поставщик
+    /// обновлять произвольный контроллер не умеет — экземпляр остаётся прежним.
+    /// Невыгруженные секции создадутся из новых поставщиков при загрузке.
+    /// `contentOffset`, окно ±1 и делегат не затрагиваются.
+    ///
+    /// Если набор `id`/заголовков всё же отличается, выполняется полный
+    /// ``reload(sections:)``.
+    ///
+    /// - Parameter newSections: Секции с тем же порядком `id` и заголовков.
+    func updateContent(of newSections: [PanoramaSection]) {
+        guard Self.haveSameIdentity(sections, newSections) else {
+            reload(sections: newSections)
+            return
+        }
+
+        sections = newSections
+        for index in loadedSections.keys where newSections.indices.contains(index) {
+            // Для валидных наборов (уникальные id) реестр вернёт тот же
+            // загруженный экземпляр, обновив его контент на месте.
+            let section = newSections[index]
+            _ = contentHosting.viewController(for: section.id, provider: section.content)
+        }
+    }
+
+    /// Совпадают ли наборы секций по `id` и заголовкам (по порядку).
+    ///
+    /// ``PanoramaSection`` не `Equatable`: у поставщика контента нет семантики
+    /// равенства, поэтому идентичность набора — пары `id` + `title`.
+    ///
+    /// - Parameters:
+    ///   - lhs: Первый набор.
+    ///   - rhs: Второй набор.
+    /// - Returns: `true`, если `id` и заголовки совпадают поэлементно.
+    static func haveSameIdentity(_ lhs: [PanoramaSection], _ rhs: [PanoramaSection]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { $0.id == $1.id && $0.title == $1.title }
+    }
+
     /// Программно переходит к секции.
     ///
     /// Единственный программный писатель `contentOffset` (§2, «Один писатель»).
@@ -387,6 +492,14 @@ public final class PanoramaViewController: UIViewController {
     ///
     /// При Reduce Motion анимация отключается принудительно (§7). Индекс
     /// зажимается в границы набора секций.
+    ///
+    /// Анимированный переход дальше соседней секции — «прямой прыжок», как у
+    /// пейджера Core (E10.13): окно ±1 сначала загружается вокруг цели, offset
+    /// без анимации переставляется на соседа цели со стороны текущей секции, и
+    /// анимируется один последний шаг — без пролёта пустых (невыгруженных)
+    /// слотов. Делегат получает один `didChangeProgress` со скачком на соседа
+    /// цели (прогресс всегда отражает фактический offset), затем кадры
+    /// анимации; `didShowSectionAt` — только для цели.
     ///
     /// - Parameters:
     ///   - index: Индекс секции в порядке чтения (в RTL — не физический слот).
@@ -424,6 +537,24 @@ public final class PanoramaViewController: UIViewController {
             scrollView.setContentOffset(offset, animated: false)
             finishTransition()
             return
+        }
+
+        if shouldAnimate {
+            let fromIndex = nearestSectionIndex(
+                forReadingProgress: scrollView.readingProgress(forRawOffset: scrollView.contentOffset.x)
+            )
+            let distance = targetIndex - fromIndex
+            if abs(distance) > 1 {
+                // Окно цели — до прыжка: в кадре анимации не должно быть
+                // пустых слотов. Иерархия меняется вне горячего пути (§6).
+                refreshLoadedSections(around: targetIndex)
+                let neighbourIndex = targetIndex - distance.signum()
+                scrollView.setContentOffset(
+                    CGPoint(x: scrollView.rawOffset(forReadingProgress: CGFloat(neighbourIndex)), y: 0),
+                    animated: false
+                )
+                currentSectionIndex = targetIndex
+            }
         }
 
         scrollView.setContentOffset(offset, animated: shouldAnimate)
@@ -528,6 +659,12 @@ public final class PanoramaViewController: UIViewController {
         // пользовательские касания) и не должны перекрывать прокрутку.
         view.addSubview(headerView)
 
+        // §7, E9.7: фокус VoiceOver может стоять на слое заголовков —
+        // трёхпальцевый свайп с него листает секции так же, как с контента.
+        headerView.accessibilityScrollHandler = { [weak self] direction in
+            self?.accessibilityScroll(direction) ?? false
+        }
+
         observeScrollPan()
 
         // §7, Dynamic Type: высота заголовков зависит от размера текста.
@@ -541,12 +678,13 @@ public final class PanoramaViewController: UIViewController {
 
     /// Применяет стиль к слоям (§3).
     ///
-    /// Сеттеры ``PanoHeaderView`` сравнивают значения с прежними, поэтому
-    /// повторное применение того же стиля не дёргает раскладку меток.
+    /// `peek` здесь в скролл не пишется: его применяет layout-проход, который
+    /// до этого запоминает прогресс по прежней ширине секции — иначе секция
+    /// осталась бы между снап-точками (§8, E10.13).
     private func applyStyle() {
         guard isViewLoaded else { return }
 
-        scrollView.peek = style.peek
+        scrollView.contentInsetAdjustmentBehavior = style.contentInsetAdjustmentBehavior
         headerView.style = Self.makeHeaderStyle(from: style)
         applyBackgroundBehavior()
         view.setNeedsLayout()
@@ -572,15 +710,17 @@ public final class PanoramaViewController: UIViewController {
     /// `PanoramaStyle.headerFont` — базовый (немасштабированный) шрифт: слой
     /// заголовков сам масштабирует его через `UIFontMetrics` под Dynamic Type.
     ///
-    /// - Note: `PanoramaStyle.headerActiveColor` здесь не используется: в API
-    ///   ``PanoHeaderView`` (волна 1) нет отдельного цвета активного заголовка —
-    ///   смена секции выражается фейдом и сдвигом. Цвет остаётся в стиле как
-    ///   задел, см. отчёт.
+    /// `PanoramaStyle.headerActiveColor` уходит в слой как цвет активного
+    /// заголовка, интерполируемый по `t` (E9.7). Если он совпадает с
+    /// `headerColor`, акцент не нужен — слой не создаёт акцентных копий меток.
     private static func makeHeaderStyle(from style: PanoramaStyle) -> PanoHeaderView.Style {
         PanoHeaderView.Style(
             textStyle: .largeTitle,
             baseFont: style.headerFont,
             textColor: style.headerColor,
+            activeTextColor: style.headerActiveColor == style.headerColor
+                ? nil
+                : style.headerActiveColor,
             travelRatio: 0.3,
             contentInsets: UIEdgeInsets(
                 top: 8,
@@ -605,25 +745,51 @@ public final class PanoramaViewController: UIViewController {
 
         // §8: при активном свайпе изменение размера лучше отложить до конца
         // децелерации — пересборка contentSize дёргала бы offset под пальцем.
-        if scrollView.isDragging || scrollView.isDecelerating {
+        if scrollView.isUserScrollInFlight {
             needsDeferredLayout = true
             return
         }
 
+        // Направление чтения корневого вида — единственный источник для слоёв:
+        // `semanticContentAttribute` не наследуется subview'ами, а скролл и
+        // заголовки считают слоты/зеркалирование от собственного направления.
+        if scrollView.semanticContentAttribute != view.semanticContentAttribute {
+            scrollView.semanticContentAttribute = view.semanticContentAttribute
+        }
+        if headerView.semanticContentAttribute != view.semanticContentAttribute {
+            headerView.semanticContentAttribute = view.semanticContentAttribute
+        }
+
         let direction = view.effectiveUserInterfaceLayoutDirection
+        // Направление, в котором сейчас разложены слоты и стоит offset.
+        let slotDirection = lastLayoutDirection ?? direction
+        // `peek` из стиля ещё не применён к скроллу: смена ширины секции на лету
+        // — такая же смена геометрии, как поворот (E10.13).
+        let peekChanged = abs(scrollView.peek - style.peek) > .ulpOfOne
         let geometryChanged = lastLayoutWidth > 0
             && (abs(bounds.width - lastLayoutWidth) > .ulpOfOne
                 || abs(bounds.height - lastLayoutHeight) > .ulpOfOne
-                || lastLayoutDirection != direction)
+                || slotDirection != direction
+                || peekChanged)
 
         // §8: долю внутри секции запоминаем до смены itemWidth, иначе после
-        // пересчёта её уже не восстановить.
+        // пересчёта её уже не восстановить. Нормализация — по направлению, в
+        // котором offset стоит сейчас, а не по новому: при смене LTR↔RTL иначе
+        // открылась бы зеркальная секция (E10.13). Скролл здесь ещё в прежней
+        // геометрии: кадр и peek применяются ниже.
         if geometryChanged, sections.count > 1 {
             savedReadingProgress = scrollView.readingProgress(
-                forRawOffset: scrollView.contentOffset.x
+                forRawOffset: scrollView.contentOffset.x,
+                layoutDirection: slotDirection
             )
         }
 
+        // Запись кадра, contentSize и offset'а — следствие пересчёта геометрии,
+        // а не прогресс пользователя: UIKit может прислать на них
+        // `scrollViewDidScroll`, и делегат не должен получить ложный
+        // `didChangeProgress`, а текущая секция — сбиться (E10.13). Итоговый
+        // прогресс применяется один раз в конце прохода.
+        isRestoringGeometry = true
         layoutHeader(in: bounds)
 
         let contentTop = headerView.isHidden
@@ -645,6 +811,8 @@ public final class PanoramaViewController: UIViewController {
         scrollView.contentSize = scrollView.requiredContentSize
 
         restoreOffsetIfNeeded(geometryChanged: geometryChanged)
+        isRestoringGeometry = false
+
         layoutBackground()
         refreshLoadedSections(around: currentSectionIndex)
         layoutSectionFrames()
@@ -713,8 +881,15 @@ public final class PanoramaViewController: UIViewController {
         let factor = style.parallaxFactor
         let shift = scrollView.maximumOffsetX * factor
         // «Резина» уводит contentOffset за край ленты; запас с обеих сторон
-        // покрывает этот выход с большим запасом при любом допустимом факторе.
-        let padding = max(Metrics.backgroundBouncePadding, bounds.width * 0.35)
+        // покрывает выход на `padding / factor`. Слагаемое `0.6 × width × factor`
+        // гарантирует не меньше 0.6 ширины экрана при любом факторе из (0, 1)
+        // (E9.7: кламп расширен с 0.4…0.6 до 0.01…0.99), остальные — прежний
+        // минимум для типичных факторов.
+        let padding = max(
+            Metrics.backgroundBouncePadding,
+            bounds.width * 0.35,
+            bounds.width * 0.6 * factor
+        )
 
         let contentSize = CGSize(
             width: max(scrollView.contentSize.width, bounds.width),
@@ -745,13 +920,12 @@ public final class PanoramaViewController: UIViewController {
 
     /// Восстанавливает `contentOffset` текущей секции (§8).
     ///
-    /// - Parameter geometryChanged: Сменилась ширина/высота/направление чтения.
+    /// Восстановление — программная запись `contentOffset` из layout'а:
+    /// вызывающий держит `isRestoringGeometry` поднятым, колбэки прогресса
+    /// делегату на это время выключены.
+    ///
+    /// - Parameter geometryChanged: Сменилась ширина/высота/направление чтения/peek.
     private func restoreOffsetIfNeeded(geometryChanged: Bool) {
-        // Восстановление — программная запись `contentOffset` из layout'а: на это
-        // время колбэки прогресса делегату выключены (см. `isRestoringGeometry`).
-        isRestoringGeometry = true
-        defer { isRestoringGeometry = false }
-
         guard !sections.isEmpty else {
             if scrollView.contentOffset != .zero {
                 scrollView.contentOffset = .zero
@@ -857,10 +1031,7 @@ public final class PanoramaViewController: UIViewController {
     private func refreshLoadedSections(around index: Int) {
         guard !sections.isEmpty, scrollView.bounds.width > 0 else { return }
 
-        let center = clampedSectionIndex(index)
-        let desired = Set(
-            [center - 1, center, center + 1].filter { sections.indices.contains($0) }
-        )
+        let desired = sectionWindow(around: index)
 
         for loadedIndex in Array(loadedSections.keys) where !desired.contains(loadedIndex) {
             guard let controller = loadedSections.removeValue(forKey: loadedIndex) else {
@@ -888,12 +1059,17 @@ public final class PanoramaViewController: UIViewController {
     private func prefetchSections(around index: Int) {
         guard !sections.isEmpty, scrollView.bounds.width > 0 else { return }
 
-        let center = clampedSectionIndex(index)
-        let desired = [center - 1, center, center + 1].filter { sections.indices.contains($0) }
-
-        for sectionIndex in desired.sorted() where loadedSections[sectionIndex] == nil {
+        for sectionIndex in sectionWindow(around: index).sorted()
+        where loadedSections[sectionIndex] == nil {
             loadSection(at: sectionIndex)
         }
+    }
+
+    /// Индексы окна ±1 вокруг секции (§6); пусто для пустого набора.
+    private func sectionWindow(around index: Int) -> Set<Int> {
+        guard !sections.isEmpty else { return [] }
+        let center = clampedSectionIndex(index)
+        return Set([center - 1, center, center + 1].filter { sections.indices.contains($0) })
     }
 
     /// Создаёт контроллер секции и подключает его как child-VC.
@@ -982,12 +1158,16 @@ public final class PanoramaViewController: UIViewController {
     }
 
     /// Досрочно применяет отложенный из-за скролла layout (§8).
+    ///
+    /// Отложенный проход уже «потратил» флаг `needsLayout` вида, поэтому
+    /// одного `layoutIfNeeded()` мало — без `setNeedsLayout()` он ничего не
+    /// делает, и новая геометрия (поворот во время свайпа) не применилась бы до
+    /// случайного следующего прохода (E10.13).
     private func applyDeferredLayoutIfNeeded() {
-        guard needsDeferredLayout,
-              !scrollView.isDragging,
-              !scrollView.isDecelerating else { return }
+        guard needsDeferredLayout, !scrollView.isUserScrollInFlight else { return }
 
         needsDeferredLayout = false
+        view.setNeedsLayout()
         view.layoutIfNeeded()
     }
 
@@ -1101,6 +1281,9 @@ extension PanoramaViewController: PanoScrollViewObserving {
     ///
     /// - Parameter scrollView: Источник события.
     func panoScrollViewDidScroll(_ scrollView: PanoScrollView) {
+        // Запись геометрии в layout-проходе — не прогресс: итог применит сам
+        // проход (E10.13).
+        guard !isRestoringGeometry else { return }
         applyProgress(notifyDelegate: true)
     }
 
@@ -1118,7 +1301,14 @@ extension PanoramaViewController: PanoScrollViewObserving {
         prefetchSections(around: targetReadingIndex)
     }
 
-    /// Жест завершён без инерции — переход закончен сразу.
+    /// Жест завершён без инерции: доводка снапа (E9.2б) либо завершение сразу.
+    ///
+    /// При нулевой скорости UIKit не начинает инерцию и игнорирует изменённый
+    /// в `scrollViewWillEndDragging` `targetContentOffset` — offset остался бы
+    /// между снап-точками. Контроллер — программный писатель `contentOffset`
+    /// (§2, «Один писатель») — сам доводит его до цели политики анимацией и
+    /// завершает переход в `scrollViewDidEndScrollingAnimation`. При Reduce
+    /// Motion доводка мгновенная (§7).
     ///
     /// - Parameters:
     ///   - scrollView: Источник события.
@@ -1127,7 +1317,20 @@ extension PanoramaViewController: PanoScrollViewObserving {
         _ scrollView: PanoScrollView,
         willDecelerate decelerate: Bool
     ) {
+        let snapTarget = scrollView.consumePendingSnapOffsetX()
         guard !decelerate else { return }
+
+        if let alignedX = scrollView.alignedSnapOffsetX(preferred: snapTarget),
+           abs(scrollView.contentOffset.x - alignedX) > Metrics.alignmentTolerance {
+            let target = CGPoint(x: alignedX, y: scrollView.contentOffset.y)
+            if TesseraAccessibility.isReduceMotionEnabled {
+                scrollView.setContentOffset(target, animated: false)
+            } else {
+                // Переход завершит `panoScrollViewDidEndScrollingAnimation`.
+                scrollView.setContentOffset(target, animated: true)
+                return
+            }
+        }
         finishTransition()
     }
 
@@ -1173,6 +1376,19 @@ extension PanoramaViewController: PanoScrollViewObserving {
 
         selectSection(at: targetIndex, animated: !TesseraAccessibility.isReduceMotionEnabled)
         return true
+    }
+}
+
+/// Корневой вид панорамы: смена `semanticContentAttribute` на лету помечает
+/// layout, чтобы `layoutPanorama()` перенёс направление на слои и переложил
+/// слоты, сохранив текущую секцию (§7, «RTL»; E10.13).
+private final class PanoramaRootView: UIView {
+    override var semanticContentAttribute: UISemanticContentAttribute {
+        didSet {
+            if oldValue != semanticContentAttribute {
+                setNeedsLayout()
+            }
+        }
     }
 }
 #endif

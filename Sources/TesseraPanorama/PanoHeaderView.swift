@@ -112,6 +112,17 @@ public final class TesseraPanoHeaderView: UIView {
         /// поэтому цвет может быть любым, включая акцентный.
         public var textColor: UIColor
 
+        /// Цвет активного заголовка (`PanoramaStyle.headerActiveColor`, E9.7).
+        ///
+        /// `nil` — заголовки одного цвета ``textColor``. Иначе цвет
+        /// интерполируется по прогрессу `t`: вес акцента у заголовка равен его
+        /// «активности» — той же кусочно-линейной функции фазы, что и альфа
+        /// (``TesseraPanoHeaderView/keyframeAlpha(progress:)``): `1` на целом `t`
+        /// своей секции, `0` у соседа на целом `t`. Интерполяция выполняется
+        /// альфой акцентной копии метки поверх основной, поэтому горячий путь
+        /// по-прежнему трогает только `alpha`/`transform` (§4, §6).
+        public var activeTextColor: UIColor?
+
         /// Амплитуда горизонтального сдвига как доля ширины вида.
         ///
         /// Полный размах сдвига — `travel = width * travelRatio`; заголовок
@@ -133,6 +144,7 @@ public final class TesseraPanoHeaderView: UIView {
             textStyle: UIFont.TextStyle = .largeTitle,
             baseFont: UIFont? = nil,
             textColor: UIColor = .label,
+            activeTextColor: UIColor? = nil,
             travelRatio: CGFloat = 0.3,
             contentInsets: UIEdgeInsets = UIEdgeInsets(top: 8, left: 16, bottom: 8, right: 16),
             numberOfLines: Int = 0
@@ -140,6 +152,7 @@ public final class TesseraPanoHeaderView: UIView {
             self.textStyle = textStyle
             self.baseFont = baseFont
             self.textColor = textColor
+            self.activeTextColor = activeTextColor
             self.travelRatio = max(travelRatio, 0)
             self.contentInsets = contentInsets
             self.numberOfLines = max(numberOfLines, 0)
@@ -178,6 +191,24 @@ public final class TesseraPanoHeaderView: UIView {
 
     /// Метки по одной на секцию; порядок совпадает с ``titles``.
     private var labels: [UILabel] = []
+
+    /// Акцентные копии меток (``Style/activeTextColor``), по одной на секцию.
+    ///
+    /// Каждая лежит **внутри** своей метки (subview) с тем же текстом и
+    /// кадром `bounds` метки: сдвиг и фейд метки применяются к ней автоматически
+    /// (групповая прозрачность слоя), а вес акцента — её собственная альфа.
+    /// Непрозрачный акцент поверх непрозрачного глифа даёт ровно линейную
+    /// интерполяцию цветов. Пусто, если акцентный цвет не задан.
+    private var accentLabels: [UILabel] = []
+
+    /// Маршрут VoiceOver-жеста «три пальца» с заголовка (E9.7).
+    ///
+    /// Слой заголовков — отдельный accessibility-элемент, и фокус VoiceOver
+    /// может стоять на нём; без маршрута трёхпальцевый свайп с заголовка не
+    /// листал бы секции. Обработчик задаёт контроллер панорамы: направление
+    /// он превращает в шаг по секциям и пишет `contentOffset` сам (§2,
+    /// «Один писатель»). `nil` — жест уходит системе.
+    var accessibilityScrollHandler: ((UIAccessibilityScrollDirection) -> Bool)?
 
     /// Последний прогресс из ``apply(progress:activeIndex:)`` — чтобы
     /// переприменить состояние после раскладки, смены стиля или Reduce Motion.
@@ -364,6 +395,20 @@ public final class TesseraPanoHeaderView: UIView {
         0.5 + (CGFloat(index) - t) * 0.5
     }
 
+    /// Вес акцентного цвета заголовка секции `index` при прогрессе `t` (E9.7).
+    ///
+    /// `weight = max(0, 1 − |index − t|)` — «активность» секции; совпадает с
+    /// ``keyframeAlpha(progress:)`` её фазы. Видимый цвет заголовка —
+    /// `lerp(textColor, activeTextColor, weight)`.
+    ///
+    /// - Parameters:
+    ///   - index: Индекс секции в порядке чтения.
+    ///   - t: Прогресс в порядке чтения.
+    /// - Returns: Вес в `0...1`.
+    static func activeColorWeight(index: Int, progress t: CGFloat) -> CGFloat {
+        keyframeAlpha(progress: phase(index: index, progress: t))
+    }
+
     // MARK: - Применение состояния
 
     private func applyCurrentState() {
@@ -394,6 +439,11 @@ public final class TesseraPanoHeaderView: UIView {
             // Строго только alpha/transform: никакой геометрии и раскладки.
             label.alpha = alpha
             label.transform = CGAffineTransform(translationX: direction * offset, y: 0)
+            // Вес акцента — «активность» заголовка: та же функция фазы, что и
+            // альфа (1 на целом t своей секции, 0 у соседа). Только alpha.
+            if accentLabels.indices.contains(index) {
+                accentLabels[index].alpha = Self.activeColorWeight(index: index, progress: progress)
+            }
         }
 
         // Единственное, что apply трогает помимо alpha/transform, — текст
@@ -409,6 +459,9 @@ public final class TesseraPanoHeaderView: UIView {
         for (index, label) in labels.enumerated() {
             label.alpha = index == activeIndex ? 1 : 0
             label.transform = .identity
+            if accentLabels.indices.contains(index) {
+                accentLabels[index].alpha = index == activeIndex ? 1 : 0
+            }
         }
 
         updateAccessibilityTitle(for: activeIndex)
@@ -464,6 +517,10 @@ public final class TesseraPanoHeaderView: UIView {
             )
         }
 
+        for (index, accent) in accentLabels.enumerated() where labels.indices.contains(index) {
+            accent.frame = labels[index].bounds
+        }
+
         applyCurrentState()
     }
 
@@ -516,14 +573,9 @@ public final class TesseraPanoHeaderView: UIView {
 
     private func rebuildLabels() {
         labels.forEach { $0.removeFromSuperview() }
-        labels = titles.map { title in
-            let label = UILabel()
-            label.text = title
-            label.textAlignment = .natural
-            label.isAccessibilityElement = false
-            label.isUserInteractionEnabled = false
-            return label
-        }
+        // Акцентные копии лежат внутри старых меток и уходят вместе с ними.
+        accentLabels = []
+        labels = titles.map(Self.makeLabel(text:))
         labels.forEach { addSubview($0) }
 
         applyStyleToLabels()
@@ -536,17 +588,87 @@ public final class TesseraPanoHeaderView: UIView {
         setNeedsLayout()
     }
 
-    private func applyStyleToLabels() {
-        let font = scaledFont
-        for label in labels {
-            label.font = font
-            // Шрифт получен из UIFontMetrics/preferredFont, поэтому метка сама
-            // пересчитает его при смене категории Dynamic Type (§7).
-            label.adjustsFontForContentSizeCategory = true
-            label.textColor = style.textColor
-            label.numberOfLines = style.numberOfLines
-            label.textAlignment = .natural
+    /// Метка заголовка: только визуал, для VoiceOver скрыта (§7).
+    private static func makeLabel(text: String) -> UILabel {
+        let label = UILabel()
+        label.text = text
+        label.textAlignment = .natural
+        label.isAccessibilityElement = false
+        label.isUserInteractionEnabled = false
+        return label
+    }
+
+    /// Создаёт или убирает акцентные копии меток под ``Style/activeTextColor``.
+    ///
+    /// Вызывается при пересоздании меток и при смене стиля — вне скролла.
+    private func syncAccentLabels() {
+        let needsAccent = style.activeTextColor != nil
+        let isInSync = needsAccent
+            ? accentLabels.count == labels.count
+            : accentLabels.isEmpty
+        guard !isInSync else { return }
+
+        accentLabels.forEach { $0.removeFromSuperview() }
+        accentLabels = []
+        guard needsAccent else { return }
+
+        accentLabels = labels.map { label in
+            let accent = Self.makeLabel(text: label.text ?? "")
+            accent.frame = label.bounds
+            accent.alpha = 0
+            label.addSubview(accent)
+            return accent
         }
+        setNeedsLayout()
+    }
+
+    private func applyStyleToLabels() {
+        syncAccentLabels()
+
+        let font = scaledFont
+        for (index, label) in labels.enumerated() {
+            Self.configure(label, font: font, color: style.textColor, numberOfLines: style.numberOfLines)
+            if let activeColor = style.activeTextColor, accentLabels.indices.contains(index) {
+                Self.configure(
+                    accentLabels[index],
+                    font: font,
+                    color: activeColor,
+                    numberOfLines: style.numberOfLines
+                )
+            }
+        }
+    }
+
+    /// Типографика метки (основной и акцентной — одинаковая, кроме цвета).
+    private static func configure(
+        _ label: UILabel,
+        font: UIFont,
+        color: UIColor,
+        numberOfLines: Int
+    ) {
+        label.font = font
+        // Шрифт получен из UIFontMetrics/preferredFont, поэтому метка сама
+        // пересчитает его при смене категории Dynamic Type (§7).
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = color
+        label.numberOfLines = numberOfLines
+        label.textAlignment = .natural
+    }
+
+    // MARK: - Accessibility (§7)
+
+    /// Трёхпальцевый свайп VoiceOver с фокусом на заголовке (E9.7).
+    ///
+    /// Жест уходит в ``accessibilityScrollHandler`` (контроллер панорамы); без
+    /// обработчика или при отказе — системе.
+    ///
+    /// - Parameter direction: Направление жеста VoiceOver.
+    /// - Returns: `true`, если жест обработан.
+    public override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
+        if let accessibilityScrollHandler, accessibilityScrollHandler(direction) {
+            return true
+        }
+        return super.accessibilityScroll(direction)
     }
 
     /// Шрифт заголовков под текущую категорию Dynamic Type.

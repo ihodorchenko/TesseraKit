@@ -217,10 +217,10 @@
 
 | Задача | Что | Статус |
 |---|---|---|
-| E9.7 | Panorama: `headerActiveColor` (реализовать или deprecate); кламп `parallaxFactor` в `(0,1)` по §4 (вместе с тестом-каноном); `contentInsetAdjustmentBehavior` в стиль (§8); маршрут `accessibilityScroll` от слоя заголовков | ⬜ |
-| E10.13 | Panorama: отложенный layout не применяется (нет `setNeedsLayout` перед `layoutIfNeeded`); смена LTR↔RTL открывает зеркальную секцию; смена `peek` на лету оставляет секцию между снап-точками; `reload` пересоздаёт секции и дальний `selectSection` пролетает пустые слоты; `style` переприменяется на каждом SwiftUI-апдейте; запись `frame`/`contentSize` при повороте вне `isRestoringGeometry` | ⬜ |
-| E9.2б | Прод-часть К2: доводка снапа при завершении жеста без инерции в `PanoScrollView` / `PanoramaViewController` + тест | ⬜ |
-| E10.12б | `PanoramaView`: SwiftUI-контент секции с тем же `id`/заголовком не обновляется (путь `TesseraContentUpdating` не задействован) | ⬜ |
+| E9.7 | Panorama: `headerActiveColor` (реализовать или deprecate); кламп `parallaxFactor` в `(0,1)` по §4 (вместе с тестом-каноном); `contentInsetAdjustmentBehavior` в стиль (§8); маршрут `accessibilityScroll` от слоя заголовков | ✅ |
+| E10.13 | Panorama: отложенный layout не применяется (нет `setNeedsLayout` перед `layoutIfNeeded`); смена LTR↔RTL открывает зеркальную секцию; смена `peek` на лету оставляет секцию между снап-точками; `reload` пересоздаёт секции и дальний `selectSection` пролетает пустые слоты; `style` переприменяется на каждом SwiftUI-апдейте; запись `frame`/`contentSize` при повороте вне `isRestoringGeometry` | ✅ |
+| E9.2б | Прод-часть К2: доводка снапа при завершении жеста без инерции в `PanoScrollView` / `PanoramaViewController` + тест | ✅ |
+| E10.12б | `PanoramaView`: SwiftUI-контент секции с тем же `id`/заголовком не обновляется (путь `TesseraContentUpdating` не задействован) | ✅ |
 | E10.7в | Применение решения E10.7а к фону панорамы (`PanoramaViewController`) | ✅ |
 | E9.1г | Применение proxy-таргета из E9.1а в `PanoramaViewController` — не требуется: UIKit держит таргеты слабо (`TesseraGestureTargetRetentionTests`, W1) | ✅ |
 
