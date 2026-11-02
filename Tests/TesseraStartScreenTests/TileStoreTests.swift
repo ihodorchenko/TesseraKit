@@ -122,6 +122,81 @@ final class TileStoreTests: XCTestCase {
         XCTAssertEqual(store.folderContaining("a")?.tiles.count, 1)
     }
 
+    // MARK: - E11.4: размер новой папки
+
+    /// Папка наследует размер ярлыка-цели (сохранённый или из дескриптора) и
+    /// переживает round-trip персистентности.
+    func testCreateFolderInheritsTileSize() throws {
+        let directory = TesseraTestDirectory()
+        let descriptors = makeDescriptors()
+        let store = makeStore(descriptors, in: directory)
+
+        let small = try XCTUnwrap(store.createFolder(withTile: "a"))
+        XCTAssertEqual(small.size, .small)
+        let medium = try XCTUnwrap(store.createFolder(withTile: "b"))
+        XCTAssertEqual(medium.size, .medium)
+
+        XCTAssertTrue(store.resize("c", to: .wide))
+        let wide = try XCTUnwrap(store.createFolder(withTile: "c"))
+        XCTAssertEqual(wide.size, .wide, "Сохранённый размер ярлыка важнее дескриптора")
+
+        let folderSizes = Dictionary(
+            uniqueKeysWithValues: store.snapshot().folders.map { ($0.id, $0.size) }
+        )
+        XCTAssertEqual(folderSizes[small.id], .small)
+        XCTAssertEqual(folderSizes[medium.id], .medium)
+        XCTAssertEqual(folderSizes[wide.id], .wide)
+
+        try store.save()
+        let restored = makeStore(descriptors, in: directory)
+        try restored.load()
+        XCTAssertEqual(
+            Set(restored.snapshot().folders.map { $0.size }),
+            [.small, .medium, .wide]
+        )
+    }
+
+    // MARK: - E11.2: вынос из папки на рабочий стол
+
+    /// По умолчанию ярлык встаёт сразу после папки-источника, а не в конец.
+    func testMoveOutOfFolderLandsRightAfterFolder() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a"))
+        XCTAssertTrue(store.addToFolder("b", folderID: folder.id))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "c", "d"])
+
+        XCTAssertTrue(store.moveBetweenFolders("b", to: nil))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "b", "c", "d"])
+        XCTAssertEqual(store.folderContaining("a")?.tiles.count, 1)
+    }
+
+    /// Вынос последнего ярлыка: папка распадается, ярлык занимает её место.
+    func testMoveOutLastTileTakesFolderPlace() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        let folder = try XCTUnwrap(store.createFolder(withTile: "b"))
+        XCTAssertEqual(ids(store.snapshot()), ["a", folder.id, "c", "d"])
+
+        XCTAssertTrue(store.moveBetweenFolders("b", to: nil))
+        XCTAssertEqual(ids(store.snapshot()), ["a", "b", "c", "d"])
+        XCTAssertTrue(store.snapshot().folders.isEmpty)
+    }
+
+    /// Явный индекс задаёт позицию в видимом порядке; значение зажимается.
+    func testMoveOutOfFolderToExplicitIndex() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a"))
+        XCTAssertTrue(store.addToFolder("b", folderID: folder.id))
+
+        XCTAssertTrue(store.moveBetweenFolders("b", to: nil, at: 2))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "c", "b", "d"])
+
+        XCTAssertTrue(store.moveBetweenFolders("a", to: nil, at: 99))
+        XCTAssertEqual(ids(store.snapshot()), ["c", "b", "d", "a"])
+    }
+
     // MARK: - move / resize
 
     /// Перестановка зажимает индекс и не трогает неизвестные ярлыки; перестановка
@@ -391,7 +466,8 @@ final class TileStoreTests: XCTestCase {
         XCTAssertNil(store.folderContaining("c"))
         XCTAssertEqual(store.folderContaining("a")?.id, folderA.id)
         XCTAssertEqual(store.folderContaining("b")?.id, folderB.id)
-        XCTAssertEqual(ids(store.snapshot()).last, AnyHashable("c"))
+        // E11.2: ярлык встаёт сразу после папки-источника, а не в конец сетки.
+        XCTAssertEqual(ids(store.snapshot()), [folderA.id, folderB.id, "c", "d"].map { AnyHashable($0) })
         XCTAssertTrue(store.isPinned("c"))
     }
 

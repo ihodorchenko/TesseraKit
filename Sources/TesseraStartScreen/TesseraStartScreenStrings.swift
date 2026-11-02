@@ -127,6 +127,9 @@ enum TesseraStartScreenStrings {
         /// Причина отказа: папка создана, но добавление ярлыка запрещено.
         case a11yGroupingReasonTileAddDenied = "a11y.grouping.reason.tileAddDenied"
 
+        /// Причина отказа: перенос ярлыка из папки запрещён (E11.1).
+        case a11yGroupingReasonMoveDenied = "a11y.grouping.reason.moveDenied"
+
         // MARK: Custom actions (§9)
 
         /// Действие «открепить ярлык».

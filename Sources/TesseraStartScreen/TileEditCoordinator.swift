@@ -217,6 +217,29 @@ public protocol TesseraTileEditCoordinatorDelegate: AnyObject {
         toFolder folderID: AnyHashable?
     )
 
+    /// Ярлык перемещён между папками или на рабочий стол с позицией (E11.1).
+    ///
+    /// Именно этот вариант координатор вызывает при перемещении ярлыка (из
+    /// drag-жеста, из ``TesseraTileEditCoordinator/moveBetweenFolders(_:to:at:)``
+    /// и из прежнего двухаргументного метода) — **ровно один раз за операцию**.
+    /// Реализация по умолчанию пересылает событие прежнему
+    /// ``tileEditCoordinator(_:didMove:toFolder:)``, поэтому делегат, который
+    /// знает только его, продолжает работать; делегат, которому нужна позиция,
+    /// реализует этот метод (тогда прежний не вызывается).
+    ///
+    /// - Parameters:
+    ///   - coordinator: Координатор-источник события.
+    ///   - tileID: Идентификатор ярлыка.
+    ///   - folderID: Папка-цель; `nil` — ярлык вынесен на рабочий стол.
+    ///   - index: Фактический индекс ярлыка в порядке сетки после
+    ///     канонизации (когда `folderID == nil`); `nil` — при переносе в папку.
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didMove tileID: AnyHashable,
+        toFolder folderID: AnyHashable?,
+        atIndex index: Int?
+    )
+
     /// Функция одобрения хоста (D14) отказала в операции с папкой.
     ///
     /// Состояние модели не изменилось (кроме случая, когда папка уже создана,
@@ -269,6 +292,17 @@ public extension TesseraTileEditCoordinatorDelegate {
         didMove tileID: AnyHashable,
         toFolder folderID: AnyHashable?
     ) {}
+
+    /// E11.1: по умолчанию — пересылка в прежний колбэк без индекса, чтобы
+    /// существующие делегаты не потеряли событие.
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didMove tileID: AnyHashable,
+        toFolder folderID: AnyHashable?,
+        atIndex index: Int?
+    ) {
+        tileEditCoordinator(coordinator, didMove: tileID, toFolder: folderID)
+    }
 
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
@@ -520,7 +554,17 @@ public struct TesseraTileEditConfiguration {
 ///   на место. Экран папки — минимальный sheet (`TesseraFolderViewController`),
 ///   в нём долгое нажатие на ярлык открывает меню «переместить в другую папку /
 ///   на рабочий стол», которое вызывает `TileStore.moveBetweenFolders` (тоже
-///   через одобрение).
+///   через одобрение);
+/// - **ярлык из папки** (E11.1): в режиме редактирования тап по папке
+///   раскрывает панель, а долгое нажатие по иконке в панели мгновенно закрывает
+///   её и поднимает ярлык (источник drag — папка, `TesseraTileDragSession.sourceFolderID`).
+///   Бросить можно на сетку / пустое место — ярлык встаёт на позицию превью
+///   (`TileStore.moveBetweenFolders(_:to:at:)`, папка из одного ярлыка
+///   распадается); на центр другой папки с удержанием E8.6 — перенос в неё;
+///   центр обычного ярлыка тут не создаёт папку (работает как перестановка);
+///   центр родной папки, панель и отмена возвращают ярлык, модель не меняется;
+///   делегат получает ровно один
+///   `didMove(_:toFolder:atIndex:)`.
 ///
 /// ## Ограничения
 ///
@@ -530,9 +574,11 @@ public struct TesseraTileEditConfiguration {
 ///   дублирующий вызов игнорируется;
 /// - в режиме редактирования хост должен сам решить, что делать с тапом по
 ///   плитке (`editor.isEditing`); координатор тапы не перехватывает, чтобы не
-///   отбирать у хоста навигацию;
-/// - перетаскивание ярлыков между папками выполняется из экрана папки меню,
-///   а не drag-жестом (drag между двумя sheet-экранами в v1 не поддерживается).
+///   отбирать у хоста навигацию. Тап по папке в режиме редактирования
+///   раскрывает нативную панель (E11.1), как и вне его;
+/// - внутри панели нельзя менять порядок ярлыков перетаскиванием (E11.1:
+///   вне объёма) — из неё ярлык только выносится на сетку или переносится в
+///   другую папку.
 public final class TesseraTileEditCoordinator: NSObject {
 
     // MARK: - Публичные настройки
@@ -687,6 +733,9 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// на котором можно собрать папку. `nil` — удержания нет (цель другая,
     /// таймер ещё не взведён или удержание уже сброшено).
     private(set) var mergeTracker: TesseraMergeHoverTracker?
+
+    /// Рамка, в которую последний раз схлопывался снимок drag (E11.3); шов для тестов.
+    private(set) var lastCollapseTargetFrame: CGRect?
 
     /// Таймер удержания (E8.6); `nil` — отсчёт не идёт.
     ///
@@ -1029,11 +1078,16 @@ public final class TesseraTileEditCoordinator: NSObject {
     public func handleLongPress(on item: TileGridItem, at point: CGPoint) {
         guard isEnabled, grid.window != nil, dragSession == nil else { return }
 
-        // E10.5-A4/E9.8а: с ячеек панели раскрытой папки drag не начинается —
-        // панель не плитка, её место фиксировано раскладкой. Долгое нажатие по
-        // панели только входит в редактирование (и закрывает панель штатно).
+        // E10.5-A4/E9.8а: панель не плитка, её место фиксировано раскладкой.
+        // Вне редактирования долгое нажатие по панели только входит в
+        // редактирование (и закрывает панель штатно).
+        // E11.1: в режиме редактирования долгое нажатие по иконке панели
+        // поднимает ярлык (источник — папка); вне панельной иконки (заголовок,
+        // фон) ничего не происходит.
         guard !item.isFolderPanel else {
-            if !isEditing {
+            if isEditing {
+                startDragFromPanel(at: point)
+            } else {
                 beginEditing()
             }
             return
@@ -1365,14 +1419,41 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Returns: `true`, если перемещение выполнено.
     @discardableResult
     public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable?) -> Bool {
-        guard store.moveBetweenFolders(tileID, to: folderID) else {
+        moveBetweenFolders(tileID, to: folderID, at: nil)
+    }
+
+    /// Перемещает ярлык между папками или на рабочий стол с позицией (E11.2).
+    ///
+    /// Без `index` ярлык, вынесенный из папки, встаёт сразу после неё; с
+    /// `index` — на эту позицию видимого порядка (см.
+    /// ``TileStore/moveBetweenFolders(_:to:at:)``). Порядок чтения под число
+    /// колонок приводится после операции, фокус VoiceOver — на ярлыке.
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - folderID: Папка-цель; `nil` — на рабочий стол.
+    ///   - index: Позиция на рабочем столе.
+    /// - Returns: `true`, если перемещение выполнено.
+    @discardableResult
+    public func moveBetweenFolders(
+        _ tileID: AnyHashable,
+        to folderID: AnyHashable?,
+        at index: Int?
+    ) -> Bool {
+        guard store.moveBetweenFolders(tileID, to: folderID, at: index) else {
             notifyGroupingFailure(.moveBetweenFolders, tileID: tileID, folderID: folderID)
             return false
         }
 
         canonicalizeVisibleOrderIfNeeded()
         render(animated: true)
-        delegate?.tileEditCoordinator(self, didMove: tileID, toFolder: folderID)
+        // E11.1: единый колбэк с индексом (по умолчанию пересылает в прежний).
+        delegate?.tileEditCoordinator(
+            self,
+            didMove: tileID,
+            toFolder: folderID,
+            atIndex: folderID == nil ? grid.index(ofItemID: tileID) : nil
+        )
         if grid.index(ofItemID: tileID) != nil {
             postLayoutChanged(focusing: tileID)
         } else if let folderID = folderID {
@@ -1601,7 +1682,9 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Parameter session: Активная drag-сессия.
     /// - Returns: `true`, если модель всё ещё та, что была на захвате.
     private func modelMatchesBase(_ session: TesseraTileDragSession) -> Bool {
-        let base = session.baseSnapshot.items
+        // E11.1: у drag из папки база превью содержит синтетический ярлык, а
+        // модель с ним не совпадает — сверяем с реальным снимком модели.
+        let base = session.modelBaseSnapshot.items
         let current = store.snapshot().items
         guard base.count == current.count else { return false }
 
@@ -1754,16 +1837,140 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
         dimmingFocusID = itemID
 
+        installDragSession(
+            itemID: itemID,
+            initialIndex: initialIndex,
+            isTile: item.tile != nil,
+            slotFrame: frame,
+            liftFrame: frame,
+            placeholder: placeholder,
+            dragView: dragView,
+            point: point,
+            baseSnapshot: modelSnapshot,
+            modelBaseSnapshot: nil,
+            sourceFolderID: nil,
+            magnetSize: item.size
+        )
+    }
+
+    /// Поднимает ярлык из панели раскрытой папки и начинает drag (E11.1).
+    ///
+    /// Источник drag — папка (``TesseraTileDragSession/sourceFolderID``), а не
+    /// элемент сетки. Модель за время drag не меняется: сетке показывается
+    /// **отображаемый** снимок — модельный, где ярлык убран из состава папки и
+    /// вставлен отдельным ярлыком сразу после неё. Этот синтетический элемент
+    /// даёт перетаскиваемому ярлыку слот, пустышку и участие в push-превью
+    /// (`TileLayoutEngine.previewOrder`) как у обычной плитки; сверка с моделью
+    /// (``modelMatchesBase(_:)``) идёт по реальному снимку.
+    ///
+    /// Панель закрывается **мгновенно** (как в m3): снимок иконки берётся до
+    /// закрытия, рамка иконки и смещение захвата считаются в тех же
+    /// координатах, поэтому ярлык остаётся под пальцем.
+    ///
+    /// - Parameter point: Точка нажатия в координатах сетки.
+    private func startDragFromPanel(at point: CGPoint) {
+        guard dragSession == nil, isEditing,
+              let hit = grid.panelTile(at: point) else {
+            return
+        }
+
+        // m2: контракт хоста — сетка показывает актуальный снимок модели.
+        let modelSnapshot = store.snapshot()
+        guard gridMatches(modelSnapshot) else {
+            #if DEBUG
+            assertionFailure(
+                "TesseraTileEditCoordinator.startDragFromPanel: the grid snapshot "
+                    + "differs from the TileStore model at grab time; drag will not "
+                    + "start (E10.5-B1)."
+            )
+            #endif
+            return
+        }
+        var items = modelSnapshot.items
+        guard let folderIndex = items.firstIndex(where: { $0.folder?.id == hit.folder.id }),
+              var displayFolder = items[folderIndex].folder,
+              displayFolder.tiles.contains(where: { $0.id == hit.tile.id }) else {
+            return
+        }
+
+        // Отображаемый снимок: ярлык вынут из папки и лежит сразу после неё.
+        // Размер берётся из дескриптора, как его разрешит `TileStore` при выносе.
+        displayFolder.tiles.removeAll { $0.id == hit.tile.id }
+        items[folderIndex] = .folder(displayFolder)
+        items.insert(.tile(hit.tile), at: folderIndex + 1)
+        let displaySnapshot = TileGridSnapshot(items: items, unpinned: modelSnapshot.unpinned)
+
+        // m3: панель закрывается мгновенно — drag стартует сразу за long-press.
+        grid.closeFolder(animated: false)
+        guard grid.expandedFolderID == nil else { return }
+
+        dimmingFocusID = hit.tile.id
+        grid.update(snapshot: displaySnapshot, animated: !isReduceMotionEnabled())
+        guard let slotFrame = grid.frame(forItemID: hit.tile.id),
+              let placeholder = grid.placeholderView(forItemID: hit.tile.id) else {
+            // Сетка не приняла отображаемый снимок: возвращаем модель.
+            syncGridWithModel(animated: false)
+            dimmingFocusID = nil
+            return
+        }
+
+        installDragSession(
+            itemID: hit.tile.id,
+            initialIndex: folderIndex + 1,
+            isTile: true,
+            slotFrame: slotFrame,
+            liftFrame: hit.frame,
+            placeholder: placeholder,
+            dragView: hit.snapshot,
+            point: point,
+            baseSnapshot: displaySnapshot,
+            modelBaseSnapshot: modelSnapshot,
+            sourceFolderID: hit.folder.id,
+            magnetSize: hit.tile.size
+        )
+    }
+
+    /// Ставит оверлеи, создаёт drag-сессию и запускает подъём (общий хвост
+    /// старта drag для ячейки сетки и для ярлыка из папки, E11.1).
+    ///
+    /// - Parameters:
+    ///   - itemID: Идентификатор перетаскиваемого ярлыка/папки.
+    ///   - initialIndex: Индекс в базовом снимке.
+    ///   - isTile: Ярлык ли это.
+    ///   - slotFrame: Рамка слота в сетке (пустышка).
+    ///   - liftFrame: Рамка, с которой стартует снимок (для ярлыка из папки —
+    ///     рамка иконки панели).
+    ///   - placeholder: Пустышка.
+    ///   - dragView: Снимок.
+    ///   - point: Точка захвата в координатах сетки.
+    ///   - baseSnapshot: База превью.
+    ///   - modelBaseSnapshot: Снимок модели, если он отличается от базы.
+    ///   - sourceFolderID: Папка-источник (drag из панели).
+    ///   - magnetSize: Размерность для магнита.
+    private func installDragSession(
+        itemID: AnyHashable,
+        initialIndex: Int,
+        isTile: Bool,
+        slotFrame: CGRect,
+        liftFrame: CGRect,
+        placeholder: UIView,
+        dragView: UIView,
+        point: CGPoint,
+        baseSnapshot: TileGridSnapshot,
+        modelBaseSnapshot: TileGridSnapshot?,
+        sourceFolderID: AnyHashable?,
+        magnetSize: TileSize
+    ) {
         beginDragStoreTransaction()
 
         grid.setItemHidden(true, forItemID: itemID)
         removeControl(for: itemID)
 
-        placeholder.frame = frame
+        placeholder.frame = slotFrame
         placeholder.layer.zPosition = 500
         grid.addSubview(placeholder)
 
-        dragView.frame = frame
+        dragView.frame = liftFrame
         dragView.isUserInteractionEnabled = false
         dragView.layer.zPosition = 1000
         dragView.layer.shadowColor = UIColor.black.cgColor
@@ -1778,13 +1985,15 @@ public final class TesseraTileEditCoordinator: NSObject {
         let session = TesseraTileDragSession(
             itemID: itemID,
             initialIndex: initialIndex,
-            isTile: item.tile != nil,
-            grabOffset: CGPoint(x: frame.midX - point.x, y: frame.midY - point.y),
+            isTile: isTile,
+            grabOffset: CGPoint(x: liftFrame.midX - point.x, y: liftFrame.midY - point.y),
             dragView: dragView,
             placeholder: placeholder,
             lastPoint: point,
-            baseSnapshot: modelSnapshot,
-            magnetSize: item.size
+            baseSnapshot: baseSnapshot,
+            magnetSize: magnetSize,
+            modelBaseSnapshot: modelBaseSnapshot,
+            sourceFolderID: sourceFolderID
         )
         dragSession = session
         storeChangedDuringDrag = false
@@ -1905,6 +2114,12 @@ public final class TesseraTileEditCoordinator: NSObject {
                     // Перетаскивание папки по сетке — обычная перестановка:
                     // папку нельзя бросить в папку (вложенности нет).
                     target = .reorder(hovered.id, index: baseIndex)
+                } else if folder.id == session.sourceFolderID {
+                    // E11.1: центр родной папки — «вернуть в папку» (no-op),
+                    // край — обычная перестановка: ярлык встаёт перед папкой.
+                    target = isPointInDropCenter(point, of: frame)
+                        ? .sourceFolder
+                        : .reorder(hovered.id, index: baseIndex)
                 } else if isPointInDropCenter(point, of: frame) {
                     // E10.5-A1: центральная зона папки — добавление ярлыка
                     // внутрь по удержанию E8.6 (D14). Без удержания drop — no-op.
@@ -1917,8 +2132,11 @@ public final class TesseraTileEditCoordinator: NSObject {
                 }
 
             case .tile(let tile):
-                if session.isTile, isPointInDropCenter(point, of: frame) {
+                if session.isTile, session.sourceFolderID == nil,
+                   isPointInDropCenter(point, of: frame) {
                     // Центр ярлыка — создание папки из двух ярлыков (D14).
+                    // E11.1: для ярлыка, взятого из папки, папка не создаётся —
+                    // центр работает как обычная перестановка (вынос на сетку).
                     target = .group(tile.id)
                 } else {
                     target = .reorder(hovered.id, index: baseIndex)
@@ -2052,7 +2270,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         switch session.hover {
         case .folder, .group:
             return nil
-        case .none, .reorder:
+        case .none, .reorder, .sourceFolder:
             break
         }
 
@@ -2495,7 +2713,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Parameter target: Текущая цель под пальцем.
     private func updateDropHighlight(for target: HoverTarget) {
         switch target {
-        case .none, .reorder:
+        case .none, .reorder, .sourceFolder:
             hideDropHighlight()
 
         case .folder(let itemID):
@@ -2577,7 +2795,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 view.bounds = CGRect(origin: .zero, size: frame.size)
                 view.center = CGPoint(x: frame.midX, y: frame.midY)
             }
-        case .none, .reorder:
+        case .none, .reorder, .sourceFolder:
             break
         }
     }
@@ -2696,7 +2914,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             switch session.hover {
             case .folder(let targetID), .group(let targetID):
                 if targetID == itemID { return 1 }
-            case .none, .reorder:
+            case .none, .reorder, .sourceFolder:
                 break
             }
             return TesseraTileGridView.dimmedTileAlpha
@@ -2754,9 +2972,9 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         guard commit else {
             restore()
-            moveDragView(session, to: currentFrame(of: session), completion: {
+            settleDragView(session) {
                 self.cleanupDrag(session, unhide: true)
-            })
+            }
             return
         }
 
@@ -2773,10 +2991,18 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
 
         switch session.hover {
+        case .sourceFolder:
+            // E11.1: центр родной папки — ярлык возвращается, модель не меняется.
+            returnAfterNoOpDrop(session)
+
         case .folder(let folderID) where session.isTile && isMergeReady:
             // E10.5-A1/E8.6: центр папки с выдержанным удержанием — добавляем
-            // ярлык внутрь (D14).
-            dropIntoFolder(session, folderID: folderID)
+            // ярлык внутрь (D14). E11.1: для ярлыка из папки это перенос.
+            if session.sourceFolderID != nil {
+                dropFromFolderIntoFolder(session, folderID: folderID)
+            } else {
+                dropIntoFolder(session, folderID: folderID)
+            }
 
         case .group(let targetID) where session.isTile && isMergeReady:
             // E8.6: папка создаётся только если удержание выдержано (подсветка
@@ -2789,6 +3015,11 @@ public final class TesseraTileEditCoordinator: NSObject {
             returnAfterNoOpDrop(session)
 
         default:
+            // E11.1: ярлык из папки выносится на рабочий стол на позицию превью.
+            if session.sourceFolderID != nil {
+                dropOutOfFolder(session)
+                return
+            }
             // Индекс перетаскиваемой плитки в текущем (превью) порядке сетки —
             // ровно тот, который `TileStore.moveItem` воспроизведёт: хранилище
             // тоже вынимает элемент и вставляет его на это место.
@@ -2821,8 +3052,121 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Parameter session: Drag-сессия.
     private func returnAfterNoOpDrop(_ session: TesseraTileDragSession) {
         restore()
-        moveDragView(session, to: currentFrame(of: session)) {
+        settleDragView(session) {
             self.cleanupDrag(session, unhide: true)
+        }
+    }
+
+    /// Возвращает снимок на место после отмены/no-op/отказа (E11.1).
+    ///
+    /// Обычный элемент едет в свой слот. Ярлык, взятый из папки, после
+    /// `restore()` уже не элемент сетки (синтетический слот убран вместе с
+    /// отображаемым снимком) — он «впитывается» обратно в папку-источник.
+    ///
+    /// - Parameters:
+    ///   - session: Drag-сессия.
+    ///   - completion: Завершение (убрать оверлеи).
+    private func settleDragView(
+        _ session: TesseraTileDragSession,
+        completion: @escaping () -> Void
+    ) {
+        if let sourceID = session.sourceFolderID,
+           grid.index(ofItemID: session.itemID) == nil,
+           let folderFrame = grid.frame(forItemID: sourceID) {
+            collapseDragView(session, into: folderFrame, completion: completion)
+        } else {
+            moveDragView(session, to: currentFrame(of: session), completion: completion)
+        }
+    }
+
+    /// Завершает drop ярлыка из панели на сетку: вынос из папки (E11.1).
+    ///
+    /// Позиция — индекс ярлыка в текущем (превью) порядке сетки. Если в папке
+    /// был один ярлык, она распадётся и в итоговом порядке её уже нет —
+    /// индекс уменьшается на единицу, когда папка стояла раньше ярлыка.
+    /// Дальше как у остальных папочных drop'ов: канонизация, `render`, рамка
+    /// читается после них, фокус VoiceOver — на ярлыке.
+    ///
+    /// - Parameter session: Drag-сессия (источник — папка).
+    private func dropOutOfFolder(_ session: TesseraTileDragSession) {
+        guard let sourceID = session.sourceFolderID else { return }
+
+        var index = previewIndex(of: session)
+        if let folder = session.modelBaseSnapshot.folders.first(where: { $0.id == sourceID }),
+           folder.tiles.count == 1,
+           let folderIndex = grid.index(ofItemID: sourceID),
+           folderIndex < index {
+            index -= 1
+        }
+
+        guard store.moveBetweenFolders(session.itemID, to: nil, at: index) else {
+            failGroupingDrop(
+                .moveBetweenFolders,
+                session: session,
+                folderID: nil,
+                reason: TesseraStartScreenStrings.string(.a11yGroupingReasonMoveDenied)
+            )
+            return
+        }
+
+        session.modelChanged = true
+        canonicalizeVisibleOrderIfNeeded()
+        render(animated: true)
+        let frame = currentFrame(of: session)
+        let actualIndex = grid.index(ofItemID: session.itemID)
+        delegate?.tileEditCoordinator(
+            self,
+            didMove: session.itemID,
+            toFolder: nil,
+            atIndex: actualIndex
+        )
+        announce(TesseraStartScreenStrings.string(.a11yFolderTileOnStart))
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+
+        moveDragView(session, to: frame) {
+            self.cleanupDrag(session, unhide: true)
+            self.postLayoutChanged(focusing: session.itemID)
+        }
+    }
+
+    /// Завершает drop ярлыка из панели на центр другой папки (E11.1).
+    ///
+    /// Вызывается только при выдержанном удержании E8.6. Перенос идёт через
+    /// ``TileStore/moveBetweenFolders(_:to:at:)`` (одобрение хоста, D14); папка-
+    /// источник распадается, если ярлык был последним.
+    ///
+    /// - Parameters:
+    ///   - session: Drag-сессия (источник — папка).
+    ///   - folderID: Папка-цель.
+    private func dropFromFolderIntoFolder(_ session: TesseraTileDragSession, folderID: AnyHashable) {
+        guard store.moveBetweenFolders(session.itemID, to: folderID, at: nil) else {
+            failGroupingDrop(
+                .moveBetweenFolders,
+                session: session,
+                folderID: folderID,
+                reason: TesseraStartScreenStrings.string(.a11yGroupingReasonMoveDenied)
+            )
+            return
+        }
+
+        session.modelChanged = true
+        canonicalizeVisibleOrderIfNeeded()
+        render(animated: true)
+        // Рамку цели читаем после переупаковки: распад папки-источника сдвигает
+        // соседей.
+        let folderFrame = grid.frame(forItemID: folderID) ?? session.placeholder.frame
+        delegate?.tileEditCoordinator(
+            self,
+            didMove: session.itemID,
+            toFolder: folderID,
+            atIndex: nil
+        )
+        announce(TesseraStartScreenStrings.string(.a11yFolderTileMoved))
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+
+        collapseDragView(session, into: folderFrame) {
+            self.cleanupDrag(session, unhide: false)
+            self.postLayoutChanged(focusing: folderID)
         }
     }
 
@@ -2947,9 +3291,11 @@ public final class TesseraTileEditCoordinator: NSObject {
             return
         }
 
-        let folderFrame = grid.frame(forItemID: folder.id) ?? session.placeholder.frame
         canonicalizeVisibleOrderIfNeeded()
         render(animated: true)
+        // E11.3: рамку папки читаем после канонизации и `render` — до них новой
+        // плитки в сетке нет, и снимок летел бы в старый слот плейсхолдера.
+        let folderFrame = grid.frame(forItemID: folder.id) ?? session.placeholder.frame
         delegate?.tileEditCoordinator(self, didAdd: session.itemID, toFolder: folder.id)
         announce(TesseraStartScreenStrings.string(.a11yFolderCreatedFromTwoTiles))
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -2988,7 +3334,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             folderID: folderID
         )
 
-        moveDragView(session, to: currentFrame(of: session)) {
+        settleDragView(session) {
             self.cleanupDrag(session, unhide: true)
         }
     }
@@ -3095,6 +3441,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         into frame: CGRect,
         completion: @escaping () -> Void
     ) {
+        lastCollapseTargetFrame = frame
         let reduceMotion = isReduceMotionEnabled()
         UIView.animate(
             withDuration: reduceMotion ? 0.12 : 0.22,
@@ -4108,6 +4455,10 @@ enum HoverTarget: Equatable {
     /// drop — no-op (E9.5).
     case group(AnyHashable)
 
+    /// Центр папки-источника при drag ярлыка из неё (E11.1): цели нет, drop
+    /// возвращает ярлык в папку, модель не меняется.
+    case sourceFolder
+
     /// Идентификатор цели удержания E8.6, если цель его поддерживает.
     ///
     /// Удержание взводится и для центра ярлыка (создание папки), и для центра
@@ -4117,7 +4468,7 @@ enum HoverTarget: Equatable {
         switch self {
         case .folder(let itemID), .group(let itemID):
             return itemID
-        case .none, .reorder:
+        case .none, .reorder, .sourceFolder:
             return nil
         }
     }
@@ -4129,7 +4480,7 @@ enum HoverTarget: Equatable {
             return .folder
         case .group:
             return .group
-        case .none, .reorder:
+        case .none, .reorder, .sourceFolder:
             return nil
         }
     }
@@ -4153,6 +4504,21 @@ final class TesseraTileDragSession {
 
     /// Ярлык ли это (папку нельзя бросить в папку — вложенности нет).
     let isTile: Bool
+
+    /// Папка-источник, если ярлык взят из панели раскрытой папки (E11.1).
+    ///
+    /// `nil` — обычный drag элемента сетки. Для drag из папки ``itemID`` — это
+    /// ярлык, которого нет среди элементов модели на сетке: в ``baseSnapshot``
+    /// он вставлен синтетическим элементом сразу после папки, а модель не
+    /// меняется до drop.
+    let sourceFolderID: AnyHashable?
+
+    /// Реальный снимок модели на момент захвата (E11.1).
+    ///
+    /// Совпадает с ``baseSnapshot`` для обычного drag; для drag из папки —
+    /// без синтетического ярлыка. По нему ``TesseraTileEditCoordinator``
+    /// проверяет, что модель не менялась извне.
+    let modelBaseSnapshot: TileGridSnapshot
 
     /// Размерность перетаскиваемого элемента (E8.9).
     ///
@@ -4249,8 +4615,12 @@ final class TesseraTileDragSession {
         placeholder: UIView,
         lastPoint: CGPoint,
         baseSnapshot: TileGridSnapshot,
-        magnetSize: TileSize
+        magnetSize: TileSize,
+        modelBaseSnapshot: TileGridSnapshot? = nil,
+        sourceFolderID: AnyHashable? = nil
     ) {
+        self.modelBaseSnapshot = modelBaseSnapshot ?? baseSnapshot
+        self.sourceFolderID = sourceFolderID
         self.itemID = itemID
         self.initialIndex = initialIndex
         self.isTile = isTile
