@@ -193,8 +193,9 @@ import TesseraCore
 /// - закрытие: повторный тап по панели, тап по пустому месту коллекции,
 ///   ``accessibilityPerformEscape()`` (Back/двумя пальцами) или явный вызов
 ///   хоста; исчезновение папки из снимка тоже закрывает панель;
-/// - в режиме редактирования (`TesseraTileEditCoordinator`) раскрытие не
-///   выполняется: тап остаётся событием ``onTap``;
+/// - в режиме редактирования (`TesseraTileEditCoordinator`) раскрытие
+///   выполняется так же (E11.1): из панели ярлык берут долгим нажатием и
+///   выносят из папки; режим редактирования тап по папке не прерывает;
 /// - анимация — `cubic-bezier(0.1, 0.9, 0.2, 1)`, 0.28 с
 ///   (``folderExpansionDuration``); при Reduce Motion (§9) раскрытие мгновенное.
 ///
@@ -266,8 +267,12 @@ public final class TesseraTileGridView: UIView {
     /// панелью (``toggleFolder(_:)``), а событие тапа по-прежнему приходит в
     /// ``onTap``.
     ///
-    /// Перехватчик не вызывается в режиме редактирования: там тап остаётся
-    /// событием хоста/координатора и раскрытия не запускает.
+    /// E11.1: правило одинаково в обычном режиме и в режиме редактирования —
+    /// перехватчик вызывается и там (раньше в режиме редактирования он не
+    /// вызывался, а тап по папке лишь приходил в ``onTap``). Хост, который
+    /// показывает собственный экран папки, получит его и во время
+    /// редактирования; нативная панель в этом режиме открывается и даёт
+    /// вынести ярлык из папки перетаскиванием.
     public var folderTapHandler: ((TileFolder) -> Bool)?
 
     /// Событие раскрытия/закрытия папки встроенной панелью (D17, E7.3).
@@ -2151,20 +2156,18 @@ public final class TesseraTileGridView: UIView {
 
     /// Маршрутизация тапа по элементу (палец или активация VoiceOver).
     ///
-    /// В режиме редактирования тап остаётся событием хоста: раскрытие не
-    /// запускается. Иначе папку можно перехватить через ``folderTapHandler``;
-    /// без перехвата она раскрывается нативной панелью (D17), а событие
-    /// ``onTap`` по-прежнему уходит подписчику.
+    /// Папку можно перехватить через ``folderTapHandler``; без перехвата она
+    /// раскрывается нативной панелью (D17), а событие ``onTap`` по-прежнему
+    /// уходит подписчику. E11.1: правило одно и для обычного режима, и для
+    /// редактирования — в режиме редактирования панель тоже открывается (из неё
+    /// ярлык берут пальцем и выносят из папки), а режим редактирования не
+    /// прерывается. Ярлык (`.tile`) в обоих режимах — только событие ``onTap``.
     private func handleItemTap(_ item: TileGridItem) {
         switch item {
         case .tile:
             onTap?(item)
 
         case .folder(let folder):
-            guard !isEditModeActive else {
-                onTap?(item)
-                return
-            }
             // Перехватчик полностью владеет тапом папки, когда вернул true:
             // и раскрытие, и событие onTap тогда не выполняются.
             if folderTapHandler?(folder) == true {
@@ -2191,6 +2194,61 @@ public final class TesseraTileGridView: UIView {
     /// - Parameter descriptor: Ярлык, по которому тапнули вне сетки.
     func forwardTileTap(_ descriptor: TileDescriptor) {
         handleItemTap(.tile(descriptor))
+    }
+
+    /// Ярлык панели раскрытой папки под точкой (E11.1).
+    ///
+    /// Нужен координатору редактирования: долгое нажатие по иконке панели
+    /// поднимает ярлык для переноса. Снимок берётся (как у ячеек сетки — с
+    /// принудительным обновлением экрана), пока панель ещё на месте: после её
+    /// закрытия ячейка исчезнет.
+    ///
+    /// - Parameter point: Точка в координатах сетки.
+    /// - Returns: Описание ярлыка или `nil`, если точка не над иконкой панели
+    ///   (панель закрыта, идёт её переход, попадание в заголовок/фон).
+    func panelTile(at point: CGPoint) -> TesseraPanelTileHit? {
+        guard expandedFolderID != nil, !isFolderChangeAnimating,
+              let folder = expandedFolder,
+              let panel = collectionView.visibleCells
+                  .compactMap({ $0 as? TesseraFolderPanelCell }).first else {
+            return nil
+        }
+
+        let pointInPanel = convert(point, to: panel.contentView)
+        guard let hit = panel.shortcut(at: pointInPanel),
+              let container = hit.cell.superview else {
+            return nil
+        }
+
+        // Рамка — по центру и границам, без `transform` каскада появления.
+        let size = hit.cell.bounds.size
+        let center = container.convert(hit.cell.center, to: self)
+        let frame = CGRect(
+            x: center.x - size.width / 2,
+            y: center.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+        guard let snapshot = hit.cell.snapshotView(afterScreenUpdates: true)
+            ?? hit.cell.resizableSnapshotView(
+                from: hit.cell.bounds,
+                afterScreenUpdates: true,
+                withCapInsets: .zero
+            ) else {
+            return nil
+        }
+        return TesseraPanelTileHit(
+            folder: folder,
+            tile: hit.tile,
+            frame: frame,
+            snapshot: snapshot
+        )
+    }
+
+    /// Раскрытая папка из текущего снимка.
+    private var expandedFolder: TileFolder? {
+        guard let expandedFolderID else { return nil }
+        return snapshot?.items.compactMap { $0.folder }.first { $0.id == expandedFolderID }
     }
 
     /// Тап по пустому месту сетки закрывает раскрытую папку (D17).
@@ -3301,6 +3359,22 @@ final class TesseraTileCell: UICollectionViewCell {
     }
 }
 
+/// Ярлык панели раскрытой папки, найденный под пальцем (E11.1).
+struct TesseraPanelTileHit {
+
+    /// Раскрытая папка (из снимка сетки).
+    let folder: TileFolder
+
+    /// Ярлык, по иконке которого нажали.
+    let tile: TileDescriptor
+
+    /// Рамка иконки в координатах сетки.
+    let frame: CGRect
+
+    /// Снимок иконки (копия, живущая после закрытия панели).
+    let snapshot: UIView
+}
+
 // MARK: - Панель раскрытой папки (D17, E7.3)
 
 /// Ячейка-панель раскрытой папки: заголовок и сетка ярлыков (D17).
@@ -3363,6 +3437,27 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     }
 
     // MARK: - Состояние
+
+    /// Ярлык панели под точкой (E11.1).
+    ///
+    /// - Parameter point: Точка в координатах `contentView` панели.
+    /// - Returns: Ячейка-иконка и её дескриптор или `nil`.
+    func shortcut(at point: CGPoint) -> (cell: TesseraTileCell, tile: TileDescriptor)? {
+        for (index, cell) in shortcutCells.enumerated() where tiles.indices.contains(index) {
+            // Рамка без учёта transform каскада: он двигает иконку на 10 pt.
+            let size = cell.bounds.size
+            let frame = CGRect(
+                x: cell.center.x - size.width / 2,
+                y: cell.center.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            if frame.contains(point) {
+                return (cell, tiles[index])
+            }
+        }
+        return nil
+    }
 
     /// Заголовок папки (в отображении — в нижнем регистре, WP-стиль).
     private let titleLabel = UILabel()

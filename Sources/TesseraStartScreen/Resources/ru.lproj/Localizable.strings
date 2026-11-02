@@ -69,6 +69,7 @@
 "a11y.grouping.reason.addDenied" = "добавление в папку запрещено";
 "a11y.grouping.reason.createDenied" = "создание папки запрещено";
 "a11y.grouping.reason.tileAddDenied" = "папка создана, но добавление ярлыка запрещено";
+"a11y.grouping.reason.moveDenied" = "перенос ярлыка из папки запрещён";
 
 /* MARK: - Custom actions режима редактирования (§9) */
 

@@ -69,6 +69,7 @@
 "a11y.grouping.reason.addDenied" = "adding to a folder is denied";
 "a11y.grouping.reason.createDenied" = "creating a folder is denied";
 "a11y.grouping.reason.tileAddDenied" = "the folder was created, but adding the shortcut is denied";
+"a11y.grouping.reason.moveDenied" = "moving the shortcut is denied";
 
 /* MARK: - Custom actions режима редактирования (§9) */
 

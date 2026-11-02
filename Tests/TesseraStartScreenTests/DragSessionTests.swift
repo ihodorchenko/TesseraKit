@@ -27,7 +27,11 @@
 //  - C2: `canonicalizeVisibleOrder(columns:)` после unpin/папочных операций;
 //  - C3: экран папки активирует ярлык общим маршрутом `grid.onTap`;
 //  - E9.5: drop в центр без удержания — возврат на исходное место (no-op);
-//  - E9.8а: значения по умолчанию для строгих границ и «желе» ±1,2°.
+//  - E9.8а: значения по умолчанию для строгих границ и «желе» ±1,2°;
+//  - E11.1: drag ярлыка из панели раскрытой папки (вынос на сетку на позицию
+//    превью, распад папки из одного ярлыка, перенос в другую папку по
+//    удержанию, no-op без удержания / на родной папке / при отмене), тап по
+//    папке в режиме редактирования открывает панель.
 //
 //  Детерминизм: без `sleep`; завершение — прокруткой run loop (`waitUntil`),
 //  таймеры удержания в тестах укорачиваются через конфигурацию.
@@ -1605,6 +1609,333 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(host.storeIDs, [AnyHashable("a"), folderID])
         XCTAssertTrue(recorder.moves.isEmpty, "didMove не пришёл")
         XCTAssertTrue(host.waitForDragCleanup("a"))
+    }
+
+
+    // MARK: - E11.1: drag ярлыка из панели папки
+
+    /// Делегат, реализующий только новый колбэк с индексом (E11.1): прежний
+    /// `didMove(toFolder:)` при этом не вызывается (ровно один из двух).
+    private final class IndexedMoveRecorder: TesseraTileEditCoordinatorDelegate {
+
+        /// События `didMove(toFolder:atIndex:)`.
+        var moves: [(id: AnyHashable, folder: AnyHashable?, index: Int?)] = []
+
+        func tileEditCoordinator(
+            _ coordinator: TesseraTileEditCoordinator,
+            didMove tileID: AnyHashable,
+            toFolder folderID: AnyHashable?,
+            atIndex index: Int?
+        ) {
+            moves.append((tileID, folderID, index))
+        }
+    }
+
+    /// Стенд E11.1: порядок сетки — «a», папка F1 («b», «c»), «d», папка F2 («e»).
+    private func makePanelHost(
+        configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
+            mergeHoverDuration: 0.05,
+            magnetSnapRadius: 0
+        )
+    ) -> TesseraTestDragHost {
+        TesseraTestDragHost(
+            descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
+            configuration: configuration,
+            prepare: { store in
+                if let folder = store.createFolder(withTile: "b") {
+                    _ = store.addToFolder("c", folderID: folder.id)
+                }
+                _ = store.createFolder(withTile: "e")
+            }
+        )
+    }
+
+    /// Идентификаторы папок стенда E11.1 по порядку: (F1, F2).
+    private func panelHostFolderIDs(_ host: TesseraTestDragHost) throws -> (AnyHashable, AnyHashable) {
+        let folders = host.folders
+        XCTAssertEqual(folders.count, 2)
+        return (try XCTUnwrap(folders.first).id, try XCTUnwrap(folders.last).id)
+    }
+
+    /// Входит в edit, раскрывает панель папки и начинает drag иконки панели.
+    ///
+    /// - Returns: Точка захвата в координатах сетки.
+    @discardableResult
+    private func startPanelDrag(
+        _ host: TesseraTestDragHost,
+        folderID: AnyHashable,
+        iconIndex: Int
+    ) throws -> CGPoint {
+        host.coordinator.beginEditing()
+        let folder = try XCTUnwrap(host.folders.first { $0.id == folderID })
+        host.host.grid.openFolder(folder, animated: false)
+        host.host.layout()
+        let panelItem = try XCTUnwrap(host.host.grid.displayItems.first { $0.isFolderPanel })
+        let panel = try XCTUnwrap(host.host.panelCell(folderID: folderID))
+        let icon = try XCTUnwrap(panel.shortcutCells[iconIndex] as TesseraTileCell?)
+        let point = try XCTUnwrap(icon.superview?.convert(icon.center, to: host.host.grid))
+
+        host.coordinator.handleLongPress(on: panelItem, at: point)
+        return point
+    }
+
+    /// Точка в пустой области сетки (правый нижний угол, под всеми плитками).
+    private func emptyPoint(in host: TesseraTestDragHost) -> CGPoint {
+        let bounds = host.host.grid.bounds
+        return CGPoint(x: bounds.maxX - 3, y: bounds.maxY - 3)
+    }
+
+    /// Долгое нажатие по иконке панели в edit: панель закрывается мгновенно,
+    /// стартует drag с источником-папкой; модель за время drag не меняется,
+    /// сетка показывает отображаемый снимок с ярлыком после папки.
+    func testLongPressOnPanelIconStartsDragFromFolder() throws {
+        let host = makePanelHost()
+        let (f1, _) = try panelHostFolderIDs(host)
+        let before = host.storeIDs
+
+        try startPanelDrag(host, folderID: f1, iconIndex: 1)
+
+        XCTAssertTrue(host.coordinator.isDragging)
+        let session = try XCTUnwrap(host.coordinator.dragSession)
+        XCTAssertEqual(session.sourceFolderID, f1)
+        XCTAssertEqual(session.itemID, AnyHashable("c"))
+        XCTAssertNil(host.host.grid.expandedFolderID, "Панель закрыта мгновенно")
+        XCTAssertFalse(host.host.grid.isFolderChangeAnimating)
+        XCTAssertEqual(host.storeIDs, before, "Модель не меняется во время drag")
+        XCTAssertEqual(
+            host.gridIDs,
+            ["a", f1, "c", "d", host.folders[1].id] as [AnyHashable],
+            "Синтетический ярлык лежит сразу после папки"
+        )
+        XCTAssertEqual(
+            host.folders.first?.tiles.map { $0.id },
+            ["b", "c"] as [AnyHashable],
+            "Состав папки в модели прежний"
+        )
+        host.coordinator.endEditing()
+        XCTAssertEqual(host.gridIDs, before, "Отмена возвращает сетке порядок модели")
+    }
+
+    /// Вынос на сетку: ярлык встаёт на позицию превью, делегат получает
+    /// `didMove(toFolder: nil, atIndex:)`, прежний колбэк не вызывается.
+    func testDropOutOfFolderLandsAtPreviewIndex() throws {
+        let host = makePanelHost()
+        let recorder = IndexedMoveRecorder()
+        host.coordinator.delegate = recorder
+        let (f1, _) = try panelHostFolderIDs(host)
+
+        try startPanelDrag(host, folderID: f1, iconIndex: 1)
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("a", fx: 0.1, fy: 0.5)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .reorder("a", index: 0))
+        XCTAssertEqual(host.gridIDs.first, AnyHashable("c"), "Превью: ярлык на месте цели")
+
+        host.coordinator.finishDrag(commit: true)
+
+        XCTAssertEqual(recorder.moves.count, 1)
+        XCTAssertEqual(recorder.moves.first?.id, AnyHashable("c"))
+        XCTAssertNil(recorder.moves.first?.folder ?? nil)
+        XCTAssertEqual(recorder.moves.first?.index, 0)
+        XCTAssertEqual(host.storeIDs.first, AnyHashable("c"))
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b"] as [AnyHashable])
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
+        XCTAssertTrue(host.waitForDragCleanup("c"))
+        XCTAssertNil(host.coordinator.dragSession)
+        // Кадр, в который летит снимок, — рамка вынесенной плитки после render.
+        XCTAssertNotNil(host.host.grid.frame(forItemID: "c"))
+    }
+
+    /// Вынос последнего ярлыка распускает папку; индекс учитывает, что папка,
+    /// стоявшая перед ярлыком, исчезла из итогового порядка.
+    func testDropOfLastTileDissolvesFolderAndAdjustsIndex() throws {
+        let host = makePanelHost()
+        let recorder = IndexedMoveRecorder()
+        host.coordinator.delegate = recorder
+        let (_, f2) = try panelHostFolderIDs(host)
+
+        try startPanelDrag(host, folderID: f2, iconIndex: 0)
+        XCTAssertEqual(host.coordinator.dragSession?.sourceFolderID, f2)
+        // Пустое место: превью не меняется, ярлык остаётся после папки.
+        host.coordinator.updateDrag(to: emptyPoint(in: host))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.none)
+
+        host.coordinator.finishDrag(commit: true)
+
+        XCTAssertFalse(host.storeIDs.contains(f2), "Папка из одного ярлыка распалась")
+        XCTAssertEqual(host.storeIDs.last, AnyHashable("e"), "Ярлык занял место папки")
+        XCTAssertEqual(recorder.moves.first?.index, host.storeIDs.count - 1)
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
+        XCTAssertTrue(host.waitForDragCleanup("e"))
+    }
+
+    /// Перенос в другую папку: центр папки-цели с выдержанным удержанием.
+    /// Работает и прежний колбэк (делегат, не знающий про индекс).
+    func testDropOnOtherFolderCenterAfterHoldMovesTile() throws {
+        let host = makePanelHost()
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        let (f1, f2) = try panelHostFolderIDs(host)
+
+        try startPanelDrag(host, folderID: f1, iconIndex: 1)
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point(f2, fx: 0.5, fy: 0.5)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .folder(f2))
+        XCTAssertTrue(
+            host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
+            "Удержание над центром чужой папки выдержано"
+        )
+
+        host.coordinator.finishDrag(commit: true)
+
+        XCTAssertEqual(recorder.folderMoves.count, 1, "Прежний колбэк получил событие")
+        XCTAssertEqual(recorder.folderMoves.first?.id, AnyHashable("c"))
+        XCTAssertEqual(recorder.folderMoves.first?.folder, f2)
+        XCTAssertEqual(host.folders.first { $0.id == f1 }?.tiles.map { $0.id }, ["b"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first { $0.id == f2 }?.tiles.map { $0.id }, ["e", "c"] as [AnyHashable])
+        let target = try XCTUnwrap(host.coordinator.lastCollapseTargetFrame)
+        XCTAssertEqual(target, host.host.grid.frame(forItemID: f2), "Полёт — в рамку папки-цели")
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
+    }
+
+    /// Без удержания drop на центр другой папки — no-op: модель не тронута,
+    /// колбэков нет, сетка возвращается к порядку модели.
+    func testDropOnOtherFolderCenterWithoutHoldIsNoOp() throws {
+        let host = makePanelHost(
+            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
+        )
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        let (f1, f2) = try panelHostFolderIDs(host)
+        let before = host.storeIDs
+
+        try startPanelDrag(host, folderID: f1, iconIndex: 1)
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point(f2, fx: 0.5, fy: 0.5)))
+        XCTAssertEqual(host.coordinator.mergeTracker?.isMergeReady, false)
+        host.coordinator.finishDrag(commit: true)
+
+        XCTAssertEqual(host.storeIDs, before)
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c"] as [AnyHashable])
+        XCTAssertTrue(recorder.folderMoves.isEmpty)
+        XCTAssertTrue(recorder.failures.isEmpty)
+        XCTAssertTrue(host.waitUntil { host.gridIDs == before })
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
+    }
+
+    /// Центр родной папки (даже с выдержанным удержанием) и отмена жеста
+    /// возвращают ярлык: модель и делегат не затронуты.
+    func testDropOnSourceFolderCenterAndCancelLeaveModelUntouched() throws {
+        let host = makePanelHost()
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        let (f1, _) = try panelHostFolderIDs(host)
+        let before = host.storeIDs
+
+        // Центр родной папки.
+        try startPanelDrag(host, folderID: f1, iconIndex: 1)
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point(f1, fx: 0.5, fy: 0.5)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .sourceFolder)
+        host.spin(0.12)
+        host.coordinator.finishDrag(commit: true)
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
+        XCTAssertTrue(host.waitUntil { host.gridIDs == before })
+        XCTAssertEqual(host.storeIDs, before)
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c"] as [AnyHashable])
+
+        // Отмена после превью.
+        try startPanelDrag(host, folderID: f1, iconIndex: 0)
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("a", fx: 0.1, fy: 0.5)))
+        host.coordinator.finishDrag(commit: false)
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
+        XCTAssertTrue(host.waitUntil { host.gridIDs == before })
+        XCTAssertEqual(host.storeIDs, before)
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c"] as [AnyHashable])
+
+        XCTAssertTrue(recorder.folderMoves.isEmpty)
+        XCTAssertTrue(recorder.createdFolders.isEmpty)
+        XCTAssertTrue(recorder.moves.isEmpty)
+    }
+
+    /// Центр обычного ярлыка для ярлыка из папки не создаёт папку: работает
+    /// как перестановка (вынос на сетку).
+    func testCenterOfPlainTileDoesNotCreateFolderForFolderSource() throws {
+        let host = makePanelHost()
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        let (f1, _) = try panelHostFolderIDs(host)
+
+        try startPanelDrag(host, folderID: f1, iconIndex: 1)
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("a", fx: 0.5, fy: 0.5)))
+        guard case .reorder(let targetID, _)? = host.coordinator.dragSession?.hover,
+              targetID == AnyHashable("a") else {
+            return XCTFail("Центр ярлыка — перестановка, а не группировка")
+        }
+        host.spin(0.12)
+        host.coordinator.finishDrag(commit: true)
+
+        XCTAssertTrue(recorder.createdFolders.isEmpty)
+        XCTAssertEqual(recorder.folderMoves.count, 1)
+        XCTAssertEqual(host.folders.count, 2)
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
+    }
+
+    /// Долгое нажатие по заголовку/фону панели в edit drag не начинает.
+    func testLongPressOnPanelBackgroundDoesNotStartDrag() throws {
+        let host = makePanelHost()
+        let (f1, _) = try panelHostFolderIDs(host)
+        host.coordinator.beginEditing()
+        host.host.grid.openFolder(try XCTUnwrap(host.folders.first), animated: false)
+        host.host.layout()
+        let panelItem = try XCTUnwrap(host.host.grid.displayItems.first { $0.isFolderPanel })
+        let panel = try XCTUnwrap(host.host.panelCell(folderID: f1))
+        let point = panel.convert(CGPoint(x: panel.bounds.midX, y: 8), to: host.host.grid)
+
+        host.coordinator.handleLongPress(on: panelItem, at: point)
+
+        XCTAssertFalse(host.coordinator.isDragging)
+        XCTAssertEqual(host.host.grid.expandedFolderID, f1, "Панель осталась раскрытой")
+        host.coordinator.endEditing()
+    }
+
+    /// Тап по папке в режиме редактирования открывает нативную панель, режим
+    /// редактирования не прерывается, `onTap` приходит.
+    func testTapOnFolderInEditModeOpensPanelWithoutLeavingEdit() throws {
+        let host = makePanelHost()
+        let (f1, _) = try panelHostFolderIDs(host)
+        var tapped: [AnyHashable] = []
+        host.host.grid.onTap = { tapped.append($0.id) }
+        host.coordinator.beginEditing()
+
+        let collectionView = try XCTUnwrap(host.host.collectionView)
+        let index = try XCTUnwrap(host.host.grid.displayItems.firstIndex { $0.id == f1 })
+        host.host.grid.collectionView(collectionView, didSelectItemAt: IndexPath(item: index, section: 0))
+
+        XCTAssertEqual(host.host.grid.expandedFolderID, f1)
+        XCTAssertTrue(host.coordinator.isEditing)
+        XCTAssertEqual(tapped, [f1])
+        host.coordinator.endEditing()
+    }
+
+    /// Перехватчик `folderTapHandler` в edit работает как вне его: `true`
+    /// отменяет раскрытие и `onTap`.
+    func testFolderTapHandlerInterceptsInEditMode() throws {
+        let host = makePanelHost()
+        let (f1, _) = try panelHostFolderIDs(host)
+        var tapped = 0
+        var intercepted = 0
+        host.host.grid.onTap = { _ in tapped += 1 }
+        host.host.grid.folderTapHandler = { _ in
+            intercepted += 1
+            return true
+        }
+        host.coordinator.beginEditing()
+
+        let collectionView = try XCTUnwrap(host.host.collectionView)
+        let index = try XCTUnwrap(host.host.grid.displayItems.firstIndex { $0.id == f1 })
+        host.host.grid.collectionView(collectionView, didSelectItemAt: IndexPath(item: index, section: 0))
+
+        XCTAssertEqual(intercepted, 1)
+        XCTAssertEqual(tapped, 0)
+        XCTAssertNil(host.host.grid.expandedFolderID)
+        host.coordinator.endEditing()
     }
 
 }
