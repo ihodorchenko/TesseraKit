@@ -269,7 +269,18 @@ public final class PivotHeaderStripView: UIView {
     /// Последний применённый прогресс. Хранится, чтобы перекрашивать заново
     /// появляющиеся ячейки и повторять положение индикатора при собственной
     /// прокрутке ленты без обращения к пейджеру.
-    private var lastProgress: CGFloat = 0
+    ///
+    /// Чтение открыто на уровне модуля (`@testable`) — контрактным тестам
+    /// синхронизации; пишет только сама лента.
+    private(set) var lastProgress: CGFloat = 0
+
+    /// Сколько раз лента запускала анимированную доцентровку (`scrollToItem`
+    /// с анимацией).
+    ///
+    /// Только для контрактных тестов модуля (`@testable`): анимация прокрутки
+    /// в тестовом окружении без сцены не исполняется, и по `contentOffset`
+    /// анимированную доцентровку не отличить от мгновенной (E9.6).
+    private(set) var animatedCenteringCount = 0
 
     /// Кеш ширин ячеек и центров в координатах контента. Считается только в
     /// layout-проходе (§4, §7).
@@ -278,6 +289,18 @@ public final class PivotHeaderStripView: UIView {
     private var contentWidth: CGFloat = 0
     private var isGeometryValid = false
     private var lastLayoutSize: CGSize = .zero
+
+    /// Направление раскладки коллекции, для которого посчитана геометрия.
+    ///
+    /// Центры заголовков зависят от направления (в RTL раскладка зеркалит
+    /// ячейки), а размер ленты при смене направления не меняется — поэтому
+    /// одной проверки размера в `layoutSubviews` мало (E9.6).
+    private var lastLayoutDirection: UIUserInterfaceLayoutDirection?
+
+    /// Нужно ли после ближайшего layout'а вернуть выделенный заголовок в
+    /// видимую область: поворот/смена ширины или направления раскладки
+    /// сдвигают ячейки относительно сохранённого `contentOffset` (§9, E9.6).
+    private var needsSelectionVisibilityRestore = false
 
     /// Кеш шрифтов: активный/неактивный шрифт пересобирается только при смене
     /// Dynamic Type или настроек шрифта, а не на каждом кадре свайпа (§7).
@@ -290,7 +313,7 @@ public final class PivotHeaderStripView: UIView {
     ///
     /// - Parameter frame: Начальный кадр; обычно ленту раскладывает контроллер.
     public override init(frame: CGRect) {
-        headerLayout = UICollectionViewFlowLayout()
+        headerLayout = PivotHeaderFlowLayout()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: headerLayout)
         indicator = PivotHeaderIndicator()
         super.init(frame: frame)
@@ -301,7 +324,7 @@ public final class PivotHeaderStripView: UIView {
     ///
     /// - Parameter coder: Декодер архива.
     public required init?(coder: NSCoder) {
-        headerLayout = UICollectionViewFlowLayout()
+        headerLayout = PivotHeaderFlowLayout()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: headerLayout)
         indicator = PivotHeaderIndicator()
         super.init(coder: coder)
@@ -401,9 +424,12 @@ public final class PivotHeaderStripView: UIView {
 
     /// Доцентровывает ленту так, чтобы заголовок `index` оказался по центру.
     ///
-    /// По §4 — только если лента переполнена: когда все заголовки помещаются,
-    /// скроллить нечего и `scrollToItem` не вызывается (иначе лента дёргалась бы
-    /// на ровном месте). Позиция — `.centeredHorizontally`.
+    /// По §4 — только если лента переполнена **и заголовок за краем** (целиком
+    /// или частично вне видимой области): видимый заголовок ленту не двигает,
+    /// иначе она дёргалась бы на каждом переходе (E9.6). Позиция —
+    /// `.centeredHorizontally`. Если лента не переполнена, а `contentOffset`
+    /// остался ненулевым (например, после поворота в более широкую ориентацию),
+    /// он возвращается к началу без анимации — все заголовки и так видны.
     ///
     /// `animated` — намерение вызывающего, но при Reduce Motion анимация
     /// отключается принудительно (§8: «прыжок по тапу — без анимации»):
@@ -417,15 +443,46 @@ public final class PivotHeaderStripView: UIView {
         guard !titles.isEmpty else { return }
 
         rebuildGeometryIfNeeded()
-        guard isOverflowing else { return }
+        guard isOverflowing else {
+            resetOffsetIfNotOverflowing()
+            return
+        }
 
         let clampedIndex = min(max(index, 0), titles.count - 1)
+        let indexPath = IndexPath(item: clampedIndex, section: 0)
+        guard isItemBeyondVisibleEdge(at: indexPath) else { return }
+
         let shouldAnimate = animated && !TesseraAccessibility.isReduceMotionEnabled
+        if shouldAnimate {
+            animatedCenteringCount += 1
+        }
         collectionView.scrollToItem(
-            at: IndexPath(item: clampedIndex, section: 0),
+            at: indexPath,
             at: .centeredHorizontally,
             animated: shouldAnimate
         )
+    }
+
+    /// Заголовок целиком или частично вне видимой области ленты (§4).
+    ///
+    /// Сравнение — в координатах контента коллекции: и фрейм атрибутов, и
+    /// `bounds` (видимый прямоугольник) живут в них, в том числе в RTL.
+    /// Нет атрибутов — считаем «за краем», чтобы не потерять доцентровку.
+    private func isItemBeyondVisibleEdge(at indexPath: IndexPath) -> Bool {
+        guard let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame else {
+            return true
+        }
+        let visible = collectionView.bounds
+        let tolerance: CGFloat = 0.5
+        return frame.minX < visible.minX - tolerance || frame.maxX > visible.maxX + tolerance
+    }
+
+    /// Непереполненная лента не скроллится: остаточный `contentOffset`
+    /// сбрасывается к началу без анимации.
+    private func resetOffsetIfNotOverflowing() {
+        let leading = CGPoint(x: -collectionView.adjustedContentInset.left, y: collectionView.contentOffset.y)
+        guard abs(collectionView.contentOffset.x - leading.x) > 0.5 else { return }
+        collectionView.setContentOffset(leading, animated: false)
     }
 
     // MARK: - Layout
@@ -434,11 +491,21 @@ public final class PivotHeaderStripView: UIView {
     ///
     /// Единственный layout-проход ленты: здесь допустимы измерение текста,
     /// `invalidateLayout` и `bounds`/`center` индикатора (§4, §7).
+    ///
+    /// Геометрия пересобирается при смене размера **и** направления раскладки
+    /// (E9.6): в RTL раскладка зеркалит ячейки, а размер ленты при этом прежний.
+    /// После поворота или смены направления выделенный заголовок возвращается в
+    /// видимую область без анимации (§9 «лента пересоберётся сама»).
     public override func layoutSubviews() {
         super.layoutSubviews()
 
         let size = bounds.size
         if size != lastLayoutSize {
+            // Первый layout с ненулевой шириной — не поворот: доцентровку при
+            // первом показе выполняет контроллер.
+            if lastLayoutSize.width > 0 {
+                needsSelectionVisibilityRestore = true
+            }
             lastLayoutSize = size
             isGeometryValid = false
             // Ширины ячеек зависят от ширины ленты, поэтому размеры делегата
@@ -446,12 +513,50 @@ public final class PivotHeaderStripView: UIView {
             collectionView.collectionViewLayout.invalidateLayout()
         }
 
+        let direction = collectionView.effectiveUserInterfaceLayoutDirection
+        if let lastLayoutDirection, lastLayoutDirection != direction {
+            isGeometryValid = false
+            needsSelectionVisibilityRestore = true
+            collectionView.collectionViewLayout.invalidateLayout()
+        }
+        lastLayoutDirection = direction
+
         syncLayoutMetrics()
         collectionView.frame = bounds
 
         rebuildGeometryIfNeeded()
         indicator.placeBar(inStripBounds: bounds)
+
+        if needsSelectionVisibilityRestore, bounds.width > 0 {
+            needsSelectionVisibilityRestore = false
+            scrollToCenter(index: selectedIndex, animated: false)
+        }
         updateIndicatorPosition()
+    }
+
+    /// Смена `semanticContentAttribute` ленты на лету (E9.6).
+    ///
+    /// Коллекция — дочерний вид и семантику родителя не наследует (её
+    /// `effectiveUserInterfaceLayoutDirection` берётся из trait-коллекции),
+    /// поэтому атрибут переносится на неё явно, а геометрия помечается
+    /// невалидной: иначе центры остались бы посчитанными для прежнего
+    /// направления и индикатор стоял бы под чужим заголовком.
+    public override var semanticContentAttribute: UISemanticContentAttribute {
+        didSet {
+            guard semanticContentAttribute != oldValue else { return }
+            collectionView.semanticContentAttribute = semanticContentAttribute
+            setNeedsLayout()
+        }
+    }
+
+    /// Смена направления из окружения (trait `layoutDirection`) — та же
+    /// инвалидация, что и при смене семантики (E9.6). Саму пересборку выполняет
+    /// `layoutSubviews`, сверяя направление коллекции с запомненным.
+    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.layoutDirection != traitCollection.layoutDirection {
+            setNeedsLayout()
+        }
     }
 
     /// Синхронизирует отступы раскладки с действующим режимом ширины (§3).
@@ -648,8 +753,10 @@ public final class PivotHeaderStripView: UIView {
         isGeometryValid && contentWidth > bounds.width + 0.5
     }
 
+    /// Направление, в котором раскладка фактически расставляет ячейки, — это
+    /// направление коллекции, а не самой ленты (E9.6).
     private var isRightToLeft: Bool {
-        effectiveUserInterfaceLayoutDirection == .rightToLeft
+        collectionView.effectiveUserInterfaceLayoutDirection == .rightToLeft
     }
 
     // MARK: - Индикатор (§4, §7)
@@ -1037,6 +1144,24 @@ private final class PivotHeaderCell: UICollectionViewCell {
             )
         }
     }
+}
+
+// MARK: - Раскладка ленты
+
+/// Потоковая раскладка ленты, зеркалящая заголовки в RTL (§8, E9.6).
+///
+/// У `UICollectionViewFlowLayout` `flipsHorizontallyInOppositeLayoutDirection`
+/// по умолчанию `false`: при направлении, заданном локально
+/// (`semanticContentAttribute`), ячейки не зеркалились, хотя пейджер зеркалит
+/// слоты страниц, — порядок заголовков расходился с направлением свайпа.
+/// Включённый флаг переворачивает систему координат, когда
+/// `effectiveUserInterfaceLayoutDirection` коллекции противоположно
+/// `developmentLayoutDirection` раскладки (LTR). Геометрия индикатора по-прежнему
+/// читает фактические атрибуты, поэтому от способа зеркалирования не зависит.
+private final class PivotHeaderFlowLayout: UICollectionViewFlowLayout {
+    override var flipsHorizontallyInOppositeLayoutDirection: Bool { true }
+
+    override var developmentLayoutDirection: UIUserInterfaceLayoutDirection { .leftToRight }
 }
 
 // MARK: - Компоненты цвета

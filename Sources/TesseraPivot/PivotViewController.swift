@@ -163,6 +163,84 @@ public final class PivotViewController: UIViewController {
     /// ширина, поэтому автоцентрирование (§4) откладывается до layout'а.
     private var needsInitialCentering = true
 
+    /// Поколение программных переходов (E9.6).
+    ///
+    /// Растёт на каждом ``selectSection(at:animated:)``. Нужен, чтобы отличать
+    /// события текущего перехода от «хвостов» перехваченного: UIKit при
+    /// перехвате анимированного `setContentOffset` новым переходом синхронно
+    /// присылает `scrollViewDidEndScrollingAnimation` для старой анимации, и
+    /// пейджер Core сообщает `didShowPageAt` для промежуточной страницы, на
+    /// которой анимацию прервали.
+    private var transitionGeneration = 0
+
+    /// Текущий программный переход; `nil`, когда переход завершён или
+    /// перехвачен жестом/`reload`.
+    private var activeTransition: ProgrammaticTransition?
+
+    /// Программный переход контроллера (E9.6, E10.12а).
+    private struct ProgrammaticTransition {
+        /// Поколение, выданное переходу (``transitionGeneration``).
+        let generation: Int
+        /// Целевая секция в порядке чтения.
+        let target: Int
+        /// Анимирован ли переход (с учётом Reduce Motion).
+        let animated: Bool
+        /// Идёт синхронный вызов `go(toPage:animated:)`: события, пришедшие
+        /// в этот момент для другой страницы, — хвосты прежнего перехода.
+        var isIssuing: Bool
+        /// Перенос прогресса для ленты при дальнем анимированном прыжке.
+        let stripRemap: StripProgressRemap?
+    }
+
+    /// Перенос прогресса пейджера на ленту при дальнем анимированном прыжке
+    /// (E10.12а).
+    ///
+    /// После W1 пейджер прыгает дальше ±1 так: offset без анимации
+    /// переставляется на соседа цели, затем анимируется один шаг. Сырой
+    /// прогресс поэтому скачком приходит на соседа — индикатор телепортировался
+    /// бы через промежуточные заголовки и подсветил бы соседа. Лента вместо
+    /// этого получает прогресс, линейно перенесённый с отрезка
+    /// `[neighbour, target]` на `[from, target]`: индикатор непрерывно едет от
+    /// исходного заголовка к целевому за время единственного анимированного
+    /// шага. Внешний делегат по-прежнему получает сырой прогресс пейджера.
+    struct StripProgressRemap: Equatable {
+        /// Прогресс, который лента показывала в момент тапа.
+        let from: CGFloat
+        /// Сосед цели со стороны исходной секции — старт анимированного шага.
+        let neighbour: CGFloat
+        /// Целевая секция.
+        let target: CGFloat
+
+        /// Прогресс ленты для сырого прогресса пейджера.
+        func stripProgress(forPagerProgress progress: CGFloat) -> CGFloat {
+            let span = target - neighbour
+            guard span != 0 else { return progress }
+            let fraction = min(max((progress - neighbour) / span, 0), 1)
+            return from + (target - from) * fraction
+        }
+    }
+
+    /// Идёт ``reload(sections:)``: прогресс, который пейджер сообщает при
+    /// перестройке, не уходит делегату синхронно (E10.12а).
+    private var isReloading = false
+
+    /// Прогресс, отложенный на время `reload`; доставляется асинхронно и только
+    /// если отличается от последнего доставленного.
+    private var deferredProgress: CGFloat?
+
+    /// Последний прогресс, доставленный внешнему делегату.
+    private var lastDeliveredProgress: CGFloat?
+
+    /// Последний сырой прогресс пейджера (в порядке чтения).
+    private var lastPagerProgress: CGFloat?
+
+    /// Секции, обновление контента которых отложено до конца перехода
+    /// (E10.12а, см. ``refreshSectionContent(_:)``).
+    private var deferredContentSections: [PivotSection]?
+
+    /// Запланирована ли повторная попытка применить отложенный контент.
+    private var isContentRefreshRetryScheduled = false
+
     /// Кеш высоты ленты: зависит от Dynamic Type (§8), пересчитывается только
     /// при смене категории размера текста, а не на каждом кадре свайпа.
     private var cachedStripHeight: CGFloat = 0
@@ -275,7 +353,19 @@ public final class PivotViewController: UIViewController {
     /// первую секцию.
     ///
     /// Обратной записи в `contentOffset` нет: пейджер сам восстанавливает
-    /// страницу по `id` (§5, «один писатель»).
+    /// страницу по `id` (§5, «один писатель»). Контроллеры секций с
+    /// сохранившимся `id` переиспользуются пейджером (W1): скролл и состояние
+    /// страниц не теряются, SwiftUI-контент обновляется на месте.
+    ///
+    /// Прогресс, который пейджер сообщает во время перестройки, делегату
+    /// синхронно не передаётся (E10.12а): `reload` часто вызывается из
+    /// обновления представления (SwiftUI `updateUIViewController`), и запись
+    /// состояния в колбэке на этом шаге — «изменение состояния во время
+    /// обновления». Итоговый прогресс доставляется следующим проходом главной
+    /// очереди и только если он изменился. Лента получает прогресс сразу.
+    ///
+    /// Незавершённый программный переход перестройкой прерывается (пейджер
+    /// останавливает анимацию).
     ///
     /// - Parameter sections: Новые секции в порядке чтения. Пустой массив
     ///   допустим: лента скрывается (§9).
@@ -285,6 +375,8 @@ public final class PivotViewController: UIViewController {
             : nil
 
         sections = newSections
+        deferredContentSections = nil
+        activeTransition = nil
 
         if newSections.isEmpty {
             currentSectionIndex = 0
@@ -299,6 +391,7 @@ public final class PivotViewController: UIViewController {
 
         guard isViewLoaded else { return }
 
+        isReloading = true
         headerStripView.titles = sections.map(\.title)
         pagerViewController.reload(pages: Self.makePageDescriptors(for: newSections))
         synchronizeStripSelection()
@@ -309,6 +402,110 @@ public final class PivotViewController: UIViewController {
         // без ширины и высоты ошиблось бы. Это layout-путь, не горячий (§7).
         view.layoutIfNeeded()
         centerStrip(index: currentSectionIndex, animated: false)
+        isReloading = false
+
+        scheduleDeferredProgressDelivery()
+    }
+
+    /// Доносит новый контент секций при неизменных `id` и заголовках (E10.12а).
+    ///
+    /// Путь SwiftUI-фасада: ``PivotView`` не может сравнить поставщиков
+    /// контента, поэтому на каждом обновлении с тем же набором `id`/заголовков
+    /// передаёт секции сюда. Контент обновляется через ``reload(sections:)``:
+    /// после W1 пейджер переиспользует контроллеры с сохранившимся `id` и
+    /// обновляет `rootView` SwiftUI-хостингов на месте (путь
+    /// `TesseraContentUpdating` в `TesseraContentHosting`), страница, скролл и
+    /// `@State` сохраняются.
+    ///
+    /// Во время жеста, инерции или программного перехода перестройка отложена:
+    /// `reload` пейджера останавливает движение и возвращает offset на
+    /// ближайшую страницу (рывок под пальцем, оборванная анимация тапа).
+    /// Отложенные секции применяются по завершении перехода (последние
+    /// пришедшие побеждают).
+    ///
+    /// - Parameter newSections: Секции с теми же `id` и заголовками, что и
+    ///   текущие, но, возможно, с новым контентом.
+    func refreshSectionContent(_ newSections: [PivotSection]) {
+        guard isViewLoaded else {
+            // До загрузки вида `viewDidLoad` сам пересоберёт пейджер из `sections`.
+            sections = newSections
+            return
+        }
+
+        guard !isTransitionInFlight else {
+            deferredContentSections = newSections
+            scheduleContentRefreshRetry()
+            return
+        }
+
+        reload(sections: newSections)
+    }
+
+    /// Идёт ли движение страниц: жест, инерция или программный переход.
+    var isTransitionInFlight: Bool {
+        if activeTransition?.animated == true { return true }
+        guard let pagerScrollView else { return false }
+        return pagerScrollView.isTracking || pagerScrollView.isDragging || pagerScrollView.isDecelerating
+    }
+
+    /// Применяет отложенный контент, если движение закончилось.
+    private func applyDeferredContentIfIdle() {
+        guard let pending = deferredContentSections, !isTransitionInFlight else { return }
+        deferredContentSections = nil
+        reload(sections: pending)
+    }
+
+    /// Страховка для отложенного контента: не каждый конец движения виден
+    /// контроллеру (инерция, вернувшая ту же страницу, не даёт
+    /// `didShowPageAt`), поэтому попытка повторяется, пока движение не
+    /// закончится. Работает только при наличии отложенных секций.
+    private func scheduleContentRefreshRetry() {
+        guard !isContentRefreshRetryScheduled else { return }
+        isContentRefreshRetryScheduled = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.contentRefreshRetryInterval) { [weak self] in
+            guard let self else { return }
+            self.isContentRefreshRetryScheduled = false
+            guard self.deferredContentSections != nil else { return }
+
+            if self.isTransitionInFlight {
+                self.scheduleContentRefreshRetry()
+            } else {
+                self.applyDeferredContentIfIdle()
+            }
+        }
+    }
+
+    /// Интервал повторной попытки применить отложенный контент.
+    private static let contentRefreshRetryInterval: TimeInterval = 0.1
+
+    /// Доставляет отложенный на время `reload` прогресс следующим проходом
+    /// главной очереди (E10.12а).
+    ///
+    /// Значение, совпадающее с последним доставленным, не доставляется вовсе:
+    /// перестройка с тем же набором секций не порождает колбэков — и цикла
+    /// «колбэк → состояние SwiftUI → обновление → reload» не возникает.
+    private func scheduleDeferredProgressDelivery() {
+        guard let progress = deferredProgress else { return }
+        guard progress != lastDeliveredProgress else {
+            deferredProgress = nil
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.deliverDeferredProgress()
+        }
+    }
+
+    /// Доставка отложенного прогресса; более свежий синхронный прогресс её
+    /// отменяет (обнуляет ``deferredProgress``).
+    private func deliverDeferredProgress() {
+        guard let progress = deferredProgress else { return }
+        deferredProgress = nil
+        guard progress != lastDeliveredProgress else { return }
+
+        lastDeliveredProgress = progress
+        delegate?.pivot(self, didChangeProgress: progress)
     }
 
     /// Программно переходит к секции.
@@ -322,6 +519,15 @@ public final class PivotViewController: UIViewController {
     /// При Reduce Motion анимация отключается принудительно (§8: «прыжок по
     /// тапу — без анимации»). Индекс зажимается в границы набора секций.
     ///
+    /// Анимированный переход не ставит индикатор на цель заранее (E10.12а):
+    /// иначе индикатор на кадр прыгал бы к цели и первым же кадром анимации
+    /// возвращался назад. Ленту ведёт прогресс пейджера; при прыжке дальше
+    /// соседней секции — перенесённый прогресс (см. `StripProgressRemap`):
+    /// индикатор непрерывно едет от исходного заголовка к целевому.
+    ///
+    /// Без анимации лента не анимируется вовсе — ни индикатор, ни
+    /// автоцентрирование (E9.6).
+    ///
     /// - Parameters:
     ///   - index: Индекс секции в порядке чтения (в RTL — не физический слот).
     ///   - animated: Намерение анимировать переход; Reduce Motion имеет приоритет.
@@ -330,24 +536,69 @@ public final class PivotViewController: UIViewController {
 
         let targetIndex = min(max(index, 0), sections.count - 1)
         let shouldAnimate = animated && !TesseraAccessibility.isReduceMotionEnabled
+        let startIndex = currentSectionIndex
 
+        transitionGeneration &+= 1
+        let generation = transitionGeneration
+
+        var stripRemap: StripProgressRemap?
+        if shouldAnimate, abs(targetIndex - startIndex) > 1 {
+            let step = targetIndex > startIndex ? 1 : -1
+            stripRemap = StripProgressRemap(
+                from: headerStripView.lastProgress,
+                neighbour: CGFloat(targetIndex - step),
+                target: CGFloat(targetIndex)
+            )
+        }
+
+        activeTransition = ProgrammaticTransition(
+            generation: generation,
+            target: targetIndex,
+            animated: shouldAnimate,
+            isIssuing: true,
+            stripRemap: stripRemap
+        )
         currentSectionIndex = targetIndex
-        headerStripView.select(index: targetIndex)
+
+        if !shouldAnimate {
+            headerStripView.select(index: targetIndex)
+        }
         pagerViewController.go(toPage: targetIndex, animated: shouldAnimate)
 
-        // Без анимации `go` может не прислать `didShowPageAt` (переход на уже
-        // показанную секцию) — доцентровываем ленту сами (§4). При анимации это
-        // сделает обработчик завершения перехода.
-        guard !shouldAnimate else { return }
+        // Переход мог завершиться синхронно (без анимации или «анимировать
+        // нечего»), а мог быть перехвачен вложенным вызовом — тогда поколение
+        // уже другое и трогать чужой переход нельзя.
+        guard activeTransition?.generation == generation else { return }
+
+        if shouldAnimate,
+           let lastPagerProgress,
+           abs(lastPagerProgress - CGFloat(targetIndex)) > Self.progressTolerance {
+            activeTransition?.isIssuing = false
+            return
+        }
+
+        // Переход завершён синхронно; `didShowPageAt` мог и не прийти (секция
+        // уже была показана) — доцентровываем ленту сами, без анимации (§4).
+        activeTransition = nil
+        headerStripView.select(index: targetIndex)
         centerStrip(index: targetIndex, animated: false)
+        applyDeferredContentIfIdle()
     }
+
+    /// Допуск «прогресс стоит на целой секции».
+    private static let progressTolerance: CGFloat = 0.001
 
     /// Регистрирует вертикальный скролл-вью страницы (docs/PIVOT-IOS-DESIGN.md §6,
     /// вариант B).
     ///
     /// Пейджер скроллит только горизонтально, вертикалью владеют страницы.
-    /// Контроллер контента секции вызывает этот метод, например из
-    /// `viewDidAppear`, и передаёт свой вертикальный `UIScrollView`. На время
+    /// Контроллер контента секции вызывает этот метод из `viewDidLoad` (или
+    /// сразу после создания скролл-вью) и передаёт свой вертикальный
+    /// `UIScrollView`. Не из `viewDidAppear`: после W1 пейджер пересылает
+    /// appearance только текущей странице, соседи ±1 загружаются без него, и
+    /// сосед, на который пользователь ткнул во время инерции, ещё не был бы
+    /// зарегистрирован. Повторная регистрация безопасна (дубликаты
+    /// отбрасываются), ссылки слабые. На время
     /// горизонтального жеста пейджера контроллер собирает из зарегистрированных
     /// детей ``TesseraGestureArbiter``: прокрутка детей блокируется и
     /// восстанавливается в исходное состояние по завершении жеста
@@ -374,7 +625,8 @@ public final class PivotViewController: UIViewController {
     ///      ``TesseraGestureArbiter/axisDecision(forVelocity:)``, после чего
     ///      арбитр блокирует детей на время горизонтального жеста — обе
     ///      половины контракта арбитража задействованы, но точка принятия
-    ///      решения сдвинута с `gestureRecognizerShouldBegin` на `.began`.    ///   Для полноценного §6 нужен публичный хук Core, например аксессор
+    ///      решения сдвинута с `gestureRecognizerShouldBegin` на `.began`.
+    ///   Для полноценного §6 нужен публичный хук Core, например аксессор
     ///   `TesseraPagerViewController.horizontalScrollView` (открытый вопрос в
     ///   отчёте, Core не менялся).
     public func registerVerticalOwner(_ scrollView: UIScrollView) {
@@ -790,9 +1042,15 @@ public final class PivotViewController: UIViewController {
     @objc private func pagerPanDidChange(_ pan: UIPanGestureRecognizer) {
         switch pan.state {
         case .began:
+            // Жест перехватил программный переход: дальше ленту ведёт сырой
+            // прогресс, а завершение — то, где остановит палец (E9.6).
+            activeTransition = nil
             beginHorizontalScroll(with: pan)
         case .ended, .cancelled, .failed:
             endHorizontalScroll()
+            // Жест без инерции закончился — можно применить отложенный контент
+            // (E10.12а); с инерцией его применит `didShowPageAt` или повтор.
+            applyDeferredContentIfIdle()
         case .possible, .changed:
             break
         @unknown default:
@@ -850,12 +1108,38 @@ extension PivotViewController: TesseraPagerDelegate {
         _ pager: TesseraPagerViewController,
         didChangeProgress progress: CGFloat
     ) {
-        headerStripView.apply(progress: progress)
+        lastPagerProgress = progress
+
+        // Дальний анимированный прыжок: лента едет от исходного заголовка к
+        // целевому, а не телепортируется на соседа цели (E10.12а).
+        let stripProgress = activeTransition?.stripRemap?
+            .stripProgress(forPagerProgress: progress) ?? progress
+        headerStripView.apply(progress: stripProgress)
         updateCurrentIndex(fromProgress: progress)
+
+        // Во время `reload` — без синхронного колбэка (E10.12а): доставит
+        // `scheduleDeferredProgressDelivery()`.
+        guard !isReloading else {
+            deferredProgress = progress
+            return
+        }
+        deferredProgress = nil
+        lastDeliveredProgress = progress
         delegate?.pivot(self, didChangeProgress: progress)
     }
 
     /// Завершение перехода: автоцентрирование ленты, анонс, колбэк делегата (§4, §8).
+    ///
+    /// Отбрасываются ложные завершения (E9.6):
+    /// - пришедшие синхронно внутри `go(toPage:animated:)` для страницы, не
+    ///   являющейся целью: это `scrollViewDidEndScrollingAnimation` прежней,
+    ///   перехваченной анимации — пейджер сообщает страницу, на которой её
+    ///   прервали;
+    /// - пришедшие во время ``reload(sections:)``: перестройка останавливает
+    ///   анимацию, и её «завершение» — тоже хвост прерванного перехода.
+    ///
+    /// Автоцентрирование ленты анимируется только у анимированных переходов:
+    /// `selectSection(animated: false)` ленту не анимирует (E9.6).
     ///
     /// - Parameters:
     ///   - pager: Пейджер-источник события.
@@ -864,15 +1148,23 @@ extension PivotViewController: TesseraPagerDelegate {
         _ pager: TesseraPagerViewController,
         didShowPageAt index: Int
     ) {
-        guard sections.indices.contains(index) else { return }
+        guard sections.indices.contains(index), !isReloading else { return }
+
+        if let transition = activeTransition, transition.isIssuing, index != transition.target {
+            return
+        }
+
+        let animatesStrip = activeTransition.map { !($0.isIssuing && !$0.animated) } ?? true
+        activeTransition = nil
 
         currentSectionIndex = index
         needsInitialCentering = false
 
         headerStripView.select(index: index)
-        // §4: доцентровываем ленту только по завершении перехода; Reduce Motion
-        // отключает анимацию внутри `scrollToCenter`.
-        headerStripView.scrollToCenter(index: index, animated: true)
+        // §4: доцентровываем ленту по завершении перехода и только если
+        // заголовок за краем; Reduce Motion отключает анимацию внутри
+        // `scrollToCenter`.
+        headerStripView.scrollToCenter(index: index, animated: animatesStrip)
 
         // §7: Core пересобрал окно страниц ±1 — чистим реестр от скролл-вью
         // выгруженных страниц, чтобы они не участвовали в следующих жестах.
@@ -880,6 +1172,8 @@ extension PivotViewController: TesseraPagerDelegate {
 
         announceSection(at: index)
         delegate?.pivot(self, didShowSectionAt: index)
+
+        applyDeferredContentIfIdle()
     }
 }
 #endif
