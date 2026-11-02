@@ -1304,8 +1304,9 @@ extension TesseraStartScreenViewController: TesseraPagerDelegate {
 ///
 /// Live-плитки (§4, «Паузы»): пока страница не показана пейджером (после
 /// `viewDidDisappear` и до `viewWillAppear` — пейджер пересылает appearance
-/// только текущей странице), видимые ячейки сетки стоят на паузе — START за
-/// кадром не флипается.
+/// только текущей странице), у сетки включена публичная пауза live-контента
+/// (`isLiveContentPaused`, E10.4) — START за кадром не флипается, а `grid.update`
+/// в обход контроллера паузу не снимает.
 private final class TesseraStartPageViewController: UIViewController {
 
     // MARK: - Метрики
@@ -1349,9 +1350,6 @@ private final class TesseraStartPageViewController: UIViewController {
     /// перезапрашивает layout.
     private var isLayingOutPage = false
 
-    /// Стоят ли live-плитки на паузе (§4): `true`, пока страница не показана.
-    private var areLiveTilesPaused = true
-
     // MARK: - Конфигурация
 
     /// Множитель параллакса; зажимается в `0.4...0.6` при раскладке (§8).
@@ -1382,6 +1380,10 @@ private final class TesseraStartPageViewController: UIViewController {
                 withContentOffset: CGPoint(x: 0, y: offset.y)
             )
         }
+        // §4: до появления страницы live-контент сетки стоит на паузе. Пауза
+        // принадлежит сетке (E10.4): она соблюдается в конфигурации ячеек,
+        // поэтому `grid.update` в обход контроллера плитки не возобновляет.
+        gridView.isLiveContentPaused = true
     }
 
     @available(*, unavailable)
@@ -1430,43 +1432,14 @@ private final class TesseraStartPageViewController: UIViewController {
     /// START-страница становится текущей: live-плитки возобновляются (§4).
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        setLiveTilesPaused(false)
+        gridView.isLiveContentPaused = false
     }
 
     /// START-страница ушла (пейджер показал другую или экран скрыт):
     /// live-плитки на паузу (§4).
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        setLiveTilesPaused(true)
-    }
-
-    // MARK: - Live-плитки (§4, «Паузы»)
-
-    /// Ставит live-плитки и idle-флип папок START на паузу или снимает её.
-    ///
-    /// Используется тот же путь, что у сетки при уходе ячейки с экрана
-    /// (`setLiveTileVisible`): движок не флипает невидимую плитку и сбрасывает
-    /// незавершённый флип, подписки провайдеров сохраняются. Ячейки, скрытые
-    /// на время drag (`setItemHidden`), не возобновляются.
-    private func setLiveTilesPaused(_ paused: Bool) {
-        areLiveTilesPaused = paused
-        applyLiveTilePause()
-    }
-
-    /// Применяет паузу к видимым ячейкам коллекции.
-    ///
-    /// Вызывается и после layout'а: `willDisplay` сетки (новый снимок, рост
-    /// контента) регистрирует ячейки видимыми, и START за кадром снова
-    /// флипался бы.
-    private func applyLiveTilePause() {
-        guard let collectionView = gridScrollView as? UICollectionView else { return }
-        for case let cell as TesseraTileCell in collectionView.visibleCells {
-            if areLiveTilesPaused {
-                cell.setLiveTileVisible(false)
-            } else if !cell.accessibilityElementsHidden {
-                cell.setLiveTileVisible(true)
-            }
-        }
+        gridView.isLiveContentPaused = true
     }
 
     /// Высота контента сетки изменилась: запас обоев пересчитается в
@@ -1528,11 +1501,6 @@ private final class TesseraStartPageViewController: UIViewController {
         gridView.layoutIfNeeded()
 
         layoutBackground(in: bounds)
-
-        // Ячейки, показанные этим проходом, сетка регистрирует видимыми.
-        if areLiveTilesPaused {
-            applyLiveTilePause()
-        }
     }
 
     /// Раскладывает слой обоев под вертикальный параллакс (§8).
