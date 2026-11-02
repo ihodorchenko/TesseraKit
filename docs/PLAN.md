@@ -207,8 +207,8 @@
 
 | Задача | Что | Статус |
 |---|---|---|
-| E9.6 | Pivot: счётчик поколений переходов (ложный `didShowPageAt` при перехвате анимированного перехода); инвалидация геометрии ленты при смене направления раскладки; доцентровка ленты при повороте; `scrollToCenter` только «если заголовок за краем» (§4); не анимировать ленту при `selectSection(animated:false)` | ⬜ |
-| E10.12а | Pivot: SwiftUI-контент секции с тем же `id`/заголовком не обновляется (`sectionsDiffer` по `id`+`title`, путь `TesseraContentUpdating` не задействован); `didChangeProgress` синхронно внутри `updateUIViewController`; мигание индикатора на один кадр при анимированном тапе (часть `PanoramaView` — E10.12б в T4) | ⬜ |
+| E9.6 | Pivot: счётчик поколений переходов (ложный `didShowPageAt` при перехвате анимированного перехода); инвалидация геометрии ленты при смене направления раскладки; доцентровка ленты при повороте; `scrollToCenter` только «если заголовок за краем» (§4); не анимировать ленту при `selectSection(animated:false)` | ✅ |
+| E10.12а | Pivot: SwiftUI-контент секции с тем же `id`/заголовком не обновляется (`sectionsDiffer` по `id`+`title`, путь `TesseraContentUpdating` не задействован); `didChangeProgress` синхронно внутри `updateUIViewController`; мигание индикатора на один кадр при анимированном тапе (часть `PanoramaView` — E10.12б в T4) | ✅ |
 | E9.1в | Применение proxy-таргета из E9.1а в `PivotViewController` — не требуется: UIKit держит таргеты слабо (`TesseraGestureTargetRetentionTests`, W1) | ✅ |
 
 Саб-агенты: один — `Sources/TesseraPivot`, `Tests/TesseraPivotTests`.
