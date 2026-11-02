@@ -139,8 +139,9 @@ public struct TesseraAppsListTexts: Equatable {
 
 /// Правая опциональная страница пейджера рабочего стола (§6; D13).
 ///
-/// Страница показывает **весь каталог** ярлыков, сгруппированный по первой
-/// букве подписи, и отдельную секцию настроек. Строка ярлыка — стандартный
+/// Страница показывает **весь каталог** ярлыков, сгруппированный по буквам
+/// алфавитного указателя локали (`UILocalizedIndexedCollation`), и отдельную
+/// секцию настроек. Строка ярлыка — стандартный
 /// элемент списка: тап запускает `TileDescriptor.action` (D12: ярлык — просто
 /// действие), кнопка-«канцелярская кнопка» в аксессуаре закрепляет или
 /// открепляет ярлык, а состояние строки всегда отражает `TileStore`.
@@ -248,15 +249,20 @@ public final class TesseraAppsListPageViewController: UIViewController {
     /// Подписка на изменения хранилища.
     private var storeSubscription: AnyCancellable?
 
-    /// Секции ярлыков по буквам в порядке отображения.
+    /// Секции ярлыков по буквам в порядке отображения (только непустые).
     private var sections: [AppSection] = []
+
+    /// Алфавитный указатель текущей локали (§6: «секции по буквам +
+    /// `sectionIndexTitles`» — нативный паттерн). Обновляется при каждой
+    /// пересборке секций, чтобы смена языка не оставляла старый алфавит.
+    private var collation = UILocalizedIndexedCollation.current()
 
     /// Структура последней отрисованной таблицы — чтобы отличить смену состава
     /// строк (нужна перезагрузка) от смены состояния (достаточно видимых ячеек).
     private var lastStructure: [SectionSignature] = []
 
-    /// Состояние «закреплён» по строкам последней отрисовки.
-    private var lastPinnedFlags: [[Bool]] = []
+    /// Состояние строк ярлыков (закреплён, иконка) последней отрисовки.
+    private var lastRowStates: [[RowState]] = []
 
     /// Кэш миниатюр иконок: стандартная ячейка берёт размер картинки в layout,
     /// поэтому крупные иконки приложения приводятся к размеру строки один раз.
@@ -278,10 +284,6 @@ public final class TesseraAppsListPageViewController: UIViewController {
     /// Идентификаторы переиспользования ячеек.
     private static let defaultCellIdentifier = "TesseraAppsListDefaultCell"
     private static let subtitleCellIdentifier = "TesseraAppsListSubtitleCell"
-
-    /// Заголовок секции для подписей, начинающихся не с буквы (цифры, символы,
-    /// эмодзи): в iOS-списках такая секция традиционно называется «#».
-    private static let otherSectionTitle = "#"
 
     // MARK: - Модель строк
 
@@ -305,8 +307,12 @@ public final class TesseraAppsListPageViewController: UIViewController {
 
     /// Секция ярлыков одной буквы.
     private struct AppSection {
-        /// Буква-заголовок секции (или «#»).
+        /// Буква-заголовок секции (или «#») — заголовок секции collation.
         let title: String
+
+        /// Индекс секции в `UILocalizedIndexedCollation.sectionTitles`: по нему
+        /// jump-list находит ближайшую непустую секцию.
+        let collationIndex: Int
 
         /// Строки в алфавитном порядке.
         var entries: [AppEntry]
@@ -316,6 +322,31 @@ public final class TesseraAppsListPageViewController: UIViewController {
     private struct RowSignature: Equatable {
         let id: AnyHashable
         let title: String
+    }
+
+    /// Изменяемое состояние строки ярлыка при неизменном составе: смена
+    /// любого поля пересобирает видимые строки на месте (без `reloadData`).
+    ///
+    /// Иконка сравнивается по **идентичности** объекта `UIImage`: хост,
+    /// заменивший иконку при тех же `id`/`title`, получает перерисованную
+    /// строку, а сравнение не платит за сравнение пикселей.
+    private struct RowState: Equatable {
+        let isPinned: Bool
+        let icon: UIImage?
+
+        static func == (lhs: RowState, rhs: RowState) -> Bool {
+            lhs.isPinned == rhs.isPinned && lhs.icon === rhs.icon
+        }
+    }
+
+    /// Обёртка подписи для `UILocalizedIndexedCollation`: collation читает
+    /// строку объекта через Objective-C селектор.
+    private final class CollationKey: NSObject {
+        @objc let title: String
+
+        init(_ title: String) {
+            self.title = title
+        }
     }
 
     /// Состояние секции для сравнения «изменилась ли таблица по составу».
@@ -475,23 +506,23 @@ public final class TesseraAppsListPageViewController: UIViewController {
                 lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
             }
 
-        var grouped: [String: [AppEntry]] = [:]
-        var order: [String] = []
+        // Секции — по `UILocalizedIndexedCollation` текущей локали (§6,
+        // нативный паттерн): «É» попадает к «E», иероглифы не дают по секции
+        // на символ, цифры и символы — в «#». Порядок строк внутри секции —
+        // `localizedStandardCompare`: раскладка по корзинам сохраняет порядок
+        // уже отсортированного массива.
+        let collation = UILocalizedIndexedCollation.current()
+        self.collation = collation
+        let titles = collation.sectionTitles
+        var buckets = [[AppEntry]](repeating: [], count: titles.count)
         for entry in entries {
-            let letter = Self.sectionTitle(for: entry.title)
-            if grouped[letter] == nil {
-                order.append(letter)
-            }
-            grouped[letter, default: []].append(entry)
+            let index = Self.collationSection(for: entry.title, collation: collation)
+            buckets[index].append(entry)
         }
 
-        let sortedLetters = order.sorted { lhs, rhs in
-            if lhs == Self.otherSectionTitle { return false }
-            if rhs == Self.otherSectionTitle { return true }
-            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        sections = buckets.enumerated().compactMap { index, entries in
+            entries.isEmpty ? nil : AppSection(title: titles[index], collationIndex: index, entries: entries)
         }
-
-        sections = sortedLetters.map { AppSection(title: $0, entries: grouped[$0] ?? []) }
     }
 
     /// Пересобирает таблицу по хранилищу.
@@ -502,32 +533,37 @@ public final class TesseraAppsListPageViewController: UIViewController {
         guard isViewLoaded else { return }
 
         let previousStructure = lastStructure
-        let previousPinnedFlags = lastPinnedFlags
+        let previousRowStates = lastRowStates
 
         rebuildSections()
         let structure = makeStructure()
-        let pinnedFlags = makePinnedFlags()
+        let rowStates = makeRowStates()
 
-        if !forceReload, structure == previousStructure, pinnedFlags == previousPinnedFlags {
+        if !forceReload, structure == previousStructure, rowStates == previousRowStates {
             return
         }
 
         lastStructure = structure
-        lastPinnedFlags = pinnedFlags
+        lastRowStates = rowStates
 
         if forceReload || structure != previousStructure {
             let previousOffset = tableView.contentOffset
             tableView.reloadData()
             updateEmptyState()
             // §6, двусторонняя связь: unpin на сетке не должен «прыгать»
-            // списком в начало — возвращаем позицию чтения, если UIKit её сбросил.
-            if tableView.contentOffset != previousOffset {
-                tableView.setContentOffset(previousOffset, animated: false)
+            // списком в начало — возвращаем позицию чтения, если UIKit её
+            // сбросил. Но только в пределах нового контента: если каталог
+            // сократился, прежний offset может указывать за его конец.
+            // `contentSize` reloadData пересчитывает синхронно (по оценкам
+            // высот), отдельный layout-проход здесь не нужен.
+            let target = clampedContentOffset(previousOffset)
+            if tableView.contentOffset != target {
+                tableView.setContentOffset(target, animated: false)
             }
         } else {
-            // Изменилось только состояние (pin/unpin): собираем видимые строки
-            // заново. reloadData здесь не нужен, а в режиме VoiceOver он ещё и
-            // сбросил бы фокус с читаемой строки.
+            // Изменилось только состояние (pin/unpin, иконка): собираем
+            // видимые строки заново. reloadData здесь не нужен, а в режиме
+            // VoiceOver он ещё и сбросил бы фокус с читаемой строки.
             for indexPath in tableView.indexPathsForVisibleRows ?? [] {
                 guard let cell = tableView.cellForRow(at: indexPath) else { continue }
                 configure(cell, at: indexPath)
@@ -554,10 +590,31 @@ public final class TesseraAppsListPageViewController: UIViewController {
         return result
     }
 
-    /// Флаги «закреплён» по строкам ярлыков — состояние, которое меняется через
-    /// сетку (unpin) и через саму страницу (pin), без изменения состава строк.
-    private func makePinnedFlags() -> [[Bool]] {
-        sections.map { $0.entries.map(\.isPinned) }
+    /// Состояние строк ярлыков — то, что меняется без изменения состава строк:
+    /// «закреплён» (unpin через сетку, pin через страницу) и иконка ярлыка.
+    private func makeRowStates() -> [[RowState]] {
+        sections.map { section in
+            section.entries.map { RowState(isPinned: $0.isPinned, icon: $0.icon) }
+        }
+    }
+
+    /// Зажимает offset в допустимый диапазон текущего контента таблицы.
+    ///
+    /// - Parameter offset: Желаемый offset (позиция чтения до перезагрузки).
+    /// - Returns: Ближайший offset в пределах `contentSize` с учётом
+    ///   `adjustedContentInset`.
+    private func clampedContentOffset(_ offset: CGPoint) -> CGPoint {
+        let inset = tableView.adjustedContentInset
+        let size = tableView.contentSize
+        let visible = tableView.bounds.size
+        let minX = -inset.left
+        let minY = -inset.top
+        let maxX = max(minX, size.width + inset.right - visible.width)
+        let maxY = max(minY, size.height + inset.bottom - visible.height)
+        return CGPoint(
+            x: min(max(offset.x, minX), maxX),
+            y: min(max(offset.y, minY), maxY)
+        )
     }
 
     /// Закрепляет или открепляет ярлык через хранилище (§6).
@@ -766,27 +823,26 @@ public final class TesseraAppsListPageViewController: UIViewController {
 
     // MARK: - Алфавитный указатель
 
-    /// Заголовок секции по подписи ярлыка.
+    /// Индекс секции collation для подписи ярлыка.
     ///
-    /// Берётся первый символ подписи в верхнем регистре; подписи, начинающиеся
-    /// не с буквы (цифры, символы, эмодзи), попадают в общую секцию «#».
-    /// Транслитерация не выполняется: сортировка идёт по текущей локали
-    /// (`localizedStandardCompare`), поэтому кириллица и латиница образуют
-    /// свои секции без смешивания.
+    /// Группировку делает `UILocalizedIndexedCollation` текущей локали: она
+    /// сворачивает диакритику («É» → «E»), относит иероглифы к секциям своего
+    /// алфавита (в en/ru — «#», в zh — по пиньиню) и складывает цифры, символы
+    /// и эмодзи в последнюю секцию «#». Пустая подпись — тоже в «#».
     ///
-    /// - Parameter title: Подпись ярлыка.
-    /// - Returns: Буква-заголовок секции или «#».
-    private static func sectionTitle(for title: String) -> String {
+    /// - Parameters:
+    ///   - title: Подпись ярлыка.
+    ///   - collation: Указатель текущей локали.
+    /// - Returns: Индекс в `collation.sectionTitles`.
+    private static func collationSection(for title: String, collation: UILocalizedIndexedCollation) -> Int {
+        let lastIndex = max(0, collation.sectionTitles.count - 1)
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let first = trimmed.first else { return otherSectionTitle }
-        // Верхний регистр может дать больше одного символа (например, «ß» → «SS»),
-        // поэтому от результата снова берём первый символ.
-        let letter = String(String(first).uppercased().prefix(1))
-        guard let scalar = letter.unicodeScalars.first,
-              CharacterSet.letters.contains(scalar) else {
-            return otherSectionTitle
-        }
-        return letter
+        guard !trimmed.isEmpty else { return lastIndex }
+        let index = collation.section(
+            for: CollationKey(trimmed),
+            collationStringSelector: #selector(getter: CollationKey.title)
+        )
+        return min(max(0, index), lastIndex)
     }
 }
 
@@ -828,18 +884,23 @@ extension TesseraAppsListPageViewController: UITableViewDataSource {
         return settingsItems.isEmpty ? nil : texts.settingsSectionTitle
     }
 
-    /// Заголовки jump-list (§6, §9): только буквы ярлыков, без настроек.
+    /// Заголовки jump-list (§6, §9): полный алфавит
+    /// `UILocalizedIndexedCollation` текущей локали, как в системных списках;
+    /// секция настроек в указатель не входит.
     ///
     /// - Parameter tableView: Таблица страницы.
     /// - Returns: Заголовки указателя или `nil`, если ярлыков нет.
     public func sectionIndexTitles(for tableView: UITableView) -> [String]? {
-        sections.isEmpty ? nil : sections.map(\.title)
+        sections.isEmpty ? nil : collation.sectionIndexTitles
     }
 
     /// Обрабатывает прыжок по jump-list.
     ///
     /// Возвращённого индекса достаточно: UITableView сам прокручивает таблицу
     /// к секции (документ §6 — «нативный паттерн, ничего изобретать не надо»).
+    /// Указатель показывает весь алфавит, а таблица — только непустые секции,
+    /// поэтому буква без ярлыков ведёт к ближайшей следующей непустой секции
+    /// (после последней непустой — к последней).
     ///
     /// - Parameters:
     ///   - tableView: Таблица страницы.
@@ -851,10 +912,9 @@ extension TesseraAppsListPageViewController: UITableViewDataSource {
         sectionForSectionIndexTitle title: String,
         at index: Int
     ) -> Int {
-        guard sections.indices.contains(index) else {
-            return max(0, sections.count - 1)
-        }
-        return index
+        guard !sections.isEmpty else { return 0 }
+        let target = collation.section(forSectionIndexTitle: index)
+        return sections.firstIndex { $0.collationIndex >= target } ?? sections.count - 1
     }
 
     /// Создаёт и настраивает строку списка.
