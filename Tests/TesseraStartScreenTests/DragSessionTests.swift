@@ -1655,10 +1655,15 @@ final class DragSessionTests: XCTestCase {
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
             configuration: configuration,
             prepare: { store in
+                // E12.2: папки создаются medium; геометрия этих тестов рассчитана
+                // на малые плитки-папки, поэтому возвращаем им small.
                 if let folder = store.createFolder(withTile: "b") {
                     _ = store.addToFolder("c", folderID: folder.id)
+                    _ = store.resize(folder.id, to: .small)
                 }
-                _ = store.createFolder(withTile: "e")
+                if let folder = store.createFolder(withTile: "e") {
+                    _ = store.resize(folder.id, to: .small)
+                }
             }
         )
     }
@@ -2224,8 +2229,10 @@ final class DragSessionTests: XCTestCase {
             descriptors: ["a", "b", "c", "d", "f", "g"].map { tesseraTestTile($0, size: .small) },
             configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0),
             prepare: { store in
+                // E12.2: папка создаётся medium; тесты E11.7 рассчитаны на small.
                 if let folder = store.createFolder(withTile: "f") {
                     _ = store.addToFolder("g", folderID: folder.id)
+                    _ = store.resize(folder.id, to: .small)
                 }
             }
         )
@@ -2566,6 +2573,86 @@ final class DragSessionTests: XCTestCase {
         host.spin(0.5)
         XCTAssertEqual(host.storeIDs, modelBefore, "Модель не менялась")
         XCTAssertEqual(host.gridIDs, modelBefore, "Сетка вернулась к порядку модели")
+    }
+
+    // MARK: - E12.2: папка из wide/large/small цели (всегда medium)
+
+    /// Стенд: цель любого размера + перетаскиваемый ярлык + «хвост» из малых.
+    private func makeWideTargetHost(
+        target: TileSize,
+        source: TileSize,
+        sourceFirst: Bool
+    ) -> TesseraTestDragHost {
+        let pair = [
+            tesseraTestTile("t", size: target),
+            tesseraTestTile("s", size: source),
+        ]
+        return TesseraTestDragHost(
+            descriptors: (sourceFirst ? pair.reversed() : pair) + [
+                tesseraTestTile("x1", size: .small),
+                tesseraTestTile("x2", size: .small),
+                tesseraTestTile("x3", size: .small),
+            ],
+            configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1)
+        )
+    }
+
+    /// E12.2: слияние на центр wide/large/small цели с удержанием создаёт
+    /// папку; папка всегда medium (W10M), и при пальце, дошедшем несколькими
+    /// шагами, и при «прыжке» сразу в центр. Модель и сетка согласованы.
+    func testMergeOnTargetCenterCreatesMediumFolder() throws {
+        let cases: [(target: TileSize, source: TileSize)] = [
+            (.wide, .medium), (.wide, .small), (.large, .medium), (.large, .small),
+            (.small, .medium), (.medium, .small),
+        ]
+        for walking in [true, false] {
+          for sourceFirst in [false, true] {
+            for item in cases {
+                let label = "target=\(item.target) source=\(item.source) walking=\(walking) sourceFirst=\(sourceFirst)"
+                let host = makeWideTargetHost(target: item.target, source: item.source, sourceFirst: sourceFirst)
+                let recorder = DragDelegateRecorder()
+                host.coordinator.delegate = recorder
+                let start = try XCTUnwrap(host.point("s"))
+                let center = try XCTUnwrap(host.point("t"))
+
+                XCTAssertTrue(host.startDrag("s"), label)
+                if walking {
+                    walk(host, from: start, to: center, steps: 14)
+                } else {
+                    host.coordinator.updateDrag(to: center)
+                }
+                XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t"), label)
+                XCTAssertTrue(
+                    host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
+                    "Удержание выдержано: \(label)"
+                )
+
+                host.coordinator.finishDrag(commit: true)
+                XCTAssertTrue(host.waitUntil { recorder.additions.count == 1 }, label)
+                let folder = try XCTUnwrap(host.folders.first, label)
+                XCTAssertEqual(folder.size, .medium, "Папка всегда medium: \(label)")
+                XCTAssertEqual(folder.tiles.map { $0.id }, ["t", "s"] as [AnyHashable], label)
+                XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil }, label)
+                host.spin(0.3)
+                XCTAssertEqual(host.gridIDs, host.storeIDs, "Сетка = модель: \(label)")
+                XCTAssertEqual(host.storeIDs.count, 4, "Папка + три малых: \(label)")
+
+                // Раскладка здравая: папка 2×2, снимок летел в её рамку, рамки
+                // не пересекаются.
+                let frame = try XCTUnwrap(host.host.grid.frame(forItemID: folder.id), label)
+                let small = try XCTUnwrap(host.host.grid.frame(forItemID: "x1"), label)
+                XCTAssertGreaterThan(frame.width, small.width * 1.5, "Папка больше малой: \(label)")
+                XCTAssertLessThan(frame.width, small.width * 3, "Папка не wide: \(label)")
+                XCTAssertEqual(host.coordinator.lastCollapseTargetFrame, frame, label)
+                let frames = host.storeIDs.compactMap { host.host.grid.frame(forItemID: $0) }
+                for (i, a) in frames.enumerated() {
+                    for b in frames[(i + 1)...] {
+                        XCTAssertFalse(a.intersects(b.insetBy(dx: 1, dy: 1)), "Пересечение: \(label)")
+                    }
+                }
+            }
+          }
+        }
     }
 }
 

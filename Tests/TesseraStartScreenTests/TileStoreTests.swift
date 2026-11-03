@@ -122,38 +122,50 @@ final class TileStoreTests: XCTestCase {
         XCTAssertEqual(store.folderContaining("a")?.tiles.count, 1)
     }
 
-    // MARK: - E11.4: размер новой папки
+    // MARK: - E12.2: размер новой папки (всегда medium)
 
-    /// Папка наследует размер ярлыка-цели (сохранённый или из дескриптора) и
-    /// переживает round-trip персистентности.
-    func testCreateFolderInheritsTileSize() throws {
+    /// Папка всегда создаётся средней (W10M), независимо от размера ярлыка-цели
+    /// (small/medium/wide/large, сохранённого или из дескриптора); размер
+    /// переживает round-trip. Заменяет E11.4 (наследование размера).
+    func testCreateFolderIsAlwaysMedium() throws {
         let directory = TesseraTestDirectory()
         let descriptors = makeDescriptors()
         let store = makeStore(descriptors, in: directory)
 
         let small = try XCTUnwrap(store.createFolder(withTile: "a"))
-        XCTAssertEqual(small.size, .small)
+        XCTAssertEqual(small.size, .medium)
         let medium = try XCTUnwrap(store.createFolder(withTile: "b"))
         XCTAssertEqual(medium.size, .medium)
 
         XCTAssertTrue(store.resize("c", to: .wide))
         let wide = try XCTUnwrap(store.createFolder(withTile: "c"))
-        XCTAssertEqual(wide.size, .wide, "Сохранённый размер ярлыка важнее дескриптора")
+        XCTAssertEqual(wide.size, .medium, "Сохранённый wide-размер ярлыка не наследуется")
 
-        let folderSizes = Dictionary(
-            uniqueKeysWithValues: store.snapshot().folders.map { ($0.id, $0.size) }
-        )
-        XCTAssertEqual(folderSizes[small.id], .small)
-        XCTAssertEqual(folderSizes[medium.id], .medium)
-        XCTAssertEqual(folderSizes[wide.id], .wide)
+        XCTAssertEqual(store.snapshot().folders.map { $0.size }, [.medium, .medium, .medium])
 
         try store.save()
         let restored = makeStore(descriptors, in: directory)
         try restored.load()
-        XCTAssertEqual(
-            Set(restored.snapshot().folders.map { $0.size }),
-            [.small, .medium, .wide]
-        )
+        XCTAssertEqual(restored.snapshot().folders.map { $0.size }, [.medium, .medium, .medium])
+    }
+
+    /// Атомарное создание из wide/large цели тоже даёт medium; сам размер
+    /// папки пользователь может поменять (`resize`), и он сохраняется — в том
+    /// числе у папок, записанных на диск при короткой жизни E11.4.
+    func testAtomicCreateFromWideTargetIsMediumAndFolderStaysResizable() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        XCTAssertTrue(store.resize("a", to: .large))
+        guard case .created(let folder) = store.createFolder(withTile: "a", adding: "b") else {
+            return XCTFail("Создание должно пройти")
+        }
+        XCTAssertEqual(folder.size, .medium)
+
+        XCTAssertTrue(store.resize(folder.id, to: .wide))
+        try store.save()
+        let restored = makeStore(makeDescriptors(), in: directory)
+        try restored.load()
+        XCTAssertEqual(restored.snapshot().folders.first?.size, .wide, "Сохранённый размер папки не трогаем")
     }
 
     // MARK: - E11.2: вынос из папки на рабочий стол
