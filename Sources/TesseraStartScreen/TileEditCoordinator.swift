@@ -2209,6 +2209,25 @@ public final class TesseraTileEditCoordinator: NSObject {
             }
         }
 
+        // E12.1: над пустым местом (дыра, зазор, область под плитками) позиция —
+        // слот порядка, ближайший к пальцу, а не «последнее превью».
+        // На подъёме палец стоит там, где была иконка панели (после закрытия панели
+        // это обычно пустое место): превью остаётся в слоте «после папки», пока
+        // палец не сдвинется на заметное расстояние.
+        if !session.hasMovedFromOrigin {
+            let dx = point.x - session.originPoint.x
+            let dy = point.y - session.originPoint.y
+            if dx * dx + dy * dy > Self.emptySlotActivationDistance * Self.emptySlotActivationDistance {
+                session.hasMovedFromOrigin = true
+            }
+        }
+        if target == .none,
+           session.hasMovedFromOrigin,
+           grid.bounds.insetBy(dx: -8, dy: -8).contains(point),
+           !session.isOverFolderPanel {
+            target = emptySpaceTarget(at: point, session: session)
+        }
+
         applyDragPreview(for: target, session: session)
 
         // E8.6: удержание над центром ярлыка/папки взводится, перевзводится и
@@ -2327,7 +2346,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         switch session.hover {
         case .folder, .group:
             return nil
-        case .none, .reorder, .sourceFolder:
+        case .none, .reorder, .slot, .sourceFolder:
             break
         }
 
@@ -2444,12 +2463,24 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///   - target: Цель под пальцем.
     ///   - session: Активная drag-сессия.
     private func applyDragPreview(for target: HoverTarget, session: TesseraTileDragSession) {
-        guard case .reorder(let targetID, _) = target,
-              let preview = TileLayoutEngine.previewOrder(
-                  items: session.baseSnapshot.items,
-                  draggingID: session.itemID,
-                  targetID: targetID
-              ) else {
+        let previewOrder: [TileGridItem]?
+        switch target {
+        case .reorder(let targetID, _):
+            previewOrder = TileLayoutEngine.previewOrder(
+                items: session.baseSnapshot.items,
+                draggingID: session.itemID,
+                targetID: targetID
+            )
+        case .slot(let insertionIndex):
+            previewOrder = TileLayoutEngine.previewOrder(
+                items: session.baseSnapshot.items,
+                draggingID: session.itemID,
+                insertionIndex: insertionIndex
+            )
+        case .none, .folder, .group, .sourceFolder:
+            previewOrder = nil
+        }
+        guard let preview = previewOrder else {
             animatePlaceholder(to: currentFrame(of: session))
             return
         }
@@ -2576,6 +2607,46 @@ public final class TesseraTileEditCoordinator: NSObject {
             return nil
         }
         return (hovered, frame)
+    }
+
+    /// Смещение пальца от точки захвата, после которого над пустым местом
+    /// включается выбор позиции (E12.1), pt.
+    static let emptySlotActivationDistance: CGFloat = 12
+
+    /// Цель над пустым местом: позиция вставки по порядку чтения (E12.1).
+    ///
+    /// Раскладка строго компактная (E8.5), поэтому «позиция» drop'а — это
+    /// индекс **порядка**, а не пиксели: упаковщик сам кладёт элемент в первое
+    /// подходящее место для этого индекса. Чтобы пользователь выбирал, куда
+    /// попадёт элемент, над пустым местом (дыра, зазор, область под плитками)
+    /// позиция берётся по клетке пальца в базовой раскладке: элемент встаёт
+    /// сразу после последней плитки, не позже этой клетки в порядке чтения
+    /// (``TesseraTileGridView/baseInsertionIndex(forGridPoint:items:draggingID:)``).
+    /// Превью и drop используют ту же позицию, поэтому элемент ложится ровно
+    /// туда, где его показало превью.
+    ///
+    /// Над собственным базовым слотом элемента (E8.4/«c»), при раскрытой панели
+    /// и без раскладки результат `.none` — остаёмся на последнем превью.
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - session: Активная drag-сессия.
+    /// - Returns: `.slot` с позицией вставки или `.none`.
+    private func emptySpaceTarget(
+        at point: CGPoint,
+        session: TesseraTileDragSession
+    ) -> HoverTarget {
+        guard grid.expandedFolderID == nil,
+              let own = baseFrames(for: session)?[session.itemID],
+              !grid.gridFrame(fromContentFrame: own).contains(point),
+              let insertion = grid.baseInsertionIndex(
+                  forGridPoint: point,
+                  items: session.baseSnapshot.items,
+                  draggingID: session.itemID
+              ) else {
+            return .none
+        }
+        return .slot(insertion)
     }
 
     /// Базовые рамки элементов сессии в координатах контента (E11.7).
@@ -2823,7 +2894,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Parameter target: Текущая цель под пальцем.
     private func updateDropHighlight(for target: HoverTarget) {
         switch target {
-        case .none, .reorder, .sourceFolder:
+        case .none, .reorder, .slot, .sourceFolder:
             hideDropHighlight()
 
         case .folder(let itemID):
@@ -2905,7 +2976,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 view.bounds = CGRect(origin: .zero, size: frame.size)
                 view.center = CGPoint(x: frame.midX, y: frame.midY)
             }
-        case .none, .reorder, .sourceFolder:
+        case .none, .reorder, .slot, .sourceFolder:
             break
         }
     }
@@ -3024,7 +3095,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             switch session.hover {
             case .folder(let targetID), .group(let targetID):
                 if targetID == itemID { return 1 }
-            case .none, .reorder, .sourceFolder:
+            case .none, .reorder, .slot, .sourceFolder:
                 break
             }
             return TesseraTileGridView.dimmedTileAlpha
@@ -4697,6 +4768,14 @@ enum HoverTarget: Equatable {
     /// возвращает ярлык в папку, модель не меняется.
     case sourceFolder
 
+    /// Пустое место под пальцем (E12.1): позиция вставки по порядку чтения.
+    ///
+    /// Значение — позиция вставки среди остальных элементов (без
+    /// перетаскиваемого), `0 ... count`; она же индекс перетаскиваемого элемента
+    /// в превью и целевой индекс drop'а. Выбирается по клетке пальца в базовой
+    /// раскладке (`emptySpaceTarget`).
+    case slot(Int)
+
     /// Идентификатор цели удержания E8.6, если цель его поддерживает.
     ///
     /// Удержание взводится и для центра ярлыка (создание папки), и для центра
@@ -4706,7 +4785,7 @@ enum HoverTarget: Equatable {
         switch self {
         case .folder(let itemID), .group(let itemID):
             return itemID
-        case .none, .reorder, .sourceFolder:
+        case .none, .reorder, .slot, .sourceFolder:
             return nil
         }
     }
@@ -4718,7 +4797,7 @@ enum HoverTarget: Equatable {
             return .folder
         case .group:
             return .group
-        case .none, .reorder, .sourceFolder:
+        case .none, .reorder, .slot, .sourceFolder:
             return nil
         }
     }
@@ -4787,6 +4866,14 @@ final class TesseraTileDragSession {
     ///
     /// Пока `false`, притяжение выключено; взводится один раз за сессию.
     var hasLeftOriginSlot = false
+
+    /// Палец сместился от точки захвата больше чем на
+    /// ``TesseraTileEditCoordinator/emptySlotActivationDistance`` (E12.1).
+    ///
+    /// До этого над пустым местом превью не трогается: при подъёме ярлыка из
+    /// панели палец стоит там, где была иконка, и слот не должен «убегать» из-под
+    /// него в тот же кадр. Взводится один раз за сессию.
+    var hasMovedFromOrigin = false
 
     /// Снимок модели на момент захвата (E8.4).
     ///

@@ -36,6 +36,8 @@
 //  - E12.1: вынос единственного ярлыка в «дыру» модели не кладёт его в
 //    соседнюю папку (не воспроизведено; охранные тесты, удержание над B не
 //    переживает уход пальца);
+//  - E12.1 (позиция над пустым местом: `HoverTarget.slot`, drop там, где показало
+//    превью): отдельный набор `DropSlotTests`;
 //  - E11.6: атомарное создание папки drop'ом — отказ второго шага откатывает
 //    первый (модель как до drop'а, только `didFailGrouping`), `didCreateFolder`
 //    приходит после обоих шагов и перед `didAdd`.
@@ -1608,7 +1610,9 @@ final class DragSessionTests: XCTestCase {
         // Превью перестановки, затем палец — в пустое место, где появится панель.
         host.coordinator.updateDrag(to: try XCTUnwrap(host.point(folderID, fx: 0.1, fy: 0.5)))
         host.coordinator.updateDrag(to: panelPoint)
-        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.none)
+        // E12.1: над пустым местом позиция — слот порядка (после «a» и папки, то
+        // есть в конец); панели под пальцем пока нет.
+        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.slot(1))
         XCTAssertFalse(host.coordinator.dragSession?.isOverFolderPanel == true)
 
         // Панель появляется под пальцем без нового шага drag.
@@ -1778,9 +1782,10 @@ final class DragSessionTests: XCTestCase {
 
         try startPanelDrag(host, folderID: f2, iconIndex: 0)
         XCTAssertEqual(host.coordinator.dragSession?.sourceFolderID, f2)
-        // Пустое место: превью не меняется, ярлык остаётся после папки.
+        // Пустое место под плитками (E12.1): позиция — конец порядка (папка F2 и
+        // так последняя, поэтому ярлык по-прежнему занимает её место).
         host.coordinator.updateDrag(to: emptyPoint(in: host))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.none)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.slot(4))
 
         host.coordinator.finishDrag(commit: true)
 
