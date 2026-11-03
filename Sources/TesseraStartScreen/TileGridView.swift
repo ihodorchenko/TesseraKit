@@ -645,6 +645,15 @@ public final class TesseraTileGridView: UIView {
     /// хит-тест, поэтому тап по ячейке (в том числе по панели) его не закрывает.
     private let backgroundTapRecognizer = UITapGestureRecognizer()
 
+    /// Пассивный наблюдатель смещения касания (E12.7): выбор ячейки коллекции
+    /// не срабатывает как тап, если палец ушёл дальше допуска.
+    ///
+    /// Сам выбор `UICollectionView` смещение не проверяет: когда собственный пан
+    /// коллекции не начался (горизонтальный свайп по вертикальной сетке, хост
+    /// без пейджера), отпускание над плиткой всё равно присылало `didSelect`.
+    /// Внутренний — тесты выставляют признак без реальных касаний.
+    let tapSlopRecognizer = TesseraTileTapSlopRecognizer()
+
     /// Кеш элементов с вставленной панелью раскрытой папки.
     ///
     /// Пересчитывается редко — при смене снимка, раскрытии/закрытии и числа
@@ -857,6 +866,7 @@ public final class TesseraTileGridView: UIView {
         backgroundTapRecognizer.delegate = self
         backgroundTapRecognizer.addTarget(self, action: #selector(handleBackgroundTap(_:)))
         collectionView.addGestureRecognizer(backgroundTapRecognizer)
+        collectionView.addGestureRecognizer(tapSlopRecognizer)
 
         longPressRecognizer.minimumPressDuration = 0.45
         longPressRecognizer.delegate = self
@@ -2559,6 +2569,54 @@ extension TesseraTileGridView: UICollectionViewDataSource {
     }
 }
 
+// MARK: - Допуск смещения тапа (E12.7)
+
+/// Пассивный распознаватель: запоминает, ушло ли касание дальше допуска тапа.
+///
+/// Никогда не распознаётся, не задерживает и не отменяет касания и не мешает
+/// остальным жестам коллекции — только считает смещение от точки касания (в
+/// координатах окна, чтобы прокрутка контента не искажала расстояние). Признак
+/// сбрасывается в начале следующего касания и остаётся после его завершения:
+/// `didSelectItemAt` приходит на отпускании, когда признак уже выставлен.
+final class TesseraTileTapSlopRecognizer: UIGestureRecognizer {
+
+    /// Допуск смещения в точках — как у системного тапа.
+    static let slop: CGFloat = 10
+
+    /// Ушло ли последнее касание дальше допуска.
+    var exceededSlop = false
+
+    private var startPoint: CGPoint = .zero
+
+    init() {
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        exceededSlop = false
+        startPoint = location(in: nil)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard !exceededSlop else { return }
+        let point = location(in: nil)
+        if hypot(point.x - startPoint.x, point.y - startPoint.y) > TesseraTileTapSlopRecognizer.slop {
+            exceededSlop = true
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .failed
+    }
+}
+
 // MARK: - UICollectionViewDelegate
 
 extension TesseraTileGridView: UICollectionViewDelegate {
@@ -2583,6 +2641,10 @@ extension TesseraTileGridView: UICollectionViewDelegate {
         didSelectItemAt indexPath: IndexPath
     ) {
         collectionView.deselectItem(at: indexPath, animated: false)
+
+        // E12.7: касание, ушедшее дальше допуска, — не тап (длинный свайп,
+        // который не забрал ни пан сетки, ни пейджер).
+        guard !tapSlopRecognizer.exceededSlop else { return }
 
         guard let item = displayItem(atIndex: indexPath.item),
               !hiddenItemIDs.contains(item.id) else {
@@ -2933,7 +2995,10 @@ final class TesseraTileCell: UICollectionViewCell {
     ///   - folder: Модель папки.
     ///   - isVisible: Видима ли ячейка: idle-флип превью идёт только на экране.
     private func configureStaticFolder(_ folder: TileFolder, isVisible: Bool) {
-        titleLabel.text = folder.title
+        // E12.7: папка без названия подписывается локализованным по умолчанию.
+        titleLabel.text = folder.title.isEmpty
+            ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
+            : folder.title
         badgeView.badge = .none
         badgeView.isHidden = true
 
@@ -3186,7 +3251,9 @@ final class TesseraTileCell: UICollectionViewCell {
 
     /// §9: папка — один элемент; число ярлыков в value.
     private func configureAccessibility(for folder: TileFolder) {
-        accessibilityLabel = folder.title.isEmpty ? nil : folder.title
+        accessibilityLabel = folder.title.isEmpty
+            ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
+            : folder.title
         folderAccessibilityCountText = folder.tiles.isEmpty ? nil : String(folder.tiles.count)
         updateFolderAccessibilityValue()
     }
@@ -3797,10 +3864,14 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     ) {
         columnCount = max(1, columns)
         contentSpacing = spacing
-        // D17: заголовок показывается в нижнем регистре — WP-стиль; исходная
-        // подпись остаётся в accessibility label ячейки папки.
-        titleLabel.text = folder.title.lowercased()
-        titleLabel.accessibilityLabel = folder.title.isEmpty ? nil : folder.title
+        // E12.7: заголовок показывается как набран (как подпись плитки папки);
+        // прежнее приведение к нижнему регистру (D17) снято. Пустое название
+        // (папка из старого хранилища/хоста) — локализованное по умолчанию.
+        let title = folder.title.isEmpty
+            ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
+            : folder.title
+        titleLabel.text = title
+        titleLabel.accessibilityLabel = title
 
         tiles = folder.tiles
 

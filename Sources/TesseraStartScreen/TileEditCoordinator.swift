@@ -373,8 +373,8 @@ public struct TesseraTileEditConfiguration {
 
     /// Название папки, создаваемой перетаскиванием ярлыка на ярлык.
     ///
-    /// Пустая строка допустима: `TileStore` не требует названия, а экран папки
-    /// покажет нейтральный заголовок.
+    /// Пустая строка (по умолчанию) — локализованное «Папка»/«Folder» из строк
+    /// модуля (E12.7); непустое значение перекрывает его.
     public var folderTitle: String
 
     /// Сколько нужно удерживать перетаскиваемую плитку над центром ярлыка-цели
@@ -460,7 +460,7 @@ public struct TesseraTileEditConfiguration {
     ///     меньше, см. ``controlDiameter``), по умолчанию 28.
     ///   - autoScrollEdge: Зона автопрокрутки, по умолчанию 64.
     ///   - autoScrollMaximumSpeed: Максимальная скорость, по умолчанию 9.
-    ///   - folderTitle: Название новой папки, по умолчанию пусто.
+    ///   - folderTitle: Название новой папки; пусто — локализованное по умолчанию.
     ///   - mergeHoverDuration: Удержание до слияния, по умолчанию 0.6 с.
     ///   - mergeHoverDisplacement: Допуск смещения, по умолчанию 10 pt.
     ///   - mergeHighlightScale: Масштаб «впитывания», по умолчанию 1.08.
@@ -1398,7 +1398,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     public func createFolder(withTile tileID: AnyHashable, title: String? = nil) -> TileFolder? {
         let folder = store.createFolder(
             withTile: tileID,
-            title: title ?? configuration.folderTitle
+            title: resolvedNewFolderTitle(title ?? configuration.folderTitle)
         )
         guard let folder else {
             if grid.index(ofItemID: tileID) != nil {
@@ -3350,7 +3350,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         switch store.createFolder(
             withTile: targetID,
             adding: session.itemID,
-            title: configuration.folderTitle
+            title: resolvedNewFolderTitle(configuration.folderTitle)
         ) {
         case .created(let created):
             folder = created
@@ -4035,6 +4035,17 @@ public final class TesseraTileEditCoordinator: NSObject {
             cellsWithEditActions[key] = cell
             editActionsItemByCell[key] = signature
         }
+    }
+
+    /// Название новой папки (E12.7): пустое — локализованное по умолчанию.
+    ///
+    /// Значение по умолчанию живёт в строках модуля
+    /// (`folderScreen.defaultTitle`, en/ru), а не в конфигурации:
+    /// ``TesseraTileEditConfiguration/folderTitle`` лишь перекрывает его.
+    /// `TileStore` по-прежнему принимает пустое название — подстановка только
+    /// на пути создания папки редактором.
+    private func resolvedNewFolderTitle(_ title: String) -> String {
+        title.isEmpty ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle) : title
     }
 
     /// Название папки для пунктов custom actions: пустое — из конфигурации,
