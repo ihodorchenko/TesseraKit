@@ -854,8 +854,9 @@ public final class TileStore: ObservableObject {
     /// Создаёт папку из ярлыка, стоящего на сетке.
     ///
     /// Ярлык немедленно переезжает в новую папку, а на его месте в сетке
-    /// появляется плитка-папка того же размера, что у ярлыка (E11.4: размер
-    /// наследуется, поэтому соседи не переупаковываются). Это единственный
+    /// появляется плитка-папка. Папка всегда создаётся средней (2×2, как в
+    /// Windows 10 Mobile) независимо от размера ярлыка (E12.2, отмена E11.4);
+    /// пользователь может изменить размер уже созданной папки. Это единственный
     /// способ создать папку: пустая папка в v1 не создаётся, потому что функция
     /// одобрения D14 получает ярлык-инициатор.
     ///
@@ -874,17 +875,12 @@ public final class TileStore: ObservableObject {
         let descriptor = catalog[catalogPosition]
         guard approval(nil, descriptor, .createFolder) else { return nil }
 
-        // E11.4: папка занимает слот ярлыка и наследует его актуальный размер
-        // (сохранённый или из дескриптора). Ярлык уже помещался в сетку с этим
-        // размером, поэтому кламп по числу колонок не нужен: слот не меняется.
-        let inheritedSize = sizes[tileKey] ?? descriptor.size
-
         let folderID = AnyHashable("folder-" + UUID().uuidString)
         let record = FolderRecord(
             key: TileStore.storageKey(for: folderID),
             id: folderID,
             title: title,
-            size: inheritedSize,
+            size: TileStore.newFolderSize,
             tileKeys: [tileKey]
         )
         folderRecords.append(record)
@@ -892,6 +888,12 @@ public final class TileStore: ObservableObject {
         didChange()
         return materialize(record)
     }
+
+    /// Размер только что созданной папки: всегда medium (E12.2).
+    ///
+    /// По памяти о Windows 10 Mobile папка — всегда плитка 2×2, и от размера
+    /// ярлыка-цели он не зависит; wide/large цель замещается средней папкой.
+    static let newFolderSize: TileSize = .medium
 
     /// Итог атомарного создания папки из двух ярлыков (E11.6).
     enum AtomicFolderResult {
@@ -945,7 +947,7 @@ public final class TileStore: ObservableObject {
             key: TileStore.storageKey(for: folderID),
             id: folderID,
             title: title,
-            size: sizes[targetKey] ?? targetDescriptor.size,
+            size: TileStore.newFolderSize,
             tileKeys: [targetKey]
         )
 
