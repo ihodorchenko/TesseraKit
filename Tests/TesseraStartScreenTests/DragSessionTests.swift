@@ -33,6 +33,9 @@
 //    удержанию, no-op без удержания / на родной папке / при отмене), тап по
 //    папке в режиме редактирования открывает панель.
 //
+//  - E12.1: вынос единственного ярлыка в «дыру» модели не кладёт его в
+//    соседнюю папку (не воспроизведено; охранные тесты, удержание над B не
+//    переживает уход пальца);
 //  - E11.6: атомарное создание папки drop'ом — отказ второго шага откатывает
 //    первый (модель как до drop'а, только `didFailGrouping`), `didCreateFolder`
 //    приходит после обоих шагов и перед `didAdd`.
@@ -2073,6 +2076,136 @@ final class DragSessionTests: XCTestCase {
         XCTAssertTrue(recorder.failures.isEmpty)
         XCTAssertEqual(changeCount, 1, "Одно уведомление за операцию")
         XCTAssertEqual(host.folders.count, 1)
+    }
+
+    // MARK: - E12.1: вынос единственного ярлыка в «дыру»
+
+    /// Стенд E12.1 (4 колонки): `s0` (кол. 0), папка «Работа» из одного ярлыка
+    /// `mail` (кол. 1), medium `cal` (кол. 2–3), папка B из `m`,`n`,`p` — в
+    /// модели ниже слева остаётся дыра под «Работой».
+    private func makeMoveOutHost(columns: Int = 4) -> TesseraTestDragHost {
+        let descriptors: [TileDescriptor] = [
+            tesseraTestTile("s0", size: .small),
+            tesseraTestTile("mail", size: .small),
+            tesseraTestTile("cal", size: .medium),
+            tesseraTestTile("m", size: .small),
+            tesseraTestTile("n", size: .small),
+            tesseraTestTile("p", size: .small)
+        ]
+        return TesseraTestDragHost(
+            descriptors: descriptors,
+            columns: columns,
+            configuration: TesseraTileEditConfiguration(
+                mergeHoverDuration: 0.05,
+                magnetSnapRadius: 0
+            ),
+            prepare: { store in
+                _ = store.createFolder(withTile: "mail")
+                if let folder = store.createFolder(withTile: "m") {
+                    _ = store.addToFolder("n", folderID: folder.id)
+                    _ = store.addToFolder("p", folderID: folder.id)
+                }
+            }
+        )
+    }
+
+    /// Точка центра ячейки «ряд 1, колонка 1» модельной раскладки (под «Работой»).
+    private func moveOutHolePoint(_ host: TesseraTestDragHost, work: AnyHashable) throws -> CGPoint {
+        let s0 = try XCTUnwrap(host.host.grid.frame(forItemID: "s0"))
+        let workFrame = try XCTUnwrap(host.host.grid.frame(forItemID: work))
+        let gap = workFrame.minX - s0.maxX
+        return CGPoint(x: workFrame.midX, y: workFrame.midY + workFrame.height + gap)
+    }
+
+    /// Проверяет итог выноса: «Работа» распалась, `mail` — обычный ярлык, B цела.
+    private func assertMailIsPlainTile(
+        _ host: TesseraTestDragHost,
+        folderB: AnyHashable,
+        work: AnyHashable,
+        _ message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertFalse(host.storeIDs.contains(work), "Работа распалась: \(message)", file: file, line: line)
+        XCTAssertTrue(host.storeIDs.contains("mail"), "mail — обычный ярлык сетки: \(message)", file: file, line: line)
+        XCTAssertEqual(
+            host.folders.first { $0.id == folderB }?.tiles.map { $0.id },
+            ["m", "n", "p"] as [AnyHashable],
+            "Состав папки B не изменился: \(message)",
+            file: file,
+            line: line
+        )
+    }
+
+    /// E12.1 (не воспроизведён вручную): вынос единственного ярлыка в «дыру»
+    /// модели с удержанием ~0,8 с не кладёт его в соседнюю папку B — ни в 4, ни
+    /// в 5/6 колонок. Отображаемый снимок (пустая «Работа» + синтетический
+    /// ярлык) пересобирает упаковку: медиум и B уезжают, а точка над «дырой»
+    /// модели попадает в плитку, занявшую её в базовой раскладке, — это
+    /// перестановка, не слияние.
+    func testDropOfSoleFolderTileIntoModelHoleNeverEntersNeighborFolder() throws {
+        for columns in [4, 5, 6] {
+            let host = makeMoveOutHost(columns: columns)
+            let (work, folderB) = try panelHostFolderIDs(host)
+            let hole = try moveOutHolePoint(host, work: work)
+
+            try startPanelDrag(host, folderID: work, iconIndex: 0)
+            host.coordinator.updateDrag(to: hole)
+            host.spin(0.12) // удержание в тесте — 0,05 с
+            XCTAssertNotEqual(
+                host.coordinator.dragSession?.hover,
+                .folder(folderB),
+                "cols=\(columns): над дырой модели цель не папка B"
+            )
+            XCTAssertNotEqual(host.coordinator.mergeTracker?.isMergeReady, true, "cols=\(columns)")
+            host.coordinator.finishDrag(commit: true)
+            host.spin(0.3)
+            assertMailIsPlainTile(host, folderB: folderB, work: work, "cols=\(columns)")
+        }
+    }
+
+    /// E12.1: удержание, взведённое (и даже выдержанное) над B, не переживает
+    /// уход пальца — drop в «дыре» после него не слияние. Покрыты уход на пустое
+    /// место, на краевую зону самой B (в пределах её рамки) и на «дыру».
+    func testHoldOverNeighborFolderDoesNotSurviveMovingAway() throws {
+        for columns in [4, 5, 6] {
+            for waitForFire in [false, true] {
+                let host = makeMoveOutHost(columns: columns)
+                let (work, folderB) = try panelHostFolderIDs(host)
+                let hole = try moveOutHolePoint(host, work: work)
+                let empty = emptyPoint(in: host)
+
+                try startPanelDrag(host, folderID: work, iconIndex: 0)
+                let session = try XCTUnwrap(host.coordinator.dragSession)
+                // Центр B в базовой раскладке (она отличается от модельной).
+                let content = try XCTUnwrap(host.host.grid.baseContentFrames(for: session.baseSnapshot.items))
+                let bFrame = host.host.grid.gridFrame(fromContentFrame: try XCTUnwrap(content[folderB]))
+
+                host.coordinator.updateDrag(to: CGPoint(x: bFrame.midX, y: bFrame.midY))
+                XCTAssertEqual(session.hover, .folder(folderB), "cols=\(columns): палец над центром B")
+                if waitForFire {
+                    XCTAssertTrue(host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true })
+                }
+
+                for away in [
+                    CGPoint(x: bFrame.minX + 2, y: bFrame.midY), // край самой B
+                    hole,
+                    empty
+                ] {
+                    host.coordinator.updateDrag(to: away)
+                    XCTAssertNotEqual(session.hover, .folder(folderB), "cols=\(columns) \(away)")
+                    XCTAssertNil(host.coordinator.mergeTracker, "Удержание сброшено при уходе: cols=\(columns) \(away)")
+                    // Возврат в центр B — новый отсчёт, а не «уже готово».
+                    host.coordinator.updateDrag(to: CGPoint(x: bFrame.midX, y: bFrame.midY))
+                    XCTAssertEqual(host.coordinator.mergeTracker?.isMergeReady, false, "cols=\(columns) \(away)")
+                }
+
+                host.coordinator.updateDrag(to: hole)
+                host.coordinator.finishDrag(commit: true)
+                host.spin(0.3)
+                assertMailIsPlainTile(host, folderB: folderB, work: work, "cols=\(columns) fire=\(waitForFire)")
+            }
+        }
     }
 
     // MARK: - E11.7: хит-тест по базовой раскладке
