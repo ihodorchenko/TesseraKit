@@ -424,8 +424,9 @@ final class DragSessionTests: XCTestCase {
 
     // MARK: - A3: перевзвод удержания E8.6
 
-    /// Смещение на допуск отменяет удержание, возврат в допуск запускает новый
-    /// отсчёт 600 мс — drop после возврата создаёт папку (E10.5-A3, E9.8а).
+    /// Смещение на допуск отменяет удержание и переносит якорь на текущую точку
+    /// (E12.3, заменил E10.5-A3): возврат к старому якорю — снова смещение, то
+    /// есть новый отсчёт 600 мс; drop после выдержанного нового отсчёта создаёт папку.
     func testMergeHoldRearmsAfterReturningToTolerance() throws {
         let host = TesseraTestDragHost(
             descriptors: [
@@ -444,20 +445,20 @@ final class DragSessionTests: XCTestCase {
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: center)
         XCTAssertEqual(host.coordinator.mergeTracker?.state, .armed)
+        XCTAssertEqual(host.coordinator.mergeTracker?.anchor, center)
 
-        // Смещение 15 pt внутри центральной зоны: удержание отменено.
-        host.coordinator.updateDrag(to: CGPoint(x: center.x + 15, y: center.y))
-        XCTAssertEqual(host.coordinator.mergeTracker?.state, .cancelled)
+        // Смещение 15 pt внутри центральной зоны: якорь переносится в новую точку.
+        let moved = CGPoint(x: center.x + 15, y: center.y)
+        host.coordinator.updateDrag(to: moved)
+        XCTAssertEqual(host.coordinator.mergeTracker?.state, .armed)
+        XCTAssertEqual(host.coordinator.mergeTracker?.anchor, moved)
         XCTAssertFalse(host.coordinator.mergeTracker?.isMergeReady == true)
 
-        // Отмена терминальна, пока палец не вернулся в допуск.
-        host.spin(0.12)
-        XCTAssertEqual(host.coordinator.mergeTracker?.state, .cancelled)
-        XCTAssertFalse(host.coordinator.mergeTracker?.isMergeReady == true)
-
-        // Возврат в допуск — новый отсчёт, а не мгновенная готовность.
+        // Возврат к старой точке — снова смещение на 15 pt: ещё один перевзвод,
+        // а не мгновенная готовность.
         host.coordinator.updateDrag(to: center)
         XCTAssertEqual(host.coordinator.mergeTracker?.state, .armed)
+        XCTAssertEqual(host.coordinator.mergeTracker?.anchor, center)
         XCTAssertFalse(host.coordinator.mergeTracker?.isMergeReady == true)
         XCTAssertTrue(
             host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
@@ -466,7 +467,7 @@ final class DragSessionTests: XCTestCase {
 
         host.coordinator.finishDrag(commit: true)
         XCTAssertTrue(host.waitUntil { recorder.createdFolders.count == 1 })
-        XCTAssertEqual(host.folders.count, 1, "Папка создана после возврата в допуск")
+        XCTAssertEqual(host.folders.count, 1, "Папка создана после перевзвода")
     }
 
     // MARK: - A4: панель папки и вход в edit
@@ -1676,7 +1677,8 @@ final class DragSessionTests: XCTestCase {
     private func startPanelDrag(
         _ host: TesseraTestDragHost,
         folderID: AnyHashable,
-        iconIndex: Int
+        iconIndex: Int,
+        grab: CGPoint = CGPoint(x: 0.5, y: 0.5)
     ) throws -> CGPoint {
         host.coordinator.beginEditing()
         let folder = try XCTUnwrap(host.folders.first { $0.id == folderID })
@@ -1685,7 +1687,12 @@ final class DragSessionTests: XCTestCase {
         let panelItem = try XCTUnwrap(host.host.grid.displayItems.first { $0.isFolderPanel })
         let panel = try XCTUnwrap(host.host.panelCell(folderID: folderID))
         let icon = try XCTUnwrap(panel.shortcutCells[iconIndex] as TesseraTileCell?)
-        let point = try XCTUnwrap(icon.superview?.convert(icon.center, to: host.host.grid))
+        // `grab` — доля рамки иконки (E12.3: хват за центр и за края).
+        let iconFrame = try XCTUnwrap(icon.superview).convert(icon.frame, to: host.host.grid)
+        let point = CGPoint(
+            x: iconFrame.minX + iconFrame.width * grab.x,
+            y: iconFrame.minY + iconFrame.height * grab.y
+        )
 
         host.coordinator.handleLongPress(on: panelItem, at: point)
         return point
@@ -2083,7 +2090,7 @@ final class DragSessionTests: XCTestCase {
     /// Стенд E12.1 (4 колонки): `s0` (кол. 0), папка «Работа» из одного ярлыка
     /// `mail` (кол. 1), medium `cal` (кол. 2–3), папка B из `m`,`n`,`p` — в
     /// модели ниже слева остаётся дыра под «Работой».
-    private func makeMoveOutHost(columns: Int = 4) -> TesseraTestDragHost {
+    private func makeMoveOutHost(columns: Int = 4, magnet: CGFloat = 0) -> TesseraTestDragHost {
         let descriptors: [TileDescriptor] = [
             tesseraTestTile("s0", size: .small),
             tesseraTestTile("mail", size: .small),
@@ -2097,7 +2104,7 @@ final class DragSessionTests: XCTestCase {
             columns: columns,
             configuration: TesseraTileEditConfiguration(
                 mergeHoverDuration: 0.05,
-                magnetSnapRadius: 0
+                magnetSnapRadius: magnet
             ),
             prepare: { store in
                 _ = store.createFolder(withTile: "mail")
@@ -2339,6 +2346,226 @@ final class DragSessionTests: XCTestCase {
         grid.setContentOffset(.zero, animated: false)
         host.host.layout()
         XCTAssertTrue(host.waitForDragCleanup("t0"))
+    }
+
+    // MARK: - E12.3: перенос из панели на центр другой папки
+
+    /// E12.3: иконка панели → центр другой папки (по базовой раскладке) с
+    /// удержанием сливается при стандартном магните (28 pt) — и при хвате за
+    /// центр иконки, и за её края; снимок при этом не уезжает из-под пальца.
+    func testPanelIconToOtherFolderCenterMergesWithMagnet() throws {
+        let grabs: [CGPoint] = [
+            CGPoint(x: 0.5, y: 0.5),
+            CGPoint(x: 0.05, y: 0.05),
+            CGPoint(x: 0.95, y: 0.95),
+            CGPoint(x: 0.05, y: 0.95),
+            CGPoint(x: 0.95, y: 0.05)
+        ]
+        for grab in grabs {
+            let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.05))
+            let (f1, f2) = try panelHostFolderIDs(host)
+            let start = try startPanelDrag(host, folderID: f1, iconIndex: 1, grab: grab)
+            let session = try XCTUnwrap(host.coordinator.dragSession)
+            let content = try XCTUnwrap(host.host.grid.baseContentFrames(for: session.baseSnapshot.items))
+            let base = host.host.grid.gridFrame(fromContentFrame: try XCTUnwrap(content[f2]))
+            let target = CGPoint(x: base.midX, y: base.midY)
+
+            // Палец уходит в центр одним событием (старт — в панели, вне сетки):
+            // тест изолирует магнит от якоря допуска удержания (см. дизайн-док, п. 40).
+            XCTAssertNotEqual(start, target)
+            host.coordinator.updateDrag(to: target)
+            host.spin(0.02)
+            XCTAssertEqual(session.hover, .folder(f2), "grab=\(grab): палец над центром F2")
+            XCTAssertTrue(
+                host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
+                "grab=\(grab): удержание выдержано"
+            )
+            // Снимок стоит под пальцем (а не притянут к слоту).
+            XCTAssertEqual(session.dragView.center.x, target.x + session.grabOffset.x, accuracy: 0.5, "grab=\(grab)")
+            XCTAssertEqual(session.dragView.center.y, target.y + session.grabOffset.y, accuracy: 0.5, "grab=\(grab)")
+
+            host.coordinator.finishDrag(commit: true)
+            host.spin(0.3)
+            XCTAssertEqual(
+                host.folders.first { $0.id == f2 }?.tiles.map { $0.id },
+                ["e", "c"] as [AnyHashable],
+                "grab=\(grab): ярлык слился с F2"
+            )
+        }
+    }
+
+    /// E12.1 (гипотеза о хвате): вынос единственного ярлыка в «дыру» модели при
+    /// стандартном магните и хвате за края иконки не кладёт его в соседнюю
+    /// папку; палец стоит над «дырой» модели, снимок не уезжает от него дальше
+    /// радиуса магнита.
+    func testSoleFolderTileEdgeGrabIntoHoleNeverEntersNeighborFolderWithMagnet() throws {
+        let grabs = [CGPoint(x: 0.05, y: 0.05), CGPoint(x: 0.95, y: 0.95), CGPoint(x: 0.95, y: 0.05)]
+        for columns in [4, 5, 6] {
+            for grab in grabs {
+                let host = makeMoveOutHost(columns: columns, magnet: 28)
+                let (work, folderB) = try panelHostFolderIDs(host)
+                let hole = try moveOutHolePoint(host, work: work)
+
+                try startPanelDrag(host, folderID: work, iconIndex: 0, grab: grab)
+                let session = try XCTUnwrap(host.coordinator.dragSession)
+                host.coordinator.updateDrag(to: CGPoint(x: hole.x - 30, y: hole.y))
+                host.coordinator.updateDrag(to: hole)
+                host.spin(0.12)
+                XCTAssertNotEqual(session.hover, .folder(folderB), "cols=\(columns) grab=\(grab)")
+                XCTAssertNotEqual(host.coordinator.mergeTracker?.isMergeReady, true, "cols=\(columns) grab=\(grab)")
+                host.coordinator.finishDrag(commit: true)
+                host.spin(0.3)
+                assertMailIsPlainTile(host, folderB: folderB, work: work, "cols=\(columns) grab=\(grab)")
+            }
+        }
+    }
+
+    // MARK: - E12.3: удержание считается от последнего заметного движения
+
+    /// Идёт пальцем от `start` к `end` равными шагами (событие на шаг), без пауз.
+    private func walk(
+        _ host: TesseraTestDragHost,
+        from start: CGPoint,
+        to end: CGPoint,
+        steps: Int
+    ) {
+        for step in 1...steps {
+            let t = CGFloat(step) / CGFloat(steps)
+            host.coordinator.updateDrag(to: CGPoint(
+                x: start.x + (end.x - start.x) * t,
+                y: start.y + (end.y - start.y) * t
+            ))
+        }
+    }
+
+    /// E12.3: 14 шагов от иконки панели к центру B, остановка — слияние
+    /// (воспроизведение ручного прогона: на входе в зону якорь ставился на
+    /// первой точке зоны, и палец, ушедший дальше 10 pt, больше не перевзводился).
+    /// Магнит — по умолчанию (28 pt); хват и за центр, и за угол иконки.
+    func testPanelIconWalkToOtherFolderCenterMerges() throws {
+        let grabs = [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.05, y: 0.05), CGPoint(x: 0.95, y: 0.95)]
+        for grab in grabs {
+            let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1))
+            let (f1, f2) = try panelHostFolderIDs(host)
+            let start = try startPanelDrag(host, folderID: f1, iconIndex: 1, grab: grab)
+            let session = try XCTUnwrap(host.coordinator.dragSession)
+            let content = try XCTUnwrap(host.host.grid.baseContentFrames(for: session.baseSnapshot.items))
+            let base = host.host.grid.gridFrame(fromContentFrame: try XCTUnwrap(content[f2]))
+            let target = CGPoint(x: base.midX, y: base.midY)
+
+            walk(host, from: start, to: target, steps: 14)
+            XCTAssertEqual(session.hover, .folder(f2), "grab=\(grab): палец над центром F2")
+            XCTAssertTrue(
+                host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
+                "grab=\(grab): удержание выдержано после остановки"
+            )
+
+            host.coordinator.finishDrag(commit: true)
+            host.spin(0.3)
+            XCTAssertEqual(
+                host.folders.first { $0.id == f2 }?.tiles.map { $0.id },
+                ["e", "c"] as [AnyHashable],
+                "grab=\(grab): ярлык слился с F2"
+            )
+        }
+    }
+
+    /// E12.3: тот же 14-шаговый заход с плитки сетки (создание папки и
+    /// добавление в существующую) завершается слиянием.
+    func testGridTileWalkToFolderCenterMerges() throws {
+        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1))
+        let (_, f2) = try panelHostFolderIDs(host)
+        let start = try XCTUnwrap(host.point("a"))
+        let target = try XCTUnwrap(host.point(f2))
+
+        XCTAssertTrue(host.startDrag("a"))
+        walk(host, from: start, to: target, steps: 14)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .folder(f2))
+        XCTAssertTrue(host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true })
+
+        host.coordinator.finishDrag(commit: true)
+        host.spin(0.3)
+        XCTAssertEqual(
+            host.folders.first { $0.id == f2 }?.tiles.map { $0.id },
+            ["e", "a"] as [AnyHashable]
+        )
+    }
+
+    /// E12.3: постоянное медленное движение внутри центральной зоны (каждый
+    /// шаг ≥10 pt) готовности не даёт, даже когда суммарное время давно
+    /// больше порога.
+    func testContinuousMovementOverFolderCenterNeverBecomesReady() throws {
+        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.3))
+        let (_, f2) = try panelHostFolderIDs(host)
+        let center = try XCTUnwrap(host.point(f2))
+
+        XCTAssertTrue(host.startDrag("a"))
+        // Вход в зону — на −8 pt от центра; дальше шаги ±8 pt (16 pt между соседними).
+        host.coordinator.updateDrag(to: CGPoint(x: center.x - 8, y: center.y))
+        for step in 0..<24 {
+            let dx: CGFloat = step % 2 == 0 ? 8 : -8
+            host.coordinator.updateDrag(to: CGPoint(x: center.x + dx, y: center.y))
+            XCTAssertEqual(host.coordinator.dragSession?.hover, .folder(f2), "шаг \(step)")
+            host.spin(0.05)
+            XCTAssertFalse(host.coordinator.mergeTracker?.isMergeReady == true, "шаг \(step)")
+        }
+
+        // Остановка — через порог от последнего движения готовность наступает.
+        XCTAssertTrue(host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true })
+        host.coordinator.finishDrag(commit: false)
+        host.spin(0.3)
+    }
+
+    /// E12.3: сместиться на 15 pt и вернуться к старой точке — готовность не
+    /// раньше порога от последнего перевзвода.
+    func testReturnToOldAnchorDoesNotMergeEarlierThanHoldFromLastMove() throws {
+        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.4))
+        let (_, f2) = try panelHostFolderIDs(host)
+        let center = try XCTUnwrap(host.point(f2))
+        let a = CGPoint(x: center.x - 8, y: center.y)
+        let b = CGPoint(x: center.x + 7, y: center.y)
+
+        XCTAssertTrue(host.startDrag("a"))
+        host.coordinator.updateDrag(to: a)
+        host.spin(0.25)
+        host.coordinator.updateDrag(to: b)
+        host.spin(0.25)
+        // Возврат к старому якорю A: смещение 15 pt от B — новый отсчёт.
+        let reanchoredAt = Date()
+        host.coordinator.updateDrag(to: a)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .folder(f2))
+        host.spin(0.2)
+        XCTAssertFalse(
+            host.coordinator.mergeTracker?.isMergeReady == true,
+            "Через 0,2 с после последнего перевзвода готовности ещё нет"
+        )
+        XCTAssertTrue(host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true })
+        XCTAssertGreaterThan(Date().timeIntervalSince(reanchoredAt), 0.4)
+
+        host.coordinator.finishDrag(commit: false)
+        host.spin(0.3)
+    }
+
+    /// E12.3 (хвост): drop без готовности на центре папки не оставляет превью
+    /// более раннего reorder — порядок сетки равен модели, ярлык не на чужом слоте.
+    func testNotReadyDropOnFolderCenterLeavesNoPushPreview() throws {
+        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 5))
+        let (f1, f2) = try panelHostFolderIDs(host)
+        let modelBefore = host.storeIDs
+        let start = try startPanelDrag(host, folderID: f1, iconIndex: 1)
+        let session = try XCTUnwrap(host.coordinator.dragSession)
+        let content = try XCTUnwrap(host.host.grid.baseContentFrames(for: session.baseSnapshot.items))
+        let base = host.host.grid.gridFrame(fromContentFrame: try XCTUnwrap(content[f2]))
+        let target = CGPoint(x: base.midX, y: base.midY)
+
+        walk(host, from: start, to: target, steps: 14)
+        XCTAssertEqual(session.hover, .folder(f2))
+        XCTAssertNotEqual(host.coordinator.mergeTracker?.isMergeReady, true)
+
+        host.coordinator.finishDrag(commit: true)
+        host.spin(0.5)
+        XCTAssertEqual(host.storeIDs, modelBefore, "Модель не менялась")
+        XCTAssertEqual(host.gridIDs, modelBefore, "Сетка вернулась к порядку модели")
     }
 }
 
