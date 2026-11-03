@@ -1036,6 +1036,10 @@ public final class TesseraTileEditCoordinator: NSObject {
         // сдвинуты. После неанимированного (reloadData) закрытия ячейки
         // пересоздаются — отложенная сверка вернёт им «желе» и дим.
         closeExpandedFolderForEditing()
+        // E12.10: вход в edit (в т. ч. кнопкой хоста) приводит порядок модели к
+        // порядку чтения — будущий drag, в том числе из панели папки, считает
+        // слоты по канонической модели.
+        canonicalizeModelOrderForEditing()
         reconcileEditControls(animated: false, dimAnimated: true)
         // Ячейки могут быть ещё не созданы (первый layout/показ): доберём
         // кнопки, «желе» и димминг на следующем проходе runloop.
@@ -1127,6 +1131,9 @@ public final class TesseraTileEditCoordinator: NSObject {
         // раскладки, а превью уходили бы в отложенный снимок сетки (M1).
         // Для публичного `beginEditing()` без drag анимация закрытия остаётся.
         closeExpandedFolderInstantlyIfNeeded()
+        // E12.10: порядок модели — до захвата базы drag'а (и при уже включённом
+        // edit: хост мог поменять модель, пока edit был открыт).
+        canonicalizeModelOrderForEditing()
         if !isEditing {
             beginEditing(focusing: item.id)
         }
@@ -1639,6 +1646,30 @@ public final class TesseraTileEditCoordinator: NSObject {
     private func canonicalizeVisibleOrderIfNeeded() {
         guard grid.columns > 0 else { return }
         _ = store.canonicalizeVisibleOrder(columns: grid.columns)
+    }
+
+    /// Канонизирует порядок модели перед редактированием (E12.10).
+    ///
+    /// Хост может принести неканоничную модель: упаковка поднимает малую
+    /// плитку, стоящую в модели последней, в «дыру» после среднего ярлыка, и
+    /// видимый порядок расходится с `gridOrder`. Операции drop'а работают по
+    /// слотам модели (`createFolder` заменяет слот цели, `moveItem` считает
+    /// индексы), поэтому слияние на «поднявшуюся» плитку создавало папку в
+    /// конце сетки, а не на месте цели. Приводим порядок к порядку чтения на
+    /// входе в edit и на старте drag: видимая раскладка при этом не меняется
+    /// (канонизация — перестановка только модели). Сетку подтягиваем, лишь
+    /// если до канонизации она показывала модель: расхождение, принесённое
+    /// хостом, по-прежнему ловит m2-проверка на захвате.
+    private func canonicalizeModelOrderForEditing() {
+        guard grid.columns > 0 else { return }
+        let gridWasInSync = gridMatches(store.snapshot())
+        guard store.canonicalizeVisibleOrder(columns: grid.columns) else { return }
+        if gridWasInSync {
+            syncGridWithModel(animated: false)
+            // Смена порядка применяется `reloadData`: ячейки нужны сразу — на
+            // них опирается захват drag в этом же проходе runloop.
+            grid.layoutIfNeeded()
+        }
     }
 
     /// Применяет текущий снимок модели к сетке.
@@ -3699,6 +3730,10 @@ public final class TesseraTileEditCoordinator: NSObject {
             } else {
                 guard frame.intersects(creationBounds) else { continue }
                 control = makeControl(for: item)
+                // E12.9: новый оверлей сразу встаёт на место плитки — иначе
+                // анимированный проход анимировал бы его из нулевой рамки
+                // (перелёт из левого верхнего угла сетки).
+                control.frame = frame
                 editControls[item.id] = control
             }
 
@@ -3711,7 +3746,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             control.isHidden = isDragged || !frame.intersects(grid.bounds)
             control.tileSize = frame.size
 
-            if animated, control.frame != frame {
+            if animated, !reduceMotion, control.frame != frame {
                 UIView.animate(
                     withDuration: 0.24,
                     delay: 0,

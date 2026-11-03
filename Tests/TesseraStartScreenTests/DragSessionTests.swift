@@ -2654,6 +2654,103 @@ final class DragSessionTests: XCTestCase {
           }
         }
     }
+    // MARK: - E12.10: drag из обычного режима при неканоничном порядке модели
+
+    /// Стенд как «Старт» в Example: малая «Почта», средний «Календарь», wide
+    /// «Погода», папка «Работа» (из «Заметок» и «Фото»), large «Музыка» и малые
+    /// «Настройки» **последними в модели** — упаковка поднимает их в «дыру» справа
+    /// от календаря, то есть порядок модели не совпадает с порядком чтения.
+    private func makeStartLikeHost() -> TesseraTestDragHost {
+        TesseraTestDragHost(
+            descriptors: [
+                tesseraTestTile("mail", size: .small),
+                tesseraTestTile("calendar", size: .medium),
+                tesseraTestTile("weather", size: .wide),
+                tesseraTestTile("notes", size: .small),
+                tesseraTestTile("photos", size: .small),
+                tesseraTestTile("music", size: .large),
+                tesseraTestTile("settings", size: .small),
+            ],
+            configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1),
+            prepare: { store in
+                if let folder = store.createFolder(withTile: "notes", title: "Работа") {
+                    store.addToFolder("photos", folderID: folder.id)
+                }
+            }
+        )
+    }
+
+    /// E12.10: свежий старт, edit выключен; один жест — long-press на «Почте»
+    /// (вход в edit + drag) и без отрыва на «Настройки» с удержанием. Папка
+    /// должна встать на место цели (после календаря), а не в конец сетки: до
+    /// фикса `createFolder` заменял слот «Настроек» в `gridOrder` (последний),
+    /// и канонизация оставляла папку в конце.
+    func testStartFromNormalModeMergeOntoHoleFillingTileKeepsTargetSlot() throws {
+        let host = makeStartLikeHost()
+        let recorder = DragDelegateRecorder()
+        host.coordinator.delegate = recorder
+        XCTAssertFalse(host.coordinator.isEditing)
+        let start = try XCTUnwrap(host.point("mail"))
+        let target = try XCTUnwrap(host.point("settings"))
+        let targetFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "settings"))
+        let calendarFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "calendar"))
+        XCTAssertGreaterThan(targetFrame.minX, calendarFrame.maxX, "«Настройки» стоят в дыре справа от календаря")
+        XCTAssertEqual(targetFrame.minY, calendarFrame.minY, accuracy: 1)
+
+        XCTAssertTrue(host.startDrag("mail"))
+        XCTAssertTrue(host.coordinator.isEditing)
+        walk(host, from: start, to: target, steps: 14)
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("settings"))
+        XCTAssertTrue(
+            host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true },
+            "Удержание выдержано"
+        )
+
+        host.coordinator.finishDrag(commit: true)
+        XCTAssertTrue(host.waitUntil { recorder.additions.count == 1 })
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
+        host.spin(0.3)
+
+        let folder = try XCTUnwrap(host.folders.first { $0.tiles.map { $0.id } == ["settings", "mail"] as [AnyHashable] })
+        let work = try XCTUnwrap(host.folders.first { $0.id != folder.id })
+        XCTAssertEqual(
+            host.storeIDs,
+            ["calendar", folder.id, "weather", work.id, "music"] as [AnyHashable],
+            "Папка в слоте цели, а не в конце"
+        )
+        XCTAssertEqual(host.gridIDs, host.storeIDs, "Сетка = модель")
+        let folderFrame = try XCTUnwrap(host.host.grid.frame(forItemID: folder.id))
+        // Папка medium (E12.2) стоит в той же строке сразу справа от календаря.
+        let newCalendarFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "calendar"))
+        XCTAssertEqual(folderFrame.minY, newCalendarFrame.minY, accuracy: 1)
+        XCTAssertGreaterThan(folderFrame.minX, newCalendarFrame.maxX - 1)
+    }
+
+    /// E12.10: порядок модели канонизируется при старте drag (в т. ч. из уже
+    /// включённого edit и при возврате без слияния), а видимая раскладка не
+    /// меняется: пользователь не видит перестановки.
+    func testDragStartCanonicalizesModelOrderWithoutVisibleChange() throws {
+        for editFirst in [false, true] {
+            let host = makeStartLikeHost()
+            let before = host.storeIDs.compactMap { host.host.grid.frame(forItemID: $0) }
+            if editFirst { host.coordinator.beginEditing() }
+            XCTAssertTrue(host.startDrag("mail"), "editFirst=\(editFirst)")
+            XCTAssertEqual(
+                host.storeIDs.prefix(3).map { $0 },
+                ["mail", "calendar", "settings"] as [AnyHashable],
+                "Порядок чтения: editFirst=\(editFirst)"
+            )
+            XCTAssertEqual(host.gridIDs, host.storeIDs, "editFirst=\(editFirst)")
+            host.coordinator.finishDrag(commit: false)
+            XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
+            host.spin(0.3)
+            let after = host.storeIDs.compactMap { host.host.grid.frame(forItemID: $0) }
+            XCTAssertEqual(before.count, after.count)
+            // Сравниваем набор рамок: порядок идентификаторов поменялся, раскладка — нет.
+            let key: (CGRect) -> String = { "\(Int($0.minX.rounded())),\(Int($0.minY.rounded())),\(Int($0.width.rounded()))" }
+            XCTAssertEqual(Set(before.map(key)), Set(after.map(key)), "editFirst=\(editFirst)")
+        }
+    }
 }
 
 #endif
