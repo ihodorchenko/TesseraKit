@@ -1599,6 +1599,46 @@ public final class TesseraTileGridView: UIView {
     /// - Returns: Рамки по идентификатору или `nil`, если геометрию не
     ///   посчитать (нулевая ширина).
     func baseContentFrames(for items: [TileGridItem]) -> [AnyHashable: CGRect]? {
+        guard let geometry = baseLayoutGeometry() else { return nil }
+        let key = geometry.key
+        let metrics = geometry.metrics
+        let packed: [(id: AnyHashable, size: TileSize)] = items.map { item in
+            (id: item.id, size: TileLayoutEngine.fittingSize(item.size, columns: key.columns))
+        }
+        let slots = TileLayoutEngine.pack(items: packed, columns: key.columns, unit: metrics.unit)
+        guard slots.count == items.count else { return nil }
+
+        var result: [AnyHashable: CGRect] = [:]
+        result.reserveCapacity(items.count)
+        for (item, slot) in zip(items, slots) {
+            var rect = TileLayoutEngine.rect(
+                for: slot,
+                unit: metrics.unit,
+                gap: metrics.spacing,
+                origin: CGPoint(x: geometry.gridLeft, y: geometry.top)
+            )
+            if key.isRightToLeft {
+                let localX = rect.minX - geometry.gridLeft
+                rect.origin.x = geometry.gridLeft + metrics.width - localX - rect.width
+            }
+            result[item.id] = rect
+        }
+        return result
+    }
+
+    /// Общая геометрия базовой раскладки: ключ, метрики юнита и начало сетки
+    /// в координатах контента (E11.7, E12.1).
+    ///
+    /// Повторяет `TesseraTileCollectionViewLayout.rebuild` без панели: пиксельные
+    /// края контента и `gridMetrics`.
+    ///
+    /// - Returns: Геометрия или `nil` (нулевая ширина).
+    private func baseLayoutGeometry() -> (
+        key: BaseFramesKey,
+        metrics: TileLayoutEngine.GridMetrics,
+        gridLeft: CGFloat,
+        top: CGFloat
+    )? {
         let key = baseFramesKey()
         let contentLeft = TileLayoutEngine.pixelRound(key.insets.left, scale: key.scale)
         let contentRight = TileLayoutEngine.pixelRound(
@@ -1615,31 +1655,71 @@ public final class TesseraTileGridView: UIView {
               ) else {
             return nil
         }
+        return (
+            key: key,
+            metrics: metrics,
+            gridLeft: contentLeft + metrics.leading,
+            top: TileLayoutEngine.pixelRound(key.insets.top, scale: key.scale)
+        )
+    }
 
-        let gridLeft = contentLeft + metrics.leading
-        let top = TileLayoutEngine.pixelRound(key.insets.top, scale: key.scale)
+    /// Позиция вставки перетаскиваемого элемента по порядку чтения (E12.1).
+    ///
+    /// Палец над пустым местом (дыра, зазор, область под плитками) не попадает
+    /// ни в одну плитку, и позицию задаёт **порядок чтения**: палец стоит в
+    /// клетке `(строка, колонка)` базовой раскладки, а элемент встаёт сразу
+    /// после последней плитки, чей левый верхний угол не позже этой клетки.
+    /// Над последней строкой справа от плиток — в конец, выше первой строки —
+    /// в начало, в дыре — между плитками, которые она разделяет по порядку
+    /// чтения. Зазор между клетками относится к клетке слева/выше (зазор — это
+    /// хвост клетки), поэтому палец в зазоре встаёт после её плитки.
+    ///
+    /// Раскладка — базовая, та же, что у хит-теста (E11.7), с самим
+    /// перетаскиваемым элементом на его базовом месте; в счёт позиции он не
+    /// входит. Позиция — индекс среди остальных элементов базового порядка
+    /// (`0 ... items.count - 1`), как у
+    /// `TileLayoutEngine.previewOrder(items:draggingID:insertionIndex:)`.
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - items: Элементы базового порядка (без панели).
+    ///   - draggingID: Идентификатор перетаскиваемого элемента.
+    /// - Returns: Позиция вставки или `nil`, если раскладку посчитать нельзя.
+    func baseInsertionIndex(
+        forGridPoint point: CGPoint,
+        items: [TileGridItem],
+        draggingID: AnyHashable
+    ) -> Int? {
+        guard let geometry = baseLayoutGeometry() else { return nil }
+        let key = geometry.key
+        let metrics = geometry.metrics
+        let pitch = metrics.unit + metrics.spacing
+        guard pitch.isFinite, pitch > 0 else { return nil }
+
         let packed: [(id: AnyHashable, size: TileSize)] = items.map { item in
             (id: item.id, size: TileLayoutEngine.fittingSize(item.size, columns: key.columns))
         }
         let slots = TileLayoutEngine.pack(items: packed, columns: key.columns, unit: metrics.unit)
         guard slots.count == items.count else { return nil }
 
-        var result: [AnyHashable: CGRect] = [:]
-        result.reserveCapacity(items.count)
-        for (item, slot) in zip(items, slots) {
-            var rect = TileLayoutEngine.rect(
-                for: slot,
-                unit: metrics.unit,
-                gap: metrics.spacing,
-                origin: CGPoint(x: gridLeft, y: top)
-            )
-            if key.isRightToLeft {
-                let localX = rect.minX - gridLeft
-                rect.origin.x = gridLeft + metrics.width - localX - rect.width
+        // Клетка пальца в логических (не зеркальных) координатах сетки.
+        let content = contentPoint(fromGridPoint: point)
+        let localX = key.isRightToLeft
+            ? geometry.gridLeft + metrics.width - content.x
+            : content.x - geometry.gridLeft
+        guard localX.isFinite, content.y.isFinite else { return nil }
+        let fingerColumn = Int((localX / pitch).rounded(.down))
+        let fingerRow = Int(((content.y - geometry.top) / pitch).rounded(.down))
+
+        var insertion = 0
+        var restIndex = 0
+        for (item, slot) in zip(items, slots) where item.id != draggingID {
+            if slot.row < fingerRow || (slot.row == fingerRow && slot.column <= fingerColumn) {
+                insertion = restIndex + 1
             }
-            result[item.id] = rect
+            restIndex += 1
         }
-        return result
+        return insertion
     }
 
     /// Переводит рамку из координат контента в координаты сетки (E11.7).
@@ -1651,6 +1731,17 @@ public final class TesseraTileGridView: UIView {
     /// - Returns: Рамка в координатах сетки.
     func gridFrame(fromContentFrame frame: CGRect) -> CGRect {
         collectionView.convert(frame, to: self)
+    }
+
+    /// Переводит точку из координат сетки в координаты контента (E12.1).
+    ///
+    /// Обратное к ``gridFrame(fromContentFrame:)``: drag сравнивает палец с
+    /// кэшированными рамками контента, не пересчитывая их на каждом шаге.
+    ///
+    /// - Parameter point: Точка в координатах сетки.
+    /// - Returns: Та же точка в координатах контента.
+    func contentPoint(fromGridPoint point: CGPoint) -> CGPoint {
+        collectionView.convert(point, from: self)
     }
 
     /// Санитизирует внешние поля сетки так же, как раскладка (E8.9).

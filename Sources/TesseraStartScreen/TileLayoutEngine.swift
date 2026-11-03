@@ -779,6 +779,38 @@ public enum TileLayoutEngine {
         return order
     }
 
+    /// Порядок сетки, если перетаскиваемый элемент вставлен на позицию
+    /// `insertionIndex` среди остальных (E12.1).
+    ///
+    /// Нужна drag'у над **пустым местом**: цели-плитки нет, и позиция берётся по
+    /// слоту порядка, ближайшему к пальцу. Индекс — в порядке **без**
+    /// перетаскиваемого элемента (`0 ... items.count - 1`), он же индекс
+    /// элемента в получившемся превью и целевой индекс
+    /// `TileStore.moveItem(_:toIndex:columns:)`/`moveBetweenFolders(_:to:at:)`.
+    /// Значение зажимается в границы. Панель раскрытой папки в перестановке не
+    /// участвует (как у ``previewOrder(items:draggingID:targetID:)``).
+    ///
+    /// - Parameters:
+    ///   - items: Порядок сетки на момент захвата (базовый, без превью).
+    ///   - draggingID: Идентификатор перетаскиваемого элемента.
+    ///   - insertionIndex: Позиция вставки среди остальных элементов.
+    /// - Returns: Новый порядок или `nil` для вырожденного случая.
+    static func previewOrder(
+        items: [TileGridItem],
+        draggingID: AnyHashable,
+        insertionIndex: Int
+    ) -> [TileGridItem]? {
+        guard let from = items.firstIndex(where: { $0.id == draggingID }),
+              !items[from].isFolderPanel else {
+            return nil
+        }
+
+        var order = items
+        let dragging = order.remove(at: from)
+        order.insert(dragging, at: min(max(insertionIndex, 0), order.count))
+        return order
+    }
+
     // MARK: - Resize-выталкивание (E8.7)
 
     /// Новый порядок сетки после изменения размера плитки (E8.7).
