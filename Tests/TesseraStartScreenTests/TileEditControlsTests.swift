@@ -37,6 +37,69 @@ final class TileEditControlsTests: XCTestCase {
         return white
     }
 
+    // MARK: - E12.9: кнопки не «влетают» при входе в edit
+
+    /// Кнопки встают на место плитки сразу: ни на входе, ни после отложенной
+    /// сверки у них нет анимации положения из нулевой рамки (перелёт из
+    /// левого верхнего угла), в том числе при включённом Reduce Motion.
+    func testControlsAppearInPlaceWithoutFlyInFromOrigin() throws {
+        for reduceMotion in [false, true] {
+            let host = TesseraTestDragHost(
+                descriptors: (0..<4).map { tesseraTestTile("t\($0)", size: .medium) }
+            )
+            host.coordinator.isReduceMotionEnabled = { reduceMotion }
+            host.coordinator.beginEditing()
+            host.spin(0.03)
+
+            for id in ["t0", "t1", "t2", "t3"] {
+                let control = try control(id, in: host)
+                let tile = try XCTUnwrap(host.host.grid.frame(forItemID: AnyHashable(id)))
+                // «Желе» поворачивает слой, поэтому сравниваем центры (frame
+                // повёрнутого вида — рамка описанного прямоугольника).
+                let center = CGPoint(x: tile.midX, y: tile.midY)
+                XCTAssertEqual(control.center.x, center.x, accuracy: 0.5, "reduceMotion=\(reduceMotion) \(id)")
+                XCTAssertEqual(control.center.y, center.y, accuracy: 0.5, "reduceMotion=\(reduceMotion) \(id)")
+                XCTAssertNil(
+                    control.layer.animation(forKey: "position"),
+                    "Нет перелёта: reduceMotion=\(reduceMotion) \(id)"
+                )
+                let shown = control.layer.presentation()?.position ?? control.layer.position
+                XCTAssertEqual(shown.x, center.x, accuracy: 1, "\(id)")
+                XCTAssertEqual(shown.y, center.y, accuracy: 1, "\(id)")
+            }
+        }
+    }
+
+    /// Кнопки плитки, поднятой long-press'ом, после отпускания возвращаются на
+    /// место без перелёта: оверлей пересоздаётся анимированным проходом, и
+    /// раньше его рамка анимировалась из нулевой (левый верхний угол сетки).
+    func testControlsOfLiftedTileReappearInPlaceAfterRelease() throws {
+        for reduceMotion in [false, true] {
+            let host = TesseraTestDragHost(
+                descriptors: (0..<4).map { tesseraTestTile("t\($0)", size: .medium) }
+            )
+            host.coordinator.isReduceMotionEnabled = { reduceMotion }
+            XCTAssertTrue(host.startDrag("t0"))
+            XCTAssertNil(host.coordinator.editControls["t0"], "Под пальцем оверлея нет")
+            host.coordinator.finishDrag(commit: true)
+
+            var seen = false
+            let deadline = Date().addingTimeInterval(2)
+            while Date() < deadline, !seen {
+                if let control = host.coordinator.editControls["t0"] {
+                    seen = true
+                    let tile = try XCTUnwrap(host.host.grid.frame(forItemID: "t0"))
+                    XCTAssertEqual(control.center.x, tile.midX, accuracy: 0.5, "reduceMotion=\(reduceMotion)")
+                    XCTAssertEqual(control.center.y, tile.midY, accuracy: 0.5, "reduceMotion=\(reduceMotion)")
+                    XCTAssertNil(control.layer.animation(forKey: "position"), "reduceMotion=\(reduceMotion)")
+                    XCTAssertNil(control.layer.animation(forKey: "bounds.size"), "reduceMotion=\(reduceMotion)")
+                }
+                host.spin(0.005)
+            }
+            XCTAssertTrue(seen, "Оверлей вернулся: reduceMotion=\(reduceMotion)")
+        }
+    }
+
     // MARK: - E12.4: обрезка
 
     /// Кнопки живут в контейнере, который обрезает по `bounds` сетки — как
