@@ -144,24 +144,38 @@ enum DemoVisuals {
 
 struct DeskDemoView: View {
     @StateObject private var model = DemoDeskModel()
+    @Environment(\.sizeCategory) private var sizeCategory
+
+    /// Высота плавающего блока подсказки/кнопки (E12.6): сетка резервирует
+    /// под него нижнее поле, чтобы последний ряд плиток не оказывался под ним.
+    @State private var overlayHeight: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            DemoDeskRepresentable(model: model, isEditing: model.isEditing)
+            DemoDeskRepresentable(
+                model: model,
+                isEditing: model.isEditing,
+                bottomReserve: overlayHeight
+            )
 
             VStack(alignment: .trailing, spacing: 10) {
-                Text(
-                    model.isEditing
-                        ? "Перетащите плитку, измените размер или открепите её"
-                        : "Долгое нажатие по плитке — режим редактирования"
-                )
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.trailing)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(UIColor.secondarySystemBackground))
-                .clipShape(Capsule())
+                // E12.6: на accessibility-размерах подсказка не показывается —
+                // крупный текст превращал её в блок поверх сетки.
+                if !sizeCategory.isAccessibilityCategory {
+                    Text(
+                        model.isEditing
+                            ? "Перетащите плитку, измените размер или открепите её"
+                            : "Долгое нажатие по плитке — режим редактирования"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .clipShape(Capsule())
+                }
 
                 Button {
                     model.isEditing.toggle()
@@ -174,7 +188,16 @@ struct DeskDemoView: View {
                 .buttonStyle(DemoCapsuleButtonStyle(tint: model.isEditing ? .green : .blue))
             }
             .padding(16)
+            // E12.6: кнопка не растёт выше xxxLarge — иначе на accessibility-
+            // размерах она занимает пол-экрана поверх сетки.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: DemoDeskOverlayHeightKey.self, value: proxy.size.height)
+                }
+            )
         }
+        .onPreferenceChange(DemoDeskOverlayHeightKey.self) { overlayHeight = $0 }
         .alert(item: $model.alert) { alert in
             Alert(
                 title: Text(alert.title),
@@ -182,6 +205,15 @@ struct DeskDemoView: View {
                 dismissButton: .default(Text("OK"))
             )
         }
+    }
+}
+
+/// Высота плавающего блока подсказки/кнопки вкладки «Стол» (E12.6).
+private struct DemoDeskOverlayHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -194,12 +226,15 @@ struct DeskDemoView: View {
 struct DemoDeskRepresentable: UIViewControllerRepresentable {
     let model: DemoDeskModel
     let isEditing: Bool
+    /// Высота плавающего блока поверх сетки — нижнее поле (E12.6).
+    let bottomReserve: CGFloat
 
     func makeUIViewController(context: Context) -> DemoDeskHostController {
         DemoDeskHostController(model: model)
     }
 
     func updateUIViewController(_ uiViewController: DemoDeskHostController, context: Context) {
+        uiViewController.bottomReserve = bottomReserve
         uiViewController.applyEditingState(isEditing)
     }
 }
@@ -381,6 +416,14 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     private let gridView = TesseraTileGridView()
     private var editCoordinator: TesseraTileEditCoordinator?
 
+    /// Высота плавающей подсказки/кнопки SwiftUI-слоя (E12.6).
+    var bottomReserve: CGFloat = 124 {
+        didSet {
+            guard bottomReserve != oldValue, isViewLoaded else { return }
+            updateGridInsets()
+        }
+    }
+
     init(model: DemoDeskModel) {
         self.model = model
         self.store = model.store
@@ -458,11 +501,12 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     private func updateGridInsets() {
         let safeArea = view.safeAreaInsets
         // Нижний запас — под плавающую подсказку и кнопку «Изменить»,
-        // которые лежат поверх представителя в SwiftUI-слое.
+        // которые лежат поверх представителя в SwiftUI-слое; высоту блока
+        // измеряет SwiftUI (на accessibility-размерах она другая, E12.6).
         let insets = UIEdgeInsets(
             top: max(safeArea.top, 0) + 8,
             left: 16,
-            bottom: max(safeArea.bottom, 0) + 124,
+            bottom: max(safeArea.bottom, 0) + bottomReserve + 8,
             right: 16
         )
 

@@ -2736,6 +2736,29 @@ final class TesseraTileCell: UICollectionViewCell {
     /// 1 — средние, 2 — крупные; границы — по фактической стороне).
     private var titleFontBucket = -1
 
+    /// Потолок размера шрифта заголовка (pt), для которого он собран (E12.6).
+    private var titleFontCap: CGFloat = 0
+
+    /// Категория Dynamic Type, для которой собран шрифт заголовка (E12.6).
+    private var titleFontCategory: UIContentSizeCategory?
+
+    /// Шрифт заголовка до подгонки под ширину плитки (E12.6).
+    ///
+    /// `titleLabel.font` в раскладке может быть уменьшен, чтобы самое длинное
+    /// слово влезло в строку целиком; от этого эталона уменьшение считается
+    /// заново при каждой раскладке.
+    private var titleBaseFont = UIFont.systemFont(ofSize: 12, weight: .semibold)
+
+    /// Нижняя граница подгонки шрифта заголовка под ширину (доля от базового).
+    ///
+    /// Ниже — текст нечитаем: тогда заголовок остаётся в одну строку и
+    /// усекается многоточием, но не рвётся посреди слова.
+    static let titleMinimumScaleFactor: CGFloat = 0.6
+
+    /// Доля меньшей стороны плитки, выше которой шрифт заголовка не растёт
+    /// при увеличении Dynamic Type (E12.6): подпись не должна съедать плитку.
+    static let titleFontSideFraction: CGFloat = 0.2
+
     /// Целевая прозрачность содержимого в режиме редактирования (E8.2, E10.4).
     ///
     /// Владелец дима — сетка: она передаёт сюда целевое значение
@@ -3320,9 +3343,6 @@ final class TesseraTileCell: UICollectionViewCell {
             bucket = 2
         }
 
-        guard bucket != titleFontBucket else { return }
-        titleFontBucket = bucket
-
         let baseSize: CGFloat
         switch bucket {
         case 0: baseSize = 12
@@ -3330,9 +3350,58 @@ final class TesseraTileCell: UICollectionViewCell {
         default: baseSize = 17
         }
 
-        titleLabel.font = UIFontMetrics(forTextStyle: .headline).scaledFont(
-            for: .systemFont(ofSize: baseSize, weight: .semibold)
+        // E12.6: Dynamic Type растёт, но не выше доли стороны плитки
+        // (на accessibility-размерах 12 pt иначе даёт ~30 pt на плитке 73 pt).
+        let cap = max(baseSize, floor(side * TesseraTileCell.titleFontSideFraction))
+        let category = traitCollection.preferredContentSizeCategory
+
+        guard bucket != titleFontBucket
+            || cap != titleFontCap
+            || category != titleFontCategory
+        else { return }
+        titleFontBucket = bucket
+        titleFontCap = cap
+        titleFontCategory = category
+
+        let font = UIFontMetrics(forTextStyle: .headline).scaledFont(
+            for: .systemFont(ofSize: baseSize, weight: .semibold),
+            maximumPointSize: cap,
+            compatibleWith: traitCollection
         )
+        titleBaseFont = font
+        titleLabel.font = font
+    }
+
+    /// Подгоняет шрифт заголовка так, чтобы самое длинное слово влезло в
+    /// строку целиком (E12.6).
+    ///
+    /// `UILabel` рвёт слово, не помещающееся в строку, посреди символа
+    /// («Календар/ь»). Поэтому шрифт уменьшается (до
+    /// ``titleMinimumScaleFactor`` от базового) под ширину самого длинного
+    /// слова. Если и так не помещается, возвращается `false`: вызывающий
+    /// ставит одну строку, и заголовок усекается многоточием, а не рвётся.
+    ///
+    /// - Parameter width: Доступная ширина строки.
+    /// - Returns: Помещается ли самое длинное слово целиком.
+    @discardableResult
+    private func fitTitleFont(toWidth width: CGFloat) -> Bool {
+        titleLabel.font = titleBaseFont
+        guard width > 0, let text = titleLabel.text, !text.isEmpty else { return true }
+
+        let words = text.components(separatedBy: .whitespacesAndNewlines)
+        func longest(_ font: UIFont) -> CGFloat {
+            words.reduce(0) { widest, word in
+                max(widest, ceil((word as NSString).size(withAttributes: [.font: font]).width))
+            }
+        }
+
+        let widest = longest(titleBaseFont)
+        guard widest > width else { return true }
+
+        let scale = max(TesseraTileCell.titleMinimumScaleFactor, width / widest)
+        let scaled = titleBaseFont.withSize(floor(titleBaseFont.pointSize * scale))
+        titleLabel.font = scaled
+        return longest(scaled) <= width
     }
 
     /// Раскладывает иконку, заголовок и бэйдж.
@@ -3352,6 +3421,7 @@ final class TesseraTileCell: UICollectionViewCell {
         let inset = max(6, min(12, minimumSide * 0.08))
         let contentWidth = max(0, bounds.width - inset * 2)
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        let titleFits = fitTitleFont(toWidth: contentWidth)
 
         // Бэйдж — в верхнем углу, противоположном иконке (§4, §9, RTL).
         let badgeSize = badgeView.intrinsicContentSize
@@ -3399,7 +3469,11 @@ final class TesseraTileCell: UICollectionViewCell {
             return
         }
 
-        if titleHeightLimit >= lineHeight * 2.5 {
+        if !titleFits {
+            // E12.6: слово не влезает даже в минимальном масштабе —
+            // одна строка с многоточием вместо разрыва посреди слова.
+            titleLabel.numberOfLines = 1
+        } else if titleHeightLimit >= lineHeight * 2.5 {
             titleLabel.numberOfLines = 3
         } else if titleHeightLimit >= lineHeight * 1.5 {
             titleLabel.numberOfLines = 2
@@ -3443,7 +3517,8 @@ final class TesseraTileCell: UICollectionViewCell {
         iconView.frame = .zero
         badgeView.frame = .zero
 
-        titleLabel.numberOfLines = 2
+        let titleFits = fitTitleFont(toWidth: contentWidth)
+        titleLabel.numberOfLines = titleFits ? 2 : 1
         let measuredTitle = titleLabel.sizeThatFits(
             CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
         )
