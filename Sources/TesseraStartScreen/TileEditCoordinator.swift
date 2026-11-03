@@ -2652,28 +2652,16 @@ public final class TesseraTileEditCoordinator: NSObject {
             return
         }
 
-        let previousState = mergeTracker?.state
-        let wasReady = previousState == .fired
-        mergeTracker?.update(point: point)
-        let newState = mergeTracker?.state
+        let wasReady = mergeTracker?.state == .fired
+        guard mergeTracker?.update(point: point) == true else { return }
 
-        switch newState {
-        case .cancelled:
-            // Палец сместился на допуск или больше — удержание отменено,
-            // дальше обычный drag E8.4. Таймер снимаем, а уже показанное
-            // «впитывание» откатываем.
-            cancelMergeTimer()
-            if wasReady {
-                refreshMergeHighlight(animated: true)
-            }
-        case .armed where previousState == .cancelled:
-            // E10.5-A3: палец вернулся в допуск после отмены — новый отсчёт
-            // 600 мс (E9.8а). Без этого удержание не перевзводилось до смены
-            // цели или выхода из зоны.
-            scheduleMergeTimer()
+        // E12.3: палец сместился на допуск или больше — прежнее удержание
+        // отменено, якорь перенесён в текущую точку, отсчёт 600 мс (E9.8а)
+        // начат заново. Старый таймер снимается (`scheduleMergeTimer` делает
+        // это сам), уже показанное «впитывание» откатывается.
+        scheduleMergeTimer()
+        if wasReady {
             refreshMergeHighlight(animated: true)
-        default:
-            break
         }
     }
 
@@ -4258,9 +4246,14 @@ extension TesseraTileEditCoordinator: UIGestureRecognizerDelegate {
 /// Состояния:
 /// - ``State/idle`` — удержания нет;
 /// - ``State/armed`` — палец над центром ярлыка, отсчёт идёт;
-/// - ``State/fired`` — порог выдержан, drop создаёт папку (``isMergeReady``);
-/// - ``State/cancelled`` — палец сместился на допуск или больше, удержание
-///   отменено.
+/// - ``State/fired`` — порог выдержан, drop создаёт папку (``isMergeReady``).
+///
+/// Контракт удержания (E12.3): «палец остаётся в пределах допуска (<10 pt)
+/// дольше порога (>600 мс), **считая от последнего заметного движения**».
+/// Смещение от якоря на допуск или больше отменяет удержание (в том числе уже
+/// выдержанное) и **переносит якорь в текущую точку с новым отсчётом** — палец,
+/// дошедший до центра цели несколькими шагами, перевзводится там, где
+/// остановился, а не ждёт возврата к первой точке входа в зону.
 ///
 /// Время читается через замыкание ``now``, а не напрямую из системных часов:
 /// тесты подменяют его управляемыми часами и проверяют порог без `sleep`.
@@ -4269,13 +4262,13 @@ extension TesseraTileEditCoordinator: UIGestureRecognizerDelegate {
 /// сдвигает таймер.
 ///
 /// Переходы:
-/// - ``beginHover(targetID:point:)``: новый ярлык (или выход из `cancelled`) —
+/// - ``beginHover(targetID:point:)``: новый ярлык —
 ///   `armed` с якорем в точке и отсчётом с текущего момента; повторный вызов
 ///   для того же ярлыка в `armed`/`fired` ничего не делает, чтобы покадровые
 ///   вызовы не перезапускали таймер;
-/// - ``update(point:)``: смещение от якоря на допуск или больше — `cancelled`;
-///   возврат пальца в допуск из `cancelled` — снова `armed` с новым отсчётом
-///   (E10.5-A3);
+/// - ``update(point:)``: смещение от якоря на допуск или больше — отмена и
+///   перевзвод: `armed` с якорем в текущей точке и отсчётом с текущего момента
+///   (E12.3, заменяет «cancelled до возврата к старому якорю» из E10.5-A3);
 /// - ``timerFired()``: прошло строго больше порога (`>600 мс`, E9.8а) —
 ///   `fired`, иначе остаётся `armed` (таймер мог сработать чуть раньше из-за
 ///   округления runloop);
@@ -4283,9 +4276,9 @@ extension TesseraTileEditCoordinator: UIGestureRecognizerDelegate {
 ///
 /// Границы E8.6 строгие (E9.8а): смещение ровно на допуск отменяет удержание
 /// (нужно «меньше 10 pt»), а порог времени должен быть превышен (нужно
-/// «больше 600 мс»). `cancelled` не терминально для ярлыка: пока палец не
-/// ушёл из зоны, возврат в допуск перевзводит отсчёт; смена цели приходит
-/// через ``beginHover(targetID:point:)`` или ``reset()``.
+/// «больше 600 мс»). Постоянно двигающийся палец (каждый шаг ≥10 pt) не
+/// успевает выдержать порог — готовности нет; смена цели приходит через
+/// ``beginHover(targetID:point:)`` или ``reset()``.
 struct TesseraMergeHoverTracker {
 
     /// Состояние удержания.
@@ -4299,9 +4292,6 @@ struct TesseraMergeHoverTracker {
 
         /// Порог выдержан: drop создаст папку.
         case fired
-
-        /// Палец сместился на допуск или больше (E9.8а).
-        case cancelled
     }
 
     /// Сколько времени нужно удерживать палец (``TesseraTileEditConfiguration/mergeHoverDuration``).
@@ -4390,15 +4380,19 @@ struct TesseraMergeHoverTracker {
     /// Проверяет смещение пальца от якоря и перевзводит удержание.
     ///
     /// Смещение на допуск или больше отменяет удержание и в `armed`, и в
-    /// `fired`: подсветка «впитывания» обещает слияние только пока палец стоит.
-    /// Возврат пальца в допуск из `cancelled` запускает новый отсчёт от
-    /// текущего момента (E10.5-A3) — якорь при этом остаётся прежним, поэтому
-    /// «мелкое дрожание у края допуска» может перевзводить, но полноценного
-    /// удержания вне зоны не будет.
+    /// `fired` (подсветка «впитывания» обещает слияние только пока палец
+    /// стоит) и сразу начинает новое: якорь переносится в текущую точку,
+    /// отсчёт идёт с текущего момента, состояние — `armed` (E12.3). Так
+    /// удержание считается от последнего заметного движения; возвращаться к
+    /// старому якорю не нужно, а постоянно движущийся палец не накопит порог.
     ///
     /// - Parameter point: Текущая точка пальца в координатах сетки.
-    mutating func update(point: CGPoint) {
-        guard let anchor else { return }
+    /// - Returns: `true`, если удержание перевзведено (прежний отсчёт и
+    ///   готовность недействительны — координатору нужно пересоздать таймер и,
+    ///   если было `fired`, откатить подсветку).
+    @discardableResult
+    mutating func update(point: CGPoint) -> Bool {
+        guard let anchor, state == .armed || state == .fired else { return false }
 
         let dx = point.x - anchor.x
         let dy = point.y - anchor.y
@@ -4411,20 +4405,13 @@ struct TesseraMergeHoverTracker {
             ? distanceSquared < thresholdSquared
             : distanceSquared == 0
 
-        switch state {
-        case .armed, .fired:
-            guard !isWithinTolerance else { return }
-            state = .cancelled
-            startedAt = nil
+        guard !isWithinTolerance else { return false }
 
-        case .cancelled:
-            guard isWithinTolerance else { return }
-            startedAt = now()
-            state = .armed
-
-        case .idle:
-            return
-        }
+        // E12.3: перенос якоря и новый отсчёт с текущей точки.
+        self.anchor = point
+        startedAt = now()
+        state = .armed
+        return true
     }
 
     /// Таймер удержания сработал.
