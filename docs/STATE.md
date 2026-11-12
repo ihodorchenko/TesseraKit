@@ -28,6 +28,7 @@ iPhone 17; Core 124, Panorama 93, Pivot 77, StartScreen 391) на W5; после
 | [`docs/PANORAMA-IOS-DESIGN.md`](PANORAMA-IOS-DESIGN.md) | панорама: peek, параллакс фона, кастомный снап |
 | [`docs/PIVOT-IOS-DESIGN.md`](PIVOT-IOS-DESIGN.md) | пивот: лента заголовков со сквозной синхронизацией |
 | [`docs/STARTSCREEN-IOS-DESIGN.md`](STARTSCREEN-IOS-DESIGN.md) | рабочий стол: сетка плиток, live-движок, три страницы |
+| [`docs/W10M-STARTSCREEN.md`](W10M-STARTSCREEN.md) | референс: как рабочий стол W10M работает на устройстве — сетка, обычный режим, редактирование, папки (не про нашу реализацию) |
 | [`PLAN.md`](PLAN.md) | эпики E0–E12, волны D19 и статусы (✅ готово / 🔶 частично / ⬜ не начато) |
 | [`RISK.md`](RISK.md) | риски R1–R24: влияние, вероятность, митигация |
 
