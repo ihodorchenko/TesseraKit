@@ -1113,6 +1113,13 @@ public enum TileLayoutEngine {
     /// колонках и 1×1 при одной. Это деградация геометрии, а не модели:
     /// `TileSize` ярлыка в `TileStore` не меняется.
     ///
+    /// Связь с ограничением колонки (E14.2): след плитки на сетке — всегда
+    /// `fittingSize`, поэтому `column + ширина ≤ columns` достижимо для любой
+    /// ячейки: ``clamped(cell:size:columns:)`` сдвигает колонку влево именно по
+    /// ужатой ширине. При 6 колонках (D26) ужатия нет — все четыре размера D15
+    /// (максимум 4 колонки) помещаются как есть; ужатие работает только при
+    /// `columns < 4`. Функция зависит только от ширины и не меняет поведения.
+    ///
     /// - Parameters:
     ///   - size: Запрошенный размер плитки.
     ///   - columns: Число колонок сетки.
@@ -1485,6 +1492,180 @@ extension TileLayoutEngine {
             }
         }
         return 0
+    }
+
+    // MARK: Панель папки на размещениях по координатам (E14.2)
+
+    /// Геометрия раскрытия по уже посчитанным слотам (E14.2).
+    ///
+    /// В отличие от ``folderPanelGeometry(items:columns:expandedFolderID:)`` ничего
+    /// не упаковывает: дыры на сетке сохраняются, панель не делает репак — строки
+    /// ниже полосы остаются на своих местах (раскладка сдвигает их вниз на высоту
+    /// панели).
+    ///
+    /// - Parameters:
+    ///   - placedSlots: Слоты всех элементов набора без панели, в порядке
+    ///     отображения.
+    ///   - expandedFolderID: Идентификатор раскрытой папки.
+    /// - Returns: Геометрия либо `nil`, если папки среди слотов нет;
+    ///   `folderIndex` — индекс папки в `placedSlots`.
+    private static func folderPanelGeometry(
+        placedSlots: [TileLayoutSlot],
+        expandedFolderID: AnyHashable
+    ) -> FolderPanelGeometry? {
+        guard let folderIndex = placedSlots.firstIndex(where: { $0.id == expandedFolderID }) else {
+            return nil
+        }
+
+        var byID: [AnyHashable: TileLayoutSlot] = [:]
+        byID.reserveCapacity(placedSlots.count)
+        for slot in placedSlots {
+            byID[slot.id] = slot
+        }
+
+        return FolderPanelGeometry(
+            slots: byID,
+            bandEndRow: folderBandEndRow(for: placedSlots[folderIndex], in: placedSlots),
+            folderIndex: folderIndex
+        )
+    }
+
+    /// Нижняя граница полосы раскрытой папки по набору размещений (E14.2).
+    ///
+    /// Та же формула, что у ``folderBandEndRow(for:in:)``, но по ячейкам, а не по
+    /// упаковке: плитки считаются по ужатым под `columns` размерам, дыры не
+    /// заполняются.
+    ///
+    /// - Parameters:
+    ///   - folderID: Идентификатор раскрытой папки.
+    ///   - placements: Набор размещений (без панели).
+    ///   - columns: Число колонок.
+    /// - Returns: Первая строка после полосы либо `nil`, если папки нет в наборе
+    ///   или она не помещается в сетку.
+    public static func folderBandEndRow(
+        forFolder folderID: AnyHashable,
+        in placements: [TilePlacedItem],
+        columns: Int
+    ) -> Int? {
+        let placed = slots(placements: placements, columns: columns, unit: 1, fitting: true)
+        guard let folderSlot = placed.first(where: { $0.id == folderID }) else { return nil }
+        return folderBandEndRow(for: folderSlot, in: placed)
+    }
+
+    /// Индекс вставки панели по уже посчитанным слотам (E14.2).
+    ///
+    /// Правило то же, что у
+    /// ``folderPanelInsertionIndex(items:columns:expandedFolderID:)``: панель
+    /// встаёт после **последнего** по массиву элемента, который остаётся над
+    /// панелью (`row < bandEnd`), но не раньше, чем сразу после папки. Размещение
+    /// не пересчитывается — слоты берутся как есть, дыры сохраняются.
+    ///
+    /// - Parameters:
+    ///   - placedSlots: Слоты элементов в порядке отображения, без панели.
+    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
+    /// - Returns: Индекс для вставки панели либо `nil`, если папки среди слотов
+    ///   нет.
+    public static func folderPanelInsertionIndex(
+        placedSlots: [TileLayoutSlot],
+        expandedFolderID: AnyHashable?
+    ) -> Int? {
+        guard let expandedFolderID,
+              let geometry = folderPanelGeometry(
+                  placedSlots: placedSlots,
+                  expandedFolderID: expandedFolderID
+              ) else {
+            return nil
+        }
+
+        var lastIndexAbovePanel = geometry.folderIndex
+        for (index, slot) in placedSlots.enumerated() where slot.row < geometry.bandEndRow {
+            lastIndexAbovePanel = max(lastIndexAbovePanel, index)
+        }
+        return lastIndexAbovePanel + 1
+    }
+
+    /// Индекс вставки панели по набору размещений (E14.2).
+    ///
+    /// Порядок элементов — порядок массива `placements`. Обёртка над
+    /// ``folderPanelInsertionIndex(placedSlots:expandedFolderID:)``: слоты берутся
+    /// с ужатыми под `columns` размерами, репака нет.
+    ///
+    /// - Parameters:
+    ///   - placements: Набор размещений в порядке отображения, без панели.
+    ///   - columns: Число колонок.
+    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
+    /// - Returns: Индекс для вставки панели либо `nil`.
+    public static func folderPanelInsertionIndex(
+        placements: [TilePlacedItem],
+        columns: Int,
+        expandedFolderID: AnyHashable?
+    ) -> Int? {
+        folderPanelInsertionIndex(
+            placedSlots: slots(placements: placements, columns: columns, unit: 1, fitting: true),
+            expandedFolderID: expandedFolderID
+        )
+    }
+
+    /// Отступ строк под панелью по уже посчитанным слотам (E14.2).
+    ///
+    /// Семантика ``rowsBelowOffset(items:columns:expandedFolderID:panelHeight:spacing:)``
+    /// сохраняется: всё, что **начинается** со строки сразу после полосы папки и
+    /// ниже, уходит под панель на `panelHeight + spacing` (дыры между строками
+    /// остаются: панель — вставка, а не репак). Если под панелью ничего нет — `0`.
+    ///
+    /// - Parameters:
+    ///   - placedSlots: Слоты элементов в порядке отображения, без панели.
+    ///   - expandedFolderID: Идентификатор раскрытой папки.
+    ///   - panelHeight: Высота панели в точках.
+    ///   - spacing: Зазор сетки (`itemSpacing`); отрицательный и нечисловой — 0.
+    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
+    ///   иначе `0`.
+    public static func rowsBelowOffset(
+        placedSlots: [TileLayoutSlot],
+        expandedFolderID: AnyHashable?,
+        panelHeight: CGFloat,
+        spacing: CGFloat = 8
+    ) -> CGFloat {
+        guard panelHeight.isFinite, panelHeight > 0, let expandedFolderID,
+              let geometry = folderPanelGeometry(
+                  placedSlots: placedSlots,
+                  expandedFolderID: expandedFolderID
+              ) else {
+            return 0
+        }
+
+        for (index, slot) in placedSlots.enumerated()
+        where index != geometry.folderIndex && slot.row >= geometry.bandEndRow {
+            return panelHeight + (spacing.isFinite ? max(spacing, 0) : 0)
+        }
+        return 0
+    }
+
+    /// Отступ строк под панелью по набору размещений (E14.2).
+    ///
+    /// Обёртка над ``rowsBelowOffset(placedSlots:expandedFolderID:panelHeight:spacing:)``.
+    ///
+    /// - Parameters:
+    ///   - placements: Набор размещений в порядке отображения, без панели.
+    ///   - columns: Число колонок.
+    ///   - expandedFolderID: Идентификатор раскрытой папки.
+    ///   - panelHeight: Высота панели в точках.
+    ///   - spacing: Зазор сетки (`itemSpacing`).
+    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
+    ///   иначе `0`.
+    public static func rowsBelowOffset(
+        placements: [TilePlacedItem],
+        columns: Int,
+        expandedFolderID: AnyHashable?,
+        panelHeight: CGFloat,
+        spacing: CGFloat = 8
+    ) -> CGFloat {
+        rowsBelowOffset(
+            placedSlots: slots(placements: placements, columns: columns, unit: 1, fitting: true),
+            expandedFolderID: expandedFolderID,
+            panelHeight: panelHeight,
+            spacing: spacing
+        )
     }
 
     /// Высота полноширинной панели раскрытой папки в точках с зазором по
