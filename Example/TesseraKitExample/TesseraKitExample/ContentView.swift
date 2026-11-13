@@ -840,7 +840,7 @@ final class StartDemoHostController: UIViewController,
         let model = self.model
         screen.configure(
             leftPanel: QuickPanelProvider(makeViewController: { StartDemoHookController() }),
-            rightPage: {
+            rightPage: { [model] in
                 TesseraAppsListPageViewController.make(
                     store: store,
                     settings: [
