@@ -132,6 +132,24 @@ public enum TileBadge: Equatable, Hashable {
             return value > 0
         }
     }
+
+    /// Значение `accessibilityValue` для VoiceOver (D34, E15.4).
+    ///
+    /// Положительный счётчик озвучивается числом, точка без числа —
+    /// локализованной строкой «есть уведомление» (иначе слепой пользователь
+    /// не узнал бы о наличии уведомления), `.none` и неположительный счётчик —
+    /// `nil`. Единый источник для ячейки сетки, ярлыка панели и
+    /// ``TesseraLiveTileView``.
+    var accessibilityValueText: String? {
+        switch self {
+        case let .count(value) where value > 0:
+            return String(value)
+        case .dot:
+            return TesseraStartScreenStrings.string(.a11yBadgeDot)
+        case .none, .count:
+            return nil
+        }
+    }
 }
 
 #if canImport(UIKit)

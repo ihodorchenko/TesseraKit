@@ -205,6 +205,11 @@ enum TesseraStartScreenStrings {
         /// Состояние раскрытой папки в accessibility value.
         case panelExpanded = "panel.expanded"
 
+        // MARK: Бейдж (§9)
+
+        /// Значение VoiceOver для бэйджа-точки без числа (D34, E15.4).
+        case a11yBadgeDot = "a11y.badge.dot"
+
         // MARK: Общие
 
         /// Кнопка отмены в меню.

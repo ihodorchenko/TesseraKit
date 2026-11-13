@@ -141,6 +141,9 @@
 /* Состояние раскрытой папки в accessibilityValue ячейки. */
 "panel.expanded" = "expanded";
 
+/* Значение VoiceOver для бэйджа-точки без числа (D34, E15.4). */
+"a11y.badge.dot" = "has a notification";
+
 /* MARK: - Общие строки */
 
 /* Кнопка отмены в меню. */

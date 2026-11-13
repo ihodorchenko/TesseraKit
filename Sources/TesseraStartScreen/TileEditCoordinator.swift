@@ -6894,12 +6894,7 @@ final class TesseraFolderTileView: UIControl {
         badgeView.badge = tile.badge
 
         accessibilityLabel = tile.title
-        switch tile.badge {
-        case .count(let value) where value > 0:
-            accessibilityValue = String(value)
-        case .none, .dot, .count:
-            accessibilityValue = nil
-        }
+        accessibilityValue = tile.badge.accessibilityValueText
         setNeedsLayout()
     }
 

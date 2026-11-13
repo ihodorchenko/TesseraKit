@@ -51,7 +51,11 @@ final class TileGridAccessibilityTests: XCTestCase {
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         cell.configure(with: .tile(withoutDetail), liveTileEngine: nil, isVisible: false)
         XCTAssertEqual(cell.accessibilityLabel, "Почта")
-        XCTAssertNil(cell.accessibilityValue, "Точка без числа не озвучивается")
+        XCTAssertEqual(
+            cell.accessibilityValue,
+            TesseraStartScreenStrings.string(.a11yBadgeDot),
+            "D34/E15.4: точка без числа озвучивается строкой «есть уведомление»"
+        )
 
         let emptyFront = TileDescriptor(
             id: "empty-front",
@@ -116,6 +120,122 @@ final class TileGridAccessibilityTests: XCTestCase {
         let shortcut = try XCTUnwrap(panel.shortcutCells.first)
         XCTAssertEqual(shortcut.accessibilityLabel, "plain-in-folder")
         XCTAssertNil(shortcut.accessibilityValue)
+    }
+
+    // MARK: - Бэйдж-точка (D34, E15.4)
+
+    /// Строка точки: ru «есть уведомление», en «has a notification».
+    func testDotBadgeStringIsLocalizedInBothLanguages() {
+        XCTAssertEqual(
+            TesseraStartScreenStrings.string(.a11yBadgeDot, language: "ru"),
+            "есть уведомление"
+        )
+        XCTAssertEqual(
+            TesseraStartScreenStrings.string(.a11yBadgeDot, language: "en"),
+            "has a notification"
+        )
+    }
+
+    /// `.dot` озвучивается строкой, label не меняется, число и `.none` — как раньше.
+    func testStaticTileValueForDotCountAndNone() {
+        let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
+
+        cell.configure(
+            with: .tile(tesseraTestTile("mail", badge: .dot)),
+            liveTileEngine: nil,
+            isVisible: false
+        )
+        XCTAssertEqual(cell.accessibilityValue, dotValue)
+        XCTAssertEqual(cell.accessibilityLabel, "mail", "Label точкой не меняется")
+
+        cell.configure(
+            with: .tile(tesseraTestTile("mail", badge: .count(7))),
+            liveTileEngine: nil,
+            isVisible: false
+        )
+        XCTAssertEqual(cell.accessibilityValue, "7")
+
+        cell.configure(
+            with: .tile(tesseraTestTile("mail", badge: .count(0))),
+            liveTileEngine: nil,
+            isVisible: false
+        )
+        XCTAssertNil(cell.accessibilityValue, "Нулевой счётчик не озвучивается")
+
+        cell.configure(
+            with: .tile(tesseraTestTile("mail", badge: .none)),
+            liveTileEngine: nil,
+            isVisible: false
+        )
+        XCTAssertNil(cell.accessibilityValue)
+    }
+
+    /// Значение следует за бэйджем: `.dot` → число → `.dot` → `.none`.
+    func testValueUpdatesWhenBadgeChanges() {
+        let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
+        let sequence: [(TileBadge, String?)] = [
+            (.dot, dotValue),
+            (.count(12), "12"),
+            (.dot, dotValue),
+            (.none, nil),
+        ]
+        for (badge, expected) in sequence {
+            cell.configure(
+                with: .tile(tesseraTestTile("mail", badge: badge)),
+                liveTileEngine: nil,
+                isVisible: false
+            )
+            XCTAssertEqual(cell.accessibilityValue, expected, "badge: \(badge)")
+        }
+    }
+
+    /// 1x1: заголовок скрыт визуально (D47), но label по-прежнему его
+    /// озвучивает, а значение точки добавляется.
+    func testSmallTileKeepsLabelAndAnnouncesDot() {
+        let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
+        cell.configure(
+            with: .tile(tesseraTestTile("notes", size: .small, badge: .dot)),
+            liveTileEngine: nil,
+            isVisible: false
+        )
+        XCTAssertEqual(cell.accessibilityLabel, "notes")
+        XCTAssertEqual(
+            cell.accessibilityValue,
+            TesseraStartScreenStrings.string(.a11yBadgeDot)
+        )
+    }
+
+    /// Ярлык панели папки и автономная live-плитка озвучивают точку так же;
+    /// текст хоста (`accessibilityText`) приоритетнее строки модуля.
+    func testPanelShortcutAndStandaloneLiveTileAnnounceDot() throws {
+        let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
+
+        let folder = TileFolder(
+            id: "folder",
+            title: "Folder",
+            tiles: [tesseraTestTile("in-folder", size: .small, badge: .dot)]
+        )
+        let panel = TesseraFolderPanelCell(
+            frame: CGRect(x: 0, y: 0, width: 350, height: 160)
+        )
+        panel.configure(folder: folder, columns: 4, spacing: 8)
+        panel.layoutIfNeeded()
+        let shortcut = try XCTUnwrap(panel.shortcutCells.first)
+        XCTAssertEqual(shortcut.accessibilityValue, dotValue)
+
+        let live = TesseraLiveTileView(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        live.setFaces(front: TesseraLiveTileFace(title: "Почта"), back: nil)
+        live.badge = .dot
+        XCTAssertEqual(live.accessibilityValue, dotValue)
+        live.badgeView.accessibilityText = "Новое письмо"
+        XCTAssertEqual(live.accessibilityValue, "Новое письмо")
+        live.badgeView.accessibilityText = nil
+        live.badge = .count(5)
+        XCTAssertEqual(live.accessibilityValue, "5")
+        live.badge = .none
+        XCTAssertNil(live.accessibilityValue)
     }
 
     // MARK: - Custom actions папок в режиме редактирования (E11.5)
