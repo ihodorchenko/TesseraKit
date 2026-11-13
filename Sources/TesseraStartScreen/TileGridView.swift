@@ -735,6 +735,16 @@ public final class TesseraTileGridView: UIView {
     /// Запланирован ли разбор отложенных команд на следующий проход runloop.
     private var hasScheduledFolderWork = false
 
+    /// Действия, которые ждут окончания перехода панели и применения
+    /// отложенных снимка и команды (D45).
+    ///
+    /// Внутренний шов координатора редактирования: после закрытия панели
+    /// распавшейся папки VoiceOver-фокус должен уйти на оставшийся ярлык **после**
+    /// того, как сетка применила отложенный снимок, а не на плитку папки,
+    /// которая вот-вот исчезнет (``postFolderLayoutChanged(expanded:folderID:)`` на
+    /// завершении закрытия ставит фокус на неё).
+    private var folderSettleActions: [() -> Void] = []
+
     /// Запрошенное извне состояние прокрутки (E10.2).
     private var isScrollEnabledRequested = true
 
@@ -2284,6 +2294,7 @@ public final class TesseraTileGridView: UIView {
     /// `pendingFolderChange` до исполнения (busy-loop нет: следующий проход
     /// увидит, что снимок уже применён).
     private func runDeferredFolderWork() {
+        defer { flushFolderSettleActions() }
         guard folderTransition == .idle else { return }
 
         if let deferredSnapshot = pendingSnapshot {
@@ -2310,6 +2321,42 @@ public final class TesseraTileGridView: UIView {
             openFolder(folder, animated: animated)
         case .close(let animated):
             closeFolder(animated: animated)
+        }
+    }
+
+    /// Выполняет действие, когда переход панели папки закончился и отложенных
+    /// снимка и команды не осталось (D45).
+    ///
+    /// Если сетка спокойна, действие уходит на **следующий проход runloop**
+    /// (E10.5-B6: к этому моменту коллекция уже разложила новые рамки); иначе
+    /// оно ждёт конца перехода и применения отложенного снимка и тоже
+    /// выполняется на следующем проходе.
+    ///
+    /// - Parameter action: Действие на главном потоке.
+    func performAfterFolderTransition(_ action: @escaping () -> Void) {
+        folderSettleActions.append(action)
+        if isFolderSettled {
+            flushFolderSettleActions()
+        } else if folderTransition == .idle {
+            scheduleDeferredFolderWork()
+        }
+    }
+
+    /// Спокойна ли панель: нет перехода и нет отложенных команд (D45).
+    private var isFolderSettled: Bool {
+        folderTransition == .idle && pendingSnapshot == nil && pendingFolderChange == nil
+    }
+
+    /// Запускает ожидающие действия, если панель спокойна (D45).
+    private func flushFolderSettleActions() {
+        guard isFolderSettled, !folderSettleActions.isEmpty else { return }
+        let actions = folderSettleActions
+        folderSettleActions = []
+        DispatchQueue.main.async { [weak self] in
+            // Ячейки применённого снимка создаёт layout-проход коллекции: доводим
+            // его до действий, чтобы фокус VoiceOver указывал на существующую ячейку.
+            self?.collectionView.layoutIfNeeded()
+            for action in actions { action() }
         }
     }
 

@@ -450,8 +450,8 @@ final class TileCellDragTests: XCTestCase {
         let host = try TesseraTestDragHost(
             cells: [],
             folders: [
-                CellFixtureFolder("F1", .medium, 0, 0, contents: [("a", .small)]),
-                CellFixtureFolder("F2", .medium, 0, 2, contents: [("b", .small)]),
+                CellFixtureFolder("F1", .medium, 0, 0, contents: [("a", .small), ("a2", .small)]),
+                CellFixtureFolder("F2", .medium, 0, 2, contents: [("b", .small), ("b2", .small)]),
             ]
         )
         XCTAssertTrue(host.startDrag("F1"))
@@ -623,14 +623,15 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertEqual(host2.folders.first?.tiles.map { $0.id }, ["f1", "f2"] as [AnyHashable])
     }
 
-    /// Ярлык из панели в новую строку: `extractFromFolderToNewRow`, папка из
-    /// одного ярлыка исчезает; превью «новой строки» считается без неё, как и
-    /// операция хранилища, поэтому ярлык ложится ровно туда, где его показало превью.
-    func testPanelSoleTileToNewRowDissolvesFolderAndLandsWherePreviewShowed() throws {
+    /// Ярлык из панели в новую строку (D45): в папке два ярлыка, она распускается,
+    /// оставшийся (large) встаёт на её ячейку со своим размером; превью «новой
+    /// строки» считается уже с ним, как и операция хранилища, поэтому ярлык ложится
+    /// ровно туда, где его показало превью (раньше папка из одного ярлыка исчезала).
+    func testPanelTileToNewRowDissolvesFolderAndLandsWherePreviewShowed() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 0, 3)],
             folders: [
-                CellFixtureFolder("F", .small, 1, 0, contents: [("f1", .small)]),
+                CellFixtureFolder("F", .small, 1, 0, contents: [("f1", .small), ("f2", .large)]),
             ]
         )
         try startPanelDrag(host, folderID: "F", iconIndex: 0)
@@ -638,12 +639,16 @@ final class TileCellDragTests: XCTestCase {
         host.coordinator.updateDrag(to: CGPoint(x: bounds.midX, y: bounds.maxY - 20))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .newRow)
         let previewFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "f1"))
+        XCTAssertNotNil(host.host.grid.frame(forItemID: "f2"), "Превью показало распад: оставшийся ярлык на месте папки")
+        XCTAssertNil(host.host.grid.frame(forItemID: "F"), "Папки в превью нет")
         host.coordinator.finishDrag(commit: true)
         settle(host, "f1")
 
-        XCTAssertTrue(host.folders.isEmpty, "Папка из одного ярлыка исчезла")
+        XCTAssertTrue(host.folders.isEmpty, "Папка распалась")
         XCTAssertEqual(host.store.placement(of: "a"), at(0, 3))
-        XCTAssertEqual(host.store.placement(of: "f1"), at(1, 0), "Новая строка считается без исчезнувшей папки")
+        XCTAssertEqual(host.store.placement(of: "f2"), at(1, 0), "Оставшийся ярлык — на ячейке папки")
+        XCTAssertEqual(host.store.snapshot().item(withID: "f2")?.size, .large, "со своим размером")
+        XCTAssertEqual(host.store.placement(of: "f1"), at(5, 0), "Новая строка считается с оставшимся ярлыком")
         assertFrame(host.host.grid.frame(forItemID: "f1"), previewFrame, "Ярлык лёг туда, где показало превью")
     }
 

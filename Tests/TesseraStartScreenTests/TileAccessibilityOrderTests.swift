@@ -532,9 +532,10 @@ final class TileAccessibilityOrderTests: XCTestCase {
         XCTAssertTrue((recorder.posts.last?.1 as? UIView) === host.host.grid, "фокус — сама сетка")
     }
 
-    /// Unpin ярлыка, которого нет на сетке (лежит в папке): прежнее поведение —
-    /// фокус на последнем элементе сетки, на несуществующий ярлык не уходит.
-    func testFocusAfterUnpinOfTileInsideFolderKeepsPreviousBehavior() throws {
+    /// Unpin ярлыка, которого нет на сетке (лежит в папке из двух ярлыков): папка
+    /// распускается (D45), фокус — на оставшемся ярлыке, ставшем элементом сетки
+    /// (раньше — на последнем элементе сетки); на несуществующий ярлык не уходит.
+    func testFocusAfterUnpinOfTileInsideFolderGoesToRemainingTile() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 0, 3), CellFixtureTile("z", .small, 3, 0)],
             folders: [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small)])]
@@ -544,7 +545,7 @@ final class TileAccessibilityOrderTests: XCTestCase {
         host.coordinator.unpin("x")
         XCTAssertTrue(host.waitUntil { !recorder.posts.isEmpty })
         XCTAssertFalse(host.store.isPinned("x"))
-        assertFocus(recorder, on: host.host.cell("z"), "последний элемент сетки в порядке чтения")
+        assertFocus(recorder, on: host.host.cell("y"), "оставшийся ярлык на месте распавшейся папки")
     }
 
     /// Resize: фокус — на изменённой плитке, и она остаётся на своей ячейке

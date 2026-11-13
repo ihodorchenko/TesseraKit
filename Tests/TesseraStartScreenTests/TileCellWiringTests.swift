@@ -220,12 +220,13 @@ final class TileCellWiringTests: XCTestCase {
     }
 
     /// Ярлык в папке открепляется без fly-out (его нет на сетке): последний ярлык
-    /// папки убирает папку, её ячейка остаётся дырой.
+    /// переходной папки (D45: папка из одного ярлыка бывает только после
+    /// `createFolder(withTile:)`) убирает папку, её ячейка остаётся дырой.
     func testUnpinOfSoleFolderTileLeavesHoleWhereFolderWas() throws {
         let host = try TesseraTestDragHost(
-            cells: [CellFixtureTile("a", .small, 0, 3)],
-            folders: [CellFixtureFolder("F", .medium, 0, 0, contents: [("f1", .small)])]
+            cells: [CellFixtureTile("a", .small, 0, 3), CellFixtureTile("f1", .small, 0, 0)]
         )
+        XCTAssertNotNil(host.coordinator.createFolder(withTile: "f1"))
         let recorder = Recorder()
         host.coordinator.delegate = recorder
         host.coordinator.beginEditing()

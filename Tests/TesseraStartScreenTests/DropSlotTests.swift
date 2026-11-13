@@ -270,6 +270,7 @@ final class DropSlotTests: XCTestCase {
             folderAt: 1
         )
         let folderID = try XCTUnwrap(host.firstFolderID)
+        let folderCell = try XCTUnwrap(host.store.placement(of: folderID))
         XCTAssertEqual(host.storeIDs, ["m", folderID, "s", "w"] as [AnyHashable])
         // Клетки малых: F — (0, 2), s — (0, 3).
         let grid = try cells(host, first: folderID, second: "s")
@@ -291,21 +292,23 @@ final class DropSlotTests: XCTestCase {
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f2")
-        XCTAssertEqual(host.storeIDs, ["m", folderID, "s", "f2", "w"] as [AnyHashable])
+        // D45: в папке F из двух ярлыков остался «f1» — папка распущена, он на её месте.
+        XCTAssertEqual(host.storeIDs, ["m", "f1", "s", "f2", "w"] as [AnyHashable])
+        XCTAssertEqual(host.store.placement(of: "f1"), folderCell, "f1 заняла ячейку папки")
         XCTAssertEqual(host.store.placement(of: "f2"), TileGridPlacement(row: 1, column: 3))
         XCTAssertEqual(host.host.grid.frame(forItemID: "f2"), preview)
     }
 
-    /// Вынос последнего ярлыка (папка исчезает, её ячейка остаётся дырой) в
-    /// клетку правее «d»: индекс учитывает исчезнувшую папку, ярлык — последний
-    /// в порядке чтения.
-    func testSoleTilePanelDropToEndDissolvesFolder() throws {
+    /// Вынос одного из двух ярлыков (D45: папка распускается, оставшийся «f2» встаёт
+    /// на её ячейку) в клетку правее «d»: вынесенный ярлык — последний в порядке чтения.
+    func testPanelDropOfOneOfTwoTilesToEndDissolvesFolder() throws {
         let host = try makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
-            folderTiles: ["f1"],
+            folderTiles: ["f1", "f2"],
             folderAt: 1
         )
         let folderID = try XCTUnwrap(host.firstFolderID)
+        let folderCell = try XCTUnwrap(host.store.placement(of: folderID))
         let grid = try cells(host, first: "a", second: folderID)
         let recorder = Recorder()
         host.coordinator.delegate = recorder
@@ -315,8 +318,9 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.finishDrag(commit: true)
         settle(host, "f1")
 
-        XCTAssertEqual(host.storeIDs, ["a", "b", "c", "d", "f1"] as [AnyHashable], "Папка исчезла")
-        XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 2), "На месте папки — дыра, без репака")
+        XCTAssertEqual(host.storeIDs, ["a", "f2", "b", "c", "d", "f1"] as [AnyHashable], "Папка распалась")
+        XCTAssertEqual(host.store.placement(of: "f2"), folderCell, "f2 — на месте папки")
+        XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 2), "Остальные без репака")
         XCTAssertEqual(recorder.folderMoves.first?.cell, TileGridPlacement(row: 1, column: 3))
     }
 

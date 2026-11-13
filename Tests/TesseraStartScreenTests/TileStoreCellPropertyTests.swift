@@ -10,8 +10,11 @@
 //
 //  Инварианты после каждой операции: нет пересечений, всё внутри
 //  `[0, columns)`, у каждого видимого элемента ровно одна ячейка, ярлыки
-//  сохранены (на сетке, в папке или среди откреплённых — один раз), папки не
-//  пусты, содержимое папок ⊂ каталога, порядок модели — порядок чтения ячеек.
+//  сохранены (на сетке, в папке или среди откреплённых — один раз), в папках
+//  не меньше двух ярлыков (E14.8, D45: вынос, открепление и перенос между
+//  папками распускают папку, в которой остался один; последовательности не
+//  зовут переходный `createFolder(withTile:)`), содержимое папок ⊂ каталога,
+//  порядок модели — порядок чтения ячеек.
 //  Ширина хоста по ходу последовательности меняется (D32).
 //
 
@@ -35,6 +38,7 @@ final class TileStoreCellPropertyTests: XCTestCase {
         for name in [
             "moveItem", "moveItemToNewRow", "resize", "createFolder", "addToFolder",
             "extract", "extractNewRow", "moveBetweenFolders", "unpin", "pinTile", "collapseEmptyRows",
+            "folderDissolved",
         ] {
             XCTAssertGreaterThan(successes[name] ?? 0, 0, "операция \(name) ни разу не удалась: \(successes)")
         }
@@ -122,6 +126,12 @@ final class TileStoreCellPropertyTests: XCTestCase {
             }
 
             if ok == true { successes[name, default: 0] += 1 }
+            // D45: операция, убравшая ярлык из папки, распустила её (папка исчезла,
+            // а все её ярлыки по-прежнему закреплены).
+            if ok == true, ["extract", "extractNewRow", "moveBetweenFolders", "unpin"].contains(name),
+               Set(folders.map { $0.id }).subtracting(store.snapshot().folders.map { $0.id }).isEmpty == false {
+                successes["folderDissolved", default: 0] += 1
+            }
             XCTContext.runActivity(named: "seed \(seed) шаг \(step) \(name) columns \(columns) ok \(String(describing: ok))") { _ in
                 tesseraAssertCellInvariants(store, columns: columns, catalogIDs: ids, checkOrder: ok == true)
                 if ok != true {

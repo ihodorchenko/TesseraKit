@@ -406,6 +406,35 @@ public final class TileStore: ObservableObject {
     /// `columns` (``placeItems(columns:)``, ``resize(_:to:columns:)`` и т. п.).
     private var hostColumns: Int?
 
+    /// Наименьшее число ярлыков в папке (D45): папка из 0 или 1 ярлыка не
+    /// существует.
+    ///
+    /// Правило действует там, где ярлыки **убирают** из папки (вынос, открепление,
+    /// перенос в другую папку, чистка по каталогу) и при загрузке файла; когда папка
+    /// теряет ярлык и в ней остаётся один, она **распускается**: последний
+    /// ярлык встаёт на ячейку папки со своим размером. Единственное исключение —
+    /// переходное состояние публичного ``createFolder(withTile:title:columns:)``
+    /// (папка из одного ярлыка до последующего ``addToFolder(_:folderID:columns:)``).
+    static let minimumFolderTileCount = 2
+
+    /// Папки, которые файл принёс с одним ярлыком и которые ещё не распущены
+    /// (D45).
+    ///
+    /// Каталог в момент ``load()`` может быть не зарегистрирован: какие из
+    /// ярлыков папки на самом деле существуют, пока неизвестно, и распускать
+    /// папку рано (удалённое приложение не должно превращаться в «невидимый»
+    /// ярлык на сетке). Такие папки запоминаются здесь, а чистка по каталогу
+    /// (``pruneFoldersAgainstCatalog()``) распускает их после того, как
+    /// каталог зарегистрирован.
+    private var underfilledFolderKeys: Set<String> = []
+
+    /// Ярлыки, занявшие место распущенной папки в чистке по каталогу и при
+    /// загрузке, вместе с ячейкой папки (D45).
+    ///
+    /// Их окончательные ячейки считает `resolveDissolvedTiles()` движком
+    /// (`inserting` на ячейке папки: бо́льший ярлык выталкивает соседей вниз).
+    private var pendingDissolvedTiles: [(key: String, cell: TileGridPlacement)] = []
+
     /// Каноническое число колонок сетки по умолчанию (6, D26).
     ///
     /// Нужно, когда ширина сетки хоста ещё не известна (``effectiveColumns``):
@@ -457,10 +486,14 @@ public final class TileStore: ObservableObject {
     /// Повторные идентификаторы отбрасываются (побеждает первый). На первом
     /// запуске (файла состояния ещё нет) новые ярлыки сразу закрепляются в конце
     /// сетки; после восстановления файла — нет, чтобы не воскрешать откреплённые.
-    /// Ярлыки, пропавшие из каталога, убираются из папок, а опустевшие папки
-    /// распускаются: удалённое приложение не оставляет «мёртвых» плиток. Та же
+    /// Ярлыки, пропавшие из каталога, убираются из папок (каталог авторитетен
+    /// для их содержимого), а папка, в которой осталось меньше двух ярлыков,
+    /// распускается (D45): при одном оставшемся ярлыке он встаёт на ячейку папки со
+    /// своим размером (бо́льший выталкивает соседей вниз, D31), пустая папка
+    /// исчезает — удалённое приложение не оставляет «мёртвых» плиток. Та же
     /// чистка выполняется после ``load()``, если каталог уже зарегистрирован
     /// (E10.3c), поэтому порядок вызовов `setCatalog`/`load` на папки не влияет.
+    /// Папки из 0–1 ярлыков, прочитанные из файла, распускаются здесь же.
     /// Ярлыки вне каталога, стоящие прямо на сетке, не удаляются: они остаются
     /// невидимыми ключами и держат своё место до возвращения в каталог.
     ///
@@ -980,6 +1013,17 @@ public final class TileStore: ObservableObject {
             return false
         }
 
+        // D45: папка из одного ярлыка (файл старой версии, ручная правка) тоже
+        // не существует, но распустить её можно только когда известен каталог:
+        // ярлык мог исчезнуть из приложения. Запоминаем такие папки — чистка по
+        // каталогу доведёт дело (``pruneFoldersAgainstCatalog()``).
+        underfilledFolderKeys = Set(
+            folderRecords
+                .filter { $0.tileKeys.count < TileStore.minimumFolderTileCount }
+                .map { $0.key }
+        )
+        pendingDissolvedTiles = []
+
         let folderKeys = Set(folderRecords.map { $0.key })
         var order: [String] = []
         var seenItems = Set<String>()
@@ -1358,30 +1402,123 @@ public final class TileStore: ObservableObject {
     }
 
     /// Убирает из папок ярлыки, которых больше нет в каталоге, и распускает
-    /// опустевшие папки.
+    /// папки, в которых осталось меньше двух ярлыков (D45).
     ///
     /// Вызывается при перерегистрации каталога и после ``load()`` при
     /// зарегистрированном каталоге (E10.3c): удалённое приложение не должно
     /// оставлять «мёртвые» идентификаторы в папках, а папка без единого ярлыка
     /// каталога — пустую плитку на сетке. Политика: каталог авторитетен для
-    /// содержимого папок (неизвестные ярлыки из них удаляются), а ярлыки вне
-    /// каталога прямо на сетке остаются невидимыми ключами.
+    /// содержимого папок (неизвестные ярлыки из них удаляются, **невидимых**
+    /// членов папки после чистки не бывает), а ярлыки вне каталога прямо на
+    /// сетке остаются невидимыми ключами.
+    ///
+    /// D45: папка, потерявшая в чистке ярлыки (или пришедшая из файла с одним
+    /// ярлыком, ``underfilledFolderKeys``), при двух и более видимых ярлыках
+    /// остаётся; при одном — **распускается**: ярлык встаёт на ячейку папки со
+    /// своим размером (``dissolveFolder(withKey:)``); при нуле — исчезает.
+    /// Папка, которой чистка не коснулась, правилом не затрагивается (переходная
+    /// папка ``createFolder(withTile:title:columns:)`` переживает
+    /// повторную регистрацию каталога).
     private func pruneFoldersAgainstCatalog() {
+        var affected = underfilledFolderKeys
+        underfilledFolderKeys = []
         for index in folderRecords.indices {
+            let before = folderRecords[index].tileKeys.count
             folderRecords[index].tileKeys.removeAll { catalogIndex[$0] == nil }
+            if folderRecords[index].tileKeys.count != before {
+                affected.insert(folderRecords[index].key)
+            }
         }
 
-        var dissolved = Set<String>()
-        folderRecords.removeAll { record in
-            if record.tileKeys.isEmpty {
-                dissolved.insert(record.key)
-                return true
-            }
-            return false
+        // Порядок — по папкам сетки, а не по множеству: каскад выталкивания
+        // детерминирован.
+        var removedAny = false
+        for key in folderRecords.map({ $0.key }) where affected.contains(key) {
+            guard let record = folderRecords.first(where: { $0.key == key }),
+                  record.tileKeys.count < TileStore.minimumFolderTileCount else { continue }
+            dissolveFolder(withKey: key)
+            removedAny = true
         }
-        if !dissolved.isEmpty {
-            gridOrder.removeAll { dissolved.contains($0) }
+        if removedAny { resolveDissolvedTiles() }
+    }
+
+    /// Распускает папку структурно: убирает её из модели, а единственный
+    /// оставшийся ярлык ставит на её место (D45).
+    ///
+    /// Для чистки по каталогу и загрузки (операции пользователя считают то же
+    /// самое по набору размещений, ``dissolveFolderIfNeeded(withKey:in:columns:)``).
+    /// Пустая папка просто исчезает. Ярлык с одним оставшимся ключом
+    /// занимает в `gridOrder` индекс папки, а его ячейка — ячейка папки, ужатая
+    /// под холст (``TileLayoutEngine/clamped(cell:size:columns:)``); окончательно
+    /// решает ``resolveDissolvedTiles()`` (выталкивание соседей), если ячейки
+    /// уже есть.
+    ///
+    /// - Parameter folderKey: Ключ папки, в которой меньше двух ярлыков.
+    private func dissolveFolder(withKey folderKey: String) {
+        guard let recordIndex = folderRecords.firstIndex(where: { $0.key == folderKey }) else { return }
+        let record = folderRecords.remove(at: recordIndex)
+        let folderCell = placementsByKey.removeValue(forKey: folderKey)
+
+        guard let remaining = record.tileKeys.first, record.tileKeys.count == 1 else {
+            gridOrder.removeAll { $0 == folderKey }
+            return
         }
+
+        // Ярлык не может остаться и на сетке (инвариант «одно место»), но файл
+        // бывает испорчен: прежнюю запись убираем, место — папки.
+        gridOrder.removeAll { $0 == remaining }
+        if let position = gridOrder.firstIndex(of: folderKey) {
+            gridOrder[position] = remaining
+        } else {
+            gridOrder.append(remaining)
+        }
+
+        if let columns = canvasColumns, columns > 0, let folderCell {
+            let cell = TileLayoutEngine.clamped(
+                cell: folderCell,
+                size: storedSize(ofKey: remaining),
+                columns: columns
+            )
+            placementsByKey[remaining] = cell
+            pendingDissolvedTiles.append((key: remaining, cell: cell))
+        }
+    }
+
+    /// Доводит ячейки ярлыков, занявших место распущенных папок (D45):
+    /// ставит каждый на ячейку папки через `TileLayoutEngine.inserting`.
+    ///
+    /// Бо́льший ярлык (wide, large) выталкивает соседей вниз каскадом (D31),
+    /// слишком правая колонка сдвигается влево, меньший оставляет дыру. Если
+    /// видимый набор ещё не корректен (файл с перекрытиями, нет ячеек у
+    /// части ярлыков), расчёт пропускается: коллизии разрешит
+    /// ``reconcilePlacements(settled:)``. Порядок модели после расчёта —
+    /// порядок чтения ячеек.
+    private func resolveDissolvedTiles() {
+        let pending = pendingDissolvedTiles
+        pendingDissolvedTiles = []
+        guard !pending.isEmpty, let columns = canvasColumns, columns > 0 else { return }
+
+        let pendingKeys = Set(pending.map { $0.key })
+        var items: [TilePlacedItem] = []
+        for key in visibleGridKeys() where !pendingKeys.contains(key) {
+            guard let cell = placementsByKey[key] else { return }
+            items.append(TilePlacedItem(id: AnyHashable(key), size: storedSize(ofKey: key), cell: cell))
+        }
+        guard TileLayoutEngine.validate(items, columns: columns).isEmpty else { return }
+
+        for entry in pending where catalogIndex[entry.key] != nil {
+            items = TileLayoutEngine.inserting(
+                id: AnyHashable(entry.key),
+                size: storedSize(ofKey: entry.key),
+                at: entry.cell,
+                into: items,
+                columns: columns
+            )
+        }
+        for item in items {
+            if let key = item.id.base as? String { placementsByKey[key] = item.cell }
+        }
+        applyVisibleOrder(TileStore.readingSorted(visibleGridKeys(), by: placementsByKey))
     }
 
     /// Ярлык с авторитетным размером из хранилища.
@@ -1477,7 +1614,11 @@ public final class TileStore: ObservableObject {
 /// - ярлыки вне каталога (невидимые ключи) хранят свои ячейки, но в коллизиях
 ///   не участвуют (E14.1);
 /// - схлопывание пустых строк — отдельная операция ``collapseEmptyRows(columns:)``:
-///   её зовёт слой правки только на drop, остальные операции строк не схлопывают.
+///   её зовёт слой правки только на drop, остальные операции строк не схлопывают;
+/// - папка не бывает из 0–1 ярлыков (D45): когда операция убирает ярлык из
+///   папки и там остаётся один, папка распускается, а оставшийся ярлык встаёт на
+///   её ячейку со своим размером (бо́льший выталкивает соседей вниз). Исключение —
+///   переходная папка ``createFolder(withTile:title:columns:)``.
 ///
 /// Операция с неверным вводом (нет элемента, нет в каталоге, `columns <= 0`,
 /// отказ хоста) ничего не меняет и возвращает `false`; уведомление и запись —
@@ -1683,6 +1824,13 @@ extension TileStore {
     /// ярлыка через `TileLayoutEngine.inserting`: соседи выталкиваются вниз
     /// каскадом. Хост одобряет создание (`.createFolder`).
     ///
+    /// D45: папка из одного ярлыка — **переходное** состояние: хост обязан
+    /// следом добавить в неё второй ярлык (``addToFolder(_:folderID:columns:)``).
+    /// Правило «папка не бывает из 0–1 ярлыков» хранилище
+    /// проводит, когда ярлыки **убирают** из папки и при загрузке файла; сама
+    /// по себе одноярлычная папка до этого момента не распускается (и
+    /// переживает ``setCatalog(_:)``).
+    ///
     /// - Parameters:
     ///   - tileID: Ярлык на сетке, который станет первым содержимым папки.
     ///   - title: Название папки.
@@ -1766,10 +1914,14 @@ extension TileStore {
     /// Выносит ярлык из папки на сетку, на ячейку (E14.4, D31).
     ///
     /// Ярлык становится верхнеуровневым элементом со своим размером на `cell`,
-    /// ограниченной холстом; мешающие плитки выталкиваются вниз каскадом. Если
-    /// папка опустела, она исчезает, а её ячейка остаётся дырой (в одиночку
-    /// ярлык папку не распускает, документ §6.9). Хост одобряет перенос как
-    /// `.moveBetweenFolders` с папкой-целью `nil` (D14).
+    /// ограниченной холстом; мешающие плитки выталкиваются вниз каскадом.
+    /// Папка не бывает из 0–1 ярлыков (D45): если в ней остался один ярлык,
+    /// папка **распускается**, и этот ярлык встаёт на её ячейку со своим
+    /// размером (``dissolveFolderIfNeeded(withKey:in:columns:)``) — до того, как
+    /// встанет вынесенный. Если папка опустела (в ней был один ярлык — переходная
+    /// папка ``createFolder(withTile:title:columns:)``), она исчезает, а её
+    /// ячейка остаётся дырой. Хост одобряет перенос как `.moveBetweenFolders`
+    /// с папкой-целью `nil` (D14). Операция — одно изменение модели (один `onChange`).
     ///
     /// - Parameters:
     ///   - tileID: Ярлык, лежащий в папке.
@@ -1785,8 +1937,9 @@ extension TileStore {
     /// Выносит ярлык из папки в новую строку в конце холста (E14.4, D33).
     ///
     /// Как ``extractFromFolder(_:toCell:columns:)``, но ячейка — первая строка
-    /// после последней занятой, колонка 0. Опустевшая папка в расчёт строки не
-    /// входит: она исчезает в той же операции.
+    /// после последней занятой, колонка 0. Папка, которая распалась (D45) или
+    /// исчезла, в расчёт строки не входит: оставшийся ярлык стоит на её
+    /// ячейке со своим размером, и строка считается уже с ним.
     ///
     /// - Parameters:
     ///   - tileID: Ярлык, лежащий в папке.
@@ -1800,8 +1953,11 @@ extension TileStore {
     /// Перемещает ярлык из одной папки в другую, не трогая остальную раскладку
     /// (E14.4).
     ///
-    /// Если папка-источник опустела, она исчезает, а её ячейка остаётся дырой
-    /// (схлопывание — ``collapseEmptyRows(columns:)``). Хост
+    /// Папка-источник, в которой остался один ярлык, **распускается** (D45):
+    /// оставшийся ярлык встаёт на её ячейку со своим размером; бо́льший ярлык
+    /// выталкивает соседей вниз (D31), меньший оставляет дыру. Папка, которая
+    /// опустела (переходная папка из одного ярлыка), исчезает, а её ячейка
+    /// остаётся дырой (схлопывание — ``collapseEmptyRows(columns:)``). Хост
     /// одобряет перенос как `.moveBetweenFolders` (D14). Возврат на рабочий стол —
     /// ``extractFromFolder(_:toCell:columns:)``.
     ///
@@ -1833,11 +1989,8 @@ extension TileStore {
         let sourceKey = folderRecords[sourceIndex].key
         folderRecords[sourceIndex].tileKeys.removeAll { $0 == tileKey }
         folderRecords[targetIndex].tileKeys.append(tileKey)
-        if folderRecords[sourceIndex].tileKeys.isEmpty {
-            folderRecords.remove(at: sourceIndex)
-            gridOrder.removeAll { $0 == sourceKey }
-            items = TileLayoutEngine.removing(id: AnyHashable(sourceKey), from: items)
-        }
+        // D45: в папке-источнике осталось меньше двух — она распускается.
+        dissolveFolderIfNeeded(withKey: sourceKey, in: &items, columns: columns)
         commitCells(items, columns: columns)
         didChange()
         return true
@@ -1848,8 +2001,11 @@ extension TileStore {
     /// Открепляет ярлык: уход с сетки оставляет дыру (E14.4, D30).
     ///
     /// Ярлык на сетке просто уходит, его ячейка остаётся свободной. Ярлык из
-    /// папки выходит из неё; опустевшая папка исчезает, и её ячейка тоже остаётся
-    /// дырой. Одобрение хоста не спрашивается (D14: открепление не группировка).
+    /// папки выходит из неё; если в папке остался один ярлык, она
+    /// **распускается** (D45): оставшийся ярлык встаёт на ячейку папки со своим
+    /// размером (``dissolveFolderIfNeeded(withKey:in:columns:)``). Опустевшая
+    /// папка (переходная, из одного ярлыка) исчезает, и её ячейка остаётся дырой.
+    /// Одобрение хоста не спрашивается (D14: открепление не группировка).
     ///
     /// - Parameters:
     ///   - tileID: Идентификатор ярлыка.
@@ -1863,13 +2019,10 @@ extension TileStore {
 
         if let index = folderRecords.firstIndex(where: { $0.tileKeys.contains(key) }) {
             var items = cellBasis(columns: columns)
+            let folderKey = folderRecords[index].key
             folderRecords[index].tileKeys.removeAll { $0 == key }
-            if folderRecords[index].tileKeys.isEmpty {
-                let folderKey = folderRecords[index].key
-                folderRecords.remove(at: index)
-                gridOrder.removeAll { $0 == folderKey }
-                items = TileLayoutEngine.removing(id: AnyHashable(folderKey), from: items)
-            }
+            // D45: в папке осталось меньше двух — она распускается.
+            dissolveFolderIfNeeded(withKey: folderKey, in: &items, columns: columns)
             commitCells(items, columns: columns)
             didChange()
             return true
@@ -1964,13 +2117,13 @@ extension TileStore {
         guard approval(nil, catalog[catalogPosition], .moveBetweenFolders) else { return false }
 
         var items = cellBasis(columns: columns)
+        let folderKey = folderRecords[sourceIndex].key
         folderRecords[sourceIndex].tileKeys.removeAll { $0 == key }
-        if folderRecords[sourceIndex].tileKeys.isEmpty {
-            let folderKey = folderRecords[sourceIndex].key
-            folderRecords.remove(at: sourceIndex)
-            gridOrder.removeAll { $0 == folderKey }
-            items = TileLayoutEngine.removing(id: AnyHashable(folderKey), from: items)
-        }
+        // D45: папка с одним ярлыком распускается раньше, чем встанет вынесенный:
+        // оставшийся ярлык занимает ячейку папки, а вынесенный встаёт на `cell` по
+        // обычным правилам (на ячейку папки он тоже может попасть — тогда
+        // оставшийся уходит вниз).
+        dissolveFolderIfNeeded(withKey: folderKey, in: &items, columns: columns)
 
         let size = storedSize(ofKey: key)
         let target = cell ?? TileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
@@ -1985,6 +2138,57 @@ extension TileStore {
         commitCells(items, columns: columns)
         didChange()
         return true
+    }
+
+    /// Распускает папку, в которой после ухода ярлыка осталось меньше двух (D45).
+    ///
+    /// Ничего не делает, если ярлыков в папке достаточно. Иначе папка исчезает
+    /// из модели и из набора `items`; единственный оставшийся видимый ярлык
+    /// встаёт на **ячейку папки со своим размером** через
+    /// `TileLayoutEngine.inserting`: бо́льший (wide, large) выталкивает соседей
+    /// вниз каскадом (D31), слишком правая колонка сдвигается влево, меньший
+    /// оставляет дыру. Размер ярлыка — авторитетный размер хранилища
+    /// (``storedSize(ofKey:)``), его выбор пользователя не теряется. Пустая
+    /// папка просто исчезает.
+    ///
+    /// Запись `gridOrder` и порядок чтения приводит ``commitCells(_:columns:)``;
+    /// вызывающий обязан вызвать его (и ``didChange()``) после. Невидимых членов
+    /// у папки в операциях не бывает: каталог авторитетен (``pruneFoldersAgainstCatalog()``).
+    ///
+    /// - Parameters:
+    ///   - folderKey: Ключ папки, из которой только что убрали ярлык.
+    ///   - items: Рабочий набор размещений; обновляется на месте.
+    ///   - columns: Ширина холста.
+    /// - Returns: Ключ ярлыка, занявшего место папки, либо `nil` (папка осталась
+    ///   или исчезла пустой).
+    @discardableResult
+    private func dissolveFolderIfNeeded(
+        withKey folderKey: String,
+        in items: inout [TilePlacedItem],
+        columns: Int
+    ) -> String? {
+        guard let index = folderRecords.firstIndex(where: { $0.key == folderKey }),
+              folderRecords[index].tileKeys.count < TileStore.minimumFolderTileCount else {
+            return nil
+        }
+        let record = folderRecords.remove(at: index)
+        gridOrder.removeAll { $0 == folderKey }
+        let folderCell = items.first { $0.id == AnyHashable(folderKey) }?.cell
+        items = TileLayoutEngine.removing(id: AnyHashable(folderKey), from: items)
+
+        guard record.tileKeys.count == 1, let remaining = record.tileKeys.first,
+              catalogIndex[remaining] != nil, let cell = folderCell else {
+            return nil
+        }
+        items = TileLayoutEngine.inserting(
+            id: AnyHashable(remaining),
+            size: storedSize(ofKey: remaining),
+            at: cell,
+            into: items,
+            columns: columns
+        )
+        gridOrder.append(remaining)
+        return remaining
     }
 
     /// Рабочий набор размещений видимых элементов для ширины `columns`

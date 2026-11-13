@@ -240,8 +240,10 @@ final class TileGridAccessibilityTests: XCTestCase {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
             prepare: { store, columns in
+                // D45: в «Work» три ярлыка — после ухода одного папка остаётся.
                 if let folder = store.createFolder(withTile: "b", title: "Work", columns: columns) {
                     _ = store.addToFolder("c", folderID: folder.id, columns: columns)
+                    _ = store.addToFolder("d", folderID: folder.id, columns: columns)
                 }
                 _ = store.createFolder(withTile: "e", title: "Play", columns: columns)
             }
@@ -254,13 +256,14 @@ final class TileGridAccessibilityTests: XCTestCase {
             actionNames(cell),
             [
                 TesseraStartScreenStrings.string(.a11yActionRemoveFromFolder),
+                TesseraStartScreenStrings.string(.a11yActionUnpin),
                 moveName("Play"),
             ]
         )
         let remove = try XCTUnwrap(action(named: TesseraStartScreenStrings.string(.a11yActionRemoveFromFolder), in: cell))
         XCTAssertEqual(remove.actionHandler?(remove), true)
 
-        XCTAssertEqual(host.folders.first { $0.id == work }?.tiles.map { $0.id }, ["b"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first { $0.id == work }?.tiles.map { $0.id }, ["b", "d"] as [AnyHashable])
         let order = host.storeIDs
         XCTAssertGreaterThan(
             order.firstIndex(of: "c") ?? -1,
@@ -279,6 +282,7 @@ final class TileGridAccessibilityTests: XCTestCase {
             prepare: { store, columns in
                 if let folder = store.createFolder(withTile: "b", title: "Work", columns: columns) {
                     _ = store.addToFolder("c", folderID: folder.id, columns: columns)
+                    _ = store.addToFolder("d", folderID: folder.id, columns: columns)
                 }
                 _ = store.createFolder(withTile: "e", title: "Play", columns: columns)
             }
@@ -290,7 +294,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         let move = try XCTUnwrap(action(named: moveName("Play"), in: panel.shortcutCells[1]))
         XCTAssertEqual(move.actionHandler?(move), true)
         XCTAssertEqual(host.folders.first { $0.id == play }?.tiles.map { $0.id }, ["e", "c"] as [AnyHashable])
-        XCTAssertEqual(host.folders.first { $0.id == work }?.tiles.map { $0.id }, ["b"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first { $0.id == work }?.tiles.map { $0.id }, ["b", "d"] as [AnyHashable])
     }
 
     /// Выход из edit снимает действия и с ячеек сетки, и с ярлыков панели.

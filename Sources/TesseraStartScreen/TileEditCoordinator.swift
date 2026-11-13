@@ -250,6 +250,30 @@ public protocol TesseraTileEditCoordinatorDelegate: AnyObject {
         atCell cell: TileGridPlacement?
     )
 
+    /// Папка распущена: в ней остался один ярлык, и он занял место папки (D45).
+    ///
+    /// Папка не бывает из 0–1 ярлыков: когда операция координатора (открепление,
+    /// вынос на рабочий стол, перенос в другую папку — в том числе drop из
+    /// панели) оставляет в папке один ярлык, папка исчезает, а этот ярлык
+    /// становится верхнеуровневым элементом на её ячейке со **своим** размером
+    /// (бо́льший ярлык выталкивает соседей вниз). Метод вызывается **после**
+    /// успешной операции и после её основного колбэка
+    /// (`didUnpin`, `didMove(_:toFolder:atCell:)`), один раз на распавшуюся
+    /// папку. Папка, которая исчезла пустой, событие не вызывает. Распад из
+    /// чистки каталога (``TileStore/setCatalog(_:)``), загрузки файла и вызовов
+    /// `TileStore` в обход координатора сюда не приходит — хост видит его в
+    /// снимке `TileStore.onChange`.
+    ///
+    /// - Parameters:
+    ///   - coordinator: Координатор-источник события.
+    ///   - folderID: Идентификатор распущенной папки (её больше нет в модели).
+    ///   - tileID: Идентификатор оставшегося ярлыка, ставшего верхнеуровневым.
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didDissolveFolder folderID: AnyHashable,
+        remainingTile tileID: AnyHashable
+    )
+
     /// Функция одобрения хоста (D14) отказала в операции с папкой.
     ///
     /// Состояние модели не изменилось (кроме случая, когда папка уже создана,
@@ -313,6 +337,12 @@ public extension TesseraTileEditCoordinatorDelegate {
     ) {
         tileEditCoordinator(coordinator, didMove: tileID, toFolder: folderID)
     }
+
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didDissolveFolder folderID: AnyHashable,
+        remainingTile tileID: AnyHashable
+    ) {}
 
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
@@ -578,8 +608,9 @@ public struct TesseraTileEditConfiguration {
 ///   раскрывает панель, а долгое нажатие по иконке в панели мгновенно закрывает
 ///   её и поднимает ярлык (источник drag — папка, `TesseraTileDragSession.sourceFolderID`).
 ///   Бросить можно на сетку / пустое место — ярлык встаёт на ячейку превью
-///   (`TileStore.extractFromFolder(_:toCell:columns:)`, папка из одного ярлыка
-///   исчезает, оставляя дыру); на центр другой папки с удержанием E8.6 —
+///   (`TileStore.extractFromFolder(_:toCell:columns:)`; D45: из папки в два
+///   ярлыка вынос распускает её — оставшийся ярлык встаёт на её место, и превью
+///   цели-размещения уже показывает этот итог); на центр другой папки с удержанием E8.6 —
 ///   перенос в неё; центр обычного ярлыка тут не создаёт папку (работает как
 ///   размещение на его ячейку); центр родной папки, панель и отмена возвращают
 ///   ярлык, модель не меняется;
@@ -1192,7 +1223,11 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///
     /// Папку открепить нельзя (она существует, пока в ней есть ярлыки), поэтому
     /// для папки метод ничего не делает. Ярлык внутри папки на сетке не показан:
-    /// для него операция сразу идёт в хранилище.
+    /// для него операция сразу идёт в хранилище; если в папке было два ярлыка,
+    /// она распускается (D45): раскрытая панель закрывается, оставшийся ярлык
+    /// встаёт на место папки, делегат после `didUnpin` получает `didDissolveFolder`,
+    /// а фокус VoiceOver уходит на оставшийся ярлык (при трёх и более — на соседний
+    /// ярлык панели: следующий, у последнего — предыдущий).
     ///
     /// - Parameter tileID: Идентификатор ярлыка.
     public func unpin(_ tileID: AnyHashable) {
@@ -1223,7 +1258,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         // элемент после ярлыка (или предыдущий, если он был последним). Индекс
         // «на месте удалённого» не годится: дыры и схлопывание строк не меняют
         // порядок оставшихся, но место ярлыка может остаться пустым.
-        let focusID = focusTarget(afterRemoving: tileID)
+        let focus = UnpinFocus.gridItem(focusTarget(afterRemoving: tileID))
 
         removeControl(for: tileID)
         cell.contentView.layer.removeAnimation(forKey: TesseraTileEditCoordinator.jiggleKey)
@@ -1279,7 +1314,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 self.store.collapseEmptyRows(columns: self.storeColumns)
                 self.render(animated: true)
                 self.delegate?.tileEditCoordinator(self, didUnpin: tileID)
-                self.postLayoutChanged(afterUnpinningFocusing: focusID)
+                self.postLayoutChanged(afterUnpinning: focus)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 self.announce(TesseraStartScreenStrings.string(.a11yTileUnpinned))
             }
@@ -1288,22 +1323,36 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Немедленное открепление без анимации (ячейка вне экрана/ярлык в папке).
     ///
+    /// Ярлык внутри папки (в том числе в раскрытой панели, где его снимает
+    /// VoiceOver-действие «Открепить») подчиняется правилу D45: если в папке
+    /// остаётся один ярлык, папка **распускается** — панель закрывается (штатным
+    /// `closeFolder`, анимированно, при Reduce Motion мгновенно), а оставшийся
+    /// ярлык встаёт на место папки; фокус VoiceOver уходит на него. Если в папке
+    /// остаётся два и больше, панель остаётся, а фокус — на **следующем** ярлыке
+    /// панели в порядке отображения (на последнем — на предыдущем). Делегат
+    /// получает `didUnpin`, затем `didDissolveFolder`.
+    ///
     /// - Parameter tileID: Идентификатор ярлыка.
     private func performImmediateUnpin(_ tileID: AnyHashable) {
         // Удаляем запись в любом исходе: повторный unpin после отказа
         // хранилища должен снова иметь право на попытку.
         defer { unpinsInFlight.remove(tileID) }
 
-        // E14.7: ярлык на сетке (ячейка вне экрана) — фокус по порядку чтения; ярлык
-        // в папке на сетке не показан, цели нет (прежнее поведение: последний
-        // элемент сетки).
-        let focusID = focusTarget(afterRemoving: tileID)
+        // E14.7/D45: цель фокуса выбирается до удаления. Ярлык на сетке (ячейка
+        // вне экрана) — сосед по порядку чтения; ярлык в папке — оставшийся
+        // ярлык распавшейся папки либо соседний ярлык панели.
+        let dissolution = dissolutionPlan(whenRemoving: tileID)
+        let focus = unpinFocus(for: tileID, dissolution: dissolution)
         guard store.unpin(tileID, columns: storeColumns) else { return }
         // E14.5: дыра остаётся, пустая строка схлопывается (D31).
         store.collapseEmptyRows(columns: storeColumns)
+        // D45: панель распавшейся папки закрывается раньше, чем сетка применит
+        // снимок без папки (сетка отложит снимок до конца анимации закрытия).
+        closePanel(ofDissolving: dissolution)
         render(animated: true)
         delegate?.tileEditCoordinator(self, didUnpin: tileID)
-        postLayoutChanged(afterUnpinningFocusing: focusID)
+        notifyDissolution(dissolution)
+        postLayoutChanged(afterUnpinning: focus)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         announce(TesseraStartScreenStrings.string(.a11yTileUnpinned))
     }
@@ -1484,9 +1533,14 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Вынос на рабочий стол идёт по ячейкам
     /// (``TileStore/extractFromFolder(_:toCell:columns:)``): ярлык встаёт на
     /// ячейку папки (если он в ней последний) либо на первую свободную ячейку
-    /// после ячейки папки в порядке чтения. Перенос в другую папку —
+    /// после ячейки папки в порядке чтения (после распада папки, см. ниже, —
+    /// с учётом ярлыка, занявшего её место). Перенос в другую папку —
     /// ``TileStore/moveBetweenFolders(_:to:columns:)``. После операции
     /// схлопывается пустая строка, фокус VoiceOver — на ярлыке.
+    ///
+    /// D45: если в папке-источнике было два ярлыка, она распускается — оставшийся
+    /// ярлык встаёт на её место со своим размером, раскрытая панель закрывается, а
+    /// делегат после `didMove` получает `didDissolveFolder`.
     ///
     /// - Parameters:
     ///   - tileID: Ярлык, лежащий в папке.
@@ -1495,6 +1549,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     @discardableResult
     public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable?) -> Bool {
         let columns = storeColumns
+        let dissolution = dissolutionPlan(whenRemoving: tileID)
         let moved: Bool
         if let folderID {
             moved = store.moveBetweenFolders(tileID, to: folderID, columns: columns)
@@ -1509,6 +1564,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
 
         store.collapseEmptyRows(columns: columns)
+        closePanel(ofDissolving: dissolution)
         render(animated: true)
         // E11.1/E14.6: единый колбэк с ячейкой (по умолчанию пересылает в
         // `didMove(_:toFolder:)`).
@@ -1518,7 +1574,10 @@ public final class TesseraTileEditCoordinator: NSObject {
             toFolder: folderID,
             atCell: folderID == nil ? store.placements(forColumns: columns)[tileID] : nil
         )
-        if grid.index(ofItemID: tileID) != nil {
+        notifyDissolution(dissolution)
+        // D45: решение по модели, а не по сетке: при закрытии панели распавшейся
+        // папки сетка отложила снимок, и вынесенного ярлыка в ней ещё нет.
+        if folderID == nil {
             postLayoutChanged(focusing: tileID)
         } else if let folderID = folderID {
             postLayoutChanged(focusing: folderID)
@@ -1549,7 +1608,20 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
         // Последний ярлык папки: она исчезнет, и ярлык занимает её ячейку.
         if folder.tiles.count == 1 { return folderCell }
-        return firstFreeCell(for: tile.size, after: folderCell, in: placed, columns: columns)
+        // D45: из папки в два ярлыка уходит один — папка распадётся, и оставшийся
+        // ярлык займёт её ячейку со своим размером; свободную ячейку ищем уже в
+        // такой раскладке, чтобы вынесенный ярлык не оказался на оставшемся.
+        var layout = placed
+        if folder.tiles.count == 2, let remaining = folder.tiles.first(where: { $0.id != tileID }) {
+            layout = TileLayoutEngine.inserting(
+                id: remaining.id,
+                size: remaining.size,
+                at: folderCell,
+                into: TileLayoutEngine.removing(id: folder.id, from: placed),
+                columns: columns
+            )
+        }
+        return firstFreeCell(for: tile.size, after: folderCell, in: layout, columns: columns)
     }
 
     /// Активирует ярлык со встроенного экрана папки общим маршрутом сетки
@@ -1638,6 +1710,103 @@ public final class TesseraTileEditCoordinator: NSObject {
             tileID: tileID,
             folderID: folderID
         )
+    }
+
+    // MARK: - Распад папки (D45)
+
+    /// Распад папки, который вызовет уход ярлыка из неё (D45).
+    private struct FolderDissolutionPlan {
+
+        /// Папка, в которой два ярлыка.
+        let folderID: AnyHashable
+
+        /// Ярлык, который останется и займёт её место.
+        let remainingTileID: AnyHashable
+    }
+
+    /// Куда уйдёт фокус VoiceOver после открепления (E14.7, D45).
+    private enum UnpinFocus {
+
+        /// Ярлык был на сетке: сосед по порядку чтения (`nil` — цели нет).
+        case gridItem(AnyHashable?)
+
+        /// Папка распалась: оставшийся ярлык, ставший элементом сетки.
+        case dissolvedTile(AnyHashable)
+
+        /// Папка пережила открепление: соседний ярлык её панели.
+        case panelTile(AnyHashable, folderID: AnyHashable)
+    }
+
+    /// Распадётся ли папка, если убрать из неё ярлык (D45).
+    ///
+    /// Папка с двумя ярлыками, потеряв один, распускается (``TileStore``:
+    /// `minimumFolderTileCount`). Считается **до** операции хранилища, по его
+    /// снимку: после неё папки в модели уже нет.
+    ///
+    /// - Parameter tileID: Ярлык, который уйдёт из папки.
+    /// - Returns: План распада или `nil` (ярлык не в папке либо папка переживёт уход).
+    private func dissolutionPlan(whenRemoving tileID: AnyHashable) -> FolderDissolutionPlan? {
+        guard let folder = store.folderContaining(tileID),
+              folder.tiles.count == 2,
+              let remaining = folder.tiles.first(where: { $0.id != tileID }) else {
+            return nil
+        }
+        return FolderDissolutionPlan(folderID: folder.id, remainingTileID: remaining.id)
+    }
+
+    /// Закрывает раскрытую панель папки, которая вот-вот распадётся (D45).
+    ///
+    /// Вызывается **до** `render`: пока сетка показывает прежний снимок, штатный
+    /// `closeFolder` анимирует закрытие (при Reduce Motion и вне окна —
+    /// мгновенно), а снимок без папки сетка отложит до конца перехода (E10.2).
+    ///
+    /// - Parameter plan: План распада.
+    private func closePanel(ofDissolving plan: FolderDissolutionPlan?) {
+        guard let plan, grid.expandedFolderID == plan.folderID else { return }
+        grid.closeFolder(animated: !isReduceMotionEnabled())
+    }
+
+    /// Сообщает делегату о распаде папки-источника drag-сессии после успешного
+    /// drop (D45): папка распадается, если в ней было два ярлыка.
+    private func notifyDissolution(of session: TesseraTileDragSession) {
+        guard let dissolution = session.folderDissolution else { return }
+        delegate?.tileEditCoordinator(
+            self,
+            didDissolveFolder: dissolution.folderID,
+            remainingTile: dissolution.remaining.id
+        )
+    }
+
+    /// Сообщает делегату о распаде папки после успешной операции (D45).
+    private func notifyDissolution(_ plan: FolderDissolutionPlan?) {
+        guard let plan else { return }
+        delegate?.tileEditCoordinator(
+            self,
+            didDissolveFolder: plan.folderID,
+            remainingTile: plan.remainingTileID
+        )
+    }
+
+    /// Цель фокуса VoiceOver после открепления ярлыка (E14.7, D45).
+    ///
+    /// - Parameters:
+    ///   - tileID: Открепляемый ярлык.
+    ///   - dissolution: План распада его папки, если она распадётся.
+    /// - Returns: Цель: оставшийся ярлык распавшейся папки; соседний ярлык
+    ///   панели (следующий в порядке отображения, у последнего — предыдущий);
+    ///   для ярлыка на сетке — сосед по порядку чтения (``focusTarget(afterRemoving:)``).
+    private func unpinFocus(for tileID: AnyHashable, dissolution: FolderDissolutionPlan?) -> UnpinFocus {
+        if let dissolution { return .dissolvedTile(dissolution.remainingTileID) }
+        if let folder = store.folderContaining(tileID) {
+            let tiles = folder.tiles
+            if let index = tiles.firstIndex(where: { $0.id == tileID }) {
+                if tiles.indices.contains(index + 1) { return .panelTile(tiles[index + 1].id, folderID: folder.id) }
+                if index > 0 { return .panelTile(tiles[index - 1].id, folderID: folder.id) }
+            }
+            // Единственный ярлык переходной папки: папка исчезнет без остатка.
+            return .gridItem(nil)
+        }
+        return .gridItem(focusTarget(afterRemoving: tileID))
     }
 
     // MARK: - Применение снимка
@@ -1805,7 +1974,10 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Parameter itemID: Элемент, на который должен уйти фокус; `nil` — без
     ///   аргумента.
     private func postLayoutChanged(focusing itemID: AnyHashable?) {
-        DispatchQueue.main.async { [weak self] in
+        // D45: если идёт закрытие панели распавшейся папки, пост ждёт конца
+        // перехода и отложенного снимка (сетка сама ставит фокус на плитку
+        // папки, которой уже нет); спокойная сетка — тот же один проход runloop.
+        grid.performAfterFolderTransition { [weak self] in
             guard let self else { return }
             let argument = itemID.flatMap { self.grid.cellView(forItemID: $0) }
             self.accessibilityNotificationPoster(.layoutChanged, argument)
@@ -1842,7 +2014,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///
     /// - Parameter focusID: Заранее выбранный сосед; `nil` — цели нет.
     private func postLayoutChanged(afterUnpinningFocusing focusID: AnyHashable?) {
-        DispatchQueue.main.async { [weak self] in
+        grid.performAfterFolderTransition { [weak self] in
             guard let self else { return }
             let items = self.grid.items
             let resolvedID: AnyHashable?
@@ -1854,6 +2026,44 @@ public final class TesseraTileEditCoordinator: NSObject {
             let argument: Any? = resolvedID.flatMap { self.grid.cellView(forItemID: $0) }
                 ?? (items.isEmpty ? self.grid : nil)
             self.accessibilityNotificationPoster(.layoutChanged, argument)
+        }
+    }
+
+    /// Публикует `.layoutChanged` после unpin по заранее выбранной цели (E14.7,
+    /// D45).
+    ///
+    /// Цель «сосед по сетке» и «оставшийся ярлык распавшейся папки» — элементы
+    /// сетки (``postLayoutChanged(afterUnpinningFocusing:)``). Цель «ярлык панели» —
+    /// ячейка панели раскрытой папки; если панели нет (закрыта) или ячейки
+    /// ещё нет, фокус получает плитка папки, а при её отсутствии — тот же
+    /// запасной путь, что у сетки. Пост — на следующем проходе runloop (B6).
+    ///
+    /// - Parameter focus: Цель фокуса.
+    private func postLayoutChanged(afterUnpinning focus: UnpinFocus) {
+        switch focus {
+        case .gridItem(let itemID):
+            postLayoutChanged(afterUnpinningFocusing: itemID)
+        case .dissolvedTile(let itemID):
+            postLayoutChanged(afterUnpinningFocusing: itemID)
+        case .panelTile(let tileID, let folderID):
+            grid.performAfterFolderTransition { [weak self] in
+                guard let self else { return }
+                if let panel = self.grid.panelShortcuts(),
+                   panel.folder.id == folderID,
+                   let index = panel.folder.tiles.firstIndex(where: { $0.id == tileID }),
+                   panel.cells.indices.contains(index) {
+                    self.accessibilityNotificationPoster(.layoutChanged, panel.cells[index])
+                    return
+                }
+                if let folderCell = self.grid.cellView(forItemID: folderID) {
+                    self.accessibilityNotificationPoster(.layoutChanged, folderCell)
+                    return
+                }
+                let items = self.grid.items
+                let argument: Any? = items.last.flatMap { self.grid.cellView(forItemID: $0.id) }
+                    ?? (items.isEmpty ? self.grid : nil)
+                self.accessibilityNotificationPoster(.layoutChanged, argument)
+            }
         }
     }
 
@@ -2120,6 +2330,32 @@ public final class TesseraTileEditCoordinator: NSObject {
             TilePlacedItem(id: hit.tile.id, size: hit.tile.size, cell: tileCell),
         ]
 
+        // D45: в папке из двух ярлыков вынос одного распускает её — готовим
+        // «итоговую картину» (оставшийся ярлык на ячейке папки) для превью. Те же
+        // шаги делает `TileStore`: без выносимого ярлыка и без папки, оставшийся на
+        // ячейке папки по `inserting`.
+        var dissolution: DragFolderDissolution?
+        if let modelFolder = modelSnapshot.folders.first(where: { $0.id == hit.folder.id }),
+           modelFolder.tiles.count == 2,
+           let remaining = modelFolder.tiles.first(where: { $0.id != hit.tile.id }) {
+            var dissolvedItems = displaySnapshot.items
+            if let index = dissolvedItems.firstIndex(where: { $0.folder?.id == hit.folder.id }) {
+                dissolvedItems[index] = .tile(remaining)
+            }
+            dissolution = DragFolderDissolution(
+                folderID: hit.folder.id,
+                remaining: remaining,
+                items: dissolvedItems,
+                placements: TileLayoutEngine.inserting(
+                    id: remaining.id,
+                    size: remaining.size,
+                    at: folderCell,
+                    into: TileLayoutEngine.removing(id: hit.folder.id, from: modelPlaced),
+                    columns: storeColumns
+                )
+            )
+        }
+
         // m3: панель закрывается мгновенно — drag стартует сразу за long-press.
         grid.closeFolder(animated: false)
         guard grid.expandedFolderID == nil else { return }
@@ -2146,7 +2382,8 @@ public final class TesseraTileEditCoordinator: NSObject {
             basePlacements: displayPlaced,
             modelBaseSnapshot: modelSnapshot,
             sourceFolderID: hit.folder.id,
-            magnetSize: hit.tile.size
+            magnetSize: hit.tile.size,
+            folderDissolution: dissolution
         )
     }
 
@@ -2167,6 +2404,8 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///   - modelBaseSnapshot: Снимок модели, если он отличается от базы.
     ///   - sourceFolderID: Папка-источник (drag из панели).
     ///   - magnetSize: Размерность для магнита.
+    ///   - folderDissolution: Итоговая картина распада папки-источника (D45),
+    ///     если в ней два ярлыка.
     private func installDragSession(
         itemID: AnyHashable,
         isTile: Bool,
@@ -2179,7 +2418,8 @@ public final class TesseraTileEditCoordinator: NSObject {
         basePlacements: [TilePlacedItem],
         modelBaseSnapshot: TileGridSnapshot?,
         sourceFolderID: AnyHashable?,
-        magnetSize: TileSize
+        magnetSize: TileSize,
+        folderDissolution: DragFolderDissolution? = nil
     ) {
         beginDragStoreTransaction()
 
@@ -2215,7 +2455,8 @@ public final class TesseraTileEditCoordinator: NSObject {
             basePlacements: basePlacements,
             modelPlacements: store.placements(forColumns: storeColumns),
             modelBaseSnapshot: modelBaseSnapshot,
-            sourceFolderID: sourceFolderID
+            sourceFolderID: sourceFolderID,
+            folderDissolution: folderDissolution
         )
         dragSession = session
         storeChangedDuringDrag = false
@@ -2667,26 +2908,50 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// оставалось прежнее превью, и цель «убегала» из-под пальца). Пустые строки
     /// во время drag не схлопываются (D31) — только на drop.
     ///
+    /// D45: drag ярлыка из папки в два ярлыка на цели-размещении
+    /// (`.cell`/`.newRow`) показывает **итог**: элемент-папка заменён оставшимся
+    /// ярлыком на её ячейке (``TesseraTileDragSession/folderDissolution``);
+    /// пока цель — слияние, родная папка или её нет, показывается база (папка с
+    /// одним ярлыком, как при подъёме), а отмена и отказ хоста возвращают
+    /// сетке модель с исходной папкой (``restore()``).
+    ///
     /// - Parameters:
     ///   - target: Цель под пальцем.
     ///   - session: Активная drag-сессия.
     private func applyDragPreview(for target: HoverTarget, session: TesseraTileDragSession) {
+        // D45: при drag из папки в два ярлыка цель-размещение показывает
+        // итоговую картину: папка уже распущена, оставшийся ярлык стоит на её
+        // ячейке, а перетаскиваемый встаёт по обычным правилам (тот же порядок
+        // шагов, что у `TileStore.extractFromFolder`). Остальные цели (слияние,
+        // родная папка, нет цели) — база: папка со вторым ярлыком на месте, как
+        // при подъёме.
+        var previewItems = session.baseSnapshot.items
         let desired: [TilePlacedItem]
         switch target {
         case .cell(let cell):
+            var basis = session.basePlacements
+            if let dissolution = session.folderDissolution {
+                basis = dissolution.placements
+                previewItems = dissolution.items
+            }
             desired = TileLayoutEngine.inserting(
                 id: session.itemID,
                 size: session.magnetSize,
                 at: cell,
-                into: session.basePlacements,
+                into: basis,
                 columns: session.columns
             )
         case .newRow:
+            var basis = session.basePlacements
+            if let dissolution = session.folderDissolution {
+                basis = dissolution.placements
+                previewItems = dissolution.items
+            }
             desired = TileLayoutEngine.inserting(
                 id: session.itemID,
                 size: session.magnetSize,
                 at: session.newRowCell,
-                into: session.basePlacements,
+                into: basis,
                 columns: session.columns
             )
         case .none, .folder, .group, .sourceFolder:
@@ -2702,7 +2967,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         var cells: [AnyHashable: TileGridPlacement] = [:]
         for placed in desired { cells[placed.id] = placed.cell }
         let previewSnapshot = TileGridSnapshot(
-            items: session.baseSnapshot.items,
+            items: previewItems,
             unpinned: session.baseSnapshot.unpinned,
             placementTable: TileGridPlacementTable(cells: cells, columns: session.columns)
         )
@@ -3521,7 +3786,9 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// мешающие плитки выталкиваются вниз каскадом (D31). Ярлык из панели папки
     /// выносится ``TileStore/extractFromFolder(_:toCell:columns:)`` /
     /// ``TileStore/extractFromFolderToNewRow(_:columns:)`` (E11.1): одобрение
-    /// хоста спрашивается там же (D14), опустевшая папка исчезает, оставляя дыру.
+    /// хоста спрашивается там же (D14), папка с одним оставшимся ярлыком
+    /// распускается (D45: ярлык встаёт на её ячейку, делегат получает
+    /// `didDissolveFolder` после `didMove`).
     /// После удачной операции схлопывается полностью пустая строка. Если
     /// раскладка не изменилась (элемент и так на этой ячейке), это no-op.
     /// Дальше как у остальных drop'ов: `render`, рамка читается после него, фокус
@@ -3560,6 +3827,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 toFolder: nil,
                 atCell: store.placements(forColumns: columns)[session.itemID]
             )
+            notifyDissolution(of: session)
             announce(TesseraStartScreenStrings.string(.a11yFolderTileOnStart))
             UINotificationFeedbackGenerator().notificationOccurred(.success)
 
@@ -3606,7 +3874,8 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///
     /// Вызывается только при выдержанном удержании E8.6. Перенос идёт через
     /// ``TileStore/moveBetweenFolders(_:to:columns:)`` (одобрение хоста, D14);
-    /// папка-источник исчезает, если ярлык был последним, оставляя дыру.
+    /// папка-источник из двух ярлыков распускается (D45): оставшийся ярлык встаёт
+    /// на её место, делегат получает `didDissolveFolder` после `didMove`.
     ///
     /// - Parameters:
     ///   - session: Drag-сессия (источник — папка).
@@ -3634,6 +3903,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             toFolder: folderID,
             atCell: nil
         )
+        notifyDissolution(of: session)
         announce(TesseraStartScreenStrings.string(.a11yFolderTileMoved))
         UINotificationFeedbackGenerator().notificationOccurred(.success)
 
@@ -4351,6 +4621,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///
     /// «Убрать из папки» — ``moveBetweenFolders(_:to:)`` с `nil`: ярлык
     /// встаёт сразу после папки (или на её месте, если она распалась).
+    /// «Открепить» — ``unpin(_:)`` (D45: при двух ярлыках папка распускается).
     /// «Переместить в папку <название>» — по одному на другую папку (не больше
     /// ``maxFolderActions``). Вне режима редактирования действий нет.
     ///
@@ -4374,6 +4645,17 @@ public final class TesseraTileEditCoordinator: NSObject {
                 ) { [weak self] _ in
                     guard let self else { return false }
                     return self.moveBetweenFolders(tileID, to: nil)
+                },
+                // D45: «Открепить» ярлык папки — путь, которым папка распускается
+                // «по одному» (W10M §6.9); при двух ярлыках панель закроется, а
+                // оставшийся ярлык встанет на место папки.
+                UIAccessibilityCustomAction(
+                    name: TesseraStartScreenStrings.string(.a11yActionUnpin),
+                    image: nil
+                ) { [weak self] _ in
+                    guard let self else { return false }
+                    self.unpin(tileID)
+                    return true
                 },
             ]
             for folder in targets {
@@ -5052,6 +5334,30 @@ enum HoverTarget: Equatable {
     }
 }
 
+/// Итоговая картина распада папки-источника при drag ярлыка из панели (D45).
+///
+/// В папке два ярлыка: когда выносимый уходит, папка распускается, и оставшийся
+/// встаёт на её ячейку со своим размером. Превью цели-размещения показывает именно
+/// это, поэтому набор считается один раз на захвате — от размещений модели, а не
+/// от предыдущего превью.
+struct DragFolderDissolution {
+
+    /// Папка, которая распадётся.
+    let folderID: AnyHashable
+
+    /// Оставшийся ярлык, занимающий место папки.
+    let remaining: TileDescriptor
+
+    /// Элементы сетки после распада: папка заменена оставшимся ярлыком; выносимый
+    /// ярлык (синтетический элемент базы) остаётся на месте.
+    let items: [TileGridItem]
+
+    /// Размещения модели **без** выносимого ярлыка: папка убрана, оставшийся
+    /// ярлык поставлен на её ячейку `TileLayoutEngine.inserting` (бо́льший
+    /// выталкивает соседей вниз). От них считаются превью и «новая строка».
+    let placements: [TilePlacedItem]
+}
+
 /// Активная drag-сессия.
 ///
 /// Класс, а не структура: координатор и таймер меняют `lastPoint`/`hover`
@@ -5194,10 +5500,17 @@ final class TesseraTileDragSession {
     /// ``basePlacements`` есть синтетический ярлык, а в модели его нет.
     let modelPlacements: [AnyHashable: TileGridPlacement]
 
+    /// Итоговая картина распада папки-источника (D45): в ней два ярлыка, и
+    /// после выноса одного она распускается. `nil` — папка переживёт вынос,
+    /// drag не из папки либо в папке один ярлык (``dissolvingFolderID``).
+    let folderDissolution: DragFolderDissolution?
+
     /// Папка-источник, которая исчезнет на drop (E14.5): ярлык в ней последний.
     ///
     /// `TileStore` убирает такую папку **до** расчёта новой строки, поэтому
-    /// превью и магнит для цели «новая строка» её тоже не учитывают.
+    /// превью и магнит для цели «новая строка» её тоже не учитывают. D45: такая
+    /// папка бывает только переходной (``TileStore/createFolder(withTile:title:columns:)``);
+    /// распад папки из двух ярлыков — ``folderDissolution``.
     var dissolvingFolderID: AnyHashable? {
         guard let sourceFolderID,
               let folder = modelBaseSnapshot.folders.first(where: { $0.id == sourceFolderID }),
@@ -5211,10 +5524,13 @@ final class TesseraTileDragSession {
     /// строка после последней занятой, колонка 0 — как её посчитает `TileStore`
     /// (без самого элемента и без исчезающей папки-источника).
     var newRowCell: TileGridPlacement {
+        // D45: после распада папки строки считаются с оставшимся ярлыком на её
+        // месте, так же, как в `TileStore.extractFromFolderToNewRow`.
         TileLayoutEngine.newRowCell(
             size: magnetSize,
             columns: columns,
-            placements: basePlacements.filter { $0.id != dissolvingFolderID },
+            placements: folderDissolution?.placements
+                ?? basePlacements.filter { $0.id != dissolvingFolderID },
             excluding: itemID
         )
     }
@@ -5232,8 +5548,10 @@ final class TesseraTileDragSession {
         basePlacements: [TilePlacedItem],
         modelPlacements: [AnyHashable: TileGridPlacement],
         modelBaseSnapshot: TileGridSnapshot? = nil,
-        sourceFolderID: AnyHashable? = nil
+        sourceFolderID: AnyHashable? = nil,
+        folderDissolution: DragFolderDissolution? = nil
     ) {
+        self.folderDissolution = folderDissolution
         self.modelBaseSnapshot = modelBaseSnapshot ?? baseSnapshot
         self.sourceFolderID = sourceFolderID
         self.itemID = itemID
