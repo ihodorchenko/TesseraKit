@@ -9,7 +9,8 @@
 //  - §5 «Режим редактирования»: long-press → «желе» (мягкая синусоидальная
 //    `CAKeyframeAnimation` поворота ±1,2° за 0,4 с со случайной фазой), unpin
 //    с fly-out, dimming всех плиток, кроме выбранной (E8.2), resize по циклу
-//    small → medium → wide → large на месте (рост выталкивает соседей вниз),
+//    small → wide → medium → large на месте (D28, E15.3; рост выталкивает
+//    соседей вниз),
 //    собственный drag-координатор (снэпшот + пустышка + превью на ячейках без
 //    записи в модель + инвалидация layout), а не нативный `UICollectionView` interactive movement;
 //  - §3 «Плиточная сетка»: ячейки и выталкивание считает `TileLayoutEngine`, анимацию
@@ -47,8 +48,8 @@
 //  E8.7/E14.5: resize-выталкивание. При увеличении плитка остаётся на своём
 //  месте, а конфликтующие плитки уходят вниз каскадом
 //  (`TileStore.resize(_:to:columns:)`); координатор передаёт реальное
-//  число колонок сетки. Цикл размеров D15 (small → medium → wide → large →
-//  small) не меняется.
+//  число колонок сетки. Цикл размеров D15/D28 (small → wide → medium → large →
+//  small, порядок — `TileSize.cycleOrder`) не меняется.
 //
 //  E8.6: папка из двух ярлыков больше не создаётся мгновенно при drop на
 //  центр плитки-цели. Нужно удержать перетаскиваемую плитку над целью больше
@@ -696,7 +697,9 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// умолчанию координатор разрешает все размеры D15, которые помещаются в
     /// текущее число колонок сетки. Хост может сузить набор: например, запретить
     /// `large` для ярлыков конкретного приложения. Пустой массив трактуется как
-    /// «использовать набор по умолчанию».
+    /// «использовать набор по умолчанию». Хост задаёт **набор**, а не порядок:
+    /// порядок цикла — малый → широкий → средний → большой — фиксирован
+    /// (D28), недоступные размеры в нём пропускаются.
     public var supportedSizesProvider: ((TileGridItem) -> [TileSize])?
 
     /// Контроллер, от которого показывать экран папки.
@@ -1463,12 +1466,16 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     // MARK: - Resize
 
-    /// Циклически меняет размер элемента: small → medium → wide → large → small
-    /// (docs/STARTSCREEN-IOS-DESIGN.md §5, D15).
+    /// Циклически меняет размер элемента: small → wide → medium → large → small
+    /// (docs/STARTSCREEN-IOS-DESIGN.md §5, D15, D28, E15.3).
     ///
+    /// Порядок цикла задан явно в `TileSize.cycleOrder` (порядок W10M с `large`
+    /// в конце), а не порядком `allCases` и не порядком списка хоста.
     /// Поддерживаемые размеры по умолчанию — все четыре, которые помещаются в
     /// число колонок сетки (широкая плитка требует четырёх). Хост может сузить
-    /// набор через ``supportedSizesProvider``. Переупаковку выполняет
+    /// набор через ``supportedSizesProvider``: неподдерживаемые размеры цикл
+    /// пропускает. Тот же шаг делает действие VoiceOver «Изменить размер»
+    /// (оно вызывает этот метод). Переупаковку выполняет
     /// `TileStore` + `TesseraTileGridView.update(snapshot:animated:)`: раскладка
     /// пересчитывается `TileLayoutEngine`, соседи переезжают batch-анимацией.
     ///
@@ -1489,8 +1496,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         let sizes = supportedSizes(for: item)
         guard sizes.count > 1 else { return nil }
 
-        let currentIndex = sizes.firstIndex(of: item.size) ?? -1
-        let next = sizes[(currentIndex + 1) % sizes.count]
+        let next = item.size.next(among: sizes)
         guard next != item.size,
               store.resize(itemID, to: next, columns: storeColumns) else {
             return nil
@@ -1512,7 +1518,8 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Список размеров, доступных элементу.
     ///
     /// - Parameter item: Ярлык или папка.
-    /// - Returns: Поддерживаемые размеры в порядке цикла D15; никогда не пустой.
+    /// - Returns: Поддерживаемые размеры (порядок цикла задаёт `TileSize.cycleOrder`,
+    ///   D28); никогда не пустой.
     private func supportedSizes(for item: TileGridItem) -> [TileSize] {
         if let provider = supportedSizesProvider {
             let custom = provider(item)
@@ -4413,6 +4420,9 @@ public final class TesseraTileEditCoordinator: NSObject {
         // Оверлеи создаются только для плиток у экрана (и одной экранной высоты
         // запаса): держать кнопки для сотни далёких ярлыков незачем.
         let creationBounds = grid.bounds.insetBy(dx: 0, dy: -grid.bounds.height)
+        // D29, E15.1: бэйдж плитки обходит стрелку размера — сетке сообщается,
+        // сколько угла она занимает.
+        var badgeClearances: [AnyHashable: CGFloat] = [:]
 
         for item in items {
             guard let frame = grid.frame(forItemID: item.id) else { continue }
@@ -4441,6 +4451,12 @@ public final class TesseraTileEditCoordinator: NSObject {
             let canResize = supportedSizes(for: item).count > 1
             control.configure(canUnpin: canUnpin, canResize: canResize)
             control.layer.zPosition = 200
+            badgeClearances[item.id] = canResize
+                ? TesseraTileEditControlView.badgeClearance(
+                    forTileSize: frame.size,
+                    maxDiameter: configuration.controlDiameter
+                )
+                : 0
 
             let isDragged = dragSession?.itemID == item.id
             control.isHidden = isDragged || !frame.intersects(grid.bounds)
@@ -4477,6 +4493,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
         applyPanelEditActions(folders: folderTargets)
         reconcilePanelEditControls(fadesIn: false)
+        grid.setBadgeEditClearances(badgeClearances, animated: animated || dimAnimated)
 
         // E8.2: после конфигурации ячеек — снова выставить прозрачность.
         applyEditDimming(animated: dimAnimated)
@@ -4659,6 +4676,8 @@ public final class TesseraTileEditCoordinator: NSObject {
         removeAllPanelEditControls()
         editControlsHost?.removeFromSuperview()
         editControlsHost = nil
+        // Стрелок больше нет — бэйджи возвращаются в угол (D29, E15.1).
+        grid.resetBadgeEditClearances(animated: true)
 
         for cell in cellsWithEditActions.values {
             cell.accessibilityCustomActions = nil
@@ -5867,12 +5886,13 @@ final class TesseraTileEditControlsHostView: UIView {
 
     /// Пропускает касания мимо контейнера, если они не попали в кнопку.
     ///
-    /// Если зоны касания нескольких оверлеев накладываются (D46: кнопки
-    /// соседних ярлыков панели папки, кнопка панели и кнопка плитки сетки), побеждает
-    /// кнопка, **центр которой ближе к точке**; при равенстве — верхняя в
-    /// порядке подвью. Правило включается, только когда среди претендентов есть
-    /// оверлей ярлыка панели: наложения кнопок плиток сетки решаются, как раньше,
-    /// порядком подвью.
+    /// Если зоны касания нескольких оверлеев накладываются, побеждает кнопка,
+    /// **центр которой ближе к точке**; при равенстве — верхняя в порядке
+    /// подвью. Наложения бывают у соседей: стрелка размера верхней плитки и
+    /// кнопка открепления плитки под ней стоят в одной колонке у конца строки
+    /// (E15.2), а кнопки ярлыков панели папки (D46) стоят вплотную. Внутри одного
+    /// оверлея зоны двух его кнопок не пересекаются
+    /// (``TesseraTileEditControlView/gridHitZone(buttonFrame:tileBounds:isRightToLeft:ownsUpperHalf:)``).
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard !isHidden, alpha > 0.01, isUserInteractionEnabled,
               self.point(inside: point, with: event) else {
@@ -5887,7 +5907,7 @@ final class TesseraTileEditControlsHostView: UIView {
                 claims.append((control, hit))
             }
         }
-        guard claims.count > 1, claims.contains(where: { $0.control.isPanelMember }) else {
+        guard claims.count > 1 else {
             return claims.first?.view
         }
 
@@ -5924,6 +5944,11 @@ final class TesseraTileEditControlsHostView: UIView {
 /// кольцо и тень читаются на плитках любого цвета в светлой и тёмной темах.
 /// Видимая кнопка может быть мелкой, а зона касания расширяется до
 /// ``minimumHitSide`` (`hitTest`).
+///
+/// E15.2 (D29): обе кнопки плитки сетки стоят у конца строки — открепление в
+/// верхнем углу, стрелка размера в нижнем, — и на малой плитке их зоны касания
+/// делятся по половинам высоты
+/// (``gridHitZone(buttonFrame:tileBounds:isRightToLeft:ownsUpperHalf:)``).
 final class TesseraTileEditControlView: UIView {
 
     /// Нажатие на кнопку открепления.
@@ -5956,13 +5981,15 @@ final class TesseraTileEditControlView: UIView {
         return min(ceiling, max(minimumDiameter, scaled))
     }
 
-    /// Рамка кнопки открепления в верхнем углу плитки (D29, D46).
+    /// Рамка кнопки открепления в верхнем углу плитки (D29, D46, E15.2).
     ///
-    /// **Единственное место, где выбирается угол кнопки.** Сетка и панель папки
-    /// строят кнопку этим помощником, поэтому перенос кнопки в другой угол
-    /// (E15.2) — правка одной функции. Сейчас кнопка — в верхнем углу по
-    /// направлению чтения (левом в LTR, правом в RTL), центр у самого угла рамки,
-    /// чуть наружу (``cornerOverhang``).
+    /// **Единственное место, где выбирается угол кнопки открепления.** Сетка и
+    /// панель папки строят кнопку этим помощником, поэтому угол у них общий.
+    /// Кнопка — в верхнем углу **у конца строки** (правом в LTR, левом в RTL, как
+    /// в W10M), центр у самого угла рамки, чуть наружу (``cornerOverhang``).
+    /// Стрелка размера сидит в нижнем углу той же стороны
+    /// (``resizeButtonFrame(inTileBounds:side:isRightToLeft:)``): обе кнопки
+    /// одного плиточного оверлея стоят друг над другом.
     ///
     /// - Parameters:
     ///   - bounds: Границы плитки (начало координат оверлея).
@@ -5975,18 +6002,105 @@ final class TesseraTileEditControlView: UIView {
         isRightToLeft: Bool
     ) -> CGRect {
         let overhang = cornerOverhang
-        let x = isRightToLeft ? bounds.width - side + overhang : -overhang
+        let x = isRightToLeft ? -overhang : bounds.width - side + overhang
         return CGRect(x: x, y: -overhang, width: side, height: side)
     }
 
-    /// Зона касания кнопки открепления ярлыка панели папки (D46).
+    /// Рамка стрелки размера в нижнем углу плитки у конца строки (D29, E15.2).
+    ///
+    /// Правый нижний угол в LTR, левый нижний в RTL; центр у самого угла рамки,
+    /// чуть наружу (``cornerOverhang``). Тот же помощник использует раскладка
+    /// бэйджа плитки, чтобы обойти кнопку (``badgeClearance(forTileSize:maxDiameter:)``).
+    ///
+    /// - Parameters:
+    ///   - bounds: Границы плитки (начало координат оверлея).
+    ///   - side: Диаметр кнопки.
+    ///   - isRightToLeft: Направление чтения.
+    /// - Returns: Рамка кнопки в координатах оверлея.
+    static func resizeButtonFrame(
+        inTileBounds bounds: CGRect,
+        side: CGFloat,
+        isRightToLeft: Bool
+    ) -> CGRect {
+        let overhang = cornerOverhang
+        let x = isRightToLeft ? -overhang : bounds.width - side + overhang
+        return CGRect(x: x, y: bounds.height - side + overhang, width: side, height: side)
+    }
+
+    /// Сколько нижнего угла плитки со стороны конца строки занимает стрелка
+    /// размера **внутри** плитки, pt (E15.1).
+    ///
+    /// Это отступ, на который бэйдж в правке уходит от края: у стрелки диаметра
+    /// `side` внутрь плитки заходит `side − cornerOverhang` по каждой оси.
+    ///
+    /// - Parameters:
+    ///   - tileSize: Размер плитки.
+    ///   - maxDiameter: Потолок из ``TesseraTileEditConfiguration/controlDiameter``.
+    /// - Returns: Ширина занятого угла внутри плитки.
+    static func badgeClearance(forTileSize tileSize: CGSize, maxDiameter: CGFloat) -> CGFloat {
+        max(0, diameter(forTileSize: tileSize, maxDiameter: maxDiameter) - cornerOverhang)
+    }
+
+    /// Зона касания кнопки плитки **сетки** (E15.2).
+    ///
+    /// Обе кнопки плитки стоят у конца строки одна над другой, и на малой плитке
+    /// (≈ 50–55 pt) их зоны 44 × 44 pt пересеклись бы. Правило детерминировано и
+    /// не отдаёт кнопкам центр плитки:
+    /// 1. зона — видимая рамка кнопки, расширенная до ``minimumHitSide`` вокруг
+    ///    её центра;
+    /// 2. **вертикаль**: кнопка открепления владеет **верхней половиной** высоты
+    ///    плитки (зона не заходит ниже её середины), стрелка размера — **нижней**
+    ///    (не заходит выше середины): зоны двух кнопок никогда не пересекаются;
+    /// 3. **горизонталь**: зона не заходит за вертикальную ось плитки (минус 1 pt)
+    ///    со стороны конца строки, поэтому центр и тело плитки (тап, long-press,
+    ///    drag) принадлежат плитке. У плитки шире ≈ 52 pt п. 3 ничего не обрезает.
+    ///
+    /// - Parameters:
+    ///   - buttonFrame: Видимая рамка кнопки в координатах оверлея.
+    ///   - tileBounds: Границы плитки (начало координат оверлея).
+    ///   - isRightToLeft: Направление чтения.
+    ///   - ownsUpperHalf: `true` — кнопка открепления (верхняя половина),
+    ///     `false` — стрелка размера (нижняя).
+    /// - Returns: Зона касания (нулевая, если она вырождена).
+    static func gridHitZone(
+        buttonFrame: CGRect,
+        tileBounds: CGRect,
+        isRightToLeft: Bool,
+        ownsUpperHalf: Bool
+    ) -> CGRect {
+        let dx = max(0, (minimumHitSide - buttonFrame.width) / 2)
+        let dy = max(0, (minimumHitSide - buttonFrame.height) / 2)
+        var zone = buttonFrame.insetBy(dx: -dx, dy: -dy)
+
+        let midX = tileBounds.midX
+        let midY = tileBounds.midY
+        var minX = zone.minX
+        var maxX = zone.maxX
+        var minY = zone.minY
+        var maxY = zone.maxY
+        if isRightToLeft {
+            maxX = min(maxX, midX - 1)
+        } else {
+            minX = max(minX, midX + 1)
+        }
+        if ownsUpperHalf {
+            maxY = min(maxY, midY)
+        } else {
+            minY = max(minY, midY)
+        }
+        zone = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        return zone.width <= 0 || zone.height <= 0 ? .zero : zone
+    }
+
+    /// Зона касания кнопки открепления ярлыка панели папки (D46, E15.2).
     ///
     /// Правило детерминировано и ничего не отнимает у ярлыка и соседей:
-    /// 1. допустимая область — **угловая четверть** ярлыка, где сидит кнопка,
-    ///    плюс выступ наружу не больше `outset` (кнопка не заходит на соседа);
-    ///    за осями симметрии ярлыка (минус 1 pt) зоны нет, поэтому центр и
-    ///    остальное тело ярлыка принадлежат самому ярлыку (тап — ничего нового,
-    ///    long-press — drag из папки);
+    /// 1. допустимая область — **угловая четверть** ярлыка, где сидит кнопка
+    ///    (верхняя у конца строки: правая в LTR, левая в RTL), плюс выступ
+    ///    наружу не больше `outset` (кнопка не заходит на соседа); за осями
+    ///    симметрии ярлыка (минус 1 pt) зоны нет, поэтому центр и остальное тело
+    ///    ярлыка принадлежат самому ярлыку (тап — ничего нового, long-press —
+    ///    drag из папки);
     /// 2. внутри этой области зона — квадрат не меньше 44 × 44 pt (HIG), прижатый
     ///    к внешнему углу и растущий внутрь ярлыка, но не дальше осей: у малого
     ///    ярлыка (≈ 55 pt) это ≈ 32 pt, у крупного — полные 44 pt. Видимая
@@ -5995,7 +6109,7 @@ final class TesseraTileEditControlView: UIView {
     /// - Parameters:
     ///   - buttonFrame: Видимая рамка кнопки в координатах оверлея.
     ///   - tileBounds: Границы ярлыка (начало координат оверлея).
-    ///   - isRightToLeft: Направление чтения: в RTL четверть правая.
+    ///   - isRightToLeft: Направление чтения: в RTL четверть левая.
     ///   - outset: Допустимый выход зоны за рамку ярлыка.
     /// - Returns: Зона касания (нулевая, если она вырождена).
     static func panelUnpinHitZone(
@@ -6008,7 +6122,7 @@ final class TesseraTileEditControlView: UIView {
         let quadrantWidth = max(0, tileBounds.width / 2 - 1) + clip
         let quadrantHeight = max(0, tileBounds.height / 2 - 1) + clip
         let quadrant = CGRect(
-            x: isRightToLeft ? tileBounds.midX + 1 : tileBounds.minX - clip,
+            x: isRightToLeft ? tileBounds.minX - clip : tileBounds.midX + 1,
             y: tileBounds.minY - clip,
             width: quadrantWidth,
             height: quadrantHeight
@@ -6017,7 +6131,7 @@ final class TesseraTileEditControlView: UIView {
         let width = min(quadrant.width, max(minimumHitSide, buttonFrame.width))
         let height = min(quadrant.height, max(minimumHitSide, buttonFrame.height))
         let zone = CGRect(
-            x: isRightToLeft ? quadrant.maxX - width : quadrant.minX,
+            x: isRightToLeft ? quadrant.minX : quadrant.maxX - width,
             y: quadrant.minY,
             width: width,
             height: height
@@ -6151,25 +6265,22 @@ final class TesseraTileEditControlView: UIView {
             forTileSize: bounds.size,
             maxDiameter: diameter
         )
-        let overhang = TesseraTileEditControlView.cornerOverhang
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
 
-        // Кнопка открепления — в верхнем углу по направлению чтения, стрелка —
-        // в нижнем противоположном (§9, RTL). Центр кнопки лежит у самого угла
-        // рамки, чуть наружу: половина диаметра остаётся над плиткой. Угол
-        // открепления выбирает общий помощник — им же пользуется панель папки.
-        let resizeX = isRightToLeft ? -overhang : bounds.width - side + overhang
-
+        // Обе кнопки — у конца строки (правый край в LTR, левый в RTL, как в
+        // W10M): открепление сверху, стрелка размера снизу (D29, E15.2). Центр
+        // кнопки лежит у самого угла рамки, чуть наружу: половина диаметра
+        // остаётся над плиткой. Углы выбирают общие помощники — открепление
+        // ими же пользуется панель папки.
         unpinButton.frame = TesseraTileEditControlView.unpinButtonFrame(
             inTileBounds: bounds,
             side: side,
             isRightToLeft: isRightToLeft
         )
-        resizeButton.frame = CGRect(
-            x: resizeX,
-            y: bounds.height - side + overhang,
-            width: side,
-            height: side
+        resizeButton.frame = TesseraTileEditControlView.resizeButtonFrame(
+            inTileBounds: bounds,
+            side: side,
+            isRightToLeft: isRightToLeft
         )
         for button in [unpinButton, resizeButton] {
             button.layer.cornerRadius = side / 2
@@ -6185,24 +6296,29 @@ final class TesseraTileEditControlView: UIView {
         updateColors()
     }
 
-    /// Зона касания кнопки: видимая рамка, расширенная до 44 pt вокруг центра.
+    /// Зона касания кнопки.
     ///
+    /// Плитка сетки: видимая рамка, расширенная до 44 pt вокруг центра и
+    /// разделённая между кнопками по половинам плитки
+    /// (``gridHitZone(buttonFrame:tileBounds:isRightToLeft:ownsUpperHalf:)``).
     /// Для кнопки открепления ярлыка панели (D46) зона урезана до угловой
     /// четверти ярлыка (``panelUnpinHitZone(buttonFrame:tileBounds:isRightToLeft:outset:)``).
     private func hitFrame(for button: UIButton) -> CGRect {
+        let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
         if isPanelMember, button === unpinButton {
             return TesseraTileEditControlView.panelUnpinHitZone(
                 buttonFrame: button.frame,
                 tileBounds: bounds,
-                isRightToLeft: effectiveUserInterfaceLayoutDirection == .rightToLeft,
+                isRightToLeft: isRightToLeft,
                 outset: panelHitOutset
             )
         }
-        let minSide = TesseraTileEditControlView.minimumHitSide
-        let frame = button.frame
-        let dx = max(0, (minSide - frame.width) / 2)
-        let dy = max(0, (minSide - frame.height) / 2)
-        return frame.insetBy(dx: -dx, dy: -dy)
+        return TesseraTileEditControlView.gridHitZone(
+            buttonFrame: button.frame,
+            tileBounds: bounds,
+            isRightToLeft: isRightToLeft,
+            ownsUpperHalf: button === unpinButton
+        )
     }
 
     /// Кнопка, в зону касания которой попадает точка (координаты оверлея).

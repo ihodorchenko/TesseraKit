@@ -254,6 +254,9 @@ final class TileCellWiringTests: XCTestCase {
         )
         let recorder = Recorder()
         host.coordinator.delegate = recorder
+        // E15.3 (D28): в полном цикле из small следующий — wide; тест про рост до
+        // 2×2 и выталкивание, поэтому набор сужен до small/medium.
+        host.coordinator.supportedSizesProvider = { _ in [.small, .medium] }
         host.coordinator.beginEditing()
 
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .medium)

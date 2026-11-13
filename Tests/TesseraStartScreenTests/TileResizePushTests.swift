@@ -160,24 +160,36 @@ final class TileResizePushTests: XCTestCase {
         let editor = TesseraTileEditCoordinator(grid: grid, store: store)
         let allIDs = Set<AnyHashable>(["a", "b", "c"])
 
-        // medium → wide: b справа конфликтует и уходит вниз.
-        XCTAssertEqual(editor.cycleSize(of: "a"), .wide)
-        XCTAssertEqual(ids(store.snapshot().items), ["a", "c", "b"])
-        XCTAssertEqual(ids(grid.items), ["a", "c", "b"])
-        XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs)
-
-        // wide → large → small → medium: полный круг D15.
-        XCTAssertEqual(editor.cycleSize(of: "a"), .large)
-        XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs)
-
-        XCTAssertEqual(editor.cycleSize(of: "a"), .small)
-        XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs)
-
-        XCTAssertEqual(editor.cycleSize(of: "a"), .medium)
+        // E15.3 (D28): полный круг D15 в порядке W10M — medium → large → small →
+        // wide → medium; набор элементов сохраняется на каждом шаге.
+        for expected in [TileSize.large, .small, .wide, .medium] {
+            XCTAssertEqual(editor.cycleSize(of: "a"), expected)
+            XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs, "после \(expected)")
+            XCTAssertEqual(Set(ids(grid.items)), allIDs, "сетка после \(expected)")
+        }
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .medium)
         XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs)
         XCTAssertEqual(size(of: AnyHashable("b"), in: grid.items), .medium)
         XCTAssertEqual(size(of: AnyHashable("c"), in: grid.items), .small)
+    }
+
+    /// Рост 2×2 → 4×2 выталкивает соседа вниз (прежняя проверка шага medium → wide:
+    /// в цикле D28 из medium следующий — large, поэтому набор сужен до medium/wide).
+    func testCycleSizeMediumToWidePushesRightNeighborDown() {
+        let directory = TesseraTestDirectory()
+        let store = makeStore([
+            tesseraTestTile("a", size: .medium),
+            tesseraTestTile("b", size: .medium),
+            tesseraTestTile("c", size: .small),
+        ], in: directory)
+        let grid = makeGrid(store: store)
+        let editor = TesseraTileEditCoordinator(grid: grid, store: store)
+        editor.supportedSizesProvider = { _ in [.medium, .wide] }
+
+        // medium → wide: b справа конфликтует и уходит вниз.
+        XCTAssertEqual(editor.cycleSize(of: "a"), .wide)
+        XCTAssertEqual(ids(store.snapshot().items), ["a", "c", "b"])
+        XCTAssertEqual(ids(grid.items), ["a", "c", "b"])
     }
 }
 

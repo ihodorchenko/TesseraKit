@@ -381,6 +381,7 @@ final class TesseraTestDragHost {
     ///   - configuration: Параметры редактирования («желе», drag, папки).
     ///   - autosaves: Автосохранение хранилища; по умолчанию выключено, чтобы
     ///     тесты не писали на диск.
+    ///   - windowSize: Размер окна и сетки (ширина экрана для проверок геометрии).
     ///   - prepare: Подготовка модели до постройки сетки (например, создание
     ///     папки через `TileStore`); получает хранилище и ширину сетки для
     ///     операций по ячейкам (E14.6). Раскладка до `prepare` — упаковка
@@ -390,6 +391,7 @@ final class TesseraTestDragHost {
         columns: Int = 4,
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(),
         autosaves: Bool = false,
+        windowSize: CGSize = TesseraTestWindowedGrid.defaultSize,
         prepare: ((TileStore, Int) -> Void)? = nil
     ) {
         let directory = TesseraTestDirectory()
@@ -399,7 +401,13 @@ final class TesseraTestDragHost {
         store.setCatalog(descriptors)
         store.placeItems(columns: columns)
         prepare?(store, columns)
-        self.init(directory: directory, store: store, columns: columns, configuration: configuration)
+        self.init(
+            directory: directory,
+            store: store,
+            columns: columns,
+            configuration: configuration,
+            windowSize: windowSize
+        )
     }
 
     /// Создаёт стенд с точной раскладкой по ячейкам (E14.5): файл схемы версии 2
@@ -489,12 +497,17 @@ final class TesseraTestDragHost {
         directory: TesseraTestDirectory,
         store: TileStore,
         columns: Int,
-        configuration: TesseraTileEditConfiguration
+        configuration: TesseraTileEditConfiguration,
+        windowSize: CGSize = TesseraTestWindowedGrid.defaultSize
     ) {
         self.directory = directory
         self.store = store
         // E14.5: хост строит сетку из `snapshot(columns:)` — с таблицей ячеек.
-        host = TesseraTestWindowedGrid(snapshot: store.snapshot(columns: columns), columns: columns)
+        host = TesseraTestWindowedGrid(
+            snapshot: store.snapshot(columns: columns),
+            columns: columns,
+            size: windowSize
+        )
         host.layout()
         coordinator = TesseraTileEditCoordinator(
             grid: host.grid,

@@ -553,6 +553,9 @@ final class TileAccessibilityOrderTests: XCTestCase {
     func testFocusAfterResizeStaysOnResizedTile() throws {
         let host = try makeHoleHost()
         let recorder = record(host)
+        // E15.3 (D28): цикл small → wide → medium; тест проверяет рост до 2×2 на месте,
+        // поэтому хост сужает набор до small/medium (прежний шаг small → medium).
+        host.coordinator.supportedSizesProvider = { _ in [.small, .medium] }
 
         host.coordinator.beginEditing()
         XCTAssertEqual(host.coordinator.cycleSize(of: "b"), .medium)
@@ -617,6 +620,9 @@ final class TileAccessibilityOrderTests: XCTestCase {
     func testCustomActionsUnpinAndResizeUseCellOperations() throws {
         let host = try makeHoleHost()
         let recorder = record(host)
+        // E15.3 (D28): набор small/medium оставляет прежний шаг small → medium
+        // (в полном цикле из small следующий — wide); тест про операции по ячейкам.
+        host.coordinator.supportedSizesProvider = { _ in [.small, .medium] }
         host.coordinator.beginEditing()
 
         func action(_ name: String, in id: AnyHashable) -> UIAccessibilityCustomAction? {
