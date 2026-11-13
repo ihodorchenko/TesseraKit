@@ -798,6 +798,15 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// Кнопки «открепить»/«размер» поверх видимых плиток, по идентификатору.
     private(set) var editControls: [AnyHashable: TesseraTileEditControlView] = [:]
 
+    /// Кнопки «открепить» на ярлыках панели раскрытой папки, по идентификатору
+    /// ярлыка (D46).
+    ///
+    /// Живут в том же обрезающем контейнере, что и ``editControls``; только в
+    /// режиме редактирования и только пока панель устоялась (не открывается и
+    /// не закрывается). Кнопки «размер» у них нет: у члена папки своего
+    /// размера нет.
+    private(set) var panelEditControls: [AnyHashable: TesseraTileEditControlView] = [:]
+
     /// Обрезающий контейнер кнопок (E12.4): рамка = `bounds` сетки.
     ///
     /// Плитка обрезается границами коллекции (= `bounds` сетки), а кнопки —
@@ -908,9 +917,16 @@ public final class TesseraTileEditCoordinator: NSObject {
         grid.panelShortcutsDidConfigure = { [weak self] _, _ in
             self?.scheduleReconcile()
         }
+        // D46: кнопки открепления на ярлыках панели появляются, когда панель
+        // устоялась, и уходят, как только она начинает закрываться.
+        grid.folderPanelStateDidChange = { [weak self] in
+            guard let self, self.isEditing else { return }
+            self.reconcilePanelEditControls(fadesIn: true)
+        }
     }
 
     deinit {
+        grid.folderPanelStateDidChange = nil
         grid.panelShortcutsDidConfigure = nil
         grid.columnsDidChange = nil
         NotificationCenter.default.removeObserver(self)
@@ -1317,6 +1333,94 @@ public final class TesseraTileEditCoordinator: NSObject {
                 self.postLayoutChanged(afterUnpinning: focus)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 self.announce(TesseraStartScreenStrings.string(.a11yTileUnpinned))
+            }
+        )
+    }
+
+    /// Открепление ярлыка раскрытой панели кнопкой на нём (D46).
+    ///
+    /// Тот же сценарий, что у кнопки на плитке сетки: ярлык улетает (снимок
+    /// иконки уменьшается и гаснет), затем идёт обычное открепление ярлыка папки
+    /// ``performImmediateUnpin(_:)`` — ``TileStore/unpin(_:columns:)``, `didUnpin`,
+    /// правило D45 (в папке из двух ярлыков она распускается, панель
+    /// закрывается, оставшийся ярлык встаёт на место папки, `didDissolveFolder`)
+    /// и фокус VoiceOver (оставшийся ярлык / следующий в панели, у последнего —
+    /// предыдущий). Подтверждения нет. Reduce Motion — без полёта, мгновенно.
+    ///
+    /// Публичное ``unpin(_:)`` (в том числе действие VoiceOver) остаётся
+    /// синхронным и без полёта: анимация относится только к тапу по кнопке.
+    ///
+    /// - Parameter tileID: Идентификатор ярлыка папки.
+    func unpinPanelTile(_ tileID: AnyHashable) {
+        guard isEditing, dragSession == nil, unpinsInFlight.isEmpty else { return }
+
+        guard !isReduceMotionEnabled(),
+              let panel = grid.panelShortcuts(),
+              let index = panel.folder.tiles.firstIndex(where: { $0.id == tileID }),
+              panel.cells.indices.contains(index),
+              let geometry = grid.panelShortcutGeometry(),
+              geometry.tileIDs == panel.folder.tiles.map({ $0.id }),
+              let snapshot = TesseraTileEditCoordinator.makeSnapshot(of: panel.cells[index]) else {
+            unpin(tileID)
+            reconcilePanelEditControls(fadesIn: false)
+            return
+        }
+
+        let cell = panel.cells[index]
+        let frame = geometry.frames[index]
+        unpinsInFlight.insert(tileID)
+        removePanelControl(for: tileID)
+        cell.alpha = 0
+
+        snapshot.frame = frame
+        snapshot.isUserInteractionEnabled = false
+        snapshot.layer.zPosition = 1000
+        snapshot.layer.shadowColor = UIColor.black.cgColor
+        snapshot.layer.shadowOpacity = 0.2
+        snapshot.layer.shadowRadius = 12
+        snapshot.layer.shadowOffset = CGSize(width: 0, height: 6)
+        grid.addSubview(snapshot)
+
+        UIView.animate(
+            withDuration: 0.22,
+            delay: 0,
+            options: [.beginFromCurrentState, .curveEaseIn],
+            animations: {
+                snapshot.alpha = 0
+                // frame при не-единичном transform не определён — bounds/center.
+                snapshot.bounds = CGRect(
+                    origin: .zero,
+                    size: CGSize(width: frame.width * 0.35, height: frame.height * 0.35)
+                )
+                snapshot.center = CGPoint(x: frame.midX, y: frame.midY - 48)
+            },
+            completion: { [weak self] _ in
+                snapshot.removeFromSuperview()
+                // Ячейка прозрачна на время полёта: без мутации модели её надо
+                // вернуть, иначе ярлык останется невидимым. При успехе ячейку
+                // переконфигурирует сетка (`configure` сбрасывает прозрачность).
+                guard let self else {
+                    cell.alpha = 1
+                    return
+                }
+
+                let stillInPanel = self.isEditing && self.dragSession == nil
+                    && self.grid.panelShortcuts()?.folder.tiles.contains { $0.id == tileID } == true
+                guard stillInPanel else {
+                    // Панель закрыли или ярлык ушёл, пока он летел: мутации нет.
+                    cell.alpha = 1
+                    self.unpinsInFlight.remove(tileID)
+                    self.reconcilePanelEditControls(fadesIn: false)
+                    return
+                }
+
+                // `performImmediateUnpin` сам снимает `unpinsInFlight`.
+                self.performImmediateUnpin(tileID)
+                if self.store.isPinned(tileID) {
+                    // Хранилище отказало: ярлык остаётся в папке.
+                    cell.alpha = 1
+                }
+                self.reconcilePanelEditControls(fadesIn: false)
             }
         )
     }
@@ -2425,6 +2529,9 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         grid.setItemHidden(true, forItemID: itemID)
         removeControl(for: itemID)
+        // D46: во время drag кнопок на ярлыках панели нет (панель при этом уже
+        // закрыта мгновенно; страховка на случай иного порядка).
+        removeAllPanelEditControls()
 
         placeholder.frame = slotFrame
         placeholder.layer.zPosition = 500
@@ -4369,6 +4476,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             applyEditActions(to: item, folders: folderTargets)
         }
         applyPanelEditActions(folders: folderTargets)
+        reconcilePanelEditControls(fadesIn: false)
 
         // E8.2: после конфигурации ячеек — снова выставить прозрачность.
         applyEditDimming(animated: dimAnimated)
@@ -4415,6 +4523,125 @@ public final class TesseraTileEditCoordinator: NSObject {
         host.frame = grid.bounds
     }
 
+    // MARK: - Кнопки на ярлыках панели папки (D46)
+
+    /// Создаёт, двигает и снимает кнопки открепления на ярлыках панели.
+    ///
+    /// Кнопки есть, только когда: идёт редактирование, нет drag, панель видима,
+    /// её ячейки соответствуют составу папки и она **не переезжает** (не
+    /// открывается и не закрывается). Иначе все кнопки панели снимаются. Кнопка
+    /// ярлыка, который сейчас улетает (``unpinPanelTile(_:)``), не показывается.
+    /// Это тот же оверлей, что на плитках сетки (общий размер и угол —
+    /// ``TesseraTileEditControlView/unpinButtonFrame(inTileBounds:side:isRightToLeft:)``),
+    /// но только с кнопкой открепления и с урезанной зоной касания.
+    ///
+    /// - Parameter fadesIn: Плавно проявлять новые кнопки (раскрытие панели);
+    ///   при Reduce Motion они появляются сразу.
+    private func reconcilePanelEditControls(fadesIn: Bool) {
+        guard isEditing, dragSession == nil, !grid.isFolderChangeAnimating,
+              let geometry = grid.panelShortcutGeometry(),
+              geometry.frames.count == geometry.tileIDs.count else {
+            removeAllPanelEditControls()
+            return
+        }
+
+        syncEditControlsHost()
+        let liveIDs = Set(geometry.tileIDs)
+        for (tileID, control) in panelEditControls where !liveIDs.contains(tileID) {
+            control.removeFromSuperview()
+        }
+        panelEditControls = panelEditControls.filter { liveIDs.contains($0.key) }
+
+        let animatesAppearance = fadesIn && !isReduceMotionEnabled()
+        let outset = min(
+            TesseraTileEditControlView.cornerOverhang,
+            max(0, geometry.spacing)
+        )
+        for (index, tileID) in geometry.tileIDs.enumerated() {
+            // Ярлык улетает: его кнопка уже снята и не возвращается до конца.
+            if unpinsInFlight.contains(tileID) {
+                removePanelControl(for: tileID)
+                continue
+            }
+
+            let frame = geometry.frames[index]
+            let control: TesseraTileEditControlView
+            if let existing = panelEditControls[tileID] {
+                control = existing
+            } else {
+                control = makePanelControl(for: tileID)
+                control.frame = frame
+                control.tileSize = frame.size
+                panelEditControls[tileID] = control
+                if animatesAppearance {
+                    control.alpha = 0
+                    UIView.animate(
+                        withDuration: 0.18,
+                        delay: 0,
+                        options: [.allowUserInteraction, .curveEaseOut],
+                        animations: { control.alpha = 1 },
+                        completion: nil
+                    )
+                }
+            }
+            control.panelHitOutset = outset
+            control.tileSize = frame.size
+            control.frame = frame
+            control.isHidden = !frame.intersects(grid.bounds)
+        }
+    }
+
+    /// Двигает кнопки панели за ярлыками при прокрутке (только `frame`).
+    private func updatePanelEditControlFrames() {
+        guard !panelEditControls.isEmpty else { return }
+        guard let geometry = grid.panelShortcutGeometry(),
+              !grid.isFolderChangeAnimating else {
+            for control in panelEditControls.values { control.isHidden = true }
+            return
+        }
+
+        syncEditControlsHost()
+        for (index, tileID) in geometry.tileIDs.enumerated() {
+            guard let control = panelEditControls[tileID] else { continue }
+            let frame = geometry.frames[index]
+            control.frame = frame
+            control.tileSize = frame.size
+            control.isHidden = !frame.intersects(grid.bounds)
+        }
+    }
+
+    /// Создаёт оверлей ярлыка панели: только кнопка открепления.
+    ///
+    /// - Parameter tileID: Идентификатор ярлыка папки.
+    /// - Returns: Оверлей, уже добавленный в контейнер кнопок.
+    private func makePanelControl(for tileID: AnyHashable) -> TesseraTileEditControlView {
+        let control = TesseraTileEditControlView(diameter: configuration.controlDiameter)
+        control.isPanelMember = true
+        // Без стрелки размера: у члена папки своего размера нет; открепления у
+        // самой папки нет по D38, поэтому оверлей папки сюда не попадает.
+        control.configure(canUnpin: true, canResize: false)
+        control.layer.zPosition = 200
+        control.onUnpin = { [weak self] in
+            self?.unpinPanelTile(tileID)
+        }
+        editControlsContainer().addSubview(control)
+        return control
+    }
+
+    /// Убирает кнопку ярлыка панели.
+    private func removePanelControl(for tileID: AnyHashable) {
+        panelEditControls[tileID]?.removeFromSuperview()
+        panelEditControls.removeValue(forKey: tileID)
+    }
+
+    /// Убирает все кнопки панели.
+    private func removeAllPanelEditControls() {
+        for control in panelEditControls.values {
+            control.removeFromSuperview()
+        }
+        panelEditControls.removeAll()
+    }
+
     /// Убирает оверлей элемента.
     ///
     /// - Parameter itemID: Идентификатор элемента.
@@ -4429,6 +4656,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             control.removeFromSuperview()
         }
         editControls.removeAll()
+        removeAllPanelEditControls()
         editControlsHost?.removeFromSuperview()
         editControlsHost = nil
 
@@ -4458,6 +4686,8 @@ public final class TesseraTileEditCoordinator: NSObject {
             control.isHidden = dragSession?.itemID == itemID
                 || !frame.intersects(grid.bounds)
         }
+
+        updatePanelEditControlFrames()
 
         // E8.2: `prepareForReuse` у переиспользованной ячейки вернул alpha 1 —
         // возвращаем дим. Это только `alpha` (разрешённое в горячем пути
@@ -5607,9 +5837,46 @@ final class TesseraTileEditControlsHostView: UIView {
     }
 
     /// Пропускает касания мимо контейнера, если они не попали в кнопку.
+    ///
+    /// Если зоны касания нескольких оверлеев накладываются (D46: кнопки
+    /// соседних ярлыков панели папки, кнопка панели и кнопка плитки сетки), побеждает
+    /// кнопка, **центр которой ближе к точке**; при равенстве — верхняя в
+    /// порядке подвью. Правило включается, только когда среди претендентов есть
+    /// оверлей ярлыка панели: наложения кнопок плиток сетки решаются, как раньше,
+    /// порядком подвью.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let hit = super.hitTest(point, with: event)
-        return hit === self ? nil : hit
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled,
+              self.point(inside: point, with: event) else {
+            return nil
+        }
+
+        var claims: [(control: TesseraTileEditControlView, view: UIView)] = []
+        for subview in subviews.reversed() {
+            guard let control = subview as? TesseraTileEditControlView else { continue }
+            let local = control.convert(point, from: self)
+            if let hit = control.hitTest(local, with: event) {
+                claims.append((control, hit))
+            }
+        }
+        guard claims.count > 1, claims.contains(where: { $0.control.isPanelMember }) else {
+            return claims.first?.view
+        }
+
+        // Расстояние — от точки до центра заявленной кнопки (в координатах её оверлея).
+        func distance(_ claim: (control: TesseraTileEditControlView, view: UIView)) -> CGFloat {
+            let local = claim.control.convert(point, from: self)
+            return hypot(local.x - claim.view.frame.midX, local.y - claim.view.frame.midY)
+        }
+        var best = claims[0]
+        var bestDistance = distance(best)
+        for claim in claims.dropFirst() {
+            let candidate = distance(claim)
+            if candidate < bestDistance {
+                best = claim
+                bestDistance = candidate
+            }
+        }
+        return best.view
     }
 }
 
@@ -5658,6 +5925,75 @@ final class TesseraTileEditControlView: UIView {
         let ceiling = max(minimumDiameter, maxDiameter)
         let scaled = (min(tileSize.width, tileSize.height) * diameterFraction).rounded()
         return min(ceiling, max(minimumDiameter, scaled))
+    }
+
+    /// Рамка кнопки открепления в верхнем углу плитки (D29, D46).
+    ///
+    /// **Единственное место, где выбирается угол кнопки.** Сетка и панель папки
+    /// строят кнопку этим помощником, поэтому перенос кнопки в другой угол
+    /// (E15.2) — правка одной функции. Сейчас кнопка — в верхнем углу по
+    /// направлению чтения (левом в LTR, правом в RTL), центр у самого угла рамки,
+    /// чуть наружу (``cornerOverhang``).
+    ///
+    /// - Parameters:
+    ///   - bounds: Границы плитки (начало координат оверлея).
+    ///   - side: Диаметр кнопки.
+    ///   - isRightToLeft: Направление чтения.
+    /// - Returns: Рамка кнопки в координатах оверлея.
+    static func unpinButtonFrame(
+        inTileBounds bounds: CGRect,
+        side: CGFloat,
+        isRightToLeft: Bool
+    ) -> CGRect {
+        let overhang = cornerOverhang
+        let x = isRightToLeft ? bounds.width - side + overhang : -overhang
+        return CGRect(x: x, y: -overhang, width: side, height: side)
+    }
+
+    /// Зона касания кнопки открепления ярлыка панели папки (D46).
+    ///
+    /// Правило детерминировано и ничего не отнимает у ярлыка и соседей:
+    /// 1. допустимая область — **угловая четверть** ярлыка, где сидит кнопка,
+    ///    плюс выступ наружу не больше `outset` (кнопка не заходит на соседа);
+    ///    за осями симметрии ярлыка (минус 1 pt) зоны нет, поэтому центр и
+    ///    остальное тело ярлыка принадлежат самому ярлыку (тап — ничего нового,
+    ///    long-press — drag из папки);
+    /// 2. внутри этой области зона — квадрат не меньше 44 × 44 pt (HIG), прижатый
+    ///    к внешнему углу и растущий внутрь ярлыка, но не дальше осей: у малого
+    ///    ярлыка (≈ 55 pt) это ≈ 32 pt, у крупного — полные 44 pt. Видимая
+    ///    кнопка всегда внутри зоны.
+    ///
+    /// - Parameters:
+    ///   - buttonFrame: Видимая рамка кнопки в координатах оверлея.
+    ///   - tileBounds: Границы ярлыка (начало координат оверлея).
+    ///   - isRightToLeft: Направление чтения: в RTL четверть правая.
+    ///   - outset: Допустимый выход зоны за рамку ярлыка.
+    /// - Returns: Зона касания (нулевая, если она вырождена).
+    static func panelUnpinHitZone(
+        buttonFrame: CGRect,
+        tileBounds: CGRect,
+        isRightToLeft: Bool,
+        outset: CGFloat
+    ) -> CGRect {
+        let clip = max(0, outset)
+        let quadrantWidth = max(0, tileBounds.width / 2 - 1) + clip
+        let quadrantHeight = max(0, tileBounds.height / 2 - 1) + clip
+        let quadrant = CGRect(
+            x: isRightToLeft ? tileBounds.midX + 1 : tileBounds.minX - clip,
+            y: tileBounds.minY - clip,
+            width: quadrantWidth,
+            height: quadrantHeight
+        )
+
+        let width = min(quadrant.width, max(minimumHitSide, buttonFrame.width))
+        let height = min(quadrant.height, max(minimumHitSide, buttonFrame.height))
+        let zone = CGRect(
+            x: isRightToLeft ? quadrant.maxX - width : quadrant.minX,
+            y: quadrant.minY,
+            width: width,
+            height: height
+        )
+        return zone.isNull || zone.width <= 0 || zone.height <= 0 ? .zero : zone
     }
 
     /// SF Symbol кнопки «открепить» (E8.3).
@@ -5710,6 +6046,18 @@ final class TesseraTileEditControlView: UIView {
 
     private var showsUnpin = true
     private var showsResize = true
+
+    /// Оверлей ярлыка панели раскрытой папки, а не плитки сетки (D46).
+    ///
+    /// У такого оверлея только кнопка открепления, а её зона касания урезана
+    /// (``panelUnpinHitZone(buttonFrame:tileBounds:isRightToLeft:outset:)``),
+    /// чтобы не отнимать тапы у самого ярлыка и соседей. Раскладка кнопки и её
+    /// размер — те же, что на сетке (``unpinButtonFrame(inTileBounds:side:isRightToLeft:)``).
+    var isPanelMember = false
+
+    /// Насколько зона касания кнопки ярлыка панели может выйти за рамку ярлыка
+    /// (D46): не больше выступа кнопки и не больше зазора между ярлыками.
+    var panelHitOutset: CGFloat = TesseraTileEditControlView.cornerOverhang
 
     /// Создаёт оверлей.
     ///
@@ -5779,11 +6127,15 @@ final class TesseraTileEditControlView: UIView {
 
         // Кнопка открепления — в верхнем углу по направлению чтения, стрелка —
         // в нижнем противоположном (§9, RTL). Центр кнопки лежит у самого угла
-        // рамки, чуть наружу: половина диаметра остаётся над плиткой.
-        let unpinX = isRightToLeft ? bounds.width - side + overhang : -overhang
+        // рамки, чуть наружу: половина диаметра остаётся над плиткой. Угол
+        // открепления выбирает общий помощник — им же пользуется панель папки.
         let resizeX = isRightToLeft ? -overhang : bounds.width - side + overhang
 
-        unpinButton.frame = CGRect(x: unpinX, y: -overhang, width: side, height: side)
+        unpinButton.frame = TesseraTileEditControlView.unpinButtonFrame(
+            inTileBounds: bounds,
+            side: side,
+            isRightToLeft: isRightToLeft
+        )
         resizeButton.frame = CGRect(
             x: resizeX,
             y: bounds.height - side + overhang,
@@ -5805,7 +6157,18 @@ final class TesseraTileEditControlView: UIView {
     }
 
     /// Зона касания кнопки: видимая рамка, расширенная до 44 pt вокруг центра.
+    ///
+    /// Для кнопки открепления ярлыка панели (D46) зона урезана до угловой
+    /// четверти ярлыка (``panelUnpinHitZone(buttonFrame:tileBounds:isRightToLeft:outset:)``).
     private func hitFrame(for button: UIButton) -> CGRect {
+        if isPanelMember, button === unpinButton {
+            return TesseraTileEditControlView.panelUnpinHitZone(
+                buttonFrame: button.frame,
+                tileBounds: bounds,
+                isRightToLeft: effectiveUserInterfaceLayoutDirection == .rightToLeft,
+                outset: panelHitOutset
+            )
+        }
         let minSide = TesseraTileEditControlView.minimumHitSide
         let frame = button.frame
         let dx = max(0, (minSide - frame.width) / 2)
