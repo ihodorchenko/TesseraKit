@@ -548,10 +548,28 @@ public final class TileStore: ObservableObject {
     ///
     /// - Returns: Согласованный снимок сетки.
     public func snapshot() -> TileGridSnapshot {
+        makeSnapshot(orderedBy: nil)
+    }
+
+    /// Собирает снимок: элементы в порядке чтения ячеек (E14.7).
+    ///
+    /// Порядок `items` — порядок VoiceOver (``TesseraTileGridView`` отдаёт его
+    /// коллекции как порядок индексов), поэтому он обязан совпадать с тем, как
+    /// элементы читаются на экране: строка по возрастанию, затем логическая
+    /// колонка. `gridOrder` этого не гарантирует после ``load()``, миграции
+    /// v1 → v2, ``setCatalog(_:)`` и проекции под другую ширину, поэтому снимок
+    /// всегда сортируется по ячейкам, а не берёт `gridOrder` как есть.
+    ///
+    /// - Parameter columns: Ширина, по ячейкам которой читать порядок:
+    ///   ``canvasColumns`` — сохранённые ячейки, иная — проекция (D32);
+    ///   `nil` — сохранённые ячейки, а без них (нераскладочное состояние) —
+    ///   порядок модели.
+    /// - Returns: Снимок без таблицы ячеек.
+    private func makeSnapshot(orderedBy columns: Int?) -> TileGridSnapshot {
         var items: [TileGridItem] = []
         var placedKeys = Set<String>()
 
-        for key in gridOrder {
+        for key in readingOrderedKeys(forColumns: columns) {
             if let record = folderRecords.first(where: { $0.key == key }) {
                 items.append(.folder(materialize(record)))
                 placedKeys.formUnion(record.tileKeys)
@@ -585,8 +603,11 @@ public final class TileStore: ObservableObject {
     /// - Parameter columns: Число колонок сетки хоста, больше нуля.
     /// - Returns: Снимок; при `columns <= 0` таблица не прикладывается.
     public func snapshot(columns: Int) -> TileGridSnapshot {
-        let base = snapshot()
-        guard columns > 0 else { return base }
+        guard columns > 0 else { return snapshot() }
+        // E14.7: порядок элементов — порядок чтения именно тех ячеек, что идут в
+        // таблице (для другой ширины — проекции), чтобы VoiceOver читал плитки
+        // так, как они лежат на экране.
+        let base = makeSnapshot(orderedBy: columns)
         return TileGridSnapshot(
             items: base.items,
             unpinned: base.unpinned,
@@ -709,10 +730,30 @@ public final class TileStore: ObservableObject {
     /// - Returns: Идентификаторы в порядке чтения; пусто при `columns <= 0`.
     public func placementReadingOrder(forColumns columns: Int) -> [AnyHashable] {
         guard columns > 0 else { return [] }
-        let cells = canvasColumns == columns
-            ? placementsByKey
-            : projectedPlacements(columns: columns)
-        return TileStore.readingSorted(visibleGridKeys(), by: cells).compactMap { visibleItemID(forKey: $0) }
+        return readingOrderedKeys(forColumns: columns).compactMap { visibleItemID(forKey: $0) }
+    }
+
+    /// Ключи видимых элементов в порядке чтения ячеек (E14.7).
+    ///
+    /// Один источник порядка для ``snapshot()``, ``snapshot(columns:)`` и
+    /// ``placementReadingOrder(forColumns:)``. Порядок чтения — строка по
+    /// возрастанию, затем логическая колонка (0 — начало чтения, поэтому в RTL
+    /// порядок тот же); пересечений ячеек нет, равные ячейки (повреждённый файл)
+    /// остаются в порядке модели.
+    ///
+    /// - Parameter columns: Ширина хоста; `nil` — без ширины: сохранённые ячейки,
+    ///   а если их ещё нет, порядок модели.
+    /// - Returns: Канонические ключи видимых элементов.
+    private func readingOrderedKeys(forColumns columns: Int?) -> [String] {
+        let visible = visibleGridKeys()
+        if let columns, columns > 0 {
+            let cells = canvasColumns == columns
+                ? placementsByKey
+                : projectedPlacements(columns: columns)
+            return TileStore.readingSorted(visible, by: cells)
+        }
+        guard canvasColumns != nil else { return visible }
+        return TileStore.readingSorted(visible, by: placementsByKey)
     }
 
     /// Сообщает хранилищу ширину сетки хоста и, если ячеек ещё нет, назначает их

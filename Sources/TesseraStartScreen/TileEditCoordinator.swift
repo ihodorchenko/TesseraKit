@@ -106,7 +106,10 @@
 //    контролы, фазы и удержание.
 //  - B5: после `render` (unpin/создание папки) «желе» и дим переприменяются.
 //  - B6: `.layoutChanged` после unpin/resize/move — на следующий проход runloop,
-//    когда ячейка-фокус уже существует.
+//    когда ячейка-фокус уже существует. E14.7: после unpin фокус — следующий
+//    элемент в порядке чтения ячеек (предыдущий, если ярлык был последним, сама
+//    сетка, если элементов не осталось); после resize/move/drop/вынесения —
+//    элемент, который изменился или переехал, после слияния — папка.
 //  - C1: делегат получает фактическую ячейку, сетка синхронизируется со снимком
 //    store (E14.5/E14.6: операции по ячейкам, до E14 — индекс порядка).
 //  - C3: встроенный экран папки активирует ярлык общим маршрутом `grid.onTap`,
@@ -1216,10 +1219,11 @@ public final class TesseraTileEditCoordinator: NSObject {
             return
         }
 
-        // Индекс до удаления: после мутации сетка переупакуется, а фокус
-        // VoiceOver должен уйти на элемент, вставший на освободившееся место
-        // (или на последний, если ярлык был последним).
-        let removedIndex = grid.index(ofItemID: tileID)
+        // E14.7: цель фокуса выбирается до удаления, по порядку чтения: следующий
+        // элемент после ярлыка (или предыдущий, если он был последним). Индекс
+        // «на месте удалённого» не годится: дыры и схлопывание строк не меняют
+        // порядок оставшихся, но место ярлыка может остаться пустым.
+        let focusID = focusTarget(afterRemoving: tileID)
 
         removeControl(for: tileID)
         cell.contentView.layer.removeAnimation(forKey: TesseraTileEditCoordinator.jiggleKey)
@@ -1275,7 +1279,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 self.store.collapseEmptyRows(columns: self.storeColumns)
                 self.render(animated: true)
                 self.delegate?.tileEditCoordinator(self, didUnpin: tileID)
-                self.postLayoutChanged(afterUnpinningAtIndex: removedIndex)
+                self.postLayoutChanged(afterUnpinningFocusing: focusID)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 self.announce(TesseraStartScreenStrings.string(.a11yTileUnpinned))
             }
@@ -1290,12 +1294,16 @@ public final class TesseraTileEditCoordinator: NSObject {
         // хранилища должен снова иметь право на попытку.
         defer { unpinsInFlight.remove(tileID) }
 
+        // E14.7: ярлык на сетке (ячейка вне экрана) — фокус по порядку чтения; ярлык
+        // в папке на сетке не показан, цели нет (прежнее поведение: последний
+        // элемент сетки).
+        let focusID = focusTarget(afterRemoving: tileID)
         guard store.unpin(tileID, columns: storeColumns) else { return }
         // E14.5: дыра остаётся, пустая строка схлопывается (D31).
         store.collapseEmptyRows(columns: storeColumns)
         render(animated: true)
         delegate?.tileEditCoordinator(self, didUnpin: tileID)
-        postLayoutChanged(afterUnpinningAtIndex: nil)
+        postLayoutChanged(afterUnpinningFocusing: focusID)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         announce(TesseraStartScreenStrings.string(.a11yTileUnpinned))
     }
@@ -1688,10 +1696,13 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Parameter snapshot: Снимок из `TileStore`.
     /// - Returns: `true`, если состав и содержимое папок те же.
     private func gridItemsMatch(_ snapshot: TileGridSnapshot) -> Bool {
+        // E14.7: сетка держит элементы в порядке чтения ячеек; ожидаемый снимок
+        // приводится к нему тем же правилом.
+        let expectedItems = grid.readingOrdered(snapshot).items
         let currentItems = grid.items
-        guard currentItems.count == snapshot.items.count else { return false }
+        guard currentItems.count == expectedItems.count else { return false }
 
-        for (current, expected) in zip(currentItems, snapshot.items) {
+        for (current, expected) in zip(currentItems, expectedItems) {
             guard current.id == expected.id, current.size == expected.size else {
                 return false
             }
@@ -1801,23 +1812,47 @@ public final class TesseraTileEditCoordinator: NSObject {
         }
     }
 
-    /// Публикует `.layoutChanged` после unpin (E10.5-B6).
+    /// Элемент, на который уйдёт фокус VoiceOver после открепления (E14.7).
     ///
-    /// Фокус получает элемент, вставший на место удалённого (или последний в
-    /// сетке): сам удалённый ярлык уже не существует.
+    /// Порядок сетки — порядок чтения ячеек (строка, затем колонка), поэтому
+    /// «следующий» — это следующий элемент в нём: он остаётся на сетке после
+    /// открепления (открепление никого не двигает, а схлопывание пустой строки
+    /// и выталкивание порядок оставшихся не меняют). Если открепляемый был
+    /// последним, берётся предыдущий. Без соседей и для ярлыка, которого нет на
+    /// сетке (лежит в папке), цели нет — `nil`.
     ///
-    /// - Parameter removedIndex: Индекс удалённого элемента до мутации.
-    private func postLayoutChanged(afterUnpinningAtIndex removedIndex: Int?) {
+    /// - Parameter itemID: Открепляемый ярлык.
+    /// - Returns: Идентификатор соседнего элемента или `nil`.
+    private func focusTarget(afterRemoving itemID: AnyHashable) -> AnyHashable? {
+        let items = grid.items
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return nil }
+        if items.indices.contains(index + 1) { return items[index + 1].id }
+        if index > 0 { return items[index - 1].id }
+        return nil
+    }
+
+    /// Публикует `.layoutChanged` после unpin (E10.5-B6, E14.7).
+    ///
+    /// Пост откладывается на следующий проход runloop (B6): к этому моменту
+    /// сетка применила снимок и ячейка-фокус существует. Цель — заранее
+    /// выбранный сосед (``focusTarget(afterRemoving:)``); если его уже нет на
+    /// сетке или цели не было (ярлык из папки), фокус получает последний
+    /// элемент сетки, а если сетка опустела — сама сетка. На удалённый элемент
+    /// фокус не уходит никогда.
+    ///
+    /// - Parameter focusID: Заранее выбранный сосед; `nil` — цели нет.
+    private func postLayoutChanged(afterUnpinningFocusing focusID: AnyHashable?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let items = self.grid.items
-            let focusID: AnyHashable?
-            if let removedIndex, !items.isEmpty {
-                focusID = items[min(max(removedIndex, 0), items.count - 1)].id
+            let resolvedID: AnyHashable?
+            if let focusID, items.contains(where: { $0.id == focusID }) {
+                resolvedID = focusID
             } else {
-                focusID = items.last?.id
+                resolvedID = items.last?.id
             }
-            let argument = focusID.flatMap { self.grid.cellView(forItemID: $0) }
+            let argument: Any? = resolvedID.flatMap { self.grid.cellView(forItemID: $0) }
+                ?? (items.isEmpty ? self.grid : nil)
             self.accessibilityNotificationPoster(.layoutChanged, argument)
         }
     }
@@ -1865,9 +1900,11 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// - Returns: `true`, если сетка показывает его.
     private func gridMatchesDragSnapshot(_ snapshot: TileGridSnapshot) -> Bool {
         let current = grid.items
-        guard current.count == snapshot.items.count else { return false }
+        // E14.7: см. `gridItemsMatch` — порядок сетки — порядок чтения ячеек.
+        let expectedItems = grid.readingOrdered(snapshot).items
+        guard current.count == expectedItems.count else { return false }
 
-        for (currentItem, expectedItem) in zip(current, snapshot.items) {
+        for (currentItem, expectedItem) in zip(current, expectedItems) {
             guard currentItem.id == expectedItem.id,
                   currentItem.size == expectedItem.size else {
                 return false

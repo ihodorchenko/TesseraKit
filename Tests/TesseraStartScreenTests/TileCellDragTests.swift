@@ -465,8 +465,8 @@ final class TileCellDragTests: XCTestCase {
 
     /// Превью считается от базовых размещений, а не от предыдущего превью: после
     /// «b» → «c» сдвинута только «c», а «b» вернулась на место; возврат на свою
-    /// ячейку даёт базу целиком. Порядок элементов снимка сетки не меняется,
-    /// хост об изменениях не уведомляется.
+    /// ячейку даёт базу целиком. Порядок элементов снимка сетки следует за
+    /// ячейками превью (E14.7), хост об изменениях не уведомляется.
     func testPreviewIsComputedFromBaseWithoutAccumulation() throws {
         let host = try makeSixTilesHost()
         var notifications = 0
@@ -484,10 +484,15 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertEqual(host.gridCells?["f"], at(1, 1), "«f» вернулась")
         XCTAssertEqual(host.gridCells?["c"], at(1, 2), "Сдвинута только цель")
         XCTAssertEqual(host.gridCells?["a"], at(0, 2), "Ярлык на ячейке цели")
-        XCTAssertEqual(host.gridIDs, baseOrder, "Порядок снимка — база")
+        XCTAssertEqual(
+            host.gridIDs,
+            ["b", "a", "d", "e", "f", "c"] as [AnyHashable],
+            "Порядок снимка — порядок чтения ячеек превью (E14.7)"
+        )
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 0)))
         XCTAssertEqual(host.gridCells, baseCells, "Возврат на свою ячейку — база")
+        XCTAssertEqual(host.gridIDs, baseOrder, "Порядок снимка — база")
         XCTAssertEqual(notifications, 0, "Хранилище во время drag не пишется")
         XCTAssertEqual(host.store.placements(forColumns: 4), baseCells)
 

@@ -1768,8 +1768,8 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(host.storeIDs, before, "Модель не меняется во время drag")
         XCTAssertEqual(
             host.gridIDs,
-            ["a", f1, "c", "d", host.folders[1].id] as [AnyHashable],
-            "Синтетический ярлык лежит сразу после папки"
+            ["a", f1, "d", host.folders[1].id, "c"] as [AnyHashable],
+            "Синтетический ярлык — на первой свободной ячейке после папки (строка 1); порядок сетки — порядок чтения ячеек (E14.7)"
         )
         XCTAssertEqual(
             host.folders.first?.tiles.map { $0.id },
