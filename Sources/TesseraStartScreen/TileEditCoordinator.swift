@@ -9,10 +9,10 @@
 //  - §5 «Режим редактирования»: long-press → «желе» (мягкая синусоидальная
 //    `CAKeyframeAnimation` поворота ±1,2° за 0,4 с со случайной фазой), unpin
 //    с fly-out, dimming всех плиток, кроме выбранной (E8.2), resize по циклу
-//    small → medium → wide → large с переупаковкой, собственный drag-координатор
-//    (снэпшот + пустышка + превью порядка без записи в модель + инвалидация
-//    layout), а не нативный `UICollectionView` interactive movement;
-//  - §3 «Плиточная сетка»: переупаковку считает `TileLayoutEngine`, анимацию
+//    small → medium → wide → large на месте (рост выталкивает соседей вниз),
+//    собственный drag-координатор (снэпшот + пустышка + превью на ячейках без
+//    записи в модель + инвалидация layout), а не нативный `UICollectionView` interactive movement;
+//  - §3 «Плиточная сетка»: ячейки и выталкивание считает `TileLayoutEngine`, анимацию
 //    сдвига соседей — `TesseraTileGridView.update(snapshot:animated:)` через
 //    batch updates;
 //  - §9 «Accessibility»: в edit-режиме у плитки появляются custom actions

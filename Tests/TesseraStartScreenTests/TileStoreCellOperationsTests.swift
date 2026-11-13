@@ -142,7 +142,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     // MARK: - Resize
 
     /// Рост выталкивает вниз; размер сохраняется в модели; якорь остаётся.
-    func testResizeInPlaceGrowthPushesDown() throws {
+    func testResizeGrowthPushesDown() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 1, 0), CellFixtureTile("z", .small, 0, 4)]
         let store = try makeStore(tiles, in: directory)
@@ -158,7 +158,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     }
 
     /// Уменьшение оставляет дыру и ничего не двигает.
-    func testResizeInPlaceShrinkLeavesHole() throws {
+    func testResizeShrinkLeavesHole() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("big", .large, 0, 0), CellFixtureTile("n", .small, 4, 0)]
         let store = try makeStore(tiles, in: directory)
@@ -171,7 +171,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     }
 
     /// Рост у правого края сдвигает колонку влево; папка меняет размер так же.
-    func testResizeInPlaceClampsLeftAndWorksForFolders() throws {
+    func testResizeClampsLeftAndWorksForFolders() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("s", .small, 0, 5)]
         let folders = [CellFixtureFolder("f", .medium, 4, 0, contents: [("x", .small), ("y", .small)])]
@@ -187,7 +187,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     }
 
     /// Тот же размер, неизвестный элемент: no-op. Ярлык в папке — только размер.
-    func testResizeInPlaceNoOpsAndTileInFolder() throws {
+    func testResizeNoOpsAndTileInFolder() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
         let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small), ("y", .small)])]
@@ -557,7 +557,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     }
 
     /// Закрепление: новая строка в конце, размер из `sizes`/каталога.
-    func testPinTileToNewRow() throws {
+    func testPinTileGoesToNewRow() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .medium, 0, 0), CellFixtureTile("b", .small, 0, 4)]
         let store = try makeStore(tiles, unpinned: [("w", .wide), ("s", .small)], in: directory)
@@ -574,7 +574,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     }
 
     /// На узкой сетке большая плитка ужимается по ширине, колонка — 0.
-    func testPinTileToNewRowFitsNarrowGrid() throws {
+    func testPinTileFitsNarrowGrid() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
         let store = try makeStore(tiles, unpinned: [("L", .large)], in: directory, columns: 2)
@@ -585,7 +585,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     }
 
     /// Закрепление: уже на сетке, в папке, нет в каталоге, ширина 0 — no-op.
-    func testPinTileToNewRowNoOps() throws {
+    func testPinTileNoOps() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
         let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small), ("x2", .small)])]
