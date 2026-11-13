@@ -301,10 +301,11 @@ test` — за Lead (D10).
 | E14.1 | Модель и схема v2: `row`/`column` у верхнеуровневого элемента, ширина холста в `tiles.json`, миграция v1→v2 однократным прогоном старого `packCompact`, поведение при другой ширине (D32) | ✅ |
 | E14.2 | Движок: размещение по координатам, коллизии с выталкиванием вниз каскадом (D31), `resize`, `fittingSize`, `folderPanelGeometry` | ✅ |
 | E14.3 | Layout и сетка: таблица явных ячеек в снимке (`TileGridPlacementTable`, откат на `pack` при неполной/некорректной/чужой ширины), `GeometryKey` с ячейкой, сдвиг строк под панелью папки без репака, `baseContentFrames`, дифф снимка. Store не подключён (`TileStore.snapshot(columns:)` — опционально, подключение в E14.5) | ✅ |
-| E14.4 | Drag/hover: цель — клетка под пальцем, `previewPlacement`, магнит, `emptySpaceTarget` (снизу — цель «новая строка»), `startDragFromPanel` | ⬜ |
-| E14.5 | Операции правки: `cycleSize`, `unpin`, `pin`, `createFolder`, `addToFolder`, вынос из папки; удаление канонизации порядка (`canonicalizeVisibleOrder`); схлопывание пустой строки только на drop | ⬜ |
-| E14.6 | Accessibility: порядок VoiceOver по (row, col), фокус после unpin | ⬜ |
-| E14.7 | Тесты и документы: STARTSCREEN-IOS-DESIGN (§3, «Отступления реализации»), W10M-CONFORMANCE (группа «Раскладка и пустоты»), RISK (R23), STATE | ⬜ |
+| E14.4 | Операции модели по ячейкам в `TileStore` (без UI): `moveItem(_:toCell:columns:)`, `moveItemToNewRow`, `resizeInPlace`, `createFolder(from:onto:columns:)` (папка 2×2 на ячейке цели), `addToFolder(…columns:)`, `extractFromFolder(toCell:)`/`extractFromFolderToNewRow`, `moveBetweenFolders(…columns:)`, `unpin(_:columns:)`, `pinTileToNewRow`, `collapseEmptyRows`; дыры остаются, выталкивание вниз каскадом, холст новой ширины принимается первой правкой (D32), `gridOrder` = порядок чтения ячеек; прежний индексный API и переходный репак не тронуты (приложение ведёт себя как раньше, новые методы пока никто не зовёт) | ✅ |
+| E14.5 | Drag/hover/preview: цель — клетка под пальцем, `previewPlacement`, магнит, `emptySpaceTarget` (снизу — цель «новая строка»), `startDragFromPanel`; живое подключение ячеек в сетку (`TileStore.snapshot(columns:)` на штатных путях хоста) и переключение координатора на операции E14.4; схлопывание пустой строки только на drop (`collapseEmptyRows`) | ⬜ |
+| E14.6 | Кнопки правки по ячейкам: `cycleSize`, `unpin`, `pin`; удаление прежнего индексного API хранилища и движка (`pin(at:)`, `move(toIndex:)`, `resize(_:to:columns:)`, `pack`/`repack`, `previewOrder` и т.п.), переходного репака и канонизации порядка (`canonicalizeVisibleOrder`, `canonicalizeModelOrderForEditing`, код под Q8) | ⬜ |
+| E14.7 | Accessibility: порядок VoiceOver по (row, col), фокус после unpin | ⬜ |
+| E14.8 | Тесты и документы: STARTSCREEN-IOS-DESIGN (§3), W10M-CONFORMANCE (группа «Раскладка и пустоты»), RISK (R22, R23), STATE, абзац «Текущий статус» в AGENTS.md | ⬜ |
 
 ## E15 — Сверка с W10M: угол badge, цикл размеров, прочее (D28, D29, D34–D39, D44) ⬜
 
@@ -351,7 +352,7 @@ live-обновления (D36 — стахгер остаётся), пауза 
 | E11 Drag&drop рабочего стола: папки | ✅ 7 из 7 |
 | E12 Находки ручного тестирования в Example | 🔶 9 из 10 (E12.1–E12.7, E12.9, E12.10 ✅; E12.8 — 🔶: проход выполнен, остаточные проверки в STATE.md «Чего нет»; E12.1 ✅: позиция при выносе — слот порядка, Q6 = А, вариант Б отложен, исходный симптом «в чужую папку» так и не воспроизведён) |
 | E13 Колонки по умолчанию: 6 | ✅ 3 из 3 |
-| E14 Настоящие пустоты (Q6-Б) | 🔶 3 из 7 (E14.1, E14.2, E14.3 ✅) |
+| E14 Настоящие пустоты (Q6-Б) | 🔶 4 из 8 (E14.1–E14.4 ✅) |
 | E15 Сверка с W10M: угол badge, цикл размеров, прочее | ⬜ 0 из 8 |
 | E16 Перестановка внутри панели папки (после E14) | ⬜ 0 из 1 |
 

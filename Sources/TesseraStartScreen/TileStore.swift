@@ -1262,8 +1262,9 @@ public final class TileStore: ObservableObject {
     /// Первая операция редактирования при несовпадении ширины принимает
     /// раскладку под ширину хоста как новый холст (обновляется
     /// ``canvasColumns``). Переходное правило E14.1: пока операции работают по
-    /// порядку, она строится упаковкой порядка модели (E14.2/E14.5 заменят это
-    /// логикой по координатам, D31).
+    /// порядку, она строится упаковкой порядка модели; операции по ячейкам (E14.4)
+    /// считают координаты движком и принимают проекцию как холст сами (D31), а
+    /// прежние индексные операции с переходным правилом удалит E14.6.
     ///
     /// - Parameter columns: Число колонок сетки хоста, больше нуля.
     /// - Returns: Ячейки по идентификаторам; пусто при `columns <= 0`.
@@ -1612,13 +1613,28 @@ public final class TileStore: ObservableObject {
     // MARK: - Уведомления и служебные операции
 
     /// Сообщает об изменении: сначала сохранение (если включено), затем снимок.
+    ///
+    /// Для операций **по порядку** (прежний индексный API): E14.1, переходное
+    /// правило (D31) — после каждой из них ячейки пересчитываются `packCompact`
+    /// по новому порядку для текущей ширины, так что сохранённые координаты
+    /// равны тому, что показывает сетка. Операции **по ячейкам** (E14.4) сами
+    /// считают координаты движком и пересчёту не подвергаются —
+    /// ``didChangeKeepingCells()``.
     private func didChange() {
-        // E14.1, переходное правило (D31): операции пока работают по порядку,
-        // поэтому после каждой из них ячейки пересчитываются `packCompact` по
-        // новому порядку для текущей ширины. Сохранённые координаты всегда
-        // равны тому, что показывает сетка; в E14.2/E14.5 это заменяется
-        // логикой по координатам.
         repackPlacementsAfterMutation()
+        finishChange()
+    }
+
+    /// Сообщает об изменении после операции по ячейкам (E14.4): координаты уже
+    /// посчитаны движком и сохраняются как есть, без переходного пересчёта
+    /// ``repackPlacementsAfterMutation()``.
+    private func didChangeKeepingCells() {
+        finishChange()
+    }
+
+    /// Общий хвост ``didChange()`` и ``didChangeKeepingCells()``: сохранение
+    /// (если включено ``autosaves``), затем снимок подписчикам.
+    private func finishChange() {
         if autosaves {
             saveIfPossible()
         }
@@ -1872,7 +1888,7 @@ public final class TileStore: ObservableObject {
     /// ``effectiveColumns``; холст становится этой ширины (первая операция при
     /// несовпадении ширины принимает проекцию как новый холст, D32). Ячейки
     /// невидимых ключей сохраняются, если помещаются. Заменяется логикой по
-    /// координатам в E14.2/E14.5.
+    /// координатам в операциях E14.4 (индексные операции удалит E14.6).
     private func repackPlacementsAfterMutation() {
         let columns = effectiveColumns
         guard columns > 0 else { return }
@@ -2059,6 +2075,570 @@ public final class TileStore: ObservableObject {
             return AnyHashable(String(key.dropFirst(2)))
         }
         return AnyHashable(key)
+    }
+}
+
+// MARK: - Операции по ячейкам (E14.4, D30–D33)
+
+/// Операции над верхнеуровневыми элементами **по координатам**: движок
+/// (`TileLayoutEngine+Placement`) считает новые ячейки, хранилище применяет их
+/// как есть (E14.4).
+///
+/// Отличия от прежнего индексного API (он остаётся до E14.6):
+///
+/// - дыры не схлопываются: уход элемента оставляет свободную ячейку, рост и
+///   вставка выталкивают мешающие плитки вниз каскадом (D31);
+/// - ячейки **не** пересчитываются переходным правилом E14.1
+///   (``repackPlacementsAfterMutation()``): операция заканчивается
+///   ``didChangeKeepingCells()`` и пишет координаты, которые посчитал движок;
+/// - ширина хоста `columns` передаётся явно, она же становится шириной холста
+///   (``canvasColumns``). Если сохранённая раскладка рассчитана на другую
+///   ширину, первая же успешная операция принимает репак по порядку чтения
+///   (проекцию D32) как новый холст и применяет к нему свою правку;
+/// - порядок модели после операции — порядок чтения ячеек (строка, колонка), так
+///   что старые потребители (`snapshot()`, `pin`, `move` по индексу) видят
+///   согласованное состояние;
+/// - ярлыки вне каталога (невидимые ключи) хранят свои ячейки, но в коллизиях
+///   не участвуют (E14.1);
+/// - схлопывание пустых строк — отдельная операция ``collapseEmptyRows(columns:)``:
+///   её зовёт слой правки только на drop, остальные операции строк не схлопывают.
+///
+/// Операция с неверным вводом (нет элемента, нет в каталоге, `columns <= 0`,
+/// отказ хоста) ничего не меняет и возвращает `false`; уведомление и запись —
+/// ровно одна на успешную операцию, как у прежних операций. Операции, которые
+/// спрашивали у хоста одобрение (D14), спрашивают его и здесь.
+extension TileStore {
+
+    // MARK: Перенос
+
+    /// Переносит ярлык или папку на ячейку (E14.4, D31).
+    ///
+    /// Элемент встаёт на `cell`, ограниченную холстом (слишком правая колонка
+    /// сдвигается влево); плитки, которые мешают, выталкиваются вниз каскадом
+    /// (`TileLayoutEngine.inserting`). Место, которое элемент освободил, остаётся
+    /// дырой — репака нет. Одобрение хоста не спрашивается: это операция
+    /// раскладки, а не группировки (D14).
+    ///
+    /// - Parameters:
+    ///   - itemID: Идентификатор ярлыка или папки на сетке.
+    ///   - cell: Желаемая ячейка левого верхнего угла (логические координаты).
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если раскладка изменилась; `false` — элемента нет на
+    ///   сетке, элемент уже на этой ячейке и ничего не двигается либо `columns <= 0`.
+    @discardableResult
+    public func moveItem(_ itemID: AnyHashable, toCell cell: TileGridPlacement, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let key = TileStore.storageKey(for: itemID)
+        guard visibleGridKeys().contains(key) else { return false }
+
+        let basis = cellBasis(columns: columns)
+        let moved = TileLayoutEngine.inserting(
+            id: AnyHashable(key),
+            size: storedSize(ofKey: key),
+            at: cell,
+            into: basis,
+            columns: columns
+        )
+        guard moved != basis else { return false }
+        commitCells(moved, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    /// Переносит ярлык или папку в новую строку в конце холста (E14.4, D33).
+    ///
+    /// Цель — `TileLayoutEngine.newRowCell`: первая строка после последней
+    /// занятой (без учёта самого переносимого элемента), колонка 0. Остальное —
+    /// как в ``moveItem(_:toCell:columns:)``.
+    ///
+    /// - Parameters:
+    ///   - itemID: Идентификатор ярлыка или папки на сетке.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если раскладка изменилась.
+    @discardableResult
+    public func moveItemToNewRow(_ itemID: AnyHashable, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let key = TileStore.storageKey(for: itemID)
+        guard visibleGridKeys().contains(key) else { return false }
+
+        let basis = cellBasis(columns: columns)
+        let cell = TileLayoutEngine.newRowCell(
+            size: storedSize(ofKey: key),
+            columns: columns,
+            placements: basis,
+            excluding: AnyHashable(key)
+        )
+        let moved = TileLayoutEngine.inserting(
+            id: AnyHashable(key),
+            size: storedSize(ofKey: key),
+            at: cell,
+            into: basis,
+            columns: columns
+        )
+        guard moved != basis else { return false }
+        commitCells(moved, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    // MARK: Размер
+
+    /// Меняет размер ярлыка или папки на месте (E14.4, D15, D31).
+    ///
+    /// Якорная ячейка остаётся (если новая ширина не помещается, колонка
+    /// сдвигается влево); рост выталкивает мешающие плитки вниз каскадом
+    /// (`TileLayoutEngine.resizing`), уменьшение оставляет дыру. Ярлык в папке
+    /// или вне сетки просто меняет авторитетный размер, ячейки не меняются.
+    ///
+    /// Отдельное имя нужно, чтобы не конфликтовать с прежним
+    /// ``resize(_:to:columns:)`` (по порядку, с переходным репаком), которое
+    /// удалит E14.6.
+    ///
+    /// - Parameters:
+    ///   - itemID: Идентификатор ярлыка или папки.
+    ///   - size: Новый размер (D15).
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если размер изменился; `false` — элемента нет, размер
+    ///   тот же либо `columns <= 0`.
+    @discardableResult
+    public func resizeInPlace(_ itemID: AnyHashable, to size: TileSize, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let key = TileStore.storageKey(for: itemID)
+
+        let folderIndex = folderRecords.firstIndex { $0.key == key }
+        guard folderIndex != nil || catalogIndex[key] != nil else { return false }
+        let currentSize: TileSize? = folderIndex.map { folderRecords[$0].size } ?? sizes[key]
+        guard currentSize != size else { return false }
+
+        // Раскладка считается до записи размера: базис несёт прежние размеры.
+        let basis = cellBasis(columns: columns)
+        let resized = TileLayoutEngine.resizing(
+            id: AnyHashable(key),
+            to: size,
+            in: basis,
+            columns: columns
+        )
+
+        if let index = folderIndex {
+            folderRecords[index].size = size
+        } else {
+            sizes[key] = size
+        }
+        commitCells(resized, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    // MARK: Папки
+
+    /// Создаёт папку из двух ярлыков на месте цели (E14.4, D20, D31).
+    ///
+    /// Папка всегда средняя (2×2, E12.2). Она встаёт на ячейку ярлыка-цели
+    /// через `TileLayoutEngine.inserting`: малая цель растёт до 2×2 и выталкивает
+    /// соседей вниз каскадом, слишком правая колонка сдвигается влево. Ярлыки
+    /// цели и источника уходят с верхнего уровня, их ячейки остаются дырами,
+    /// кроме тех, что накрыла папка. Внутри папки порядок: цель, затем источник.
+    ///
+    /// Хост одобряет оба шага по очереди (`.createFolder`, затем `.addToFolder`,
+    /// как у ``createFolder(withTile:adding:title:)``); состояние до обоих
+    /// одобрений не меняется, при отказе откатывать нечего.
+    ///
+    /// - Parameters:
+    ///   - sourceID: Перетаскиваемый ярлык на сетке.
+    ///   - targetID: Ярлык на сетке, на месте которого встанет папка.
+    ///   - title: Название папки.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: Итог операции (`.createDenied` также при неверном вводе).
+    func createFolder(
+        from sourceID: AnyHashable,
+        onto targetID: AnyHashable,
+        title: String = "",
+        columns: Int
+    ) -> AtomicFolderResult {
+        guard columns > 0 else { return .createDenied }
+        noteHostColumns(columns)
+        let sourceKey = TileStore.storageKey(for: sourceID)
+        let targetKey = TileStore.storageKey(for: targetID)
+        let visible = Set(visibleGridKeys())
+        guard sourceKey != targetKey,
+              let sourceCatalog = catalogIndex[sourceKey],
+              let targetCatalog = catalogIndex[targetKey],
+              visible.contains(sourceKey), visible.contains(targetKey) else {
+            return .createDenied
+        }
+
+        let basis = cellBasis(columns: columns)
+        guard let targetItem = basis.first(where: { $0.id == AnyHashable(targetKey) }) else {
+            return .createDenied
+        }
+
+        let folderID = AnyHashable("folder-" + UUID().uuidString)
+        var record = FolderRecord(
+            key: TileStore.storageKey(for: folderID),
+            id: folderID,
+            title: title,
+            size: TileStore.newFolderSize,
+            tileKeys: [targetKey]
+        )
+        guard approval(nil, catalog[targetCatalog], .createFolder) else { return .createDenied }
+        guard approval(materialize(record), catalog[sourceCatalog], .addToFolder) else { return .addDenied }
+
+        record.tileKeys.append(sourceKey)
+        var items = TileLayoutEngine.removing(id: AnyHashable(sourceKey), from: basis)
+        items = TileLayoutEngine.removing(id: AnyHashable(targetKey), from: items)
+        items = TileLayoutEngine.inserting(
+            id: AnyHashable(record.key),
+            size: record.size,
+            at: targetItem.cell,
+            into: items,
+            columns: columns
+        )
+
+        folderRecords.append(record)
+        gridOrder.removeAll { $0 == sourceKey || $0 == targetKey }
+        gridOrder.append(record.key)
+        commitCells(items, columns: columns)
+        didChangeKeepingCells()
+        return .created(materialize(record))
+    }
+
+    /// Добавляет ярлык с сетки в существующую папку (E14.4).
+    ///
+    /// Ярлык уходит с верхнего уровня, его ячейка остаётся дырой (репака нет);
+    /// папка сохраняет свою ячейку и размер.
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык на сетке.
+    ///   - folderID: Идентификатор папки.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если состояние изменилось; `false` — ярлык уже в этой
+    ///   папке или в другой, ярлыка/папки нет, хост запретил либо `columns <= 0`.
+    @discardableResult
+    public func addToFolder(_ tileID: AnyHashable, folderID: AnyHashable, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let tileKey = TileStore.storageKey(for: tileID)
+        let folderKey = TileStore.storageKey(for: folderID)
+
+        guard let catalogPosition = catalogIndex[tileKey],
+              let folderIndex = folderRecords.firstIndex(where: { $0.key == folderKey }),
+              !folderRecords[folderIndex].tileKeys.contains(tileKey),
+              visibleGridKeys().contains(tileKey) else {
+            return false
+        }
+        guard approval(materialize(folderRecords[folderIndex]), catalog[catalogPosition], .addToFolder) else {
+            return false
+        }
+
+        let items = TileLayoutEngine.removing(id: AnyHashable(tileKey), from: cellBasis(columns: columns))
+        gridOrder.removeAll { $0 == tileKey }
+        folderRecords[folderIndex].tileKeys.append(tileKey)
+        commitCells(items, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    /// Выносит ярлык из папки на сетку, на ячейку (E14.4, D31).
+    ///
+    /// Ярлык становится верхнеуровневым элементом со своим размером на `cell`,
+    /// ограниченной холстом; мешающие плитки выталкиваются вниз каскадом. Если
+    /// папка опустела, она исчезает, а её ячейка остаётся дырой (в одиночку
+    /// ярлык папку не распускает, документ §6.9). Хост одобряет перенос как
+    /// `.moveBetweenFolders` с папкой-целью `nil` (D14).
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - cell: Желаемая ячейка левого верхнего угла.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если состояние изменилось; `false` — ярлыка нет в папке,
+    ///   хост запретил либо `columns <= 0`.
+    @discardableResult
+    public func extractFromFolder(_ tileID: AnyHashable, toCell cell: TileGridPlacement, columns: Int) -> Bool {
+        performExtract(tileID, cell: cell, columns: columns)
+    }
+
+    /// Выносит ярлык из папки в новую строку в конце холста (E14.4, D33).
+    ///
+    /// Как ``extractFromFolder(_:toCell:columns:)``, но ячейка — первая строка
+    /// после последней занятой, колонка 0. Опустевшая папка в расчёт строки не
+    /// входит: она исчезает в той же операции.
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если состояние изменилось.
+    @discardableResult
+    public func extractFromFolderToNewRow(_ tileID: AnyHashable, columns: Int) -> Bool {
+        performExtract(tileID, cell: nil, columns: columns)
+    }
+
+    /// Перемещает ярлык из одной папки в другую, не трогая остальную раскладку
+    /// (E14.4).
+    ///
+    /// Если папка-источник опустела, она исчезает, а её ячейка остаётся дырой
+    /// (прежнее ``moveBetweenFolders(_:to:)`` потом репакует сетку). Хост
+    /// одобряет перенос как `.moveBetweenFolders` (D14). Возврат на рабочий стол —
+    /// ``extractFromFolder(_:toCell:columns:)``.
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - folderID: Папка-цель.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если состояние изменилось; `false` — ярлыка нет ни в
+    ///   одной папке, цель совпадает с текущей папкой или не существует, хост
+    ///   запретил либо `columns <= 0`.
+    @discardableResult
+    public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let tileKey = TileStore.storageKey(for: tileID)
+        let folderKey = TileStore.storageKey(for: folderID)
+
+        guard let catalogPosition = catalogIndex[tileKey],
+              let sourceIndex = folderRecords.firstIndex(where: { $0.tileKeys.contains(tileKey) }),
+              let targetIndex = folderRecords.firstIndex(where: { $0.key == folderKey }),
+              targetIndex != sourceIndex else {
+            return false
+        }
+        guard approval(materialize(folderRecords[targetIndex]), catalog[catalogPosition], .moveBetweenFolders) else {
+            return false
+        }
+
+        var items = cellBasis(columns: columns)
+        let sourceKey = folderRecords[sourceIndex].key
+        folderRecords[sourceIndex].tileKeys.removeAll { $0 == tileKey }
+        folderRecords[targetIndex].tileKeys.append(tileKey)
+        if folderRecords[sourceIndex].tileKeys.isEmpty {
+            folderRecords.remove(at: sourceIndex)
+            gridOrder.removeAll { $0 == sourceKey }
+            items = TileLayoutEngine.removing(id: AnyHashable(sourceKey), from: items)
+        }
+        commitCells(items, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    // MARK: Закрепление
+
+    /// Открепляет ярлык: уход с сетки оставляет дыру (E14.4, D30).
+    ///
+    /// Ярлык на сетке просто уходит, его ячейка остаётся свободной. Ярлык из
+    /// папки выходит из неё; опустевшая папка исчезает, и её ячейка тоже остаётся
+    /// дырой. Одобрение хоста не спрашивается (D14: открепление не группировка).
+    ///
+    /// - Parameters:
+    ///   - tileID: Идентификатор ярлыка.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если состояние изменилось.
+    @discardableResult
+    public func unpin(_ tileID: AnyHashable, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let key = TileStore.storageKey(for: tileID)
+
+        if let index = folderRecords.firstIndex(where: { $0.tileKeys.contains(key) }) {
+            var items = cellBasis(columns: columns)
+            folderRecords[index].tileKeys.removeAll { $0 == key }
+            if folderRecords[index].tileKeys.isEmpty {
+                let folderKey = folderRecords[index].key
+                folderRecords.remove(at: index)
+                gridOrder.removeAll { $0 == folderKey }
+                items = TileLayoutEngine.removing(id: AnyHashable(folderKey), from: items)
+            }
+            commitCells(items, columns: columns)
+            didChangeKeepingCells()
+            return true
+        }
+
+        guard catalogIndex[key] != nil, gridOrder.contains(key) else { return false }
+        let items = TileLayoutEngine.removing(id: AnyHashable(key), from: cellBasis(columns: columns))
+        gridOrder.removeAll { $0 == key }
+        commitCells(items, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    /// Закрепляет ярлык на сетке в новой строке в конце холста (E14.4, D33).
+    ///
+    /// Размер берётся из сохранённых размеров или умолчания дескриптора (D15);
+    /// на узкой сетке плитка ужимается движком (`fittingSize`), колонка — 0.
+    ///
+    /// - Parameters:
+    ///   - tileID: Идентификатор ярлыка из каталога.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если ярлык закреплён; `false` — его нет в каталоге, он
+    ///   уже на сетке или в папке либо `columns <= 0`.
+    @discardableResult
+    public func pinTileToNewRow(_ tileID: AnyHashable, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let key = TileStore.storageKey(for: tileID)
+        guard let catalogPosition = catalogIndex[key], !gridOrder.contains(key),
+              folderContaining(tileID) == nil else { return false }
+
+        if sizes[key] == nil {
+            sizes[key] = catalog[catalogPosition].size
+        }
+        let size = storedSize(ofKey: key)
+        let basis = cellBasis(columns: columns)
+        let cell = TileLayoutEngine.newRowCell(size: size, columns: columns, placements: basis)
+        let items = TileLayoutEngine.inserting(
+            id: AnyHashable(key),
+            size: size,
+            at: cell,
+            into: basis,
+            columns: columns
+        )
+        gridOrder.append(key)
+        commitCells(items, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    // MARK: Схлопывание
+
+    /// Схлопывает пустые строки холста (E14.4, D31).
+    ///
+    /// Строка удаляется, только если её не покрывает ни один элемент (высокие
+    /// плитки покрывают все свои строки). Зовёт слой правки **только на drop**,
+    /// никогда во время drag. Идемпотентна: на раскладке без пустых строк ничего
+    /// не меняет, не пишет файл и не уведомляет.
+    ///
+    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если раскладка изменилась.
+    @discardableResult
+    public func collapseEmptyRows(columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+
+        let basis = cellBasis(columns: columns)
+        let collapsed = TileLayoutEngine.collapsingEmptyRows(in: basis, columns: columns)
+        guard collapsed != basis else { return false }
+        commitCells(collapsed, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    // MARK: Внутреннее
+
+    /// Общая часть выноса из папки (E14.4): ячейка либо новая строка.
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - cell: Ячейка; `nil` — новая строка в конце холста.
+    ///   - columns: Число колонок сетки хоста.
+    private func performExtract(_ tileID: AnyHashable, cell: TileGridPlacement?, columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        noteHostColumns(columns)
+        let key = TileStore.storageKey(for: tileID)
+
+        guard let catalogPosition = catalogIndex[key],
+              let sourceIndex = folderRecords.firstIndex(where: { $0.tileKeys.contains(key) }) else {
+            return false
+        }
+        guard approval(nil, catalog[catalogPosition], .moveBetweenFolders) else { return false }
+
+        var items = cellBasis(columns: columns)
+        folderRecords[sourceIndex].tileKeys.removeAll { $0 == key }
+        if folderRecords[sourceIndex].tileKeys.isEmpty {
+            let folderKey = folderRecords[sourceIndex].key
+            folderRecords.remove(at: sourceIndex)
+            gridOrder.removeAll { $0 == folderKey }
+            items = TileLayoutEngine.removing(id: AnyHashable(folderKey), from: items)
+        }
+
+        let size = storedSize(ofKey: key)
+        let target = cell ?? TileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
+        items = TileLayoutEngine.inserting(
+            id: AnyHashable(key),
+            size: size,
+            at: target,
+            into: items,
+            columns: columns
+        )
+        gridOrder.append(key)
+        commitCells(items, columns: columns)
+        didChangeKeepingCells()
+        return true
+    }
+
+    /// Рабочий набор размещений видимых элементов для ширины `columns`
+    /// (E14.4): отправная точка каждой операции по ячейкам.
+    ///
+    /// Если холст той же ширины, берутся сохранённые ячейки (с дырами); иначе
+    /// (D32) — проекция ``placements(forColumns:)``: репак по порядку чтения без
+    /// дыр, и операция применяется к нему. Сам метод **ничего не меняет**:
+    /// холст принимает ``commitCells(_:columns:)`` только после успешной
+    /// операции, поэтому отказ не перезаписывает файл. Размеры — запрошенные
+    /// (след ужимает движок). Набор, не прошедший `validate`, заменяется
+    /// проекцией.
+    ///
+    /// - Parameter columns: Число колонок, больше нуля.
+    /// - Returns: Элементы в порядке сетки; идентификатор — канонический ключ.
+    private func cellBasis(columns: Int) -> [TilePlacedItem] {
+        let keys = visibleGridKeys()
+
+        func build(from cells: [String: TileGridPlacement]) -> [TilePlacedItem] {
+            var items: [TilePlacedItem] = []
+            items.reserveCapacity(keys.count)
+            var missing: [String] = []
+            for key in keys {
+                if let cell = cells[key] {
+                    items.append(TilePlacedItem(id: AnyHashable(key), size: storedSize(ofKey: key), cell: cell))
+                } else {
+                    missing.append(key)
+                }
+            }
+            // Защита: у видимого ключа нет ячейки — новая строка в конце.
+            for key in missing {
+                let size = storedSize(ofKey: key)
+                let cell = TileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
+                items = TileLayoutEngine.inserting(
+                    id: AnyHashable(key), size: size, at: cell, into: items, columns: columns
+                )
+            }
+            return items
+        }
+
+        let stored = canvasColumns == columns ? placementsByKey : projectedPlacements(columns: columns)
+        let items = build(from: stored)
+        if TileLayoutEngine.validate(items, columns: columns).isEmpty {
+            return items
+        }
+        return build(from: projectedPlacements(columns: columns))
+    }
+
+    /// Принимает посчитанную раскладку как модель (E14.4): ячейки видимых
+    /// элементов, ширина холста и порядок чтения.
+    ///
+    /// Ячейки невидимых ключей сохраняются (в коллизиях не участвуют), а те, что
+    /// не помещаются в новую ширину, получают место в конце
+    /// (``reconcilePlacements(settled:)``). `gridOrder` для видимых элементов
+    /// становится порядком чтения ячеек; структурные правки `gridOrder` (уход
+    /// ярлыка, новая папка) вызывающий делает до вызова. Уведомление и запись —
+    /// на вызывающем (``didChangeKeepingCells()``).
+    ///
+    /// - Parameters:
+    ///   - items: Размещения всех видимых элементов после операции.
+    ///   - columns: Ширина холста (ширина хоста).
+    private func commitCells(_ items: [TilePlacedItem], columns: Int) {
+        var next: [String: TileGridPlacement] = [:]
+        for item in items {
+            if let key = item.id.base as? String { next[key] = item.cell }
+        }
+        let visibleSet = Set(visibleGridKeys())
+        for key in gridOrder where !visibleSet.contains(key) {
+            if let placement = placementsByKey[key] { next[key] = placement }
+        }
+        placementsByKey = next
+        canvasColumns = columns
+
+        let ordered = TileStore.readingSorted(items.compactMap { $0.id.base as? String }, by: next)
+        applyVisibleOrder(ordered)
+        reconcilePlacements()
     }
 }
 
