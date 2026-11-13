@@ -780,6 +780,16 @@ public final class TesseraTileGridView: UIView {
     /// ярлыков, чтобы выставить им custom actions VoiceOver.
     var panelShortcutsDidConfigure: ((TileFolder, [TesseraTileCell]) -> Void)?
 
+    /// Вызывается, когда панель раскрытой папки меняет устойчивое состояние
+    /// (D46): начался анимированный переход, он завершился либо панель
+    /// открылась/закрылась без анимации.
+    ///
+    /// Внутренний шов координатора редактирования: он синхронно показывает
+    /// кнопки открепления на ярлыках панели, когда она устоялась, и снимает их,
+    /// пока панель едет (открытие, закрытие). Колбэк синхронный и не должен
+    /// менять снимок сетки (см. `onFolderExpansionChanged`).
+    var folderPanelStateDidChange: (() -> Void)?
+
     /// Аниматор раскрытия/закрытия панели (D17).
     ///
     /// Удерживается, пока идёт анимация: так её нельзя потерять между кадрами,
@@ -1374,6 +1384,42 @@ public final class TesseraTileGridView: UIView {
             return nil
         }
         return (folder, panel.shortcutCells)
+    }
+
+    /// Рамки ярлыков видимой панели раскрытой папки в координатах сетки (D46).
+    ///
+    /// Нужны координатору редактирования, чтобы поставить кнопки открепления на
+    /// ярлыки панели так же, как на плитки сетки: рамка считается по центру и
+    /// границам ячейки (без `transform` каскада появления) и учитывает
+    /// прокрутку, поэтому следует за панелью при каждом вызове.
+    ///
+    /// - Returns: Идентификаторы ярлыков, их рамки по порядку состава папки и
+    ///   зазор сетки; `nil`, если панели нет или её ячейки ещё не соответствуют
+    ///   составу папки.
+    func panelShortcutGeometry() -> TesseraPanelShortcutGeometry? {
+        guard let panel = panelShortcuts(),
+              let cell = collectionView.visibleCells
+                  .compactMap({ $0 as? TesseraFolderPanelCell }).first else {
+            return nil
+        }
+
+        let frames: [CGRect] = panel.cells.map { shortcut in
+            let size = shortcut.bounds.size
+            let center = shortcut.superview?.convert(shortcut.center, to: self)
+                ?? cell.contentView.convert(shortcut.center, to: self)
+            return CGRect(
+                x: center.x - size.width / 2,
+                y: center.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+        }
+        return TesseraPanelShortcutGeometry(
+            folderID: panel.folder.id,
+            tileIDs: panel.folder.tiles.map { $0.id },
+            frames: frames,
+            spacing: tileLayout.itemSpacing
+        )
     }
 
     /// Настраивает ячейку под элемент и подписывает её активацию VoiceOver.
@@ -2251,6 +2297,7 @@ public final class TesseraTileGridView: UIView {
         isFolderChangeAnimating = true
         isFolderPanelScrollLocked = true
         updateScrollEnabled()
+        folderPanelStateDidChange?()
     }
 
     /// Завершает состояние перехода, не разбирая отложенные команды (E10.2).
@@ -2262,6 +2309,7 @@ public final class TesseraTileGridView: UIView {
         isFolderChangeAnimating = false
         isFolderPanelScrollLocked = false
         updateScrollEnabled()
+        folderPanelStateDidChange?()
     }
 
     /// Планирует разбор отложенной команды панели на следующий проход runloop
@@ -2398,6 +2446,7 @@ public final class TesseraTileGridView: UIView {
             // `.layoutChanged` уходит с фокусом на папку, а не на панель.
             collectionView.layoutIfNeeded()
             postFolderLayoutChanged(expanded: true, folderID: currentFolder.id)
+            folderPanelStateDidChange?()
             onFolderExpansionChanged?(currentFolder, true)
             runDeferredFolderWork()
             return
@@ -2547,6 +2596,7 @@ public final class TesseraTileGridView: UIView {
         collectionView.layoutIfNeeded()
         clampContentOffsetAfterCollapse()
         postFolderLayoutChanged(expanded: false, folderID: expandedID)
+        folderPanelStateDidChange?()
         if let folder, notify {
             onFolderExpansionChanged?(folder, false)
         }
@@ -3932,6 +3982,22 @@ final class TesseraTileCell: UICollectionViewCell {
             height: blockSide
         )
     }
+}
+
+/// Геометрия ярлыков видимой панели раскрытой папки (D46).
+struct TesseraPanelShortcutGeometry {
+
+    /// Раскрытая папка.
+    let folderID: AnyHashable
+
+    /// Идентификаторы ярлыков в порядке состава папки.
+    let tileIDs: [AnyHashable]
+
+    /// Рамки ярлыков в координатах сетки (по порядку ``tileIDs``).
+    let frames: [CGRect]
+
+    /// Зазор между ярлыками панели (`itemSpacing` сетки).
+    let spacing: CGFloat
 }
 
 /// Ярлык панели раскрытой папки, найденный под пальцем (E11.1).
