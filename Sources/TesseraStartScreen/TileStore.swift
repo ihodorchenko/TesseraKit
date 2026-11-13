@@ -139,6 +139,35 @@ public struct TileGridSnapshot {
     /// приложений (§6, двусторонний pin/unpin).
     public let unpinned: [TileDescriptor]
 
+    /// Необязательная таблица явных ячеек (E14.3, D30).
+    ///
+    /// «Боковой» вход раскладки: пока таблицы нет, сетка раскладывает элементы
+    /// упаковкой по порядку ``items`` (строго компактно, как раньше). Если она
+    /// есть, полна и корректна для текущего числа колонок сетки, плитки встают
+    /// на свои ячейки, а дыры остаются. Неполная, некорректная или рассчитанная
+    /// на другую ширину таблица игнорируется целиком — см.
+    /// ``TileGridPlacementTable``. `TileStore.snapshot()` таблицу не прикладывает
+    /// (она появится вместе с операциями по координатам, E14.5); получить снимок
+    /// с таблицей для конкретной ширины можно через
+    /// ``TileStore/snapshot(columns:)``.
+    public let placementTable: TileGridPlacementTable?
+
+    /// Создаёт снимок.
+    ///
+    /// - Parameters:
+    ///   - items: Элементы сетки в порядке отображения.
+    ///   - unpinned: Ярлыки вне сетки.
+    ///   - placementTable: Таблица явных ячеек; `nil` — раскладка по порядку.
+    init(
+        items: [TileGridItem],
+        unpinned: [TileDescriptor],
+        placementTable: TileGridPlacementTable? = nil
+    ) {
+        self.items = items
+        self.unpinned = unpinned
+        self.placementTable = placementTable
+    }
+
     /// Пары «идентификатор — размер» в порядке сетки для `TileLayoutEngine`.
     ///
     /// Хранилище не считает раскладку само (§3): оно отдаёт данные, а движок
@@ -536,6 +565,36 @@ public final class TileStore: ObservableObject {
             .map(resolved)
 
         return TileGridSnapshot(items: items, unpinned: unpinned)
+    }
+
+    /// Снимок сетки с таблицей явных ячеек для ширины `columns` (E14.3, D30).
+    ///
+    /// Те же элементы и ярлыки вне сетки, что у ``snapshot()``, плюс
+    /// ``TileGridSnapshot/placementTable``: ячейки из ``placements(forColumns:)``
+    /// (сохранённая раскладка с дырами, если `columns` совпадает с
+    /// ``canvasColumns``, иначе проекция без дыр, D32) и заявленная ширина
+    /// `columns`. Сетка той же ширины раскладывает плитки на эти ячейки; сетка
+    /// другой ширины таблицу игнорирует и упаковывает по порядку.
+    ///
+    /// Метод **не подключён** к штатным путям хоста (`snapshot()` его не
+    /// вызывает): переходное правило E14.1 держит ячейки равными упаковке
+    /// порядка только после операций хранилища, а `setCatalog` ставит новые
+    /// ярлыки в новую строку в конце, не в дыру, поэтому картинка могла бы
+    /// отличаться от прежней. Подключение — E14.5.
+    ///
+    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: Снимок; при `columns <= 0` таблица не прикладывается.
+    public func snapshot(columns: Int) -> TileGridSnapshot {
+        let base = snapshot()
+        guard columns > 0 else { return base }
+        return TileGridSnapshot(
+            items: base.items,
+            unpinned: base.unpinned,
+            placementTable: TileGridPlacementTable(
+                cells: placements(forColumns: columns),
+                columns: columns
+            )
+        )
     }
 
     // MARK: - Закрепление
