@@ -1110,12 +1110,8 @@ public final class TesseraLiveTileView: UIView {
         if let badgeText = badgeView.accessibilityText, !badgeText.isEmpty {
             accessibilityValue = badgeText
         } else {
-            switch badgeView.badge {
-            case .count(let value) where value > 0:
-                accessibilityValue = String(value)
-            case .none, .dot, .count:
-                accessibilityValue = nil
-            }
+            // D34/E15.4: без текста хоста точка озвучивается строкой модуля.
+            accessibilityValue = badgeView.badge.accessibilityValueText
         }
     }
 

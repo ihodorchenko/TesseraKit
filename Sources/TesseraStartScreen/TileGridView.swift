@@ -3663,14 +3663,9 @@ final class TesseraTileCell: UICollectionViewCell {
         }
         accessibilityLabel = labelParts.isEmpty ? nil : labelParts.joined(separator: ", ")
 
-        switch descriptor.badge {
-        case .count(let value) where value > 0:
-            accessibilityValue = String(value)
-        case .none, .dot, .count:
-            // Точка не несёт числа: озвучивать нечего, виджет сообщает о
-            // наличии внимания визуально (как в TesseraLiveTileView).
-            accessibilityValue = nil
-        }
+        // D34/E15.4: точка без числа озвучивается строкой «есть уведомление»,
+        // счётчик — числом, `.none` — без значения.
+        accessibilityValue = descriptor.badge.accessibilityValueText
     }
 
     /// §9: папка — один элемент; число ярлыков в value.

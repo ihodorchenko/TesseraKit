@@ -247,7 +247,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
     // MARK: - Accessibility
 
     /// label и value VoiceOver те же, что и до D47: подпись по-прежнему
-    /// озвучивается, число — в value; точка value не имеет.
+    /// озвучивается, число — в value; точка — строка D34 («есть уведомление»).
     func testAccessibilityLabelAndValueAreUnchanged() {
         let size = CGSize(width: 53, height: 53)
         let counted = makeCell(size: size, descriptor: descriptor(title: "Почта", badge: .count(3)))
@@ -257,7 +257,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
 
         let dotted = makeCell(size: size, descriptor: descriptor(title: "Почта", badge: .dot))
         XCTAssertEqual(dotted.accessibilityLabel, "Почта")
-        XCTAssertNil(dotted.accessibilityValue)
+        XCTAssertEqual(dotted.accessibilityValue, TesseraStartScreenStrings.string(.a11yBadgeDot))
 
         // Те же значения, что у такой же плитки без иконки (подпись на ней видна).
         let plain = makeCell(size: size, descriptor: descriptor(title: "Почта", badge: .count(3), withIcon: false))
