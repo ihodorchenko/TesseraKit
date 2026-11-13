@@ -65,37 +65,18 @@ final class DefaultColumnsTests: XCTestCase {
         XCTAssertLessThan(frames[3].width, grid.bounds.width - 32)
     }
 
-    /// `resize(_:to:)` без сетки считает выталкивание для 6 колонок по умолчанию:
-    /// результат совпадает с явным `columns: 6`.
-    func testStoreResizeWithoutColumnsUsesDefaultSixColumns() {
-        let descriptors = [
-            tesseraTestTile("a", size: .medium),
-            tesseraTestTile("b", size: .medium),
-            tesseraTestTile("c", size: .medium),
-            tesseraTestTile("d", size: .small),
-            tesseraTestTile("e", size: .small),
-        ]
+    /// Пока хост не назвал ширину сетки, хранилище считает по умолчанию 6 колонок
+    /// (`effectiveColumns`); названная ширина её заменяет. Прежний
+    /// `resize(_:to:)` без `columns` удалён в E14.6 — ширина передаётся явно.
+    func testStoreEffectiveColumnsDefaultsToSix() {
+        let directory = TesseraTestDirectory()
+        let store = TileStore(directoryURL: directory.url)
+        store.autosaves = false
+        store.setCatalog([tesseraTestTile("a", size: .medium)])
 
-        func makeStore(in directory: TesseraTestDirectory) -> TileStore {
-            let store = TileStore(directoryURL: directory.url)
-            store.autosaves = false
-            store.setCatalog(descriptors)
-            return store
-        }
-
-        let implicitDirectory = TesseraTestDirectory()
-        let explicitDirectory = TesseraTestDirectory()
-        let implicit = makeStore(in: implicitDirectory)
-        let explicit = makeStore(in: explicitDirectory)
-
-        XCTAssertTrue(implicit.resize("b", to: .wide))
-        XCTAssertTrue(explicit.resize("b", to: .wide, columns: 6))
-
-        XCTAssertEqual(
-            implicit.snapshot().items.map { $0.id },
-            explicit.snapshot().items.map { $0.id }
-        )
-        XCTAssertEqual(implicit.descriptor(withID: "b")?.size, .wide)
+        XCTAssertEqual(store.effectiveColumns, 6)
+        store.placeItems(columns: 4)
+        XCTAssertEqual(store.effectiveColumns, 4)
     }
 }
 

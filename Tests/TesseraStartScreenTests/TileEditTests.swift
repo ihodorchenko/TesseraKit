@@ -195,25 +195,25 @@ final class TileEditTests: XCTestCase {
         XCTAssertNil(grid.item(at: CGPoint(x: -1000, y: -1000)))
     }
 
-    /// Перестановка — модель drop'а: индекс зажимается, набор ярлыков не
-    /// теряется и не дублируется (§5, §6).
+    /// Перенос на ячейку — модель drop'а: колонка ограничивается холстом, набор
+    /// ярлыков не теряется и не дублируется (§5, §6, E14.6).
     func testDropReorderThroughStoreKeepsItemSet() {
         let directory = TesseraTestDirectory()
         let store = makeStore(
             [
-                tesseraTestTile("a"),
-                tesseraTestTile("b"),
-                tesseraTestTile("c"),
+                tesseraTestTile("a", size: .small),
+                tesseraTestTile("b", size: .small),
+                tesseraTestTile("c", size: .small),
             ],
             in: directory
         )
 
         let initial = Set(store.snapshot().items.map { $0.id })
-        XCTAssertTrue(store.move("a", toIndex: 2))
+        XCTAssertTrue(store.moveItem("a", toCell: tesseraCell(1, 3), columns: 4))
         XCTAssertEqual(Set(store.snapshot().items.map { $0.id }), initial)
         XCTAssertEqual(store.snapshot().items.map { $0.id }, ["b", "c", "a"])
 
-        XCTAssertFalse(store.move("a", toIndex: 99))
+        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(1, 99), columns: 4), "99 зажата до колонки 3: уже там")
         XCTAssertEqual(store.snapshot().items.map { $0.id }, ["b", "c", "a"])
         XCTAssertEqual(Set(store.snapshot().items.map { $0.id }), initial)
     }

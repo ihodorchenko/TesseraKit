@@ -47,7 +47,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
 
         XCTAssertTrue(store.moveItem("a", toCell: tesseraCell(5, 4), columns: 6))
         XCTAssertTrue(store.unpin("b", columns: 6))
-        XCTAssertTrue(store.resizeInPlace("d", to: .wide, columns: 6))
+        XCTAssertTrue(store.resize("d", to: .wide, columns: 6))
         let expected = store.placements
         XCTAssertEqual(store.placement(of: "d"), tesseraCell(3, 0))
 
@@ -137,7 +137,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
 
         XCTAssertFalse(store.moveItem("nope", toCell: tesseraCell(0, 0), columns: 4))
         XCTAssertFalse(store.unpin("nope", columns: 4))
-        XCTAssertFalse(store.pinTileToNewRow("a", columns: 4))
+        XCTAssertFalse(store.pinTile("a", columns: 4))
         XCTAssertFalse(store.collapseEmptyRows(columns: 4))
 
         XCTAssertEqual(store.canvasColumns, 6)
@@ -234,13 +234,13 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         for columns in [0, -3] {
             XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(1, 1), columns: columns))
             XCTAssertFalse(store.moveItemToNewRow("a", columns: columns))
-            XCTAssertFalse(store.resizeInPlace("a", to: .wide, columns: columns))
+            XCTAssertFalse(store.resize("a", to: .wide, columns: columns))
             XCTAssertFalse(store.addToFolder("a", folderID: "f", columns: columns))
             XCTAssertFalse(store.extractFromFolder("x", toCell: tesseraCell(1, 1), columns: columns))
             XCTAssertFalse(store.extractFromFolderToNewRow("x", columns: columns))
             XCTAssertFalse(store.moveBetweenFolders("x", to: "f", columns: columns))
             XCTAssertFalse(store.unpin("a", columns: columns))
-            XCTAssertFalse(store.pinTileToNewRow("u", columns: columns))
+            XCTAssertFalse(store.pinTile("u", columns: columns))
             XCTAssertFalse(store.collapseEmptyRows(columns: columns))
         }
         XCTAssertFalse(store.moveItemToNewRow("u", columns: 6), "ярлык вне сетки")

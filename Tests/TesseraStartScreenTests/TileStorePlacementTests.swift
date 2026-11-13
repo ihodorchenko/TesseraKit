@@ -16,8 +16,11 @@
 //    прежней ширине возвращает дыры, первая правка принимает новый холст;
 //  - починка нарушителей на загрузке (пересечения, границы, мусор),
 //    частичный набор ячеек, версия новее поддерживаемой;
-//  - папки имеют ячейки, содержимое папок — нет;
-//  - переходное правило: ячейки после операции равны упаковке порядка.
+//  - папки имеют ячейки, содержимое папок — нет.
+//
+//  Переходное правило E14.1 («ячейки после операции равны упаковке порядка»)
+//  удалено в E14.6 вместе с индексным API: дыры после операций проверяют
+//  `TileStoreCellOperationsTests`.
 //
 
 #if canImport(UIKit)
@@ -308,7 +311,7 @@ final class TileStorePlacementTests: XCTestCase {
         XCTAssertNil(store.placement(of: "d"), "невидимых нет в видимых ячейках")
         XCTAssertEqual(store.placements.count, 3)
 
-        XCTAssertTrue(store.unpin("a"))
+        XCTAssertTrue(store.unpin("a", columns: 6))
         XCTAssertTrue(try fileItems(store).contains { ($0["key"] as? String) == "s:d" && $0["row"] is Int },
                       "ячейка невидимого сохранена в файле")
 
@@ -322,13 +325,14 @@ final class TileStorePlacementTests: XCTestCase {
         let directory = TesseraTestDirectory()
         let store = try storeWithInvisibleD(directory)
 
-        // a 4×4 → (0,0), b → (0,4) и занимает колонку 5 в строке 0.
-        XCTAssertTrue(store.resize("a", to: .large, columns: 6))
-        XCTAssertEqual(store.placement(of: "b"), TileGridPlacement(row: 0, column: 4))
+        // «c» (2×2) переносится на колонку 5 и ограничивается холстом до колонки 4:
+        // занимает колонки 4–5 строк 0–1, то есть ячейку (0, 5) невидимого «d».
+        XCTAssertTrue(store.moveItem("c", toCell: TileGridPlacement(row: 0, column: 5), columns: 6))
+        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 0, column: 4))
 
         store.setCatalog(descriptors())
         let d = try XCTUnwrap(store.placement(of: "d"))
-        XCTAssertEqual(d, TileGridPlacement(row: 4, column: 0), "строка после последней занятой")
+        XCTAssertEqual(d, TileGridPlacement(row: 2, column: 0), "строка после последней занятой")
         assertNoOverlapsAndInBounds(store, columns: 6)
     }
 
@@ -401,7 +405,11 @@ final class TileStorePlacementTests: XCTestCase {
         XCTAssertEqual(store.canvasColumns, 4)
         XCTAssertNotEqual(try Data(contentsOf: store.fileURL), originalData)
         XCTAssertEqual(try jsonObject(store)["columns"] as? Int, 4)
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 4))
+        // Проекция: a (0,0), b (0,1), c (0,2); рост «b» до 2×2 на месте накрывает
+        // «c», и она выталкивается вниз (D31).
+        XCTAssertEqual(store.placement(of: "a"), TileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(store.placement(of: "b"), TileGridPlacement(row: 0, column: 1))
+        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 2, column: 2))
         assertNoOverlapsAndInBounds(store, columns: 4)
 
         // Теперь проекция нужна для 6, а прежние дыры потеряны.
@@ -510,14 +518,16 @@ final class TileStorePlacementTests: XCTestCase {
         let store = makeStore(descriptors(), in: directory)
         store.placeItems(columns: 6)
 
-        let folder = try XCTUnwrap(store.createFolder(withTile: "b"))
-        XCTAssertTrue(store.addToFolder("c", folderID: folder.id))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "b", columns: 6))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: 6))
 
         XCTAssertNotNil(store.placement(of: folder.id))
         XCTAssertNil(store.placement(of: "b"))
         XCTAssertNil(store.placement(of: "c"))
         XCTAssertEqual(store.placements.count, 3)
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
+        // Папка встала на ячейку «b»; ячейка «c» осталась дырой (без репака).
+        XCTAssertEqual(store.placement(of: folder.id), TileGridPlacement(row: 0, column: 1))
+        XCTAssertEqual(store.placement(of: "d"), TileGridPlacement(row: 0, column: 5))
 
         let items = try fileItems(store)
         let folderItem = try XCTUnwrap(items.first { ($0["kind"] as? String) == "folder" })
@@ -529,46 +539,6 @@ final class TileStorePlacementTests: XCTestCase {
         try reloaded.load()
         XCTAssertEqual(reloaded.placements, store.placements)
         XCTAssertEqual(reloaded.placement(of: folder.id), store.placement(of: folder.id))
-    }
-
-    // MARK: - Переходное правило
-
-    /// После каждой операции сохранённые ячейки равны упаковке порядка — то,
-    /// что сетка показывает сегодня.
-    func testPlacementsFollowPackAfterMutations() throws {
-        let directory = TesseraTestDirectory()
-        let store = makeStore(descriptors() + [tesseraTestTile("e", size: .wide)], in: directory)
-        store.placeItems(columns: 6)
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-
-        XCTAssertTrue(store.unpin("b"))
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-
-        XCTAssertNotNil(store.pinTile("b", at: 1, columns: 6))
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-
-        XCTAssertNotNil(store.moveItem("e", toIndex: 0, columns: 6))
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-
-        XCTAssertTrue(store.resize("a", to: .large, columns: 6))
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-
-        let folder = try XCTUnwrap(store.createFolder(withTile: "d"))
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-        XCTAssertTrue(store.addToFolder("c", folderID: folder.id))
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-        XCTAssertTrue(store.moveBetweenFolders("c", to: nil))
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-        assertNoOverlapsAndInBounds(store, columns: 6)
-    }
-
-    /// Операция до того, как хост назвал ширину, раскладывает на умолчание (6).
-    func testMutationWithoutKnownWidthUsesDefaultColumns() {
-        let directory = TesseraTestDirectory()
-        let store = makeStore(descriptors(), in: directory)
-        XCTAssertTrue(store.unpin("a"))
-        XCTAssertEqual(store.canvasColumns, TileLayoutEngine.defaultColumns)
-        XCTAssertEqual(store.placements, packedExpectation(store, columns: TileLayoutEngine.defaultColumns))
     }
 }
 

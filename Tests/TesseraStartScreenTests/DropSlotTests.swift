@@ -30,65 +30,47 @@ final class DropSlotTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    /// Делегат, ловящий только `didMove(toFolder:atIndex:)` и `didMove(toIndex:)`.
+    /// Делегат, ловящий только `didMove(toFolder:atCell:)` и `didMove(toCell:)`.
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
-        /// Вынос/перенос: ярлык, папка-цель и фактический индекс.
-        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, index: Int?)] = []
+        /// Вынос/перенос: ярлык, папка-цель и фактическая ячейка.
+        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, cell: TileGridPlacement?)] = []
 
-        /// Перестановка по сетке: ярлык и фактический индекс.
-        var moves: [(id: AnyHashable, index: Int)] = []
+        /// Перестановка по сетке: ярлык и фактическая ячейка.
+        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
             toFolder folderID: AnyHashable?,
-            atIndex index: Int?
+            atCell cell: TileGridPlacement?
         ) {
-            folderMoves.append((tileID, folderID, index))
+            folderMoves.append((tileID, folderID, cell))
         }
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toIndex index: Int
+            toCell cell: TileGridPlacement
         ) {
-            moves.append((tileID, index))
+            moves.append((tileID, cell))
         }
     }
 
-    /// Стенд: ярлыки `sizes` (в порядке чтения), папка «F» с ярлыками
+    /// Стенд: ярлыки `plain` (в порядке чтения), папка «F» с ярлыками
     /// `folderTiles` (small) стоит в порядке на позиции `folderAt`.
     ///
-    /// Ярлыки папки идут в каталоге после остальных; папка создаётся первой из
-    /// них и получает размер small, затем порядок канонизируется под колонки.
+    /// Раскладка — компактная, как её давали операции по порядку до E14
+    /// (`TesseraTestDragHost(packed:)`, E14.6); папка — small.
     private func makeHost(
         plain: [(String, TileSize)],
         folderTiles: [String],
         folderAt: Int,
         columns: Int = 4
-    ) -> TesseraTestDragHost {
-        var descriptors = plain.map { tesseraTestTile($0.0, size: $0.1) }
-        descriptors += folderTiles.map { tesseraTestTile($0, size: .small) }
-        return TesseraTestDragHost(
-            descriptors: descriptors,
-            columns: columns,
-            configuration: TesseraTileEditConfiguration(
-                mergeHoverDuration: 0.05,
-                magnetSnapRadius: 0
-            ),
-            prepare: { store in
-                guard let first = folderTiles.first,
-                      let folder = store.createFolder(withTile: first) else { return }
-                for tile in folderTiles.dropFirst() {
-                    _ = store.addToFolder(tile, folderID: folder.id)
-                }
-                _ = store.resize(folder.id, to: .small)
-                // Папка — на позицию `folderAt` среди элементов сетки.
-                _ = store.moveItem(folder.id, toIndex: folderAt, columns: columns)
-                store.canonicalizeVisibleOrder(columns: columns)
-            }
-        )
+    ) throws -> TesseraTestDragHost {
+        var entries: [TesseraTestPackedEntry] = plain.map { .tile($0.0, $0.1) }
+        entries.insert(.folder("F", .small, folderTiles.map { ($0, TileSize.small) }), at: min(folderAt, entries.count))
+        return try TesseraTestDragHost(packed: entries, columns: columns)
     }
 
     /// Входит в edit, раскрывает панель папки и берёт иконку панели (E11.1).
@@ -148,7 +130,7 @@ final class DropSlotTests: XCTestCase {
     /// панели брошен справа от «d» (пустая клетка (1, 3)): встаёт **ровно в эту
     /// клетку** — ту, которую показало превью, а не «после папки».
     func testPanelDropRightOfLastTileLandsAtEnd() throws {
-        let host = makeHost(
+        let host = try makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
             folderTiles: ["f1", "f2", "f3"],
             folderAt: 1
@@ -181,7 +163,7 @@ final class DropSlotTests: XCTestCase {
         XCTAssertEqual(host.store.placement(of: "f3"), TileGridPlacement(row: 1, column: 3))
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["f1", "f2"] as [AnyHashable])
         XCTAssertEqual(recorder.folderMoves.count, 1)
-        XCTAssertEqual(recorder.folderMoves.first?.index, 5)
+        XCTAssertEqual(recorder.folderMoves.first?.cell, TileGridPlacement(row: 1, column: 3))
         let landed = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
         XCTAssertEqual(landed, previewFrame, "Ярлык лёг ровно туда, где показало превью")
     }
@@ -190,7 +172,7 @@ final class DropSlotTests: XCTestCase {
     /// клетке слева — это край занятой клетки «d», поэтому вынос встаёт на ячейку
     /// «d», а «d» выталкивается вниз (D31), а не «сразу после папки».
     func testPanelDropBetweenTwoTilesInGapInsertsBetween() throws {
-        let host = makeHost(
+        let host = try makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
             folderTiles: ["f1", "f2", "f3"],
             folderAt: 1
@@ -221,7 +203,7 @@ final class DropSlotTests: XCTestCase {
     /// Палец левее/выше первой клетки (зона полей сверху): ярлык встаёт на первую
     /// клетку «a» (0, 0), а «a» выталкивается вниз (D31).
     func testPanelDropAboveFirstRowLandsAtStart() throws {
-        let host = makeHost(
+        let host = try makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
             folderTiles: ["f1", "f2", "f3"],
             folderAt: 1
@@ -255,7 +237,7 @@ final class DropSlotTests: XCTestCase {
     /// Пустая область под плитками (палец ниже последней строки): цель «новая
     /// строка» — ярлык встаёт в начало новой строки в конце холста.
     func testPanelDropBelowAllTilesLandsAtEnd() throws {
-        let host = makeHost(
+        let host = try makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
             folderTiles: ["f1", "f2", "f3"],
             folderAt: 1
@@ -278,7 +260,7 @@ final class DropSlotTests: XCTestCase {
     /// панели встаёт **ровно в неё** (E14.5: клетка под пальцем, а не ближайший
     /// слот порядка); drop кладёт его туда же, куда показало превью.
     func testPanelDropIntoHoleLandsInNearestReachableCell() throws {
-        let host = makeHost(
+        let host = try makeHost(
             plain: [("m", .medium), ("s", .small), ("w", .wide)],
             folderTiles: ["f1", "f2"],
             folderAt: 1
@@ -314,7 +296,7 @@ final class DropSlotTests: XCTestCase {
     /// клетку правее «d»: индекс учитывает исчезнувшую папку, ярлык — последний
     /// в порядке чтения.
     func testSoleTilePanelDropToEndDissolvesFolder() throws {
-        let host = makeHost(
+        let host = try makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
             folderTiles: ["f1"],
             folderAt: 1
@@ -331,7 +313,7 @@ final class DropSlotTests: XCTestCase {
 
         XCTAssertEqual(host.storeIDs, ["a", "b", "c", "d", "f1"] as [AnyHashable], "Папка исчезла")
         XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 2), "На месте папки — дыра, без репака")
-        XCTAssertEqual(recorder.folderMoves.first?.index, 4)
+        XCTAssertEqual(recorder.folderMoves.first?.cell, TileGridPlacement(row: 1, column: 3))
     }
 
     // MARK: - Drag по сетке (та же ветка)
@@ -359,7 +341,7 @@ final class DropSlotTests: XCTestCase {
         XCTAssertEqual(host.storeIDs, ["b", "c", "d", "e", "f", "a"] as [AnyHashable])
         XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 3))
         XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 1), "Дыра на месте «a» осталась")
-        XCTAssertEqual(recorder.moves.first?.index, 5)
+        XCTAssertEqual(recorder.moves.first?.cell, TileGridPlacement(row: 1, column: 3))
     }
 
     /// Над собственной базовой ячейкой цели нет (`.none`): превью — база, а drop
@@ -401,7 +383,7 @@ final class DropSlotTests: XCTestCase {
     /// палец не сдвинется заметно (`emptySlotActivationDistance`); потом превью
     /// следует за пальцем, а повтор той же клетки превью не меняет.
     func testPanelLiftOverEmptySpaceKeepsDefaultSlotUntilFingerMoves() throws {
-        let host = makeHost(
+        let host = try makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
             folderTiles: ["f1", "f2", "f3"],
             folderAt: 1
@@ -459,24 +441,6 @@ final class DropSlotTests: XCTestCase {
         settle(host, "a")
         XCTAssertEqual(host.storeIDs, ["b", "c", "d", "e", "f", "a"] as [AnyHashable])
         XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 2))
-    }
-
-    // MARK: - Чистая функция превью
-
-    /// `previewOrder(insertionIndex:)`: позиция среди остальных, зажим границ.
-    func testPreviewOrderByInsertionIndex() {
-        let items = ["a", "b", "c", "d"].map { TileGridItem.tile(
-            TileDescriptor(id: $0, title: $0, action: {}, badge: .none, size: .small)
-        ) }
-        func ids(_ index: Int) -> [AnyHashable]? {
-            TileLayoutEngine.previewOrder(items: items, draggingID: "b", insertionIndex: index)?.map { $0.id }
-        }
-        XCTAssertEqual(ids(0), ["b", "a", "c", "d"] as [AnyHashable])
-        XCTAssertEqual(ids(1), ["a", "b", "c", "d"] as [AnyHashable])
-        XCTAssertEqual(ids(3), ["a", "c", "d", "b"] as [AnyHashable])
-        XCTAssertEqual(ids(99), ["a", "c", "d", "b"] as [AnyHashable], "Зажим сверху")
-        XCTAssertEqual(ids(-5), ["b", "a", "c", "d"] as [AnyHashable], "Зажим снизу")
-        XCTAssertNil(TileLayoutEngine.previewOrder(items: items, draggingID: "zz", insertionIndex: 0))
     }
 }
 

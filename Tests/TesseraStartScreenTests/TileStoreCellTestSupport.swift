@@ -102,6 +102,20 @@ enum TileStoreCellFixture {
         }
         for (id, size) in unpinned { sizes["s:" + id] = size.rawValue }
 
+        // Порядок файла — порядок чтения ячеек (как после любой операции хранилища):
+        // `gridOrder` держит операции, а не загрузка (E14.6).
+        func isBefore(_ lhs: [String: Any], _ rhs: [String: Any]) -> Bool {
+            let left = tesseraCell(lhs["row"] as? Int ?? 0, lhs["column"] as? Int ?? 0)
+            let right = tesseraCell(rhs["row"] as? Int ?? 0, rhs["column"] as? Int ?? 0)
+            return TileGridPlacement.isReadingOrdered(left, before: right)
+        }
+        items = items.enumerated().sorted { lhs, rhs in
+            let l = lhs.element, r = rhs.element
+            if isBefore(l, r) { return true }
+            if isBefore(r, l) { return false }
+            return lhs.offset < rhs.offset
+        }.map { $0.element }
+
         let document: [String: Any] = [
             "version": 2,
             "columns": columns,

@@ -15,9 +15,11 @@
 //  - дифф снимка: смена одних ячеек (те же элементы в том же порядке) —
 //    изменение раскладки и анимируется как перестановка; тот же снимок кадры не
 //    меняет;
-//  - `TileStore.snapshot(columns:)` даёт ячейки, при которых рамки сетки равны
-//    прежним рамкам упаковки (колонки 4, 6, 8, случайные каталоги и операции);
-//  - магнитные центры и позиция вставки продолжают работать по порядку.
+//  - `TileStore.snapshot(columns:)` для другой ширины сетки игнорируется (рамки
+//    упаковки); равенство рамок сетки и ячеек модели после операций — в
+//    `TileCellWiringTests` (после E14.6 операции оставляют дыры, и прежнее
+//    сравнение «таблица = упаковка» потеряло смысл);
+//  - магнитные центры без таблицы остаются на упаковке по порядку.
 //
 
 #if canImport(UIKit)
@@ -293,20 +295,18 @@ final class TilePlacementGridTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(grid.frame(forItemID: "c")).minY, before.minY)
     }
 
-    // MARK: - Магнит и позиция вставки по порядку
+    // MARK: - Магнит
 
-    /// `magnetSlotCenters` и `baseInsertionIndex` остаются на пути по порядку
-    /// (E14.4 заменит): снимок с дырами их не ломает.
-    func testMagnetAndInsertionStayOrderBasedOnSnapshotWithHoles() throws {
+    /// `magnetSlotCenters` на снимке без таблицы остаётся на упаковке по
+    /// порядку (откат E14.3): снимок с дырами, поданный без таблицы, его не
+    /// ломает. `baseInsertionIndex` (позиция вставки по порядку) удалён в E14.6.
+    func testMagnetStaysPackBasedOnSnapshotWithoutTable() throws {
         let grid = makeGrid()
         let snapshot = holeSnapshot()
         grid.reload(snapshot: snapshot)
         layoutGrid(grid)
 
         XCTAssertFalse(grid.magnetSlotCenters(for: .small).isEmpty)
-        let point = CGPoint(x: 20, y: 40)
-        let index = grid.baseInsertionIndex(forGridPoint: point, items: snapshot.items, draggingID: "c")
-        XCTAssertNotNil(index)
     }
 
     // MARK: - Снимок хранилища
@@ -317,63 +317,6 @@ final class TilePlacementGridTests: XCTestCase {
         let sizes: [TileSize] = [.small, .small, .medium, .medium, .wide, .large]
         return (0..<count).map { index in
             tesseraTestTile("t\(index)", size: sizes[generator.int(upperBound: sizes.count)])
-        }
-    }
-
-    /// `snapshot(columns:)` не подключён к штатным путям, но даёт те же рамки,
-    /// что и упаковка порядка: после миграции и операций хранилища на колонках
-    /// 4, 6 и 8 на случайных каталогах и ширинах. Откат на `snapshot()` — те же
-    /// рамки без таблицы.
-    func testStoreSnapshotWithPlacementsMatchesLegacyPackFrames() throws {
-        for columns in [4, 6, 8] {
-            for (seedIndex, seed) in [UInt64(1), 7, 42, 2024].enumerated() {
-                let directory = TesseraTestDirectory()
-                let store = TileStore(directoryURL: directory.url)
-                store.autosaves = false
-                store.setCatalog(randomCatalog(seed: seed, count: 6 + seedIndex * 5))
-                store.placeItems(columns: columns)
-
-                // Несколько операций: размеры, перестановки, открепление и закрепление.
-                var generator = TesseraTestSeededGenerator(seed: seed &+ 99)
-                let ids = store.snapshot().items.map { $0.id }
-                for step in 0..<4 {
-                    let id = ids[generator.int(upperBound: ids.count)]
-                    switch step % 4 {
-                    case 0:
-                        _ = store.resize(id, to: [.small, .medium, .wide, .large][generator.int(upperBound: 4)], columns: columns)
-                    case 1:
-                        _ = store.moveItem(id, toIndex: generator.int(upperBound: ids.count), columns: columns)
-                    case 2:
-                        _ = store.unpin(id)
-                    default:
-                        _ = store.pinTile(id, columns: columns)
-                    }
-                }
-
-                for width in [CGFloat(375), 414] {
-                    let label = "колонки \(columns), seed \(seed), ширина \(width)"
-                    let legacy = makeGrid(columns: columns, width: width)
-                    let legacySnapshot = store.snapshot()
-                    XCTAssertNil(legacySnapshot.placementTable, label)
-                    legacy.reload(snapshot: legacySnapshot)
-                    layoutGrid(legacy)
-
-                    let withCells = makeGrid(columns: columns, width: width)
-                    let cellsSnapshot = store.snapshot(columns: columns)
-                    XCTAssertEqual(cellsSnapshot.placementTable?.columns, columns, label)
-                    XCTAssertEqual(cellsSnapshot.items.map { $0.id }, legacySnapshot.items.map { $0.id }, label)
-                    withCells.reload(snapshot: cellsSnapshot)
-                    layoutGrid(withCells)
-
-                    for item in legacySnapshot.items {
-                        assertClose(
-                            try XCTUnwrap(withCells.frame(forItemID: item.id)),
-                            try XCTUnwrap(legacy.frame(forItemID: item.id)),
-                            "\(label), \(item.id)"
-                        )
-                    }
-                }
-            }
         }
     }
 

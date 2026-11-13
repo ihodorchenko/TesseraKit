@@ -127,11 +127,11 @@ final class TileGridAccessibilityTests: XCTestCase {
         let ids = ["a", "b", "c", "d", "e"] + (0..<extraFolders).map { "x\($0)" }
         return TesseraTestDragHost(
             descriptors: ids.map { tesseraTestTile($0, size: .small) },
-            prepare: { store in
-                _ = store.createFolder(withTile: "b", title: "Work")
-                _ = store.createFolder(withTile: "e", title: "Play")
+            prepare: { store, columns in
+                _ = store.createFolder(withTile: "b", title: "Work", columns: columns)
+                _ = store.createFolder(withTile: "e", title: "Play", columns: columns)
                 for index in 0..<extraFolders {
-                    _ = store.createFolder(withTile: AnyHashable("x\(index)"), title: "F\(index)")
+                    _ = store.createFolder(withTile: AnyHashable("x\(index)"), title: "F\(index)", columns: columns)
                 }
             }
         )
@@ -239,11 +239,11 @@ final class TileGridAccessibilityTests: XCTestCase {
     func testPanelShortcutRemoveFromFolderAction() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
-            prepare: { store in
-                if let folder = store.createFolder(withTile: "b", title: "Work") {
-                    _ = store.addToFolder("c", folderID: folder.id)
+            prepare: { store, columns in
+                if let folder = store.createFolder(withTile: "b", title: "Work", columns: columns) {
+                    _ = store.addToFolder("c", folderID: folder.id, columns: columns)
                 }
-                _ = store.createFolder(withTile: "e", title: "Play")
+                _ = store.createFolder(withTile: "e", title: "Play", columns: columns)
             }
         )
         let work = try XCTUnwrap(host.folders.first { $0.title == "Work" }?.id)
@@ -276,11 +276,11 @@ final class TileGridAccessibilityTests: XCTestCase {
     func testPanelShortcutMoveToFolderAction() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
-            prepare: { store in
-                if let folder = store.createFolder(withTile: "b", title: "Work") {
-                    _ = store.addToFolder("c", folderID: folder.id)
+            prepare: { store, columns in
+                if let folder = store.createFolder(withTile: "b", title: "Work", columns: columns) {
+                    _ = store.addToFolder("c", folderID: folder.id, columns: columns)
                 }
-                _ = store.createFolder(withTile: "e", title: "Play")
+                _ = store.createFolder(withTile: "e", title: "Play", columns: columns)
             }
         )
         let work = try XCTUnwrap(host.folders.first { $0.title == "Work" }?.id)
@@ -297,9 +297,9 @@ final class TileGridAccessibilityTests: XCTestCase {
     func testEndEditingClearsFolderActions() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c"].map { tesseraTestTile($0, size: .small) },
-            prepare: { store in
-                if let folder = store.createFolder(withTile: "b", title: "Work") {
-                    _ = store.addToFolder("c", folderID: folder.id)
+            prepare: { store, columns in
+                if let folder = store.createFolder(withTile: "b", title: "Work", columns: columns) {
+                    _ = store.addToFolder("c", folderID: folder.id, columns: columns)
                 }
             }
         )

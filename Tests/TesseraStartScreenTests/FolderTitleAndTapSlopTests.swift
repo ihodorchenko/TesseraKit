@@ -74,7 +74,7 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         let store = TileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog([tesseraTestTile("a")])
-        XCTAssertEqual(try XCTUnwrap(store.createFolder(withTile: "a")).title, "")
+        XCTAssertEqual(try XCTUnwrap(store.createFolder(withTile: "a", columns: 4)).title, "")
     }
 
     // MARK: - Заголовок панели и подпись плитки папки

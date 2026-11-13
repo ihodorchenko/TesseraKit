@@ -1440,9 +1440,10 @@ public final class TesseraTileGridView: UIView {
     /// Индекс элемента в порядке сетки.
     ///
     /// Индекс считается по снимку `TileStore`, без панели раскрытой папки:
-    /// координатор редактирования передаёт его в
-    /// `TileStore.moveItem(_:toIndex:columns:)`, и «лишний» элемент сдвинул бы
-    /// модель. Панель адресуется отдельно — ``expandedFolderID``.
+    /// он совпадает с порядком чтения ячеек модели, по нему координатор
+    /// сообщает делегату итоговую позицию (`didMove(_:toCell:)` несёт ячейку,
+    /// индекс остаётся для VoiceOver и анонсов). Панель адресуется отдельно —
+    /// ``expandedFolderID``.
     ///
     /// - Parameter id: Идентификатор ярлыка или папки.
     /// - Returns: Индекс или `nil`, если элемента нет в снимке.
@@ -1714,71 +1715,11 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Позиция вставки перетаскиваемого элемента по порядку чтения (E12.1).
-    ///
-    /// Палец над пустым местом (дыра, зазор, область под плитками) не попадает
-    /// ни в одну плитку, и позицию задаёт **порядок чтения**: палец стоит в
-    /// клетке `(строка, колонка)` базовой раскладки, а элемент встаёт сразу
-    /// после последней плитки, чей левый верхний угол не позже этой клетки.
-    /// Над последней строкой справа от плиток — в конец, выше первой строки —
-    /// в начало, в дыре — между плитками, которые она разделяет по порядку
-    /// чтения. Зазор между клетками относится к клетке слева/выше (зазор — это
-    /// хвост клетки), поэтому палец в зазоре встаёт после её плитки.
-    ///
-    /// Раскладка — базовая, та же, что у хит-теста (E11.7), с самим
-    /// перетаскиваемым элементом на его базовом месте; в счёт позиции он не
-    /// входит. Позиция — индекс среди остальных элементов базового порядка
-    /// (`0 ... items.count - 1`), как у
-    /// `TileLayoutEngine.previewOrder(items:draggingID:insertionIndex:)`.
-    ///
-    /// - Parameters:
-    ///   - point: Точка пальца в координатах сетки.
-    ///   - items: Элементы базового порядка (без панели).
-    ///   - draggingID: Идентификатор перетаскиваемого элемента.
-    /// - Returns: Позиция вставки или `nil`, если раскладку посчитать нельзя.
-    func baseInsertionIndex(
-        forGridPoint point: CGPoint,
-        items: [TileGridItem],
-        draggingID: AnyHashable
-    ) -> Int? {
-        guard let geometry = baseLayoutGeometry() else { return nil }
-        let key = geometry.key
-        let metrics = geometry.metrics
-        let pitch = metrics.unit + metrics.spacing
-        guard pitch.isFinite, pitch > 0 else { return nil }
-
-        let packed: [(id: AnyHashable, size: TileSize)] = items.map { item in
-            (id: item.id, size: TileLayoutEngine.fittingSize(item.size, columns: key.columns))
-        }
-        let slots = TileLayoutEngine.pack(items: packed, columns: key.columns, unit: metrics.unit)
-        guard slots.count == items.count else { return nil }
-
-        // Клетка пальца в логических (не зеркальных) координатах сетки.
-        let content = contentPoint(fromGridPoint: point)
-        let localX = key.isRightToLeft
-            ? geometry.gridLeft + metrics.width - content.x
-            : content.x - geometry.gridLeft
-        guard localX.isFinite, content.y.isFinite else { return nil }
-        let fingerColumn = Int((localX / pitch).rounded(.down))
-        let fingerRow = Int(((content.y - geometry.top) / pitch).rounded(.down))
-
-        var insertion = 0
-        var restIndex = 0
-        for (item, slot) in zip(items, slots) where item.id != draggingID {
-            if slot.row < fingerRow || (slot.row == fingerRow && slot.column <= fingerColumn) {
-                insertion = restIndex + 1
-            }
-            restIndex += 1
-        }
-        return insertion
-    }
-
     /// Логическая ячейка базовой раскладки под точкой (E14.5, D21, D33).
     ///
     /// Палец решает, **в какую клетку** падает элемент: строка и колонка
     /// считаются по шагу `юнит + зазор` от начала сетки (зазор между клетками
-    /// относится к клетке слева/выше, как в
-    /// ``baseInsertionIndex(forGridPoint:items:draggingID:)``). Колонка
+    /// относится к клетке слева/выше, как хвост клетки). Колонка
     /// логическая, незеркальная: в RTL точка отражается внутри ширины сетки, так
     /// что колонка 0 — начало чтения. Результат **не ограничен** холстом: над
     /// полями и ниже контента он выходит за `0 ..< columns` / занятые строки, это

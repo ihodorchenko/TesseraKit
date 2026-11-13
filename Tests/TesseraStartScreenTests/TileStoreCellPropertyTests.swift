@@ -33,8 +33,8 @@ final class TileStoreCellPropertyTests: XCTestCase {
         }
         // Охват: каждая операция реально выполнялась успешно (а не только отказывала).
         for name in [
-            "moveItem", "moveItemToNewRow", "resizeInPlace", "createFolder", "addToFolder",
-            "extract", "extractNewRow", "moveBetweenFolders", "unpin", "pinTileToNewRow", "collapseEmptyRows",
+            "moveItem", "moveItemToNewRow", "resize", "createFolder", "addToFolder",
+            "extract", "extractNewRow", "moveBetweenFolders", "unpin", "pinTile", "collapseEmptyRows",
         ] {
             XCTAssertGreaterThan(successes[name] ?? 0, 0, "операция \(name) ни разу не удалась: \(successes)")
         }
@@ -82,8 +82,8 @@ final class TileStoreCellPropertyTests: XCTestCase {
             case 2:
                 let candidates: [AnyHashable] = topIDs + folderTiles.map { AnyHashable($0) }
                 if let id = pick(candidates) {
-                    ok = store.resizeInPlace(id, to: TileStoreCellPropertyTests.sizes[rng.int(upperBound: 4)], columns: columns)
-                    name = "resizeInPlace"
+                    ok = store.resize(id, to: TileStoreCellPropertyTests.sizes[rng.int(upperBound: 4)], columns: columns)
+                    name = "resize"
                 }
             case 3:
                 if topTiles.count >= 2, let source = pick(topTiles) {
@@ -108,7 +108,7 @@ final class TileStoreCellPropertyTests: XCTestCase {
             case 8:
                 if pinnedCount > 4, let tile = pick(topTiles + folderTiles) { ok = store.unpin(tile, columns: columns); name = "unpin" }
             case 9:
-                if let tile = pick(unpinned) { ok = store.pinTileToNewRow(tile, columns: columns); name = "pinTileToNewRow" }
+                if let tile = pick(unpinned) { ok = store.pinTile(tile, columns: columns); name = "pinTile" }
             case 10:
                 ok = store.collapseEmptyRows(columns: columns)
                 name = "collapseEmptyRows"

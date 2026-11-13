@@ -34,10 +34,10 @@ final class TileCellDragTests: XCTestCase {
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
         /// Перестановки по сетке.
-        var moves: [(id: AnyHashable, index: Int)] = []
+        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
 
         /// Вынос/перенос между папками.
-        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, index: Int?)] = []
+        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, cell: TileGridPlacement?)] = []
 
         /// Созданные папки.
         var createdFolders: [TileFolder] = []
@@ -51,18 +51,18 @@ final class TileCellDragTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toIndex index: Int
+            toCell cell: TileGridPlacement
         ) {
-            moves.append((tileID, index))
+            moves.append((tileID, cell))
         }
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
             toFolder folderID: AnyHashable?,
-            atIndex index: Int?
+            atCell cell: TileGridPlacement?
         ) {
-            folderMoves.append((tileID, folderID, index))
+            folderMoves.append((tileID, folderID, cell))
         }
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TileFolder) {

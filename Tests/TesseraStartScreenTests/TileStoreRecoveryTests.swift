@@ -90,8 +90,8 @@ final class TileStoreRecoveryTests: XCTestCase {
     /// Сохраняет файл с папкой [B, C] на месте B: порядок [A, папка, D].
     private func saveLayoutWithFolder(in directory: TesseraTestDirectory) throws -> AnyHashable {
         let store = makeStore(catalog(["a", "b", "c", "d"]), in: directory)
-        let folder = try XCTUnwrap(store.createFolder(withTile: "b", title: "F"))
-        XCTAssertTrue(store.addToFolder("c", folderID: folder.id))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "b", title: "F", columns: 6))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: 6))
         try store.save()
         return folder.id
     }
@@ -169,7 +169,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(store.snapshot().folders.first?.tiles.map { $0.id }, ["b", "c"])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["d"])
         XCTAssertTrue(store.isPinned("b"))
-        XCTAssertFalse(store.pin("b"), "ярлык из папки не закрепляется второй раз")
+        XCTAssertFalse(store.pinTile("b", columns: 6), "ярлык из папки не закрепляется второй раз")
         assertInvariants(store, catalogIDs: ["a", "b", "c", "d"])
     }
 
@@ -226,7 +226,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), original)
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path))
 
-        XCTAssertTrue(store.unpin("b"))
+        XCTAssertTrue(store.unpin("b", columns: 6))
         XCTAssertNil(store.lastPersistenceError)
         let reloaded = makeStore(catalog(["a", "b", "c"]), in: directory)
         XCTAssertNoThrow(try reloaded.load())
@@ -254,7 +254,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(backups.count, 1)
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), original)
 
-        XCTAssertTrue(store.resize("a", to: .wide))
+        XCTAssertTrue(store.resize("a", to: .wide, columns: 6))
         let written = try Data(contentsOf: store.fileURL)
         XCTAssertNotEqual(written, original)
         let reloaded = makeStore(catalog(["a", "b"]), in: directory)
