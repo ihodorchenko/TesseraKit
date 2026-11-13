@@ -337,21 +337,26 @@ final class DemoDeskModel: ObservableObject {
     /// Каталог регистрируется целиком, поэтому при первом запуске ярлыки
     /// автоматически попадают на сетку. Папка создаётся через публичное
     /// одобрение D14 (по умолчанию `TileStore.approval` разрешает всё).
+    /// Операции хранилища — по ячейкам (E14); ширина сетки известна только
+    /// после создания вью, поэтому сид использует умолчание D26 (6 колонок),
+    /// как и сетка Example.
     private func seedFolderIfNeeded() {
         guard store.snapshot().folders.isEmpty else { return }
+        let columns = TileLayoutEngine.defaultColumns
 
         if !store.isPinned("notes") {
-            store.pin("notes")
+            store.pinTile("notes", columns: columns)
         }
 
-        guard let folder = store.createFolder(withTile: "notes", title: "Работа") else {
+        guard let folder = store.createFolder(withTile: "notes", title: "Работа", columns: columns) else {
             return
         }
 
         if !store.isPinned("photos") {
-            store.pin("photos")
+            store.pinTile("photos", columns: columns)
         }
-        store.addToFolder("photos", folderID: folder.id)
+        store.addToFolder("photos", folderID: folder.id, columns: columns)
+        store.collapseEmptyRows(columns: columns)
     }
 
     /// Действие ярлыка: печать в консоль и алерт. D12: действие вызывает хост,
@@ -569,9 +574,9 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didMove tileID: AnyHashable,
-        toIndex index: Int
+        toCell cell: TileGridPlacement
     ) {
-        print("[TesseraKitExample] Move tile: \(tileID) → \(index)")
+        print("[TesseraKitExample] Move tile: \(tileID) → (\(cell.row), \(cell.column))")
     }
 
     /// Не публикуем изменение повторно, если флаг уже совпадает: иначе
@@ -733,13 +738,15 @@ final class StartDemoModel: ObservableObject {
     private func seedIfNeeded() {
         guard store.snapshot().folders.isEmpty else { return }
 
+        let columns = TileLayoutEngine.defaultColumns
         for app in Self.extraApps where store.isPinned(app.id) {
-            _ = store.unpin(app.id)
+            _ = store.unpin(app.id, columns: columns)
         }
 
-        if let folder = store.createFolder(withTile: "notes", title: "Работа") {
-            store.addToFolder("photos", folderID: folder.id)
+        if let folder = store.createFolder(withTile: "notes", title: "Работа", columns: columns) {
+            store.addToFolder("photos", folderID: folder.id, columns: columns)
         }
+        store.collapseEmptyRows(columns: columns)
     }
 
     private func makeAction(for title: String) -> () -> Void {

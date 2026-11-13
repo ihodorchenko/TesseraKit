@@ -22,9 +22,9 @@
 //  - B4: смена конфигурации на лету перестраивает контролы и «желе»;
 //  - B5: «желе» и дим переживают unpin и создание папки;
 //  - B6: `.layoutChanged` после unpin/resize;
-//  - C1: делегат получает фактический (зажатый/канонизированный) индекс, сетка
-//    синхронизируется со снимком store;
-//  - C2: `canonicalizeVisibleOrder(columns:)` после unpin/папочных операций;
+//  - C1: делегат получает фактическую (ограниченную холстом) ячейку, сетка
+//    синхронизируется со снимком store (E14.6: вместо индекса);
+//  - C2: порядок модели — порядок чтения ячеек после unpin/папочных операций;
 //  - C3: экран папки активирует ярлык общим маршрутом `grid.onTap`;
 //  - E9.5: drop в центр без удержания — возврат на исходное место (no-op);
 //  - E9.8а: значения по умолчанию для строгих границ и «желе» ±1,2°;
@@ -62,8 +62,8 @@ final class DragSessionTests: XCTestCase {
     /// Делегат-рекордер событий координатора.
     private final class DragDelegateRecorder: TesseraTileEditCoordinatorDelegate {
 
-        /// События `didMove(toIndex:)` в порядке прихода.
-        var moves: [(id: AnyHashable, index: Int)] = []
+        /// События `didMove(toCell:)` в порядке прихода.
+        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
 
         /// События `didUnpin`.
         var unpins: [AnyHashable] = []
@@ -113,9 +113,9 @@ final class DragSessionTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toIndex index: Int
+            toCell cell: TileGridPlacement
         ) {
-            moves.append((tileID, index))
+            moves.append((tileID, cell))
         }
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TileFolder) {
@@ -164,8 +164,8 @@ final class DragSessionTests: XCTestCase {
                 tesseraTestTile("b", size: .small),
             ],
             configuration: configuration,
-            prepare: { store in
-                _ = store.createFolder(withTile: "b")
+            prepare: { store, columns in
+                _ = store.createFolder(withTile: "b", columns: columns)
             }
         )
     }
@@ -247,7 +247,7 @@ final class DragSessionTests: XCTestCase {
             "Drop в краевой зоне завершился перемещением"
         )
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("a"))
-        XCTAssertEqual(recorder.moves.first?.index, 0, "Фактический индекс в порядке чтения")
+        XCTAssertEqual(recorder.moves.first?.cell, folderCell, "Фактическая ячейка")
         XCTAssertEqual(host.store.placement(of: "a"), folderCell, "Ярлык — на ячейке папки")
         XCTAssertEqual(
             host.store.placement(of: folderID),
@@ -574,7 +574,7 @@ final class DragSessionTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("a"))
         // Хост меняет модель и применяет снимок, пока палец ещё держит плитку.
-        XCTAssertTrue(host.store.unpin("c"))
+        XCTAssertTrue(host.store.unpin("c", columns: host.host.grid.columns))
         host.host.grid.update(snapshot: host.store.snapshot(), animated: false)
         host.host.layout()
 
@@ -883,13 +883,13 @@ final class DragSessionTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    // MARK: - C1: фактический индекс из store
+    // MARK: - C1: фактическая ячейка из store
 
-    /// Drop отдаёт делегату фактический индекс элемента в порядке чтения после
+    /// Drop отдаёт делегату фактическую ячейку элемента после
     /// `TileStore.moveItem(_:toCell:columns:)`, а сетка синхронизируется со
-    /// снимком store (E10.5-C1, E14.5): «a» встала на ячейку «c», «c» вытолкнута
-    /// вниз.
-    func testDropReportsActualIndexFromStore() throws {
+    /// снимком store (E10.5-C1, E14.5, E14.6): «a» встала на ячейку «c», «c»
+    /// вытолкнута вниз.
+    func testDropReportsActualCellFromStore() throws {
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("a", size: .small),
@@ -907,14 +907,15 @@ final class DragSessionTests: XCTestCase {
 
         XCTAssertTrue(host.waitUntil { recorder.moves.count == 1 })
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("a"))
-        XCTAssertEqual(recorder.moves.first?.index, 1, "Фактический индекс в порядке чтения")
+        XCTAssertEqual(recorder.moves.first?.cell, TileGridPlacement(row: 0, column: 2), "Фактическая ячейка: бывшая «c»")
+        XCTAssertEqual(host.store.placement(of: "c"), TileGridPlacement(row: 1, column: 2), "«c» вытолкнута вниз")
         XCTAssertEqual(host.storeIDs, ["b", "a", "c"])
         XCTAssertEqual(host.gridIDs, host.storeIDs, "Сетка синхронизирована со store")
     }
 
-    /// Публичный `move` зажимает индекс хранилищем и отдаёт делегату
-    /// фактический, а не запрошенный индекс (E10.5-C1).
-    func testPublicMoveClampsAndReportsActualIndex() throws {
+    /// Публичный `move(_:toCell:)` ограничивает ячейку холстом и отдаёт делегату
+    /// фактическую, а не запрошенную ячейку (E10.5-C1, E14.6).
+    func testPublicMoveClampsAndReportsActualCell() throws {
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("a", size: .small),
@@ -925,18 +926,18 @@ final class DragSessionTests: XCTestCase {
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder
 
-        XCTAssertTrue(host.coordinator.move("a", toIndex: 99))
+        XCTAssertTrue(host.coordinator.move("a", toCell: tesseraCell(0, 99)))
         XCTAssertEqual(recorder.moves.count, 1)
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("a"))
-        XCTAssertEqual(recorder.moves.first?.index, 2, "Индекс зажат до последнего")
+        XCTAssertEqual(recorder.moves.first?.cell, tesseraCell(0, 3), "Колонка зажата холстом из 4 колонок")
         XCTAssertEqual(host.storeIDs, ["b", "c", "a"])
         XCTAssertEqual(host.gridIDs, host.storeIDs)
     }
 
-    /// Drop после канонизации порядка (E10.15): сетка совпадает со снимком
-    /// store, даже если тот переставил соседей; делегат получает индекс из
-    /// хранилища (E10.5-C1).
-    func testDropSyncsGridWithCanonicalizedStoreOrder() throws {
+    /// Drop: сетка совпадает со снимком store, даже если выталкивание
+    /// переставило соседей; делегат получает ячейку из хранилища (E10.5-C1,
+    /// E14.6).
+    func testDropSyncsGridWithStoreOrder() throws {
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("A", size: .medium),
@@ -963,16 +964,17 @@ final class DragSessionTests: XCTestCase {
         )
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("S"))
         XCTAssertEqual(
-            recorder.moves.first?.index,
-            storeIDs.firstIndex(of: AnyHashable("S")),
-            "Делегат получил индекс из store"
+            recorder.moves.first?.cell,
+            host.store.placement(of: "S"),
+            "Делегат получил ячейку из store"
         )
     }
 
-    // MARK: - C2: канонизация после unpin/папочных операций
+    // MARK: - C2: порядок модели = порядок чтения ячеек
 
-    /// После unpin видимый порядок приводится к порядку чтения (E10.5-C2).
-    func testCanonicalizeVisibleOrderAfterUnpin() throws {
+    /// После unpin порядок модели остаётся порядком чтения ячеек: оставшиеся
+    /// элементы не двигаются (E10.5-C2, E14.6).
+    func testUnpinKeepsReadingOrderOfCells() throws {
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("A", size: .medium),
@@ -992,13 +994,14 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(
             host.storeIDs,
             ["A", "S", "W"],
-            "Unpin канонизировал порядок"
+            "Порядок чтения ячеек без открепленного"
         )
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
     }
 
-    /// Создание папки тоже канонизирует видимый порядок (E10.5-C2).
-    func testCanonicalizeVisibleOrderAfterFolderCreation() throws {
+    /// Создание папки оставляет порядок модели порядком чтения ячеек (E10.5-C2,
+    /// E14.6).
+    func testFolderCreationKeepsReadingOrderOfCells() throws {
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("A", size: .medium),
@@ -1009,24 +1012,21 @@ final class DragSessionTests: XCTestCase {
         let folder = try XCTUnwrap(host.coordinator.createFolder(withTile: "S"))
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
         XCTAssertEqual(host.storeIDs, ["A", folder.id, "W"], "Порядок чтения после папки")
-        XCTAssertEqual(
-            host.storeIDs,
-            TileStore.readingOrder(of: host.store.snapshot().layoutItems, columns: 4)
-        )
+        XCTAssertEqual(host.storeIDs, host.store.placementReadingOrder(forColumns: 4))
     }
 
     /// Перемещение ярлыка из папки на рабочий стол оставляет порядок модели
     /// порядком чтения ячеек и идёт через функцию одобрения (D14, E10.5-C2,
     /// E14.5): последний ярлык занимает ячейку исчезнувшей папки.
-    func testCanonicalizeVisibleOrderAfterMoveBetweenFolders() throws {
+    func testMoveFromFolderToDesktopKeepsReadingOrderOfCells() throws {
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("A", size: .medium),
                 tesseraTestTile("W", size: .wide),
                 tesseraTestTile("S", size: .small),
             ],
-            prepare: { store in
-                _ = store.createFolder(withTile: "S")
+            prepare: { store, columns in
+                _ = store.createFolder(withTile: "S", columns: columns)
             }
         )
         let folderID = try XCTUnwrap(host.firstFolderID)
@@ -1052,9 +1052,9 @@ final class DragSessionTests: XCTestCase {
                 tesseraTestTile("c", size: .small),
                 tesseraTestTile("d", size: .small),
             ],
-            prepare: { store in
-                if let folder = store.createFolder(withTile: "a") {
-                    _ = store.addToFolder("b", folderID: folder.id)
+            prepare: { store, columns in
+                if let folder = store.createFolder(withTile: "a", columns: columns) {
+                    _ = store.addToFolder("b", folderID: folder.id, columns: columns)
                 }
             }
         )
@@ -1084,8 +1084,8 @@ final class DragSessionTests: XCTestCase {
         folderTile.badge = .none
         let host = TesseraTestDragHost(
             descriptors: [tesseraTestTile("a", size: .small), folderTile],
-            prepare: { store in
-                _ = store.createFolder(withTile: "in-folder")
+            prepare: { store, columns in
+                _ = store.createFolder(withTile: "in-folder", columns: columns)
             }
         )
         var tapped: [TileGridItem] = []
@@ -1112,8 +1112,8 @@ final class DragSessionTests: XCTestCase {
                 tesseraTestTile("a", size: .small),
                 tesseraTestTile("b", size: .small),
             ],
-            prepare: { store in
-                _ = store.createFolder(withTile: "b")
+            prepare: { store, columns in
+                _ = store.createFolder(withTile: "b", columns: columns)
             }
         )
         var tapped: [TileGridItem] = []
@@ -1323,10 +1323,10 @@ final class DragSessionTests: XCTestCase {
             grid.update(snapshot: snapshot, animated: false)
         }
 
-        XCTAssertTrue(host.coordinator.move("a", toIndex: 99), "Порядок изменился")
+        XCTAssertTrue(host.coordinator.move("a", toCell: tesseraCell(0, 3)), "Раскладка изменилась")
         XCTAssertEqual(recorder.moves.count, 1, "didMove пришёл, несмотря на синхронный onChange")
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("a"))
-        XCTAssertEqual(recorder.moves.first?.index, 2, "Фактический индекс")
+        XCTAssertEqual(recorder.moves.first?.cell, tesseraCell(0, 3), "Фактическая ячейка")
         XCTAssertEqual(host.gridIDs, host.storeIDs)
         XCTAssertTrue(host.waitUntil { !posts.isEmpty }, ".layoutChanged опубликован")
         XCTAssertEqual(posts.last?.0, UIAccessibility.Notification.layoutChanged)
@@ -1346,8 +1346,8 @@ final class DragSessionTests: XCTestCase {
         )
         let host = TesseraTestDragHost(
             descriptors: [tesseraTestTile("a", size: .small), folderTile],
-            prepare: { store in
-                _ = store.createFolder(withTile: "in-folder")
+            prepare: { store, columns in
+                _ = store.createFolder(withTile: "in-folder", columns: columns)
             }
         )
         let folder = try XCTUnwrap(host.folders.first)
@@ -1671,20 +1671,20 @@ final class DragSessionTests: XCTestCase {
 
     // MARK: - E11.1: drag ярлыка из панели папки
 
-    /// Делегат, реализующий только новый колбэк с индексом (E11.1): прежний
-    /// `didMove(toFolder:)` при этом не вызывается (ровно один из двух).
+    /// Делегат, реализующий только колбэк с ячейкой (E11.1, E14.6): `didMove(toFolder:)`
+    /// при этом не вызывается (ровно один из двух).
     private final class IndexedMoveRecorder: TesseraTileEditCoordinatorDelegate {
 
-        /// События `didMove(toFolder:atIndex:)`.
-        var moves: [(id: AnyHashable, folder: AnyHashable?, index: Int?)] = []
+        /// События `didMove(toFolder:atCell:)`.
+        var moves: [(id: AnyHashable, folder: AnyHashable?, cell: TileGridPlacement?)] = []
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
             toFolder folderID: AnyHashable?,
-            atIndex index: Int?
+            atCell cell: TileGridPlacement?
         ) {
-            moves.append((tileID, folderID, index))
+            moves.append((tileID, folderID, cell))
         }
     }
 
@@ -1694,21 +1694,17 @@ final class DragSessionTests: XCTestCase {
             mergeHoverDuration: 0.05,
             magnetSnapRadius: 0
         )
-    ) -> TesseraTestDragHost {
-        TesseraTestDragHost(
-            descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
-            configuration: configuration,
-            prepare: { store in
-                // E12.2: папки создаются medium; геометрия этих тестов рассчитана
-                // на малые плитки-папки, поэтому возвращаем им small.
-                if let folder = store.createFolder(withTile: "b") {
-                    _ = store.addToFolder("c", folderID: folder.id)
-                    _ = store.resize(folder.id, to: .small)
-                }
-                if let folder = store.createFolder(withTile: "e") {
-                    _ = store.resize(folder.id, to: .small)
-                }
-            }
+    ) throws -> TesseraTestDragHost {
+        // E14.6: компактная раскладка как до E14 (`packed`); папки — small:
+        // геометрия этих тестов рассчитана на малые плитки-папки.
+        try TesseraTestDragHost(
+            packed: [
+                .tile("a", .small),
+                .folder("F1", .small, [("b", .small), ("c", .small)]),
+                .tile("d", .small),
+                .folder("F2", .small, [("e", .small)]),
+            ],
+            configuration: configuration
         )
     }
 
@@ -1757,7 +1753,7 @@ final class DragSessionTests: XCTestCase {
     /// стартует drag с источником-папкой; модель за время drag не меняется,
     /// сетка показывает отображаемый снимок с ярлыком после папки.
     func testLongPressOnPanelIconStartsDragFromFolder() throws {
-        let host = makePanelHost()
+        let host = try makePanelHost()
         let (f1, _) = try panelHostFolderIDs(host)
         let before = host.storeIDs
 
@@ -1785,9 +1781,9 @@ final class DragSessionTests: XCTestCase {
     }
 
     /// Вынос на сетку: ярлык встаёт на ячейку превью, делегат получает
-    /// `didMove(toFolder: nil, atIndex:)`, прежний колбэк не вызывается.
-    func testDropOutOfFolderLandsAtPreviewIndex() throws {
-        let host = makePanelHost()
+    /// `didMove(toFolder: nil, atCell:)`, прежний колбэк не вызывается.
+    func testDropOutOfFolderLandsAtPreviewCell() throws {
+        let host = try makePanelHost()
         let recorder = IndexedMoveRecorder()
         host.coordinator.delegate = recorder
         let (f1, _) = try panelHostFolderIDs(host)
@@ -1808,7 +1804,7 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(recorder.moves.count, 1)
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("c"))
         XCTAssertNil(recorder.moves.first?.folder ?? nil)
-        XCTAssertEqual(recorder.moves.first?.index, 0)
+        XCTAssertEqual(recorder.moves.first?.cell, aCell)
         XCTAssertEqual(host.storeIDs.first, AnyHashable("c"))
         XCTAssertEqual(host.store.placement(of: "c"), aCell)
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b"] as [AnyHashable])
@@ -1820,9 +1816,9 @@ final class DragSessionTests: XCTestCase {
     }
 
     /// Вынос последнего ярлыка: папка исчезает (её ячейка остаётся дырой), а
-    /// индекс учитывает, что папка исчезла из итогового порядка.
-    func testDropOfLastTileDissolvesFolderAndAdjustsIndex() throws {
-        let host = makePanelHost()
+    /// делегат получает итоговую ячейку ярлыка.
+    func testDropOfLastTileDissolvesFolderAndReportsCell() throws {
+        let host = try makePanelHost()
         let recorder = IndexedMoveRecorder()
         host.coordinator.delegate = recorder
         let (_, f2) = try panelHostFolderIDs(host)
@@ -1838,7 +1834,7 @@ final class DragSessionTests: XCTestCase {
         XCTAssertFalse(host.storeIDs.contains(f2), "Папка из одного ярлыка исчезла")
         XCTAssertEqual(host.storeIDs.last, AnyHashable("e"), "Ярлык — в новой строке")
         XCTAssertEqual(host.store.placement(of: "e")?.column, 0)
-        XCTAssertEqual(recorder.moves.first?.index, host.storeIDs.count - 1)
+        XCTAssertEqual(recorder.moves.first?.cell, host.store.placement(of: "e"))
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
         XCTAssertTrue(host.waitForDragCleanup("e"))
     }
@@ -1846,7 +1842,7 @@ final class DragSessionTests: XCTestCase {
     /// Перенос в другую папку: центр папки-цели с выдержанным удержанием.
     /// Работает и прежний колбэк (делегат, не знающий про индекс).
     func testDropOnOtherFolderCenterAfterHoldMovesTile() throws {
-        let host = makePanelHost()
+        let host = try makePanelHost()
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder
         let (f1, f2) = try panelHostFolderIDs(host)
@@ -1875,7 +1871,7 @@ final class DragSessionTests: XCTestCase {
     /// Без удержания drop на центр другой папки — no-op: модель не тронута,
     /// колбэков нет, сетка возвращается к порядку модели.
     func testDropOnOtherFolderCenterWithoutHoldIsNoOp() throws {
-        let host = makePanelHost(
+        let host = try makePanelHost(
             configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
         )
         let recorder = DragDelegateRecorder()
@@ -1899,7 +1895,7 @@ final class DragSessionTests: XCTestCase {
     /// Центр родной папки (даже с выдержанным удержанием) и отмена жеста
     /// возвращают ярлык: модель и делегат не затронуты.
     func testDropOnSourceFolderCenterAndCancelLeaveModelUntouched() throws {
-        let host = makePanelHost()
+        let host = try makePanelHost()
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder
         let (f1, _) = try panelHostFolderIDs(host)
@@ -1933,7 +1929,7 @@ final class DragSessionTests: XCTestCase {
     /// Центр обычного ярлыка для ярлыка из папки не создаёт папку: работает
     /// как размещение на его ячейку (вынос на сетку).
     func testCenterOfPlainTileDoesNotCreateFolderForFolderSource() throws {
-        let host = makePanelHost()
+        let host = try makePanelHost()
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder
         let (f1, _) = try panelHostFolderIDs(host)
@@ -1956,7 +1952,7 @@ final class DragSessionTests: XCTestCase {
 
     /// Долгое нажатие по заголовку/фону панели в edit drag не начинает.
     func testLongPressOnPanelBackgroundDoesNotStartDrag() throws {
-        let host = makePanelHost()
+        let host = try makePanelHost()
         let (f1, _) = try panelHostFolderIDs(host)
         host.coordinator.beginEditing()
         host.host.grid.openFolder(try XCTUnwrap(host.folders.first), animated: false)
@@ -1975,7 +1971,7 @@ final class DragSessionTests: XCTestCase {
     /// Тап по папке в режиме редактирования открывает нативную панель, режим
     /// редактирования не прерывается, `onTap` приходит.
     func testTapOnFolderInEditModeOpensPanelWithoutLeavingEdit() throws {
-        let host = makePanelHost()
+        let host = try makePanelHost()
         let (f1, _) = try panelHostFolderIDs(host)
         var tapped: [AnyHashable] = []
         host.host.grid.onTap = { tapped.append($0.id) }
@@ -1994,7 +1990,7 @@ final class DragSessionTests: XCTestCase {
     /// Перехватчик `folderTapHandler` в edit работает как вне его: `true`
     /// отменяет раскрытие и `onTap`.
     func testFolderTapHandlerInterceptsInEditMode() throws {
-        let host = makePanelHost()
+        let host = try makePanelHost()
         let (f1, _) = try panelHostFolderIDs(host)
         var tapped = 0
         var intercepted = 0
@@ -2081,7 +2077,7 @@ final class DragSessionTests: XCTestCase {
         host.store.approval = { _, _, action in action != .addToFolder }
         let before = host.store.snapshot()
 
-        let result = host.store.createFolder(withTile: "b", adding: "a")
+        let result = host.store.createFolder(from: "a", onto: "b", columns: 4)
         guard case .addDenied = result else {
             return XCTFail("Ожидался откат второго шага, получено \(result)")
         }
@@ -2091,7 +2087,7 @@ final class DragSessionTests: XCTestCase {
         XCTAssertTrue(after.folders.isEmpty)
         // Хранилище остаётся рабочим: повторное создание после снятия запрета.
         host.store.approval = { _, _, _ in true }
-        guard case .created(let folder) = host.store.createFolder(withTile: "b", adding: "a") else {
+        guard case .created(let folder) = host.store.createFolder(from: "a", onto: "b", columns: 4) else {
             return XCTFail("Повторное создание должно пройти")
         }
         XCTAssertEqual(folder.tiles.map { $0.id }, ["b", "a"] as [AnyHashable])
@@ -2148,29 +2144,20 @@ final class DragSessionTests: XCTestCase {
     /// Стенд E12.1 (4 колонки): `s0` (кол. 0), папка «Работа» из одного ярлыка
     /// `mail` (кол. 1), medium `cal` (кол. 2–3), папка B из `m`,`n`,`p` — в
     /// модели ниже слева остаётся дыра под «Работой».
-    private func makeMoveOutHost(columns: Int = 4, magnet: CGFloat = 0) -> TesseraTestDragHost {
-        let descriptors: [TileDescriptor] = [
-            tesseraTestTile("s0", size: .small),
-            tesseraTestTile("mail", size: .small),
-            tesseraTestTile("cal", size: .medium),
-            tesseraTestTile("m", size: .small),
-            tesseraTestTile("n", size: .small),
-            tesseraTestTile("p", size: .small)
-        ]
-        return TesseraTestDragHost(
-            descriptors: descriptors,
+    private func makeMoveOutHost(columns: Int = 4, magnet: CGFloat = 0) throws -> TesseraTestDragHost {
+        // E14.6: компактная раскладка как до E14 (`packed`): новые папки — medium.
+        try TesseraTestDragHost(
+            packed: [
+                .tile("s0", .small),
+                .folder("Work", .medium, [("mail", .small)]),
+                .tile("cal", .medium),
+                .folder("B", .medium, [("m", .small), ("n", .small), ("p", .small)]),
+            ],
             columns: columns,
             configuration: TesseraTileEditConfiguration(
                 mergeHoverDuration: 0.05,
                 magnetSnapRadius: magnet
-            ),
-            prepare: { store in
-                _ = store.createFolder(withTile: "mail")
-                if let folder = store.createFolder(withTile: "m") {
-                    _ = store.addToFolder("n", folderID: folder.id)
-                    _ = store.addToFolder("p", folderID: folder.id)
-                }
-            }
+            )
         )
     }
 
@@ -2210,7 +2197,7 @@ final class DragSessionTests: XCTestCase {
     /// перестановка, не слияние.
     func testDropOfSoleFolderTileIntoModelHoleNeverEntersNeighborFolder() throws {
         for columns in [4, 5, 6] {
-            let host = makeMoveOutHost(columns: columns)
+            let host = try makeMoveOutHost(columns: columns)
             let (work, folderB) = try panelHostFolderIDs(host)
             let hole = try moveOutHolePoint(host, work: work)
 
@@ -2235,7 +2222,7 @@ final class DragSessionTests: XCTestCase {
     func testHoldOverNeighborFolderDoesNotSurviveMovingAway() throws {
         for columns in [4, 5, 6] {
             for waitForFire in [false, true] {
-                let host = makeMoveOutHost(columns: columns)
+                let host = try makeMoveOutHost(columns: columns)
                 let (work, folderB) = try panelHostFolderIDs(host)
                 let hole = try moveOutHolePoint(host, work: work)
                 let empty = emptyPoint(in: host)
@@ -2277,17 +2264,14 @@ final class DragSessionTests: XCTestCase {
 
     /// Стенд E11.7: ряд `a b c d` (small) и папка F (small) с ярлыками `f`, `g`
     /// во втором ряду, 4 колонки.
-    private func makeBaseHitHost() -> TesseraTestDragHost {
-        TesseraTestDragHost(
-            descriptors: ["a", "b", "c", "d", "f", "g"].map { tesseraTestTile($0, size: .small) },
-            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0),
-            prepare: { store in
-                // E12.2: папка создаётся medium; тесты E11.7 рассчитаны на small.
-                if let folder = store.createFolder(withTile: "f") {
-                    _ = store.addToFolder("g", folderID: folder.id)
-                    _ = store.resize(folder.id, to: .small)
-                }
-            }
+    private func makeBaseHitHost() throws -> TesseraTestDragHost {
+        // E14.6: компактная раскладка как до E14 (`packed`); папка — small.
+        try TesseraTestDragHost(
+            packed: [
+                .tile("a", .small), .tile("b", .small), .tile("c", .small), .tile("d", .small),
+                .folder("F", .small, [("f", .small), ("g", .small)]),
+            ],
+            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
         )
     }
 
@@ -2296,7 +2280,7 @@ final class DragSessionTests: XCTestCase {
     /// сторону сдвига, а превью при этом возвращается к базовой раскладке: цель
     /// остаётся под пальцем, подсветка рисуется на ней.
     func testFolderCenterReachableAfterPreviewShiftedItAway() throws {
-        let host = makeBaseHitHost()
+        let host = try makeBaseHitHost()
         let folderID = try XCTUnwrap(host.firstFolderID)
         let baseCenter = try XCTUnwrap(host.point(folderID, fx: 0.5, fy: 0.5))
         let baseEdge = try XCTUnwrap(host.point(folderID, fx: 0.1, fy: 0.5))
@@ -2344,7 +2328,7 @@ final class DragSessionTests: XCTestCase {
     /// куда цель уехала после превью (вытолкнута вниз, D31), и над собственной
     /// ячейкой — нет.
     func testGroupFiresOnlyInsideBaseFrameCenter() throws {
-        let host = makeBaseHitHost()
+        let host = try makeBaseHitHost()
         let baseCenter = try XCTUnwrap(host.point("b", fx: 0.5, fy: 0.5))
         let baseEdge = try XCTUnwrap(host.point("b", fx: 0.9, fy: 0.5))
         let ownSlotCenter = try XCTUnwrap(host.point("a", fx: 0.5, fy: 0.5))
@@ -2438,7 +2422,7 @@ final class DragSessionTests: XCTestCase {
             CGPoint(x: 0.95, y: 0.05)
         ]
         for grab in grabs {
-            let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.05))
+            let host = try makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.05))
             let (f1, f2) = try panelHostFolderIDs(host)
             let start = try startPanelDrag(host, folderID: f1, iconIndex: 1, grab: grab)
             let session = try XCTUnwrap(host.coordinator.dragSession)
@@ -2478,7 +2462,7 @@ final class DragSessionTests: XCTestCase {
         let grabs = [CGPoint(x: 0.05, y: 0.05), CGPoint(x: 0.95, y: 0.95), CGPoint(x: 0.95, y: 0.05)]
         for columns in [4, 5, 6] {
             for grab in grabs {
-                let host = makeMoveOutHost(columns: columns, magnet: 28)
+                let host = try makeMoveOutHost(columns: columns, magnet: 28)
                 let (work, folderB) = try panelHostFolderIDs(host)
                 let hole = try moveOutHolePoint(host, work: work)
 
@@ -2521,7 +2505,7 @@ final class DragSessionTests: XCTestCase {
     func testPanelIconWalkToOtherFolderCenterMerges() throws {
         let grabs = [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.05, y: 0.05), CGPoint(x: 0.95, y: 0.95)]
         for grab in grabs {
-            let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1))
+            let host = try makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1))
             let (f1, f2) = try panelHostFolderIDs(host)
             let start = try startPanelDrag(host, folderID: f1, iconIndex: 1, grab: grab)
             let session = try XCTUnwrap(host.coordinator.dragSession)
@@ -2549,7 +2533,7 @@ final class DragSessionTests: XCTestCase {
     /// E12.3: тот же 14-шаговый заход с плитки сетки (создание папки и
     /// добавление в существующую) завершается слиянием.
     func testGridTileWalkToFolderCenterMerges() throws {
-        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1))
+        let host = try makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1))
         let (_, f2) = try panelHostFolderIDs(host)
         let start = try XCTUnwrap(host.point("a"))
         let target = try XCTUnwrap(host.point(f2))
@@ -2571,7 +2555,7 @@ final class DragSessionTests: XCTestCase {
     /// шаг ≥10 pt) готовности не даёт, даже когда суммарное время давно
     /// больше порога.
     func testContinuousMovementOverFolderCenterNeverBecomesReady() throws {
-        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.3))
+        let host = try makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.3))
         let (_, f2) = try panelHostFolderIDs(host)
         let center = try XCTUnwrap(host.point(f2))
 
@@ -2595,7 +2579,7 @@ final class DragSessionTests: XCTestCase {
     /// E12.3: сместиться на 15 pt и вернуться к старой точке — готовность не
     /// раньше порога от последнего перевзвода.
     func testReturnToOldAnchorDoesNotMergeEarlierThanHoldFromLastMove() throws {
-        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.4))
+        let host = try makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.4))
         let (_, f2) = try panelHostFolderIDs(host)
         let center = try XCTUnwrap(host.point(f2))
         let a = CGPoint(x: center.x - 8, y: center.y)
@@ -2625,7 +2609,7 @@ final class DragSessionTests: XCTestCase {
     /// E12.3 (хвост): drop без готовности на центре папки не оставляет превью
     /// более раннего reorder — порядок сетки равен модели, ярлык не на чужом слоте.
     func testNotReadyDropOnFolderCenterLeavesNoPushPreview() throws {
-        let host = makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 5))
+        let host = try makePanelHost(configuration: TesseraTileEditConfiguration(mergeHoverDuration: 5))
         let (f1, f2) = try panelHostFolderIDs(host)
         let modelBefore = host.storeIDs
         let start = try startPanelDrag(host, folderID: f1, iconIndex: 1)
@@ -2729,23 +2713,19 @@ final class DragSessionTests: XCTestCase {
     /// «Погода», папка «Работа» (из «Заметок» и «Фото»), large «Музыка» и малые
     /// «Настройки» **последними в модели** — упаковка поднимает их в «дыру» справа
     /// от календаря, то есть порядок модели не совпадает с порядком чтения.
-    private func makeStartLikeHost() -> TesseraTestDragHost {
-        TesseraTestDragHost(
-            descriptors: [
-                tesseraTestTile("mail", size: .small),
-                tesseraTestTile("calendar", size: .medium),
-                tesseraTestTile("weather", size: .wide),
-                tesseraTestTile("notes", size: .small),
-                tesseraTestTile("photos", size: .small),
-                tesseraTestTile("music", size: .large),
-                tesseraTestTile("settings", size: .small),
+    private func makeStartLikeHost() throws -> TesseraTestDragHost {
+        // E14.6: компактная раскладка как до E14 (`packed`): «Настройки» последние
+        // в порядке упаковки, но упаковка поднимает их в «дыру» справа от календаря.
+        try TesseraTestDragHost(
+            packed: [
+                .tile("mail", .small),
+                .tile("calendar", .medium),
+                .tile("weather", .wide),
+                .folder("Работа", .medium, [("notes", .small), ("photos", .small)]),
+                .tile("music", .large),
+                .tile("settings", .small),
             ],
-            configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1),
-            prepare: { store in
-                if let folder = store.createFolder(withTile: "notes", title: "Работа") {
-                    store.addToFolder("photos", folderID: folder.id)
-                }
-            }
+            configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.1)
         )
     }
 
@@ -2756,7 +2736,7 @@ final class DragSessionTests: XCTestCase {
     /// сдвигается влево до (0, 2), а календарь, который она накрывает, уходит
     /// вниз каскадом (D31). Ячейка «Почты» остаётся дырой.
     func testStartFromNormalModeMergeOntoHoleFillingTileKeepsTargetSlot() throws {
-        let host = makeStartLikeHost()
+        let host = try makeStartLikeHost()
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder
         XCTAssertFalse(host.coordinator.isEditing)
@@ -2797,11 +2777,10 @@ final class DragSessionTests: XCTestCase {
 
     /// E12.10 → E14.5: старт drag (в т. ч. из уже включённого edit и при возврате
     /// без слияния) не меняет ни модель, ни видимую раскладку: координаты ячеек —
-    /// сама модель, порядок не канонизируется (раньше `canonicalizeVisibleOrder`),
-    /// «Настройки» остаются в дыре справа от календаря.
+    /// сама модель, «Настройки» остаются в дыре справа от календаря.
     func testDragStartKeepsModelAndLayoutUntouched() throws {
         for editFirst in [false, true] {
-            let host = makeStartLikeHost()
+            let host = try makeStartLikeHost()
             let before = host.storeIDs.compactMap { host.host.grid.frame(forItemID: $0) }
             let idsBefore = host.storeIDs
             let cellsBefore = host.store.placements(forColumns: 4)

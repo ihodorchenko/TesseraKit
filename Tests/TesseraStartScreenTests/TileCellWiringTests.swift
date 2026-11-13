@@ -13,7 +13,7 @@
 //  - ширина сетки сообщается хранилищу и при смене колонок (D32);
 //  - сетка, построенная хостом без таблицы ячеек, подтягивается на входе в правку;
 //  - `onChange` хранилища отдаёт снимок с таблицей ячеек, когда ширина известна;
-//  - публичные `move(toIndex:)`/`createFolder`/`addToFolder` идут по ячейкам.
+//  - публичные `move(toCell:)`/`moveToNewRow`/`createFolder`/`addToFolder` идут по ячейкам.
 //
 //  Раскладки точные (`TileStoreCellFixture`), 4 колонки; без `sleep`.
 //
@@ -37,8 +37,8 @@ final class TileCellWiringTests: XCTestCase {
         /// События `didResize`.
         var resizes: [(id: AnyHashable, size: TileSize)] = []
 
-        /// События `didMove(toIndex:)`.
-        var moves: [(id: AnyHashable, index: Int)] = []
+        /// События `didMove(toCell:)`.
+        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didUnpin tileID: AnyHashable) {
             unpins.append(tileID)
@@ -55,9 +55,9 @@ final class TileCellWiringTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toIndex index: Int
+            toCell cell: TileGridPlacement
         ) {
-            moves.append((tileID, index))
+            moves.append((tileID, cell))
         }
     }
 
@@ -161,7 +161,7 @@ final class TileCellWiringTests: XCTestCase {
         var snapshots: [TileGridSnapshot] = []
         store.onChange = { snapshots.append($0) }
 
-        XCTAssertTrue(store.resizeInPlace("a", to: .medium, columns: 4))
+        XCTAssertTrue(store.resize("a", to: .medium, columns: 4))
         XCTAssertEqual(snapshots.last?.placementTable?.columns, 4)
         XCTAssertEqual(snapshots.last?.placementTable?.cells["b"], at(0, 2))
 
@@ -170,7 +170,9 @@ final class TileCellWiringTests: XCTestCase {
         bare.setCatalog([tesseraTestTile("a", size: .small)])
         var bareSnapshot: TileGridSnapshot?
         bare.onChange = { bareSnapshot = $0 }
-        XCTAssertTrue(bare.unpin("a"))
+        // Уведомление без операции с `columns`: ширина сетки хранилищу неизвестна.
+        bare.setCatalog([tesseraTestTile("a", size: .small), tesseraTestTile("b", size: .small)])
+        XCTAssertNotNil(bareSnapshot)
         XCTAssertNil(bareSnapshot?.placementTable, "Хост без ширины — прежний снимок")
     }
 
@@ -317,26 +319,27 @@ final class TileCellWiringTests: XCTestCase {
 
     // MARK: - Публичные операции координатора
 
-    /// Публичный `move(toIndex:)` идёт по ячейкам: элемент встаёт на ячейку того,
-    /// кто сейчас на этом индексе, тот выталкивается вниз; индекс за концом — в
-    /// новую строку; пустая строка схлопывается.
-    func testPublicMoveToIndexUsesCells() throws {
+    /// Публичные `move(toCell:)` и `moveToNewRow` идут по ячейкам: элемент
+    /// встаёт на ячейку (ограниченную холстом), мешающие выталкиваются вниз;
+    /// новая строка — в конце холста; пустая строка схлопывается; делегат
+    /// получает итоговую ячейку (E14.6: вместо `move(toIndex:)`).
+    func testPublicMoveToCellAndNewRowUseCells() throws {
         let host = try makeHoleyHost()
         let recorder = Recorder()
         host.coordinator.delegate = recorder
         // Порядок чтения: a (0,0), b (0,2), c (1,3), w (2,0).
 
-        XCTAssertTrue(host.coordinator.move("w", toIndex: 1), "«w» на индекс 1: ячейка «b»")
+        XCTAssertTrue(host.coordinator.move("w", toCell: at(0, 2)), "«w» на ячейку «b»")
         XCTAssertEqual(host.store.placement(of: "w"), at(0, 0), "4×2 ограничена холстом до колонки 0")
         XCTAssertEqual(host.storeIDs.first, AnyHashable("w"))
         XCTAssertEqual(recorder.moves.count, 1)
-        XCTAssertEqual(recorder.moves.first?.index, host.storeIDs.firstIndex(of: "w"))
+        XCTAssertEqual(recorder.moves.first?.cell, at(0, 0))
 
-        let toEnd = host.coordinator.move("a", toIndex: 99)
-        XCTAssertTrue(toEnd)
-        XCTAssertEqual(host.storeIDs.last, AnyHashable("a"), "Индекс за концом — новая строка")
+        XCTAssertTrue(host.coordinator.moveToNewRow("a"))
+        XCTAssertEqual(host.storeIDs.last, AnyHashable("a"), "Новая строка в конце холста")
         XCTAssertEqual(host.store.placement(of: "a")?.column, 0)
-        XCTAssertFalse(host.coordinator.move("a", toIndex: 99), "Уже на этом индексе")
+        XCTAssertEqual(recorder.moves.last?.cell, host.store.placement(of: "a"))
+        XCTAssertFalse(host.coordinator.moveToNewRow("a"), "Уже одна в нижней строке")
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
     }
 

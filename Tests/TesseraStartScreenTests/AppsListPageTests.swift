@@ -7,11 +7,10 @@
 //  список приложений + настройки» — `UITableView` с секциями по буквам и
 //  `sectionIndexTitles` (нативный паттерн), источник истины — `TileStore`.
 //
-//  W4: pin из списка идёт через `TileStore.pinTile(_:at:columns:)` с числом
-//  колонок сетки: ярлык встаёт по видимому индексу, а хранилище возвращает
-//  фактический (канонизированный) индекс. Unpin удаляет ярлык из видимого
-//  порядка, после чего страница канонизирует порядок при известных колонках;
-//  секции списка и позиция чтения при этом не меняются.
+//  W4 → E14.5/E14.6: pin из списка идёт через `TileStore.pinTile(_:columns:)`
+//  (новая строка в конце холста), unpin — через `TileStore.unpin(_:columns:)` и
+//  `collapseEmptyRows(columns:)` (дыра остаётся, схлопывается только пустая
+//  строка); секции списка и позиция чтения при этом не меняются.
 //
 //  Страница поднимается в настоящем окне: видимые ячейки и `contentSize`
 //  таблицы существуют только после layout в иерархии окна.
@@ -423,7 +422,7 @@ final class AppsListPageTests: XCTestCase {
             tile("Wide", id: "w", size: .wide),
             tile("Spark", id: "s", size: .small),
         ])
-        XCTAssertTrue(store.unpin("s"))
+        XCTAssertTrue(store.unpin("s", columns: 4))
         XCTAssertEqual(ids(store), ["a", "w"])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["s"])
 
@@ -465,7 +464,7 @@ final class AppsListPageTests: XCTestCase {
             tile("Wide", id: "w", size: .wide),
             tile("Spark", id: "s", size: .small),
         ])
-        XCTAssertTrue(store.unpin("s"))
+        XCTAssertTrue(store.unpin("s", columns: 4))
 
         let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
         let table = host(page)
@@ -488,23 +487,23 @@ final class AppsListPageTests: XCTestCase {
         XCTAssertEqual(ids(store), ["a", "w", "s"], "pin — в новую строку в конце")
     }
 
-    /// Фолбэк `columns == nil`: хост не сообщил раскладку — pin остаётся
-    /// прежним, ярлык дописывается в конец видимого порядка без канонизации
-    /// (поведение до W4; фиксируется контрактом фабрики).
-    func testPinWithoutColumnsAppendsWithoutCanonicalization() {
+    /// Фолбэк `columns == nil`: хост не сообщил раскладку странице — pin берёт
+    /// ширину, известную хранилищу (`effectiveColumns`), и ставит ярлык в новую
+    /// строку в конце холста (E14.5, E14.6).
+    func testPinWithoutColumnsUsesStoreWidthAndAppendsToNewRow() {
         let store = makeStore([
             tile("Aurora", id: "a", size: .medium),
             tile("Wide", id: "w", size: .wide),
             tile("Spark", id: "s", size: .small),
         ])
-        XCTAssertTrue(store.unpin("s"))
+        XCTAssertTrue(store.unpin("s", columns: 4))
 
         let page = TesseraAppsListPageViewController.make(store: store)
         let table = host(page)
         XCTAssertTrue(pin(true, forTileID: "s", title: "Spark", page: page, table: table))
 
         XCTAssertTrue(store.isPinned("s"))
-        XCTAssertEqual(ids(store), ["a", "w", "s"], "без колонок порядок не канонизируется")
+        XCTAssertEqual(ids(store), ["a", "w", "s"], "без колонок страница берёт ширину хранилища: новая строка в конце")
         XCTAssertEqual(store.snapshot().items.firstIndex { $0.id == AnyHashable("s") }, 2)
     }
 
@@ -609,10 +608,10 @@ final class AppsListPageTests: XCTestCase {
             tile("Alpha", id: "a", size: .small),
             tile("Bravo", id: "b", size: .small),
         ])
-        guard let folder = store.createFolder(withTile: "a", title: "Группа") else {
+        guard let folder = store.createFolder(withTile: "a", title: "Группа", columns: 4) else {
             return XCTFail("Не удалось создать папку")
         }
-        XCTAssertTrue(store.addToFolder("b", folderID: folder.id))
+        XCTAssertTrue(store.addToFolder("b", folderID: folder.id, columns: 4))
         XCTAssertEqual(ids(store), [folder.id])
 
         let page = TesseraAppsListPageViewController.make(store: store, columns: 4)

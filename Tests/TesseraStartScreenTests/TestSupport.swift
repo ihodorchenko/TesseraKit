@@ -328,6 +328,30 @@ final class TesseraTestWindowedGrid {
 
 // MARK: - Стенд drag-сессий (E10.5)
 
+/// Элемент раскладки стенда, упакованной как до E14 (`TesseraTestDragHost(packed:)`).
+enum TesseraTestPackedEntry {
+
+    /// Ярлык верхнего уровня.
+    case tile(String, TileSize)
+
+    /// Папка верхнего уровня с содержимым (размеры ярлыков внутри).
+    case folder(String, TileSize, [(String, TileSize)])
+
+    /// Идентификатор элемента.
+    var id: String {
+        switch self {
+        case let .tile(id, _), let .folder(id, _, _): return id
+        }
+    }
+
+    /// Запрошенный размер элемента.
+    var size: TileSize {
+        switch self {
+        case let .tile(_, size), let .folder(_, size, _): return size
+        }
+    }
+}
+
 /// Стенд windowed-drag-сессий: окно с сеткой, `TileStore` и живым
 /// координатором редактирования (E10.5).
 ///
@@ -358,20 +382,23 @@ final class TesseraTestDragHost {
     ///   - autosaves: Автосохранение хранилища; по умолчанию выключено, чтобы
     ///     тесты не писали на диск.
     ///   - prepare: Подготовка модели до постройки сетки (например, создание
-    ///     папки через `TileStore`).
+    ///     папки через `TileStore`); получает хранилище и ширину сетки для
+    ///     операций по ячейкам (E14.6). Раскладка до `prepare` — упаковка
+    ///     каталога (`placeItems`), операции работают по ячейкам: дыры остаются.
     convenience init(
         descriptors: [TileDescriptor],
         columns: Int = 4,
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(),
         autosaves: Bool = false,
-        prepare: ((TileStore) -> Void)? = nil
+        prepare: ((TileStore, Int) -> Void)? = nil
     ) {
         let directory = TesseraTestDirectory()
         try? directory.create()
         let store = TileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(descriptors)
-        prepare?(store)
+        store.placeItems(columns: columns)
+        prepare?(store, columns)
         self.init(directory: directory, store: store, columns: columns, configuration: configuration)
     }
 
@@ -405,6 +432,56 @@ final class TesseraTestDragHost {
             autosaves: false
         )
         self.init(directory: directory, store: store, columns: columns, configuration: configuration)
+    }
+
+    /// Создаёт стенд с раскладкой, **упакованной как до E14** (E14.6): элементы в
+    /// порядке массива упаковываются `TileLayoutEngine.packCompact` для `columns`,
+    /// результат записывается файлом версии 2 (`TileStoreCellFixture`), так что
+    /// ячейки точные, а порядок модели — порядок чтения. Для тестов, чья геометрия
+    /// была рассчитана на компактную раскладку, которую раньше давали операции по
+    /// порядку.
+    ///
+    /// - Parameters:
+    ///   - entries: Ярлыки и папки верхнего уровня в порядке упаковки.
+    ///   - columns: Число колонок сетки (и ширина холста файла).
+    ///   - unpinned: Ярлыки каталога вне сетки.
+    ///   - configuration: Параметры редактирования.
+    convenience init(
+        packed entries: [TesseraTestPackedEntry],
+        columns: Int = 4,
+        unpinned: [(String, TileSize)] = [],
+        configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
+            mergeHoverDuration: 0.05,
+            magnetSnapRadius: 0
+        )
+    ) throws {
+        let slots = TileLayoutEngine.packCompact(
+            items: entries.map { (id: AnyHashable($0.id), size: $0.size) },
+            columns: columns,
+            unit: 1
+        )
+        var cellByID: [String: (row: Int, column: Int)] = [:]
+        for slot in slots {
+            if let id = slot.id.base as? String { cellByID[id] = (slot.row, slot.column) }
+        }
+        var tiles: [CellFixtureTile] = []
+        var folders: [CellFixtureFolder] = []
+        for entry in entries {
+            let cell = cellByID[entry.id] ?? (0, 0)
+            switch entry {
+            case let .tile(id, size):
+                tiles.append(CellFixtureTile(id, size, cell.row, cell.column))
+            case let .folder(id, size, contents):
+                folders.append(CellFixtureFolder(id, size, cell.row, cell.column, contents: contents))
+            }
+        }
+        try self.init(
+            cells: tiles,
+            folders: folders,
+            unpinned: unpinned,
+            columns: columns,
+            configuration: configuration
+        )
     }
 
     /// Общая часть: окно с сеткой из снимка хранилища и живой координатор.

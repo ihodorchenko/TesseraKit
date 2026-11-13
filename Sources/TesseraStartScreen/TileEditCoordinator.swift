@@ -34,8 +34,9 @@
 //  (`TileLayoutEngine.inserting` от базовых размещений, таблица ячеек в снимке
 //  сетки), на слиянии и без цели — база; drop фиксируется операциями `TileStore`
 //  по ячейкам с последующим `collapseEmptyRows`; кнопки правки и публичные
-//  методы идут теми же операциями; порядок модели не канонизируется. Подробно —
-//  STARTSCREEN-IOS-DESIGN, «Отступления реализации (E14)», п. 53.
+//  методы идут теми же операциями. Индексного API нет (E14.6, D33): делегат
+//  получает ячейку, а не индекс. Подробно — STARTSCREEN-IOS-DESIGN,
+//  «Отступления реализации (E14)», п. 53–54.
 //
 //  E8.4: во время перетаскивания модель НЕ меняется. Раскладка соседей —
 //  превью, которое живёт только в сетке (`grid.update(snapshot:animated:)`); в
@@ -45,7 +46,7 @@
 //
 //  E8.7/E14.5: resize-выталкивание. При увеличении плитка остаётся на своём
 //  месте, а конфликтующие плитки уходят вниз каскадом
-//  (`TileStore.resizeInPlace(_:to:columns:)`); координатор передаёт реальное
+//  (`TileStore.resize(_:to:columns:)`); координатор передаёт реальное
 //  число колонок сетки. Цикл размеров D15 (small → medium → wide → large →
 //  small) не меняется.
 //
@@ -106,10 +107,8 @@
 //  - B5: после `render` (unpin/создание папки) «желе» и дим переприменяются.
 //  - B6: `.layoutChanged` после unpin/resize/move — на следующий проход runloop,
 //    когда ячейка-фокус уже существует.
-//  - C1: делегат получает фактический индекс, сетка синхронизируется со снимком
-//    store (E14.5: индекс — в порядке чтения ячеек, операции по ячейкам).
-//  - C2: (до E14.5 — канонизация порядка после unpin и папочных операций;
-//    с E14.5 порядок не канонизируется, дыры остаются.)
+//  - C1: делегат получает фактическую ячейку, сетка синхронизируется со снимком
+//    store (E14.5/E14.6: операции по ячейкам, до E14 — индекс порядка).
 //  - C3: встроенный экран папки активирует ярлык общим маршрутом `grid.onTap`,
 //    а не вызовом `action` напрямую; в edit-режиме не активирует.
 //
@@ -187,11 +186,12 @@ public protocol TesseraTileEditCoordinatorDelegate: AnyObject {
     /// - Parameters:
     ///   - coordinator: Координатор-источник события.
     ///   - tileID: Идентификатор ярлыка или папки.
-    ///   - index: Новый индекс в порядке сетки.
+    ///   - cell: Ячейка левого верхнего угла элемента после операции (после
+    ///     выталкивания, ограничения холстом и схлопывания пустых строк).
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didMove tileID: AnyHashable,
-        toIndex index: Int
+        toCell cell: TileGridPlacement
     )
 
     /// Создана папка (D14).
@@ -225,28 +225,26 @@ public protocol TesseraTileEditCoordinatorDelegate: AnyObject {
         toFolder folderID: AnyHashable?
     )
 
-    /// Ярлык перемещён между папками или на рабочий стол с позицией (E11.1).
+    /// Ярлык перемещён между папками или на рабочий стол с ячейкой (E11.1, E14.6).
     ///
     /// Именно этот вариант координатор вызывает при перемещении ярлыка (из
-    /// drag-жеста, из ``TesseraTileEditCoordinator/moveBetweenFolders(_:to:at:)``
-    /// и из прежнего двухаргументного метода) — **ровно один раз за операцию**.
-    /// Реализация по умолчанию пересылает событие прежнему
-    /// ``tileEditCoordinator(_:didMove:toFolder:)``, поэтому делегат, который
-    /// знает только его, продолжает работать; делегат, которому нужна позиция,
-    /// реализует этот метод (тогда прежний не вызывается).
+    /// drag-жеста и из ``TesseraTileEditCoordinator/moveBetweenFolders(_:to:)``) —
+    /// **ровно один раз за операцию**. Реализация по умолчанию пересылает
+    /// событие в ``tileEditCoordinator(_:didMove:toFolder:)``, поэтому делегат,
+    /// которому ячейка не нужна, реализует только его; делегат, которому она
+    /// нужна, реализует этот метод (тогда тот не вызывается).
     ///
     /// - Parameters:
     ///   - coordinator: Координатор-источник события.
     ///   - tileID: Идентификатор ярлыка.
     ///   - folderID: Папка-цель; `nil` — ярлык вынесен на рабочий стол.
-    ///   - index: Фактический индекс ярлыка в порядке сетки (порядок чтения
-    ///     ячеек, E14.5) после операции (когда `folderID == nil`); `nil` — при
-    ///     переносе в папку.
+    ///   - cell: Ячейка ярлыка на рабочем столе после операции (когда
+    ///     `folderID == nil`); `nil` — при переносе в папку.
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didMove tileID: AnyHashable,
         toFolder folderID: AnyHashable?,
-        atIndex index: Int?
+        atCell cell: TileGridPlacement?
     )
 
     /// Функция одобрения хоста (D14) отказала в операции с папкой.
@@ -285,7 +283,7 @@ public extension TesseraTileEditCoordinatorDelegate {
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didMove tileID: AnyHashable,
-        toIndex index: Int
+        toCell cell: TileGridPlacement
     ) {}
 
     func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TileFolder) {}
@@ -302,13 +300,13 @@ public extension TesseraTileEditCoordinatorDelegate {
         toFolder folderID: AnyHashable?
     ) {}
 
-    /// E11.1: по умолчанию — пересылка в прежний колбэк без индекса, чтобы
-    /// существующие делегаты не потеряли событие.
+    /// E11.1/E14.6: по умолчанию — пересылка в колбэк без ячейки, чтобы делегат,
+    /// которому позиция не нужна, не потерял событие.
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didMove tileID: AnyHashable,
         toFolder folderID: AnyHashable?,
-        atIndex index: Int?
+        atCell cell: TileGridPlacement?
     ) {
         tileEditCoordinator(coordinator, didMove: tileID, toFolder: folderID)
     }
@@ -549,7 +547,7 @@ public struct TesseraTileEditConfiguration {
 ///   схлопывается);
 /// - **resize**: стрелка → циклическая смена размера из поддерживаемых
 ///   (по умолчанию — все четыре, помещающиеся в текущее число колонок) через
-///   `TileStore.resizeInPlace(_:to:columns:)`; при увеличении плитка остаётся
+///   `TileStore.resize(_:to:columns:)`; при увеличении плитка остаётся
 ///   на месте, а конфликтующие соседи уходят вниз (E8.7, E14.5);
 /// - **drag**: собственный координатор — снимок едет за пальцем и слегка
 ///   уменьшается (0.95, спека WP: плитка «отделяется» от плоскости, а не
@@ -583,7 +581,7 @@ public struct TesseraTileEditConfiguration {
 ///   размещение на его ячейку); центр родной папки, панель и отмена возвращают
 ///   ярлык, модель не меняется;
 ///   делегат получает ровно один
-///   `didMove(_:toFolder:atIndex:)`.
+///   `didMove(_:toFolder:atCell:)`.
 ///
 /// ## Ограничения
 ///
@@ -1313,7 +1311,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// `TileStore` + `TesseraTileGridView.update(snapshot:animated:)`: раскладка
     /// пересчитывается `TileLayoutEngine`, соседи переезжают batch-анимацией.
     ///
-    /// E14.5: resize идёт через ``TileStore/resizeInPlace(_:to:columns:)`` —
+    /// E14.5: resize идёт через ``TileStore/resize(_:to:columns:)`` —
     /// якорная ячейка остаётся, рост выталкивает мешающие плитки вниз каскадом
     /// (D31), уменьшение оставляет дыру; затем схлопывается только полностью
     /// пустая строка (``TileStore/collapseEmptyRows(columns:)``).
@@ -1333,7 +1331,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         let currentIndex = sizes.firstIndex(of: item.size) ?? -1
         let next = sizes[(currentIndex + 1) % sizes.count]
         guard next != item.size,
-              store.resizeInPlace(itemID, to: next, columns: storeColumns) else {
+              store.resize(itemID, to: next, columns: storeColumns) else {
             return nil
         }
 
@@ -1369,46 +1367,46 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     // MARK: - Порядок
 
-    /// Переставляет элемент сетки через `TileStore` (§6).
+    /// Переставляет элемент сетки на ячейку через `TileStore` (§6, E14.6).
     ///
-    /// Операция раскладки не требует одобрения (D14). E14.5: индекс — позиция
-    /// в порядке чтения; элемент встаёт на ячейку того, кто сейчас стоит на этом
-    /// индексе среди остальных (тот выталкивается вниз, D31), а индекс за концом
-    /// — в новую строку (``TileStore/moveItem(_:toCell:columns:)``,
-    /// ``TileStore/moveItemToNewRow(_:columns:)``). Дыра на старом месте
-    /// остаётся, пустая строка схлопывается. Делегат получает индекс элемента в
-    /// порядке чтения после операции; сетка синхронизируется со снимком
-    /// хранилища.
+    /// Операция раскладки не требует одобрения (D14). Элемент встаёт на `cell`,
+    /// ограниченную холстом; мешающие плитки выталкиваются вниз каскадом (D31),
+    /// дыра на старом месте остаётся, полностью пустая строка схлопывается
+    /// (``TileStore/moveItem(_:toCell:columns:)``,
+    /// ``TileStore/collapseEmptyRows(columns:)``). Делегат получает итоговую
+    /// ячейку элемента; сетка синхронизируется со снимком хранилища.
     ///
     /// - Parameters:
     ///   - itemID: Идентификатор ярлыка или папки на сетке.
-    ///   - index: Целевой индекс; значения за границами зажимаются.
+    ///   - cell: Желаемая ячейка левого верхнего угла (логические координаты).
     /// - Returns: `true`, если раскладка изменилась.
     @discardableResult
-    public func move(_ itemID: AnyHashable, toIndex index: Int) -> Bool {
-        let columns = storeColumns
-        let items = store.snapshot(columns: columns).items
-        guard let currentIndex = items.firstIndex(where: { $0.id == itemID }) else {
-            return false
-        }
+    public func move(_ itemID: AnyHashable, toCell cell: TileGridPlacement) -> Bool {
+        finishMove(of: itemID, moved: store.moveItem(itemID, toCell: cell, columns: storeColumns))
+    }
 
-        let others = items.filter { $0.id != itemID }
-        let target = min(max(index, 0), others.count)
-        // Уже на этом индексе — менять нечего.
-        guard target != currentIndex else { return false }
+    /// Переставляет элемент сетки в новую строку в конце холста (E14.6, D33).
+    ///
+    /// Как ``move(_:toCell:)``, но цель — ``TileStore/moveItemToNewRow(_:columns:)``.
+    ///
+    /// - Parameter itemID: Идентификатор ярлыка или папки на сетке.
+    /// - Returns: `true`, если раскладка изменилась.
+    @discardableResult
+    public func moveToNewRow(_ itemID: AnyHashable) -> Bool {
+        finishMove(of: itemID, moved: store.moveItemToNewRow(itemID, columns: storeColumns))
+    }
 
-        let moved: Bool
-        if target < others.count, let cell = store.placements(forColumns: columns)[others[target].id] {
-            moved = store.moveItem(itemID, toCell: cell, columns: columns)
-        } else {
-            moved = store.moveItemToNewRow(itemID, columns: columns)
-        }
+    /// Общий хвост ``move(_:toCell:)`` и ``moveToNewRow(_:)``: схлопывание пустой
+    /// строки, синхронизация сетки, делегат, фокус VoiceOver.
+    private func finishMove(of itemID: AnyHashable, moved: Bool) -> Bool {
         guard moved else { return false }
 
+        let columns = storeColumns
         store.collapseEmptyRows(columns: columns)
         render(animated: true)
-        let actualIndex = store.snapshot().items.firstIndex { $0.id == itemID } ?? target
-        delegate?.tileEditCoordinator(self, didMove: itemID, toIndex: actualIndex)
+        if let cell = store.placements(forColumns: columns)[itemID] {
+            delegate?.tileEditCoordinator(self, didMove: itemID, toCell: cell)
+        }
         // E10.5-B6: элемент переехал — переводим фокус VoiceOver на его ячейку
         // после раскладки.
         postLayoutChanged(focusing: itemID)
@@ -1475,42 +1473,24 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Перемещает ярлык между папками или из папки на рабочий стол (D14).
     ///
+    /// Вынос на рабочий стол идёт по ячейкам
+    /// (``TileStore/extractFromFolder(_:toCell:columns:)``): ярлык встаёт на
+    /// ячейку папки (если он в ней последний) либо на первую свободную ячейку
+    /// после ячейки папки в порядке чтения. Перенос в другую папку —
+    /// ``TileStore/moveBetweenFolders(_:to:columns:)``. После операции
+    /// схлопывается пустая строка, фокус VoiceOver — на ярлыке.
+    ///
     /// - Parameters:
     ///   - tileID: Ярлык, лежащий в папке.
     ///   - folderID: Папка-цель; `nil` — на рабочий стол.
     /// - Returns: `true`, если перемещение выполнено.
     @discardableResult
     public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable?) -> Bool {
-        moveBetweenFolders(tileID, to: folderID, at: nil)
-    }
-
-    /// Перемещает ярлык между папками или на рабочий стол с позицией (E11.2).
-    ///
-    /// E14.5: вынос на рабочий стол идёт по ячейкам
-    /// (``TileStore/extractFromFolder(_:toCell:columns:)``). Без `index` ярлык
-    /// встаёт на ячейку папки (если ярлык в ней последний) либо на первую
-    /// свободную ячейку после ячейки папки в порядке чтения; с
-    /// `index` — на ячейку элемента, стоящего сейчас на этом индексе порядка
-    /// чтения (тот выталкивается вниз); индекс за концом — новая строка.
-    /// Перенос в другую папку — ``TileStore/moveBetweenFolders(_:to:columns:)``.
-    /// После операции схлопывается пустая строка, фокус VoiceOver — на ярлыке.
-    ///
-    /// - Parameters:
-    ///   - tileID: Ярлык, лежащий в папке.
-    ///   - folderID: Папка-цель; `nil` — на рабочий стол.
-    ///   - index: Позиция на рабочем столе.
-    /// - Returns: `true`, если перемещение выполнено.
-    @discardableResult
-    public func moveBetweenFolders(
-        _ tileID: AnyHashable,
-        to folderID: AnyHashable?,
-        at index: Int?
-    ) -> Bool {
         let columns = storeColumns
         let moved: Bool
         if let folderID {
             moved = store.moveBetweenFolders(tileID, to: folderID, columns: columns)
-        } else if let cell = extractionCell(forTile: tileID, at: index, columns: columns) {
+        } else if let cell = extractionCell(forTile: tileID, columns: columns) {
             moved = store.extractFromFolder(tileID, toCell: cell, columns: columns)
         } else {
             moved = store.extractFromFolderToNewRow(tileID, columns: columns)
@@ -1522,12 +1502,13 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         store.collapseEmptyRows(columns: columns)
         render(animated: true)
-        // E11.1: единый колбэк с индексом (по умолчанию пересылает в прежний).
+        // E11.1/E14.6: единый колбэк с ячейкой (по умолчанию пересылает в
+        // `didMove(_:toFolder:)`).
         delegate?.tileEditCoordinator(
             self,
             didMove: tileID,
             toFolder: folderID,
-            atIndex: folderID == nil ? grid.index(ofItemID: tileID) : nil
+            atCell: folderID == nil ? store.placements(forColumns: columns)[tileID] : nil
         )
         if grid.index(ofItemID: tileID) != nil {
             postLayoutChanged(focusing: tileID)
@@ -1538,29 +1519,20 @@ public final class TesseraTileEditCoordinator: NSObject {
         return true
     }
 
-    /// Ячейка для ярлыка, выносимого из папки без жеста (E14.5).
+    /// Ячейка для ярлыка, выносимого из папки без жеста (E14.5, E14.6).
     ///
     /// - Parameters:
     ///   - tileID: Ярлык в папке.
-    ///   - index: Позиция в порядке чтения (среди остальных верхнеуровневых
-    ///     элементов); `nil` — ячейка папки-источника, если ярлык в ней последний
-    ///     (папка исчезнет), иначе первая свободная ячейка после неё.
     ///   - columns: Число колонок сетки.
-    /// - Returns: Ячейка или `nil`, если подходит только новая строка (индекс за
-    ///   концом, нет папки-источника).
+    /// - Returns: Ячейка папки-источника, если ярлык в ней последний (папка
+    ///   исчезнет), иначе первая свободная ячейка после неё; `nil` — подходит
+    ///   только новая строка (нет папки-источника).
     private func extractionCell(
         forTile tileID: AnyHashable,
-        at index: Int?,
         columns: Int
     ) -> TileGridPlacement? {
         let snapshot = store.snapshot(columns: columns)
         let placed = placedItems(of: snapshot)
-
-        if let index {
-            let others = snapshot.items
-            guard index >= 0, index < others.count else { return nil }
-            return placed.first { $0.id == others[index].id }?.cell
-        }
 
         guard let folder = store.folderContaining(tileID),
               let folderCell = placed.first(where: { $0.id == folder.id })?.cell,
@@ -1752,7 +1724,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// файлу версии 1 и раскладке первого запуска (``TileStore/placeItems(columns:)``,
     /// однократно и без уведомления подписчиков), а затем пересчитывает ячейки
     /// после операций. Вызывается при создании координатора и на входе в
-    /// правку/drag — там же, где порядок канонизируется.
+    /// правку/drag.
     private func reportGridWidthToStore() {
         guard grid.columns > 0 else { return }
         store.placeItems(columns: grid.columns)
@@ -3549,7 +3521,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 self,
                 didMove: session.itemID,
                 toFolder: nil,
-                atIndex: grid.index(ofItemID: session.itemID)
+                atCell: store.placements(forColumns: columns)[session.itemID]
             )
             announce(TesseraStartScreenStrings.string(.a11yFolderTileOnStart))
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -3577,15 +3549,15 @@ public final class TesseraTileEditCoordinator: NSObject {
         session.modelChanged = true
         store.collapseEmptyRows(columns: columns)
         render(animated: true)
-        let actualIndex = store.snapshot().items.firstIndex { $0.id == session.itemID }
+        let actualCell = store.placements(forColumns: columns)[session.itemID]
         let frame = currentFrame(of: session)
         moveDragView(session, to: frame) {
             self.cleanupDrag(session, unhide: true)
-            if let actualIndex {
+            if let actualCell {
                 self.delegate?.tileEditCoordinator(
                     self,
                     didMove: session.itemID,
-                    toIndex: actualIndex
+                    toCell: actualCell
                 )
             }
             // E10.5-B6: после переноса фокус VoiceOver — на переехавшую плитку.
@@ -3623,7 +3595,7 @@ public final class TesseraTileEditCoordinator: NSObject {
             self,
             didMove: session.itemID,
             toFolder: folderID,
-            atIndex: nil
+            atCell: nil
         )
         announce(TesseraStartScreenStrings.string(.a11yFolderTileMoved))
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -4340,7 +4312,7 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Выставляет custom actions ярлыкам панели раскрытой папки (E11.5).
     ///
-    /// «Убрать из папки» — ``moveBetweenFolders(_:to:at:)`` с `nil`: ярлык
+    /// «Убрать из папки» — ``moveBetweenFolders(_:to:)`` с `nil`: ярлык
     /// встаёт сразу после папки (или на её месте, если она распалась).
     /// «Переместить в папку <название>» — по одному на другую папку (не больше
     /// ``maxFolderActions``). Вне режима редактирования действий нет.

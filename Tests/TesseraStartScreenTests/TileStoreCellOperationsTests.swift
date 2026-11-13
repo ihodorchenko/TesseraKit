@@ -12,8 +12,9 @@
 //  новую строку, исчезновение опустевшей папки с дырой, resize на месте,
 //  закрепление в новую строку, схлопывание только непокрытых строк (и
 //  идемпотентность), одно уведомление на операцию, no-op на неверный ввод,
-//  согласованность модели (`tesseraAssertCellInvariants`) и контраст со
-//  старыми операциями по порядку (они по-прежнему репакуют).
+//  согласованность модели (`tesseraAssertCellInvariants`). Имена после E14.6:
+//  `resize(_:to:columns:)` и `pinTile(_:columns:)` (были `resizeInPlace`,
+//  `pinTileToNewRow`).
 //
 
 #if canImport(UIKit)
@@ -146,7 +147,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 1, 0), CellFixtureTile("z", .small, 0, 4)]
         let store = try makeStore(tiles, in: directory)
 
-        XCTAssertTrue(store.resizeInPlace("a", to: .medium, columns: columns))
+        XCTAssertTrue(store.resize("a", to: .medium, columns: columns))
 
         XCTAssertEqual(store.snapshot().item(withID: "a")?.size, .medium)
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 0))
@@ -162,7 +163,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let tiles = [CellFixtureTile("big", .large, 0, 0), CellFixtureTile("n", .small, 4, 0)]
         let store = try makeStore(tiles, in: directory)
 
-        XCTAssertTrue(store.resizeInPlace("big", to: .small, columns: columns))
+        XCTAssertTrue(store.resize("big", to: .small, columns: columns))
 
         XCTAssertEqual(store.placement(of: "big"), tesseraCell(0, 0))
         XCTAssertEqual(store.placement(of: "n"), tesseraCell(4, 0), "ничего не подтянулось")
@@ -176,10 +177,10 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let folders = [CellFixtureFolder("f", .medium, 4, 0, contents: [("x", .small), ("y", .small)])]
         let store = try makeStore(tiles, folders: folders, in: directory)
 
-        XCTAssertTrue(store.resizeInPlace("s", to: .medium, columns: columns))
+        XCTAssertTrue(store.resize("s", to: .medium, columns: columns))
         XCTAssertEqual(store.placement(of: "s"), tesseraCell(0, 4))
 
-        XCTAssertTrue(store.resizeInPlace("f", to: .wide, columns: columns))
+        XCTAssertTrue(store.resize("f", to: .wide, columns: columns))
         XCTAssertEqual(store.snapshot().folders.first?.size, .wide)
         XCTAssertEqual(store.placement(of: "f"), tesseraCell(4, 0))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
@@ -195,12 +196,12 @@ final class TileStoreCellOperationsTests: XCTestCase {
         var notifications = 0
         store.onChange = { _ in notifications += 1 }
 
-        XCTAssertFalse(store.resizeInPlace("a", to: .small, columns: columns))
-        XCTAssertFalse(store.resizeInPlace("nope", to: .wide, columns: columns))
-        XCTAssertFalse(store.resizeInPlace("a", to: .wide, columns: 0))
+        XCTAssertFalse(store.resize("a", to: .small, columns: columns))
+        XCTAssertFalse(store.resize("nope", to: .wide, columns: columns))
+        XCTAssertFalse(store.resize("a", to: .wide, columns: 0))
         XCTAssertEqual(notifications, 0)
 
-        XCTAssertTrue(store.resizeInPlace("x", to: .wide, columns: columns))
+        XCTAssertTrue(store.resize("x", to: .wide, columns: columns))
         XCTAssertEqual(store.tileSizeInFolder("x"), .wide)
         XCTAssertEqual(store.placements, before, "ячейки не менялись")
         XCTAssertEqual(notifications, 1)
@@ -547,11 +548,11 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let tiles = [CellFixtureTile("a", .medium, 0, 0), CellFixtureTile("b", .small, 0, 4)]
         let store = try makeStore(tiles, unpinned: [("w", .wide), ("s", .small)], in: directory)
 
-        XCTAssertTrue(store.pinTileToNewRow("w", columns: columns))
+        XCTAssertTrue(store.pinTile("w", columns: columns))
         XCTAssertEqual(store.placement(of: "w"), tesseraCell(2, 0))
         XCTAssertEqual(store.snapshot().item(withID: "w")?.size, .wide)
 
-        XCTAssertTrue(store.pinTileToNewRow("s", columns: columns))
+        XCTAssertTrue(store.pinTile("s", columns: columns))
         XCTAssertEqual(store.placement(of: "s"), tesseraCell(4, 0))
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 0))
         XCTAssertTrue(store.snapshot().unpinned.isEmpty)
@@ -564,7 +565,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
         let store = try makeStore(tiles, unpinned: [("L", .large)], in: directory, columns: 2)
 
-        XCTAssertTrue(store.pinTileToNewRow("L", columns: 2))
+        XCTAssertTrue(store.pinTile("L", columns: 2))
         XCTAssertEqual(store.placement(of: "L"), tesseraCell(1, 0))
         tesseraAssertCellInvariants(store, columns: 2, catalogIDs: ["a", "L"])
     }
@@ -576,10 +577,10 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small)])]
         let store = try makeStore(tiles, folders: folders, unpinned: [("u", .small)], in: directory)
 
-        XCTAssertFalse(store.pinTileToNewRow("a", columns: columns))
-        XCTAssertFalse(store.pinTileToNewRow("x", columns: columns))
-        XCTAssertFalse(store.pinTileToNewRow("nope", columns: columns))
-        XCTAssertFalse(store.pinTileToNewRow("u", columns: 0))
+        XCTAssertFalse(store.pinTile("a", columns: columns))
+        XCTAssertFalse(store.pinTile("x", columns: columns))
+        XCTAssertFalse(store.pinTile("nope", columns: columns))
+        XCTAssertFalse(store.pinTile("u", columns: 0))
         XCTAssertEqual(store.snapshot().items.count, 2)
     }
 
@@ -638,7 +639,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(1, 0))
     }
 
-    // MARK: - Уведомления, старый API
+    // MARK: - Уведомления и отсутствие репака
 
     /// Одна операция — один `onChange`, и снимок уже согласован.
     func testSingleNotificationPerOperation() throws {
@@ -655,8 +656,9 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(tesseraTestIDs(snapshots[0].items), [folder.id])
     }
 
-    /// Контраст: прежние операции по порядку по-прежнему репакуют (переходное правило E14.1).
-    func testOldStyleMutationStillUsesTransitionalRepack() throws {
+    /// Операции не пересчитывают ячейки упаковкой: уход соседа оставляет дыру, а
+    /// ячейка далёкой плитки не подтягивается (переходный репак E14.1 удалён в E14.6).
+    func testUnpinDoesNotRepackOtherCells() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 3, 3)]
         let store = try makeStore(tiles, in: directory)
@@ -664,10 +666,9 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertTrue(store.moveItem("c", toCell: tesseraCell(5, 5), columns: columns))
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(5, 5), "ячейка не пересчитана упаковкой")
 
-        // Старый индексный unpin репакует: «c» подтягивается к «b».
-        XCTAssertTrue(store.unpin("a"))
-        XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 0))
-        XCTAssertEqual(store.placement(of: "c"), tesseraCell(0, 1))
+        XCTAssertTrue(store.unpin("a", columns: columns))
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 1), "дыра на месте «a» осталась")
+        XCTAssertEqual(store.placement(of: "c"), tesseraCell(5, 5))
     }
 
     /// Ширина хоста, отличная от холста, при ошибке ввода не перезаписывает файл (D32).
