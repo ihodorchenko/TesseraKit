@@ -127,6 +127,48 @@ final class StartScreenViewFacadeTests: XCTestCase {
         XCTAssertEqual(folder.tiles.first?.title, "Inbox")
     }
 
+    // MARK: - Таблица ячеек снимка (E14.5)
+
+    /// Снимок с теми же элементами, но другими ячейками (например, после открепления
+    /// осталась дыра) доходит до сетки; снимок без таблицы показанную таблицу не
+    /// затирает (хост, который не знает про ячейки).
+    func testPlacementTableChangeReachesGridAndTablelessSnapshotKeepsIt() throws {
+        func snapshot(secondColumn: Int?) -> TileGridSnapshot {
+            let items: [TileGridItem] = ["a", "b"].map {
+                .tile(TileDescriptor(id: $0, title: $0, action: {}, size: .small))
+            }
+            guard let secondColumn else { return TileGridSnapshot(items: items, unpinned: []) }
+            let table = TileGridPlacementTable(
+                cells: [
+                    "a": TileGridPlacement(row: 0, column: 0),
+                    "b": TileGridPlacement(row: 0, column: secondColumn),
+                ],
+                columns: TileLayoutEngine.defaultColumns
+            )
+            return TileGridSnapshot(items: items, unpinned: [], placementTable: table)
+        }
+
+        let hosting = host(StartScreenView(snapshot: snapshot(secondColumn: 1)))
+        let screen = try screen(in: hosting)
+        XCTAssertEqual(screen.gridView.snapshot?.placementTable?.cells["b"], TileGridPlacement(row: 0, column: 1))
+
+        hosting.rootView = StartScreenView(snapshot: snapshot(secondColumn: 3))
+        render(hosting)
+        XCTAssertEqual(
+            screen.gridView.snapshot?.placementTable?.cells["b"],
+            TileGridPlacement(row: 0, column: 3),
+            "Другие ячейки при тех же элементах применены"
+        )
+
+        hosting.rootView = StartScreenView(snapshot: snapshot(secondColumn: nil))
+        render(hosting)
+        XCTAssertEqual(
+            screen.gridView.snapshot?.placementTable?.cells["b"],
+            TileGridPlacement(row: 0, column: 3),
+            "Снимок без таблицы показанные ячейки не затирает"
+        )
+    }
+
     // MARK: - Сигнатура снимка: liveContent и action (E10.8)
 
     /// Появление `liveContent` у ярлыка с тем же `id` доходит до сетки —

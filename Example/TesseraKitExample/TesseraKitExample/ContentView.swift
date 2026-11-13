@@ -454,7 +454,8 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
             gridView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        gridView.reload(snapshot: store.snapshot())
+        // E14.5: снимок с таблицей явных ячеек — сетка показывает дыры модели.
+        gridView.reload(snapshot: store.snapshot(columns: gridView.columns))
         gridView.onTap = { [weak self] item in
             self?.handleTap(item)
         }
@@ -825,7 +826,8 @@ final class StartDemoHostController: UIViewController,
         screen.startPageTitle = "Начало"
         screen.applicationsPageTitle = "Приложения"
 
-        screen.reload(grid: store.snapshot())
+        // E14.5: снимок с таблицей явных ячеек — сетка показывает дыры модели.
+        screen.reload(grid: store.snapshot(columns: screen.gridView.columns))
 
         let store = self.store
         let model = self.model

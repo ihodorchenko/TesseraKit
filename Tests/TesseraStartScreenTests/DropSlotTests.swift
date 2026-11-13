@@ -2,16 +2,19 @@
 //  DropSlotTests.swift
 //  TesseraStartScreenTests
 //
-//  Позиция drop'а над пустым местом (E12.1, 03.11.2026).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Алгоритм упаковки»
-//  (строго компактная, E8.5), §5 «Drag: позиция над пустым местом» (п. 46).
+//  Позиция drop'а: клетка под пальцем (E12.1 → E14.5, 13.11.2026).
+//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Алгоритм упаковки»,
+//  §5 «Drag: позиция над пустым местом» (п. 46) и п. 53 «Цели drag — клетка
+//  под пальцем» (E14.5, D21, D31, D33).
 //
 //  Наблюдение: ярлык, вынутый из панели папки, «падал в первое свободное
-//  место» — над пустым местом (дыра, зазор, область под плитками) цель была
-//  `.none`, превью оставалось в слоте «сразу после папки», и пользователь не
-//  выбирал позицию. Теперь над пустым местом позиция — слот порядка, ближайший
-//  к пальцу (`HoverTarget.slot`); превью живёт за пальцем, а drop кладёт
-//  элемент ровно туда, где его показало превью.
+//  место» — позицию выбрать было нельзя. С E12.1 над пустым местом цель была
+//  слотом порядка (`HoverTarget.slot`), а с E14.5 — клеткой под пальцем
+//  (`HoverTarget.cell`): элемент ложится **ровно в эту клетку**, дыры
+//  сохраняются, мешающие плитки выталкиваются вниз (D31), под плитками —
+//  цель «новая строка» (`HoverTarget.newRow`). Превью живёт за пальцем (те же
+//  элементы на других ячейках), а drop кладёт элемент туда, где его показало
+//  превью.
 //
 //  Проверяется на реальных ячейках и настоящем `TileStore` в окне
 //  (`TesseraTestDragHost`), без `sleep`.
@@ -142,8 +145,8 @@ final class DropSlotTests: XCTestCase {
     // MARK: - Drag из панели
 
     /// Порядок «a F b c d» (4 колонки): ряд 0 — a F b c, ряд 1 — d. Ярлык из
-    /// панели брошен справа от «d» (пустая клетка конца): встаёт **в конец**
-    /// порядка и в ту клетку, которую показало превью, а не «после папки».
+    /// панели брошен справа от «d» (пустая клетка (1, 3)): встаёт **ровно в эту
+    /// клетку** — ту, которую показало превью, а не «после папки».
     func testPanelDropRightOfLastTileLandsAtEnd() throws {
         let host = makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
@@ -156,11 +159,16 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.delegate = recorder
         let folderID = try startPanelDrag(host, iconIndex: 2)
 
-        // Отображаемый снимок: ярлык после папки. Палец — на пустой клетке
-        // (колонка 3, строка 1), правее «d»; там ничего нет и в базе.
+        // Отображаемый снимок: ярлык после папки в порядке снимка, на сетке — на
+        // свободной ячейке после папки. Палец — на пустой клетке (колонка 3,
+        // строка 1), правее «d»; там ничего нет и в базе.
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .slot(5), "Позиция — конец порядка")
-        XCTAssertEqual(host.gridIDs, ["a", folderID, "b", "c", "d", "f3"] as [AnyHashable])
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .cell(TileGridPlacement(row: 1, column: 3)),
+            "Цель — клетка под пальцем"
+        )
+        XCTAssertEqual(host.gridIDs, ["a", folderID, "f3", "b", "c", "d"] as [AnyHashable], "Порядок снимка — база")
         let previewFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
         let dFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "d"))
         XCTAssertEqual(previewFrame.minY, dFrame.minY, accuracy: 0.5, "Превью — в ряду «d», сразу за ним")
@@ -170,6 +178,7 @@ final class DropSlotTests: XCTestCase {
         settle(host, "f3")
 
         XCTAssertEqual(host.storeIDs, ["a", folderID, "b", "c", "d", "f3"] as [AnyHashable])
+        XCTAssertEqual(host.store.placement(of: "f3"), TileGridPlacement(row: 1, column: 3))
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["f1", "f2"] as [AnyHashable])
         XCTAssertEqual(recorder.folderMoves.count, 1)
         XCTAssertEqual(recorder.folderMoves.first?.index, 5)
@@ -177,8 +186,9 @@ final class DropSlotTests: XCTestCase {
         XCTAssertEqual(landed, previewFrame, "Ярлык лёг ровно туда, где показало превью")
     }
 
-    /// Палец в зазоре между «c» и «d» (между клетками, а не над плиткой): вынос
-    /// встаёт между ними, а не «сразу после папки».
+    /// Палец в зазоре между клетками (не над самой плиткой): зазор относится к
+    /// клетке слева — это край занятой клетки «d», поэтому вынос встаёт на ячейку
+    /// «d», а «d» выталкивается вниз (D31), а не «сразу после папки».
     func testPanelDropBetweenTwoTilesInGapInsertsBetween() throws {
         let host = makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
@@ -188,21 +198,28 @@ final class DropSlotTests: XCTestCase {
         let grid = try cells(host, first: "a", second: host.storeIDs[1])
         let folderID = try startPanelDrag(host, iconIndex: 2)
 
-        // В отображаемом снимке: a F f3 b / c d. Зазор между c (кол. 0) и d (кол. 1).
+        // Базовая раскладка: ряд 0 — a F b c, ряд 1 — d (1, 0), f3 (1, 1). Зазор
+        // между клетками (1, 0) и (1, 1) — хвост клетки «d».
         let gap = CGPoint(
             x: grid.origin.x + grid.pitch - (grid.pitch - grid.unit) / 2,
             y: grid.point(column: 0, row: 1).y
         )
         host.coordinator.updateDrag(to: gap)
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .slot(4), "Между «c» (индекс 3) и «d»")
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .cell(TileGridPlacement(row: 1, column: 0)),
+            "Зазор — край клетки «d»: ячейка «d»"
+        )
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f3")
         XCTAssertEqual(host.storeIDs, ["a", folderID, "b", "c", "f3", "d"] as [AnyHashable])
+        XCTAssertEqual(host.store.placement(of: "f3"), TileGridPlacement(row: 1, column: 0))
+        XCTAssertEqual(host.store.placement(of: "d"), TileGridPlacement(row: 2, column: 0), "«d» вытолкнут вниз")
     }
 
-    /// Палец левее/выше первой клетки (зона полей сверху): ярлык встаёт в начало
-    /// порядка («первая строка»).
+    /// Палец левее/выше первой клетки (зона полей сверху): ярлык встаёт на первую
+    /// клетку «a» (0, 0), а «a» выталкивается вниз (D31).
     func testPanelDropAboveFirstRowLandsAtStart() throws {
         let host = makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
@@ -215,19 +232,28 @@ final class DropSlotTests: XCTestCase {
         let folderID = try startPanelDrag(host, iconIndex: 2)
 
         host.coordinator.updateDrag(to: CGPoint(x: grid.origin.x + 4, y: grid.origin.y - 30))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .slot(0))
-        XCTAssertEqual(host.gridIDs.first, AnyHashable("f3"))
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .cell(TileGridPlacement(row: 0, column: 0)),
+            "Над полями строка зажимается до 0: край клетки «a»"
+        )
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f3")
-        XCTAssertEqual(host.storeIDs, ["f3", "a", folderID, "b", "c", "d"] as [AnyHashable])
+        XCTAssertEqual(host.store.placement(of: "f3"), TileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 0), "«a» вытолкнут вниз")
+        XCTAssertEqual(
+            host.storeIDs,
+            ["f3", folderID, "b", "c", "a", "d"] as [AnyHashable],
+            "Порядок модели — порядок чтения ячеек"
+        )
         let landed = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
         let aFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "a"))
-        XCTAssertEqual(landed.minY, aFrame.minY, accuracy: 0.5)
-        XCTAssertLessThan(landed.minX, aFrame.minX, "Ярлык — первая клетка первой строки")
+        XCTAssertLessThan(landed.minY, aFrame.minY, "Ярлык — первая клетка первой строки, «a» ниже")
     }
 
-    /// Пустая область под плитками (палец ниже последней строки): конец порядка.
+    /// Пустая область под плитками (палец ниже последней строки): цель «новая
+    /// строка» — ярлык встаёт в начало новой строки в конце холста.
     func testPanelDropBelowAllTilesLandsAtEnd() throws {
         let host = makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
@@ -237,9 +263,11 @@ final class DropSlotTests: XCTestCase {
         let folderID = try startPanelDrag(host, iconIndex: 0)
         let bounds = host.host.grid.bounds
         host.coordinator.updateDrag(to: CGPoint(x: bounds.midX, y: bounds.maxY - 30))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .newRow)
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f1")
+        XCTAssertEqual(host.store.placement(of: "f1"), TileGridPlacement(row: 2, column: 0), "Новая строка после ряда «d»")
         XCTAssertEqual(host.storeIDs.last, AnyHashable("f1"))
         XCTAssertEqual(host.storeIDs.first, AnyHashable("a"))
         XCTAssertTrue(host.storeIDs.contains(folderID))
@@ -247,8 +275,8 @@ final class DropSlotTests: XCTestCase {
 
     /// Дыра в раскладке: «m» (2×2), папка F и «s» справа от неё, под ними 2×1
     /// свободно, «w» (wide) ниже. Палец — в свободной клетке (1, 3): ярлык из
-    /// панели встаёт в ближайшую достижимую клетку (1, 2), а не в слот «после
-    /// папки» (0, 3); drop кладёт его туда же, куда показало превью.
+    /// панели встаёт **ровно в неё** (E14.5: клетка под пальцем, а не ближайший
+    /// слот порядка); drop кладёт его туда же, куда показало превью.
     func testPanelDropIntoHoleLandsInNearestReachableCell() throws {
         let host = makeHost(
             plain: [("m", .medium), ("s", .small), ("w", .wide)],
@@ -266,19 +294,25 @@ final class DropSlotTests: XCTestCase {
         // Базовая раскладка снимка: m, F (0,2), f2 (0,3), s (1,2); (1,3) свободна.
 
         host.coordinator.updateDrag(to: cell.point(column: 3, row: 1, fx: 0.1))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .slot(3), "После «s»")
+        XCTAssertEqual(
+            host.coordinator.dragSession?.hover,
+            .cell(TileGridPlacement(row: 1, column: 3)),
+            "Клетка под пальцем"
+        )
         let preview = try XCTUnwrap(host.host.grid.frame(forItemID: "f2"))
-        XCTAssertEqual(preview.minX, cell.point(column: 2, row: 1, fx: 0).x, accuracy: 0.5)
-        XCTAssertEqual(preview.minY, cell.point(column: 2, row: 1, fy: 0).y, accuracy: 0.5)
+        XCTAssertEqual(preview.minX, cell.point(column: 3, row: 1, fx: 0).x, accuracy: 0.5)
+        XCTAssertEqual(preview.minY, cell.point(column: 3, row: 1, fy: 0).y, accuracy: 0.5)
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f2")
         XCTAssertEqual(host.storeIDs, ["m", folderID, "s", "f2", "w"] as [AnyHashable])
+        XCTAssertEqual(host.store.placement(of: "f2"), TileGridPlacement(row: 1, column: 3))
         XCTAssertEqual(host.host.grid.frame(forItemID: "f2"), preview)
     }
 
-    /// Вынос последнего ярлыка (папка распадается) в конец: индекс учитывает
-    /// исчезнувшую папку, ярлык — последний в порядке.
+    /// Вынос последнего ярлыка (папка исчезает, её ячейка остаётся дырой) в
+    /// клетку правее «d»: индекс учитывает исчезнувшую папку, ярлык — последний
+    /// в порядке чтения.
     func testSoleTilePanelDropToEndDissolvesFolder() throws {
         let host = makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
@@ -295,14 +329,15 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.finishDrag(commit: true)
         settle(host, "f1")
 
-        XCTAssertEqual(host.storeIDs, ["a", "b", "c", "d", "f1"] as [AnyHashable], "Папка распалась")
+        XCTAssertEqual(host.storeIDs, ["a", "b", "c", "d", "f1"] as [AnyHashable], "Папка исчезла")
+        XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 2), "На месте папки — дыра, без репака")
         XCTAssertEqual(recorder.folderMoves.first?.index, 4)
     }
 
     // MARK: - Drag по сетке (та же ветка)
 
     /// Обычный drag: палец на пустой клетке справа от последней плитки — элемент
-    /// встаёт в конец порядка (раньше оставался на месте: `.none`).
+    /// встаёт ровно в эту клетку; его старое место остаётся дырой (E14.5).
     func testGridDragToEmptyCellAfterLastTileMovesToEnd() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e", "f"].map { tesseraTestTile($0, size: .small) },
@@ -314,17 +349,21 @@ final class DropSlotTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .slot(5))
-        XCTAssertEqual(host.gridIDs, ["b", "c", "d", "e", "f", "a"] as [AnyHashable])
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 1, column: 3)))
+        let previewFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "a"))
+        XCTAssertEqual(previewFrame.minX, grid.point(column: 3, row: 1, fx: 0).x, accuracy: 0.5)
+        XCTAssertEqual(previewFrame.minY, grid.point(column: 3, row: 1, fy: 0).y, accuracy: 0.5)
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "a")
         XCTAssertEqual(host.storeIDs, ["b", "c", "d", "e", "f", "a"] as [AnyHashable])
+        XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 3))
+        XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 1), "Дыра на месте «a» осталась")
         XCTAssertEqual(recorder.moves.first?.index, 5)
     }
 
-    /// Над собственным базовым слотом цель не меняется (поведение «c», E8.4):
-    /// превью остаётся прежним, а drop без перестановки не пишет в модель.
+    /// Над собственной базовой ячейкой цели нет (`.none`): превью — база, а drop
+    /// без изменения раскладки не пишет в модель.
     func testGridDragOverOwnSlotKeepsOrder() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e", "f"].map { tesseraTestTile($0, size: .small) },
@@ -343,7 +382,8 @@ final class DropSlotTests: XCTestCase {
         XCTAssertTrue(recorder.moves.isEmpty)
     }
 
-    /// Над плиткой (E8.4) поведение прежнее: `.reorder`, а не `.slot`.
+    /// Над краем плитки цель — её ячейка (`.cell` с ячейкой «c»), а не клетка
+    /// под пальцем: элемент встанет на место «c», а «c» уйдёт вниз.
     func testGridDragOverTileStillReorders() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d"].map { tesseraTestTile($0, size: .small) },
@@ -351,15 +391,15 @@ final class DropSlotTests: XCTestCase {
         )
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: try XCTUnwrap(host.point("c", fx: 0.1, fy: 0.5)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .reorder("c", index: 2))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 0, column: 2)))
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitForDragCleanup("a"))
     }
 
     /// На подъёме палец стоит на месте иконки панели (после закрытия панели —
-    /// пустое место под плитками): слот не «убегает» из-под пальца, пока палец
-    /// не сдвинется заметно (`emptySlotActivationDistance`); потом превью
-    /// следует за пальцем, а повтор той же точки превью не меняет.
+    /// пустое место под плитками): пустышка не «убегает» из-под пальца, пока
+    /// палец не сдвинется заметно (`emptySlotActivationDistance`); потом превью
+    /// следует за пальцем, а повтор той же клетки превью не меняет.
     func testPanelLiftOverEmptySpaceKeepsDefaultSlotUntilFingerMoves() throws {
         let host = makeHost(
             plain: [("a", .small), ("b", .small), ("c", .small), ("d", .small)],
@@ -376,14 +416,20 @@ final class DropSlotTests: XCTestCase {
             "На подъёме ярлык остаётся после папки"
         )
 
+        let liftFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
         host.coordinator.updateDrag(to: CGPoint(x: origin.x + 4, y: origin.y - 3))
-        XCTAssertEqual(host.gridIDs[2], AnyHashable("f3"), "Дрожание пальца превью не трогает")
+        XCTAssertEqual(
+            host.host.grid.frame(forItemID: "f3"),
+            liftFrame,
+            "Дрожание пальца превью не трогает"
+        )
 
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .slot(5))
-        let ids = host.gridIDs
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 1, column: 3)))
+        let moved = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
+        XCTAssertNotEqual(moved, liftFrame, "Пустышка поехала за пальцем")
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1, fx: 0.3, fy: 0.7))
-        XCTAssertEqual(host.gridIDs, ids, "Та же клетка — то же превью")
+        XCTAssertEqual(host.host.grid.frame(forItemID: "f3"), moved, "Та же клетка — то же превью")
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs }, "Отмена: сетка = модель")
         XCTAssertNil(host.coordinator.dragSession)
@@ -391,7 +437,7 @@ final class DropSlotTests: XCTestCase {
 
     /// RTL: клетка пальца считается в логических (не зеркальных) координатах —
     /// пустая клетка справа от последней плитки по порядку чтения (то есть
-    /// левее неё на экране) — конец порядка.
+    /// левее неё на экране) — логическая колонка 2 строки 1.
     func testGridDragToEmptyCellInRightToLeftLandsAtEnd() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e", "f"].map { tesseraTestTile($0, size: .small) },
@@ -408,10 +454,11 @@ final class DropSlotTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: CGPoint(x: f.midX - pitch, y: f.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .slot(5))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 1, column: 2)))
         host.coordinator.finishDrag(commit: true)
         settle(host, "a")
         XCTAssertEqual(host.storeIDs, ["b", "c", "d", "e", "f", "a"] as [AnyHashable])
+        XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 2))
     }
 
     // MARK: - Чистая функция превью

@@ -108,7 +108,7 @@ public struct StartScreenStyle {
 ///
 /// var body: some View {
 ///     StartScreenView(
-///         snapshot: store.snapshot(),
+///         snapshot: store.snapshot(columns: 6),   // ширина сетки; ячейки и дыры (E14.5)
 ///         style: StartScreenStyle(startPageTitle: "Начало"),
 ///         rightPage: { TesseraAppsListPageViewController.make(store: store) },
 ///         delegate: host
@@ -574,7 +574,13 @@ public struct StartScreenView: UIViewControllerRepresentable {
             if !force {
                 let desired = StartScreenView.signatures(for: snapshot.items)
                 let current = StartScreenView.signatures(for: screen.gridView.items)
-                guard desired != current else { return }
+                // E14.5: снимок с таблицей явных ячеек (`TileStore.snapshot(columns:)`)
+                // меняет раскладку и тогда, когда состав и размеры те же — например,
+                // после открепления остаётся дыра. Снимок без таблицы раскладку не
+                // задаёт и показанную таблицу не затирает.
+                let placementsChanged = snapshot.placementTable != nil
+                    && snapshot.placementTable != screen.gridView.snapshot?.placementTable
+                guard desired != current || placementsChanged else { return }
             }
             screen.reload(grid: snapshot)
         }

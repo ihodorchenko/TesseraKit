@@ -576,11 +576,10 @@ public final class TileStore: ObservableObject {
     /// `columns`. Сетка той же ширины раскладывает плитки на эти ячейки; сетка
     /// другой ширины таблицу игнорирует и упаковывает по порядку.
     ///
-    /// Метод **не подключён** к штатным путям хоста (`snapshot()` его не
-    /// вызывает): переходное правило E14.1 держит ячейки равными упаковке
-    /// порядка только после операций хранилища, а `setCatalog` ставит новые
-    /// ярлыки в новую строку в конце, не в дыру, поэтому картинка могла бы
-    /// отличаться от прежней. Подключение — E14.5.
+    /// С E14.5 это штатный путь хоста и координатора редактирования: сетка
+    /// показывает сохранённые ячейки (дыры), а ``onChange`` отдаёт такой же
+    /// снимок, когда ширина хоста известна. Хост без хранилища и без таблицы
+    /// по-прежнему получает упаковку по порядку.
     ///
     /// - Parameter columns: Число колонок сетки хоста, больше нуля.
     /// - Returns: Снимок; при `columns <= 0` таблица не прикладывается.
@@ -1642,8 +1641,14 @@ public final class TileStore: ObservableObject {
     }
 
     /// Отправляет снимок подписчикам: `objectWillChange` и ``onChange``.
+    ///
+    /// E14.5: если хранилище знает ширину сетки хоста (её сообщает координатор
+    /// редактирования, ``placeItems(columns:)``), снимок идёт с таблицей явных
+    /// ячеек (``snapshot(columns:)``) — хост, применяющий `onChange` к сетке,
+    /// получает дыры, а не упаковку по порядку. Без известной ширины снимок
+    /// прежний: сетка раскладывает его упаковкой.
     private func notifyChange() {
-        let snapshot = snapshot()
+        let snapshot = hostColumns.map { snapshot(columns: $0) } ?? snapshot()
         objectWillChange.send()
         onChange?(snapshot)
     }
@@ -1772,8 +1777,9 @@ public final class TileStore: ObservableObject {
     }
 
     /// Ширина, для которой пересчитываются ячейки после операции: последняя
-    /// ширина хоста, иначе ширина холста, иначе умолчание (D26).
-    private var effectiveColumns: Int {
+    /// ширина хоста, иначе ширина холста, иначе умолчание (D26). Внутренняя:
+    /// страница списка приложений берёт её, когда хост не передал колонки (E14.5).
+    var effectiveColumns: Int {
         hostColumns ?? canvasColumns ?? TileStore.defaultGridColumns
     }
 
@@ -2303,6 +2309,57 @@ extension TileStore {
         commitCells(items, columns: columns)
         didChangeKeepingCells()
         return .created(materialize(record))
+    }
+
+    /// Создаёт папку из одного ярлыка на его месте (E14.5, D20, D31).
+    ///
+    /// Нужна публичному `TesseraTileEditCoordinator.createFolder(withTile:)`,
+    /// чтобы оно не пользовалось прежней операцией по порядку (та пересчитывает
+    /// ячейки упаковкой и теряет дыры). Папка всегда 2×2 и встаёт на ячейку
+    /// ярлыка через `TileLayoutEngine.inserting`: соседи выталкиваются вниз
+    /// каскадом. Хост одобряет создание (`.createFolder`).
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык на сетке, который станет первым содержимым папки.
+    ///   - title: Название папки.
+    ///   - columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: Созданная папка или `nil` (нет ярлыка на сетке, `columns <= 0`
+    ///   либо отказ хоста).
+    func createFolder(withTile tileID: AnyHashable, title: String = "", columns: Int) -> TileFolder? {
+        guard columns > 0 else { return nil }
+        noteHostColumns(columns)
+        let tileKey = TileStore.storageKey(for: tileID)
+        guard let catalogPosition = catalogIndex[tileKey],
+              visibleGridKeys().contains(tileKey) else {
+            return nil
+        }
+        let basis = cellBasis(columns: columns)
+        guard let tileItem = basis.first(where: { $0.id == AnyHashable(tileKey) }) else { return nil }
+        guard approval(nil, catalog[catalogPosition], .createFolder) else { return nil }
+
+        let folderID = AnyHashable("folder-" + UUID().uuidString)
+        let record = FolderRecord(
+            key: TileStore.storageKey(for: folderID),
+            id: folderID,
+            title: title,
+            size: TileStore.newFolderSize,
+            tileKeys: [tileKey]
+        )
+        var items = TileLayoutEngine.removing(id: AnyHashable(tileKey), from: basis)
+        items = TileLayoutEngine.inserting(
+            id: AnyHashable(record.key),
+            size: record.size,
+            at: tileItem.cell,
+            into: items,
+            columns: columns
+        )
+
+        folderRecords.append(record)
+        gridOrder.removeAll { $0 == tileKey }
+        gridOrder.append(record.key)
+        commitCells(items, columns: columns)
+        didChangeKeepingCells()
+        return materialize(record)
     }
 
     /// Добавляет ярлык с сетки в существующую папку (E14.4).

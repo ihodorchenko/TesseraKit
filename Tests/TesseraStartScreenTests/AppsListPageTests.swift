@@ -393,15 +393,31 @@ final class AppsListPageTests: XCTestCase {
         }
     }
 
-    /// Pin из списка передаёт в хранилище число колонок сетки: ярлык встаёт по
-    /// видимому индексу (в конец видимого порядка), хранилище возвращает
-    /// фактический канонизированный индекс — одной операцией (E10.3a/E10.15).
+    /// Проверяет, что порядок снимка — порядок чтения ячеек модели (E14.5):
+    /// строка, затем колонка; дыры порядок не меняют.
+    private func assertCellReadingOrder(
+        _ store: TileStore,
+        columns: Int,
+        _ message: @autoclosure () -> String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(
+            store.placementReadingOrder(forColumns: columns),
+            store.snapshot().items.map { $0.id },
+            message(),
+            file: file,
+            line: line
+        )
+    }
+
+    /// Pin из списка передаёт в хранилище число колонок сетки: ярлык встаёт в
+    /// **новую строку** в конце холста (E14.5, D33) — одной операцией, дыры выше
+    /// не заполняются.
     ///
     /// «Aurora» (2×2) и «Wide» (4×2) на 4 колонках; «Spark» (1×1) откреплён.
-    /// После pin видимый порядок модели — [A, W, S], но компактная упаковка
-    /// читается A(0,0), S(0,2), W(2,0), поэтому канонический индекс Spark — 1,
-    /// а не позиция вставки 2.
-    func testPinFromListUsesGridColumnsAndReturnsCanonicalIndex() {
+    /// После pin Spark стоит в (4, 0) под «Wide», порядок чтения — [A, W, S].
+    func testPinFromListUsesGridColumnsAndPlacesTileInNewRow() {
         let store = makeStore([
             tile("Aurora", id: "a", size: .medium),
             tile("Wide", id: "w", size: .wide),
@@ -420,16 +436,17 @@ final class AppsListPageTests: XCTestCase {
         store.onChange = { _ in changes += 1 }
         XCTAssertTrue(pin(true, forTileID: "s", title: "Spark", page: page, table: table))
 
-        XCTAssertEqual(changes, 1, "pin и канонизация — одна операция модели (E10.15)")
+        XCTAssertEqual(changes, 1, "pin — одна операция модели")
         XCTAssertTrue(store.isPinned("s"))
         XCTAssertTrue(store.snapshot().unpinned.isEmpty)
-        XCTAssertEqual(ids(store), ["a", "s", "w"], "порядок модели должен стать каноническим")
+        XCTAssertEqual(ids(store), ["a", "w", "s"], "порядок модели — порядок чтения ячеек")
+        XCTAssertEqual(store.placement(of: "s"), TileGridPlacement(row: 4, column: 0), "новая строка после «Wide»")
         XCTAssertEqual(
             store.snapshot().items.firstIndex { $0.id == AnyHashable("s") },
-            1,
-            "фактический канонизированный индекс ярлыка"
+            2,
+            "индекс ярлыка в порядке чтения"
         )
-        assertReadingOrder(store, columns: 4, "после pin из списка")
+        assertCellReadingOrder(store, columns: 4, "после pin из списка")
         XCTAssertEqual(rowTitles(page, table), structureBefore, "pin не меняет секции списка")
         XCTAssertEqual(sectionTitles(page, table), sectionsBefore)
         // Двусторонняя связь §6: строка сразу отражает новое состояние.
@@ -468,7 +485,7 @@ final class AppsListPageTests: XCTestCase {
         _ = button.perform(NSSelectorFromString(selectorName))
 
         XCTAssertTrue(store.isPinned("s"))
-        XCTAssertEqual(ids(store), ["a", "s", "w"])
+        XCTAssertEqual(ids(store), ["a", "w", "s"], "pin — в новую строку в конце")
     }
 
     /// Фолбэк `columns == nil`: хост не сообщил раскладку — pin остаётся
@@ -491,17 +508,16 @@ final class AppsListPageTests: XCTestCase {
         XCTAssertEqual(store.snapshot().items.firstIndex { $0.id == AnyHashable("s") }, 2)
     }
 
-    /// Unpin из списка переупаковывает сетку: без канонизации порядок модели
-    /// разошёлся бы с экраном, поэтому при известных колонках страница
-    /// канонизирует видимый порядок (E10.15). Секции списка и их строки при
-    /// этом не меняются — ярлык остаётся в каталоге, меняется только состояние.
+    /// Unpin из списка оставляет дыру на месте ярлыка и не переупаковывает сетку
+    /// (E14.5, D30): после него страница схлопывает только полностью пустую
+    /// строку (D31). Секции списка и их строки при этом не меняются — ярлык
+    /// остаётся в каталоге, меняется только состояние.
     ///
     /// «Alpha» (1×1), «Bravo» (2×2), «Whiskey» (4×2), «Charlie» (2×2) на
-    /// 4 колонках читаются Alpha, Bravo, Whiskey, Charlie. После удаления
-    /// Alpha порядок [Bravo, Whiskey, Charlie] переупаковывается так, что
-    /// Charlie поднимается выше Whiskey — канонический порядок Bravo, Charlie,
-    /// Whiskey.
-    func testUnpinFromListCanonicalizesVisibleOrder() {
+    /// 4 колонках: Alpha (0,0), Bravo (0,1), Whiskey (2,0), Charlie (4,0). После
+    /// удаления Alpha в её ячейке дыра, остальные на месте (Bravo остаётся в
+    /// строке 0, схлопывать нечего).
+    func testUnpinFromListLeavesHoleWithoutRepacking() {
         let store = makeStore([
             tile("Alpha", id: "a", size: .small),
             tile("Bravo", id: "b", size: .medium),
@@ -520,14 +536,39 @@ final class AppsListPageTests: XCTestCase {
         store.onChange = { _ in changes += 1 }
         XCTAssertTrue(pin(false, forTileID: "a", title: "Alpha", page: page, table: table))
 
-        XCTAssertEqual(changes, 2, "unpin и канонизация — два изменения модели")
+        XCTAssertEqual(changes, 1, "unpin — одно изменение модели: пустых строк нет, схлопывать нечего")
         XCTAssertFalse(store.isPinned("a"))
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["a"])
-        XCTAssertEqual(ids(store), ["b", "c", "w"], "порядок после unpin должен стать каноническим")
-        assertReadingOrder(store, columns: 4, "после unpin из списка")
+        XCTAssertEqual(ids(store), ["b", "w", "c"], "порядок — порядок чтения ячеек, без репака")
+        XCTAssertEqual(store.placement(of: "b"), TileGridPlacement(row: 0, column: 1), "дыра на месте «Alpha» осталась")
+        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 4, column: 0))
+        assertCellReadingOrder(store, columns: 4, "после unpin из списка")
         XCTAssertEqual(rowTitles(page, table), structureBefore, "unpin не меняет секции списка")
         XCTAssertEqual(sectionTitles(page, table), sectionsBefore)
         assertPinButton(forTitle: "Alpha", pinned: false, page: page, table: table)
+    }
+
+    /// Unpin из списка последнего ярлыка строки схлопывает пустую строку (D31):
+    /// «Whiskey» (4×2) занимает строки 2–3 один, поэтому «Charlie» поднимается.
+    func testUnpinFromListCollapsesFullyEmptyRow() {
+        let store = makeStore([
+            tile("Alpha", id: "a", size: .small),
+            tile("Bravo", id: "b", size: .medium),
+            tile("Whiskey", id: "w", size: .wide),
+            tile("Charlie", id: "c", size: .medium),
+        ])
+        let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
+        let table = host(page)
+
+        var changes = 0
+        store.onChange = { _ in changes += 1 }
+        XCTAssertTrue(pin(false, forTileID: "w", title: "Whiskey", page: page, table: table))
+
+        XCTAssertEqual(changes, 2, "unpin и схлопывание строк — два изменения модели")
+        XCTAssertEqual(ids(store), ["a", "b", "c"])
+        XCTAssertEqual(store.placement(of: "a"), TileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 2, column: 0), "строки 2–3 схлопнуты")
+        assertCellReadingOrder(store, columns: 4, "после unpin и схлопывания")
     }
 
     /// Unpin из списка не перезагружает таблицу: состав строк (секции) не
