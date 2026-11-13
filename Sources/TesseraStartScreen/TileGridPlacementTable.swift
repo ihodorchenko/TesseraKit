@@ -101,3 +101,56 @@ public struct TileGridPlacementTable: Equatable {
         return placed
     }
 }
+
+// MARK: - Порядок чтения снимка (E14.7)
+
+extension TileGridSnapshot {
+
+    /// Снимок, у которого элементы идут в порядке чтения явных ячеек (E14.7).
+    ///
+    /// Порядок элементов снимка — порядок индексов коллекции, а значит, и порядок
+    /// обхода VoiceOver (см. «Accessibility» в ``TesseraTileGridView``). Хост со
+    /// своей таблицей ячеек (без ``TileStore``) мог отдать элементы в любом
+    /// порядке; применимая таблица (``TileGridPlacementTable/resolve(items:cells:placementColumns:columns:)``)
+    /// задаёт, как элементы лежат на экране, и порядок приводится к ней: строка по
+    /// возрастанию, затем логическая колонка (в RTL колонки логические, порядок
+    /// тот же). Равные ячейки (их быть не может: ``TileLayoutEngine/validate(_:columns:)``)
+    /// остаются в исходном порядке.
+    ///
+    /// Если таблица не применима (нет, неполная, другая ширина, пересечения),
+    /// раскладка идёт упаковкой по порядку `items`, и этот порядок сохраняется
+    /// как есть. Снимок с панелью раскрытой папки в `items` тоже не трогается:
+    /// панель добавляет сама сетка уже после сортировки.
+    ///
+    /// - Parameter columns: Число колонок сетки.
+    /// - Returns: `self`, если порядок уже верный или таблица не применима;
+    ///   иначе копия с переставленными элементами.
+    func readingOrdered(columns: Int) -> TileGridSnapshot {
+        guard placementTable != nil, !items.contains(where: { $0.isFolderPanel }),
+              let placed = TileGridPlacementTable.resolve(
+                  items: items.map { (id: $0.id, size: $0.size) },
+                  cells: placementTable?.cells,
+                  placementColumns: placementTable?.columns,
+                  columns: columns
+              ) else {
+            return self
+        }
+        var cellByID: [AnyHashable: TileGridPlacement] = [:]
+        cellByID.reserveCapacity(placed.count)
+        for item in placed { cellByID[item.id] = item.cell }
+
+        let sorted = items.enumerated().sorted { lhs, rhs in
+            guard let left = cellByID[lhs.element.id], let right = cellByID[rhs.element.id],
+                  left != right else {
+                return lhs.offset < rhs.offset
+            }
+            return TileGridPlacement.isReadingOrdered(left, before: right)
+        }
+        guard sorted.map({ $0.offset }) != Array(items.indices) else { return self }
+        return TileGridSnapshot(
+            items: sorted.map { $0.element },
+            unpinned: unpinned,
+            placementTable: placementTable
+        )
+    }
+}

@@ -205,7 +205,17 @@ import TesseraCore
 ///   счётчик бэйджа — value;
 /// - папка — один элемент с числом ярлыков в value;
 /// - Dynamic Type: шрифт заголовка пересобирается при смене категории;
-/// - RTL: порядок элементов задаётся раскладкой, иконка и бэйдж зеркалятся.
+/// - RTL: порядок элементов задаётся раскладкой, иконка и бэйдж зеркалятся;
+/// - порядок обхода VoiceOver (E14.7) — порядок индексов коллекции (так
+///   работает `UICollectionView`, на устройстве с VoiceOver не проверялось):
+///   сетка не задаёт `accessibilityElements`, кадры не сортирует, а атрибуты
+///   раскладка отдаёт по индексу. Индексы идут в порядке чтения явных ячеек (строка, затем
+///   логическая колонка, в RTL тот же порядок — колонка 0 справа), в том числе
+///   с дырами; панель раскрытой папки (D17) стоит сразу после последнего
+///   элемента полосы папки, а её ярлыки читаются внутри панели после плитки
+///   папки. `TileStore` отдаёт снимок уже в таком порядке, а для хоста с таблицей
+///   ячеек без `TileStore` его восстанавливает сама сетка; без применимой таблицы
+///   (упаковка `pack`) порядок остаётся таким, как отдал хост.
 ///
 /// ## Поля и safe area
 ///
@@ -564,7 +574,10 @@ public final class TesseraTileGridView: UIView {
             // перестраиваем набор целиком, иначе панель и соседи разъедутся.
             invalidateDisplayItems()
             tileLayout.columns = newValue
-            if expandedFolderID != nil {
+            // E14.7: от числа колонок зависит применимость таблицы ячеек, а с ней
+            // и порядок чтения; если он изменился, набор коллекции перестраивается.
+            let orderChanged = reorderSnapshotForCurrentColumns()
+            if expandedFolderID != nil || orderChanged {
                 pushDisplayItemsToLayout(reason: .items)
                 collectionView.reloadData()
             }
@@ -920,6 +933,7 @@ public final class TesseraTileGridView: UIView {
     ///
     /// - Parameter snapshot: Новый снимок сетки.
     public func reload(snapshot: TileGridSnapshot) {
+        let snapshot = readingOrdered(snapshot)
         if deferSnapshotIfTransitioning(snapshot, animated: false) { return }
         apply(snapshot, animated: false)
     }
@@ -951,7 +965,10 @@ public final class TesseraTileGridView: UIView {
     /// - Parameters:
     ///   - newSnapshot: Новый снимок сетки.
     ///   - animated: Анимировать ли изменение, если сетка на экране.
-    public func update(snapshot newSnapshot: TileGridSnapshot, animated: Bool) {
+    public func update(snapshot rawSnapshot: TileGridSnapshot, animated: Bool) {
+        // E14.7: порядок элементов — порядок чтения ячеек; сравнение «до/после»
+        // ниже идёт уже в нём.
+        let newSnapshot = readingOrdered(rawSnapshot)
         if deferSnapshotIfTransitioning(newSnapshot, animated: animated) { return }
 
         let oldIDs = snapshot?.items.map { $0.id } ?? []
@@ -2046,6 +2063,40 @@ public final class TesseraTileGridView: UIView {
     /// Сбрасывает кеш элементов с панелью.
     private func invalidateDisplayItems() {
         cachedDisplayItems = nil
+    }
+
+    /// Снимок с элементами в порядке чтения явных ячеек (E14.7).
+    ///
+    /// Порядок элементов снимка — порядок индексов коллекции, а он — порядок
+    /// обхода VoiceOver (см. «Accessibility»): сетка не задаёт
+    /// `accessibilityElements`, не сортирует кадры и не переопределяет порядок
+    /// ячеек, а `layoutAttributesForElements(in:)` раскладчика отдаёт атрибуты
+    /// по индексу. Поэтому сетка сама приводит набор к порядку чтения
+    /// (строка, затем логическая колонка; в RTL тот же порядок), если снимок
+    /// несёт применимую для текущих колонок таблицу ячеек. Без таблицы или с
+    /// неприменимой порядок остаётся таким, как отдал хост: так же идёт упаковка
+    /// ``TileLayoutEngine/pack(items:columns:unit:)``. Внутренний: координатор
+    /// сравнивает по нему ожидаемые снимки с тем, что показывает сетка.
+    ///
+    /// - Parameter snapshot: Снимок хоста.
+    /// - Returns: Снимок в порядке чтения.
+    func readingOrdered(_ snapshot: TileGridSnapshot) -> TileGridSnapshot {
+        snapshot.readingOrdered(columns: columns)
+    }
+
+    /// Переупорядочивает текущий снимок под текущие колонки (E14.7).
+    ///
+    /// Нужен, когда число колонок изменилось: таблица ячеек могла стать
+    /// применимой (или перестать ей быть), а с ней меняется порядок чтения.
+    ///
+    /// - Returns: `true`, если порядок элементов снимка изменился.
+    private func reorderSnapshotForCurrentColumns() -> Bool {
+        guard let current = snapshot else { return false }
+        let ordered = readingOrdered(current)
+        guard ordered.items.map({ $0.id }) != current.items.map({ $0.id }) else { return false }
+        snapshot = ordered
+        invalidateDisplayItems()
+        return true
     }
 
     /// Передаёт раскладке набор коллекции вместе с таблицей явных ячеек снимка

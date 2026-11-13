@@ -150,7 +150,11 @@ final class DropSlotTests: XCTestCase {
             .cell(TileGridPlacement(row: 1, column: 3)),
             "Цель — клетка под пальцем"
         )
-        XCTAssertEqual(host.gridIDs, ["a", folderID, "f3", "b", "c", "d"] as [AnyHashable], "Порядок снимка — база")
+        XCTAssertEqual(
+            host.gridIDs,
+            ["a", folderID, "b", "c", "d", "f3"] as [AnyHashable],
+            "Порядок снимка — порядок чтения ячеек превью (E14.7): «f3» на клетке (1, 3) — после «d»"
+        )
         let previewFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
         let dFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "d"))
         XCTAssertEqual(previewFrame.minY, dFrame.minY, accuracy: 0.5, "Превью — в ряду «d», сразу за ним")
@@ -394,8 +398,8 @@ final class DropSlotTests: XCTestCase {
         let origin = try XCTUnwrap(host.coordinator.dragSession?.originPoint)
         XCTAssertEqual(
             host.gridIDs,
-            ["a", folderID, "f3", "b", "c", "d"] as [AnyHashable],
-            "На подъёме ярлык остаётся после папки"
+            ["a", folderID, "b", "c", "d", "f3"] as [AnyHashable],
+            "На подъёме ярлык стоит на первой свободной ячейке после папки; порядок — порядок чтения ячеек (E14.7)"
         )
 
         let liftFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
