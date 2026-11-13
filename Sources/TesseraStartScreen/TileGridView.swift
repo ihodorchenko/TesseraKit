@@ -822,6 +822,12 @@ public final class TesseraTileGridView: UIView {
     /// (`hiddenItemIDs`) сильнее дима: `contentView.alpha` = 0.
     private var editDimmingAlphas: [AnyHashable: CGFloat] = [:]
 
+    /// Отступы бэйджей от стрелок размера режима редактирования (D29, E15.1).
+    ///
+    /// Как и дим, принадлежат сетке: переживают обновление снимка и
+    /// переиспользование ячеек. Пустая запись — вне правки (0).
+    private var badgeEditClearances: [AnyHashable: CGFloat] = [:]
+
     /// Прозрачность невыбранной плитки в режиме редактирования (E8.2).
     ///
     /// 0,7 — из спеки WP: плитки остаются читаемыми и доступными для действий,
@@ -1120,6 +1126,9 @@ public final class TesseraTileGridView: UIView {
         // Дим принадлежит сетке (E10.4): записи исчезнувших элементов не храним,
         // иначе после повторного pin дим вернулся бы к чужой ячейке.
         editDimmingAlphas = editDimmingAlphas.filter { entry in
+            newSnapshot.items.contains { $0.id == entry.key }
+        }
+        badgeEditClearances = badgeEditClearances.filter { entry in
             newSnapshot.items.contains { $0.id == entry.key }
         }
         invalidateDisplayItems()
@@ -1455,6 +1464,7 @@ public final class TesseraTileGridView: UIView {
         )
         // E8.2/E10.4: дим применяется после содержимого ячейки.
         cell.setDimmingAlpha(editDimmingAlpha(for: item.id))
+        cell.setBadgeEditClearance(badgeEditClearances[item.id] ?? 0, animated: false)
         cell.setSourceHidden(isHidden)
 
         let itemID = item.id
@@ -2039,6 +2049,46 @@ public final class TesseraTileGridView: UIView {
             animations: apply,
             completion: nil
         )
+    }
+
+    /// Сообщает ячейкам, сколько угла занимает стрелка размера (D29, E15.1).
+    ///
+    /// Бэйдж плитки обходит стрелку режима редактирования: координатор считает
+    /// для каждой плитки со стрелкой занятую часть угла
+    /// (``TesseraTileEditControlView/badgeClearance(forTileSize:maxDiameter:)``),
+    /// сетка хранит значения и применяет их к ячейкам, в том числе созданным
+    /// позже. Семантика — слияние, как у ``setEditDimming(_:animated:)``; `0`
+    /// возвращает бэйдж в угол.
+    ///
+    /// - Parameters:
+    ///   - clearances: Отступ по идентификатору элемента, pt.
+    ///   - animated: Плавный сдвиг (при Reduce Motion — мгновенно).
+    func setBadgeEditClearances(_ clearances: [AnyHashable: CGFloat], animated: Bool) {
+        guard !clearances.isEmpty else { return }
+
+        let animates = animated && !isReduceMotionEnabled()
+        for (itemID, clearance) in clearances {
+            if clearance > 0 {
+                badgeEditClearances[itemID] = clearance
+            } else {
+                badgeEditClearances.removeValue(forKey: itemID)
+            }
+            guard let indexPath = indexPath(forItemID: itemID),
+                  let cell = collectionView.cellForItem(at: indexPath) as? TesseraTileCell,
+                  cell.itemID == itemID else {
+                continue
+            }
+            cell.setBadgeEditClearance(clearance, animated: animates)
+        }
+    }
+
+    /// Возвращает бэйджи всех плиток в угол: правка закончилась (E15.1).
+    ///
+    /// - Parameter animated: Плавный сдвиг (при Reduce Motion — мгновенно).
+    func resetBadgeEditClearances(animated: Bool) {
+        let ids = Set(badgeEditClearances.keys)
+        guard !ids.isEmpty else { return }
+        setBadgeEditClearances(Dictionary(uniqueKeysWithValues: ids.map { ($0, CGFloat(0)) }), animated: animated)
     }
 
     /// Целевая прозрачность содержимого элемента (E8.2, E10.4).
@@ -3423,6 +3473,7 @@ final class TesseraTileCell: UICollectionViewCell {
         badgeView.isHidden = true
         liveView.isHidden = false
         liveView.badge = badge
+        liveView.badgeEditClearance = badgeEditClearance
 
         guard let engine else {
             // Ячейка ещё не показана: стороны без регистрации, чтобы движок не
@@ -3682,6 +3733,42 @@ final class TesseraTileCell: UICollectionViewCell {
         updateContentAlpha()
     }
 
+    /// Сколько нижнего угла у конца строки занимает стрелка размера режима
+    /// редактирования, pt; `0` — вне правки либо стрелки нет (D29, E15.1).
+    ///
+    /// Бэйдж обходит эту область: сдвигается от угла вдоль нижнего ряда
+    /// (``TesseraTileBadgeLayout``). Значением владеет сетка
+    /// (``TesseraTileGridView/setBadgeEditClearances(_:animated:)``), как и
+    /// димом: `configure` применяет сохранённое значение, а переиспользование
+    /// ячейки возвращает 0.
+    private(set) var badgeEditClearance: CGFloat = 0
+
+    /// Применяет отступ бэйдж от стрелки размера (D29, E15.1).
+    ///
+    /// - Parameters:
+    ///   - clearance: Занятая стрелкой часть угла внутри плитки, pt.
+    ///   - animated: Плавно сдвинуть бэйдж и подпись; без анимации раскладка
+    ///     обновляется на ближайшем layout.
+    func setBadgeEditClearance(_ clearance: CGFloat, animated: Bool) {
+        let value = clearance.isFinite ? max(0, clearance) : 0
+        guard value != badgeEditClearance else { return }
+        badgeEditClearance = value
+        liveTileView?.badgeEditClearance = value
+        setNeedsLayout()
+
+        guard animated, window != nil else { return }
+        UIView.animate(
+            withDuration: TesseraTileGridView.dimmingDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { [weak self] in
+                self?.layoutIfNeeded()
+                self?.liveTileView?.layoutIfNeeded()
+            },
+            completion: nil
+        )
+    }
+
     /// Пересчитывает фактическую прозрачность содержимого (E10.4).
     ///
     /// Скрытие на время drag сильнее дима: у скрытой ячейки `alpha` = 0, иначе
@@ -3724,6 +3811,8 @@ final class TesseraTileCell: UICollectionViewCell {
         // Диму и скрытию принадлежит сетка: чистое состояние — полная яркость.
         // Очередной `configure` применит сохранённую цель (E10.4).
         dimmingAlpha = 1
+        badgeEditClearance = 0
+        liveTileView?.badgeEditClearance = 0
         folderAccessibilityCountText = nil
         setSourceHidden(false)
     }
@@ -3850,38 +3939,41 @@ final class TesseraTileCell: UICollectionViewCell {
         let inset = max(6, min(12, minimumSide * 0.08))
         let contentWidth = max(0, bounds.width - inset * 2)
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
-        let titleFits = fitTitleFont(toWidth: contentWidth)
 
-        // Бэйдж — в верхнем углу, противоположном иконке (§4, §9, RTL).
+        // Бэйдж — в нижнем углу у конца строки (D29, E15.1; §4, §9, RTL); в
+        // правке он обходит стрелку размера. Подпись уступает ему место:
+        // сужается рядом с ним либо поднимается над его рядом.
         let badgeSize = badgeView.intrinsicContentSize
-        let showsBadge = badgeSize.width > 0 && badgeSize.height > 0
-        if showsBadge {
-            let badgeX = isRightToLeft ? inset : bounds.width - inset - badgeSize.width
-            badgeView.frame = CGRect(
-                x: max(inset, badgeX),
-                y: inset,
-                width: badgeSize.width,
-                height: badgeSize.height
-            )
-        } else {
-            badgeView.frame = .zero
-        }
+        let badgeLayout = TesseraTileBadgeLayout.make(
+            tileSize: bounds.size,
+            badgeSize: badgeSize,
+            inset: inset,
+            isRightToLeft: isRightToLeft,
+            editClearance: badgeEditClearance
+        )
+        badgeView.frame = badgeLayout.frame
+        badgeView.alpha = badgeLayout.isHiddenByEditControls ? 0 : 1
+
+        let titleWidth = max(0, contentWidth - badgeLayout.titleTrailingReserve)
+        let titleFits = fitTitleFont(toWidth: titleWidth)
 
         // Иконка — в верхнем углу по направлению чтения (§9).
         let hasImage = iconView.image != nil
         var iconSide = hasImage ? max(14, min(34, minimumSide * 0.22)) : 0
         let lineHeight = titleLabel.font.lineHeight
 
-        // Заголовок прижат к низу и не заходит в верхнюю зону, занятую
-        // иконкой/бэйджем: на маленьких плитках бэйдж иначе ложится на первую
-        // строку. Если места на строку не остаётся, иконку прячем — текст
-        // важнее для 1×1 и крупного Dynamic Type.
-        var topReserve = max(hasImage ? iconSide : 0, showsBadge ? badgeSize.height : 0)
-        var titleHeightLimit = bounds.height - inset * 2 - (topReserve > 0 ? topReserve + 4 : 0)
+        // Заголовок прижат к низу и не заходит в верхнюю зону, занятую иконкой,
+        // и в нижний ряд бэйджа, если подпись над ним. Если места на строку не
+        // остаётся, иконку прячем — текст важнее для 1×1 и крупного Dynamic
+        // Type.
+        let bottomReserve = badgeLayout.titleBottomReserve
+        var topReserve = hasImage ? iconSide : 0
+        var titleHeightLimit = bounds.height - inset * 2 - bottomReserve
+            - (topReserve > 0 ? topReserve + 4 : 0)
         if hasImage && titleHeightLimit < lineHeight {
             iconSide = 0
-            topReserve = showsBadge ? badgeSize.height : 0
-            titleHeightLimit = bounds.height - inset * 2 - (topReserve > 0 ? topReserve + 4 : 0)
+            topReserve = 0
+            titleHeightLimit = bounds.height - inset * 2 - bottomReserve
         }
 
         let showsIcon = hasImage && iconSide > 0
@@ -3893,7 +3985,7 @@ final class TesseraTileCell: UICollectionViewCell {
             iconView.frame = .zero
         }
 
-        guard contentWidth > 0 else {
+        guard titleWidth > 0 else {
             titleLabel.frame = .zero
             return
         }
@@ -3911,13 +4003,15 @@ final class TesseraTileCell: UICollectionViewCell {
         }
 
         let measured = titleLabel.sizeThatFits(
-            CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
+            CGSize(width: titleWidth, height: CGFloat.greatestFiniteMagnitude)
         )
         let titleHeight = min(ceil(measured.height), max(0, titleHeightLimit))
+        // В RTL бэйдж слева, поэтому подпись «рядом» сдвигается вправо.
+        let titleX = isRightToLeft ? inset + badgeLayout.titleTrailingReserve : inset
         titleLabel.frame = CGRect(
-            x: inset,
-            y: bounds.height - inset - titleHeight,
-            width: contentWidth,
+            x: titleX,
+            y: bounds.height - inset - bottomReserve - titleHeight,
+            width: titleWidth,
             height: titleHeight
         )
     }

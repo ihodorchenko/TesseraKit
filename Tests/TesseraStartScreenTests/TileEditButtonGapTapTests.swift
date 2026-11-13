@@ -146,11 +146,11 @@ final class TileEditButtonGapTapTests: XCTestCase {
 
     /// Точка внутри видимой кнопки, **вне рамки плитки** и в зазоре (под ней
     /// нет плитки), ближайшая к центру кнопки: «выступающая часть».
-    private func overhangPoint(
+    private func overhangPointIfAny(
         button: CGRect,
         tile: CGRect,
         in host: TesseraTestDragHost
-    ) throws -> CGPoint {
+    ) -> CGPoint? {
         var best: CGPoint?
         var bestDistance = CGFloat.greatestFiniteMagnitude
         var x = button.minX + 0.5
@@ -169,7 +169,18 @@ final class TileEditButtonGapTapTests: XCTestCase {
             }
             x += 1
         }
-        return try XCTUnwrap(best, "у кнопки нет части в зазоре")
+        return best
+    }
+
+    private func overhangPoint(
+        button: CGRect,
+        tile: CGRect,
+        in host: TesseraTestDragHost
+    ) throws -> CGPoint {
+        try XCTUnwrap(
+            overhangPointIfAny(button: button, tile: tile, in: host),
+            "у кнопки нет части в зазоре"
+        )
     }
 
     /// Сколько единиц событий делегата с префиксом.
@@ -223,7 +234,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
 
     /// Точки зоны касания вне видимой кнопки (расширение до 44 pt) ведут себя
     /// как сама кнопка: касание уходит кнопке, жест фона его не принимает —
-    /// и в зазоре слева, и над плиткой верхнего ряда.
+    /// и в зазоре справа, и над плиткой верхнего ряда.
     func testExtendedHitZoneBehavesLikeTheButton() throws {
         let (host, recorder) = try makeHost()
         let id: AnyHashable = "t3"
@@ -232,8 +243,9 @@ final class TileEditButtonGapTapTests: XCTestCase {
         let hit = gridFrame(control.unpinHitFrame, of: control, in: host)
         XCTAssertGreaterThan(hit.width, button.width, "зона шире кнопки")
 
-        // Слева от кнопки: в зазоре между плитками (глубже зазора — другая плитка).
-        let left = CGPoint(x: button.minX - 1, y: button.midY)
+        // Справа от кнопки (E15.2: открепление — в верхнем углу у конца строки):
+        // в зазоре между плитками либо в поле сетки (глубже зазора — другая плитка).
+        let left = CGPoint(x: button.maxX + 1, y: button.midY)
         XCTAssertTrue(hit.contains(left))
         XCTAssertFalse(button.contains(left))
         XCTAssertNil(host.host.grid.item(at: left), "точка — в зазоре")
@@ -354,16 +366,17 @@ final class TileEditButtonGapTapTests: XCTestCase {
 
     // MARK: - RTL
 
-    /// RTL: кнопки зеркалятся (открепление — вверху справа, размер — внизу
-    /// слева); касание по выступающей части каждой не выводит из правки.
+    /// RTL: кнопки зеркалятся (E15.2: обе у начала физического левого края —
+    /// открепление вверху слева, размер внизу слева); касание по выступающей
+    /// части каждой не выводит из правки.
     func testRightToLeftOverhangsKeepEditing() throws {
         let (host, recorder) = try makeHost(rightToLeft: true)
 
-        // Открепление t3: зеркальный угол — правый верхний.
+        // Открепление t3: зеркальный угол — левый верхний.
         let t3Control = try control("t3", in: host)
         let t3 = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
         let unpinButton = gridFrame(t3Control.unpinButtonFrame, of: t3Control, in: host)
-        XCTAssertGreaterThan(unpinButton.midX, t3.midX, "RTL: кнопка открепления справа")
+        XCTAssertLessThan(unpinButton.midX, t3.midX, "RTL: кнопка открепления слева")
         let unpinPoint = try overhangPoint(button: unpinButton, tile: t3, in: host)
         let unpinOutcome = touchDown(at: unpinPoint, in: host)
         XCTAssertTrue(unpinOutcome.hit is UIButton)
@@ -428,7 +441,8 @@ final class TileEditButtonGapTapTests: XCTestCase {
         let tile = geometry.frames[0]
         let button = gridFrame(control.unpinButtonFrame, of: control, in: host)
         let center = CGPoint(x: button.midX, y: button.midY)
-        let overhang = try? overhangPoint(button: button, tile: tile, in: host)
+        // У кнопки ярлыка панели в зазоре может не быть части (E15.2: правый угол).
+        let overhang = overhangPointIfAny(button: button, tile: tile, in: host)
 
         for point in [center, overhang].compactMap({ $0 }) {
             let outcome = touchDown(at: point, in: host)

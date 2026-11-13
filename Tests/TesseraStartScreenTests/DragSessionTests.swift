@@ -873,7 +873,8 @@ final class DragSessionTests: XCTestCase {
         }
 
         host.coordinator.beginEditing()
-        XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .medium)
+        // E15.3 (D28): из small цикл ведёт в wide (раньше — в medium).
+        XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .wide)
         XCTAssertTrue(host.waitUntil { !posts.isEmpty })
         XCTAssertEqual(posts.last?.0, UIAccessibility.Notification.layoutChanged)
         XCTAssertTrue(
