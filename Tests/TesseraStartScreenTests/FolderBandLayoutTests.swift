@@ -287,6 +287,7 @@ final class FolderBandLayoutTests: XCTestCase {
         let items: [TileGridItem] = smalls.map { .tile($0) } + [.folder(folder)]
 
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 393, height: 1200))
+        grid.columns = 4
         grid.itemSpacing = 12
         grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
         layoutGrid(grid)

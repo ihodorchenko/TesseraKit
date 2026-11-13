@@ -43,9 +43,11 @@ final class TileGridPixelAlignmentTests: XCTestCase {
     private func makeLayout(
         width: CGFloat,
         scale: CGFloat,
-        spacing: CGFloat = 8
+        spacing: CGFloat = 8,
+        columns: Int = 4
     ) -> (TesseraTileCollectionViewLayout, UICollectionView) {
         let layout = TesseraTileCollectionViewLayout()
+        layout.columns = columns
         layout.itemSpacing = spacing
         layout.displayScaleOverride = scale
         let collectionView = UICollectionView(
