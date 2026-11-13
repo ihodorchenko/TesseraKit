@@ -1043,7 +1043,8 @@ final class DragSessionTests: XCTestCase {
 
     /// E11.2/E14.5: вынос из папки без индекса ставит ярлык на первую свободную
     /// ячейку после папки (рядом с ней), а не в конец; порядок модели — порядок
-    /// чтения ячеек.
+    /// чтения ячеек. D45: в папке три ярлыка («a», «b», «e»), после выноса «b» она
+    /// остаётся с двумя.
     func testMoveOutOfFolderLandsAfterFolderThroughCoordinator() throws {
         let host = TesseraTestDragHost(
             descriptors: [
@@ -1051,10 +1052,12 @@ final class DragSessionTests: XCTestCase {
                 tesseraTestTile("b", size: .small),
                 tesseraTestTile("c", size: .small),
                 tesseraTestTile("d", size: .small),
+                tesseraTestTile("e", size: .small),
             ],
             prepare: { store, columns in
                 if let folder = store.createFolder(withTile: "a", columns: columns) {
                     _ = store.addToFolder("b", folderID: folder.id, columns: columns)
+                    _ = store.addToFolder("e", folderID: folder.id, columns: columns)
                 }
             }
         )
@@ -1066,6 +1069,7 @@ final class DragSessionTests: XCTestCase {
         // ячейка после папки — (1, 2), под «c».
         XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: folderCell.row + 1, column: 2))
         XCTAssertEqual(host.storeIDs, [folderID, "c", "d", "b"])
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["a", "e"] as [AnyHashable])
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
     }
 
@@ -1678,6 +1682,9 @@ final class DragSessionTests: XCTestCase {
         /// События `didMove(toFolder:atCell:)`.
         var moves: [(id: AnyHashable, folder: AnyHashable?, cell: TileGridPlacement?)] = []
 
+        /// События `didDissolveFolder` (D45).
+        var dissolutions: [(folder: AnyHashable, remaining: AnyHashable)] = []
+
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
@@ -1686,9 +1693,19 @@ final class DragSessionTests: XCTestCase {
         ) {
             moves.append((tileID, folderID, cell))
         }
+
+        func tileEditCoordinator(
+            _ coordinator: TesseraTileEditCoordinator,
+            didDissolveFolder folderID: AnyHashable,
+            remainingTile tileID: AnyHashable
+        ) {
+            dissolutions.append((folderID, tileID))
+        }
     }
 
-    /// Стенд E11.1: порядок сетки — «a», папка F1 («b», «c»), «d», папка F2 («e»).
+    /// Стенд E11.1: порядок сетки — «a», папка F1 («b», «c», «g»), «d», папка F2
+    /// («e», «h»). D45: в F1 три ярлыка (вынос одного оставляет папку), в F2 два
+    /// (вынос одного распускает её; раньше в F2 был один «e», а в F1 два).
     private func makePanelHost(
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
             mergeHoverDuration: 0.05,
@@ -1700,9 +1717,9 @@ final class DragSessionTests: XCTestCase {
         try TesseraTestDragHost(
             packed: [
                 .tile("a", .small),
-                .folder("F1", .small, [("b", .small), ("c", .small)]),
+                .folder("F1", .small, [("b", .small), ("c", .small), ("g", .small)]),
                 .tile("d", .small),
-                .folder("F2", .small, [("e", .small)]),
+                .folder("F2", .small, [("e", .small), ("h", .small)]),
             ],
             configuration: configuration
         )
@@ -1773,7 +1790,7 @@ final class DragSessionTests: XCTestCase {
         )
         XCTAssertEqual(
             host.folders.first?.tiles.map { $0.id },
-            ["b", "c"] as [AnyHashable],
+            ["b", "c", "g"] as [AnyHashable],
             "Состав папки в модели прежний"
         )
         host.coordinator.endEditing()
@@ -1807,7 +1824,8 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(recorder.moves.first?.cell, aCell)
         XCTAssertEqual(host.storeIDs.first, AnyHashable("c"))
         XCTAssertEqual(host.store.placement(of: "c"), aCell)
-        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "g"] as [AnyHashable])
+        XCTAssertTrue(recorder.dissolutions.isEmpty, "Папка из трёх не распалась")
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
         XCTAssertTrue(host.waitForDragCleanup("c"))
         XCTAssertNil(host.coordinator.dragSession)
@@ -1815,13 +1833,15 @@ final class DragSessionTests: XCTestCase {
         XCTAssertNotNil(host.host.grid.frame(forItemID: "c"))
     }
 
-    /// Вынос последнего ярлыка: папка исчезает (её ячейка остаётся дырой), а
-    /// делегат получает итоговую ячейку ярлыка.
-    func testDropOfLastTileDissolvesFolderAndReportsCell() throws {
+    /// Вынос одного из двух ярлыков (D45): папка распускается, оставшийся «h» встаёт
+    /// на её место, вынесенный «e» — в новую строку; делегат получает итоговую
+    /// ячейку ярлыка и затем `didDissolveFolder`.
+    func testDropOfOneOfTwoTilesDissolvesFolderAndReportsCell() throws {
         let host = try makePanelHost()
         let recorder = IndexedMoveRecorder()
         host.coordinator.delegate = recorder
         let (_, f2) = try panelHostFolderIDs(host)
+        let folderCell = try XCTUnwrap(host.store.placement(of: f2))
 
         try startPanelDrag(host, folderID: f2, iconIndex: 0)
         XCTAssertEqual(host.coordinator.dragSession?.sourceFolderID, f2)
@@ -1831,10 +1851,14 @@ final class DragSessionTests: XCTestCase {
 
         host.coordinator.finishDrag(commit: true)
 
-        XCTAssertFalse(host.storeIDs.contains(f2), "Папка из одного ярлыка исчезла")
-        XCTAssertEqual(host.storeIDs.last, AnyHashable("e"), "Ярлык — в новой строке")
+        XCTAssertFalse(host.storeIDs.contains(f2), "Папка распалась")
+        XCTAssertEqual(host.store.placement(of: "h"), folderCell, "Оставшийся ярлык — на месте папки")
+        XCTAssertEqual(host.storeIDs.last, AnyHashable("e"), "Вынесенный ярлык — в новой строке")
         XCTAssertEqual(host.store.placement(of: "e")?.column, 0)
         XCTAssertEqual(recorder.moves.first?.cell, host.store.placement(of: "e"))
+        XCTAssertEqual(recorder.dissolutions.count, 1)
+        XCTAssertEqual(recorder.dissolutions.first?.folder, f2)
+        XCTAssertEqual(recorder.dissolutions.first?.remaining, AnyHashable("h"))
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
         XCTAssertTrue(host.waitForDragCleanup("e"))
     }
@@ -1860,8 +1884,8 @@ final class DragSessionTests: XCTestCase {
         XCTAssertEqual(recorder.folderMoves.count, 1, "Прежний колбэк получил событие")
         XCTAssertEqual(recorder.folderMoves.first?.id, AnyHashable("c"))
         XCTAssertEqual(recorder.folderMoves.first?.folder, f2)
-        XCTAssertEqual(host.folders.first { $0.id == f1 }?.tiles.map { $0.id }, ["b"] as [AnyHashable])
-        XCTAssertEqual(host.folders.first { $0.id == f2 }?.tiles.map { $0.id }, ["e", "c"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first { $0.id == f1 }?.tiles.map { $0.id }, ["b", "g"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first { $0.id == f2 }?.tiles.map { $0.id }, ["e", "h", "c"] as [AnyHashable])
         let target = try XCTUnwrap(host.coordinator.lastCollapseTargetFrame)
         XCTAssertEqual(target, host.host.grid.frame(forItemID: f2), "Полёт — в рамку папки-цели")
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
@@ -1885,7 +1909,7 @@ final class DragSessionTests: XCTestCase {
         host.coordinator.finishDrag(commit: true)
 
         XCTAssertEqual(host.storeIDs, before)
-        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c", "g"] as [AnyHashable])
         XCTAssertTrue(recorder.folderMoves.isEmpty)
         XCTAssertTrue(recorder.failures.isEmpty)
         XCTAssertTrue(host.waitUntil { host.gridIDs == before })
@@ -1910,7 +1934,7 @@ final class DragSessionTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
         XCTAssertTrue(host.waitUntil { host.gridIDs == before })
         XCTAssertEqual(host.storeIDs, before)
-        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c", "g"] as [AnyHashable])
 
         // Отмена после превью.
         try startPanelDrag(host, folderID: f1, iconIndex: 0)
@@ -1919,7 +1943,7 @@ final class DragSessionTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
         XCTAssertTrue(host.waitUntil { host.gridIDs == before })
         XCTAssertEqual(host.storeIDs, before)
-        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c"] as [AnyHashable])
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["b", "c", "g"] as [AnyHashable])
 
         XCTAssertTrue(recorder.folderMoves.isEmpty)
         XCTAssertTrue(recorder.createdFolders.isEmpty)
@@ -2141,15 +2165,16 @@ final class DragSessionTests: XCTestCase {
 
     // MARK: - E12.1: вынос единственного ярлыка в «дыру»
 
-    /// Стенд E12.1 (4 колонки): `s0` (кол. 0), папка «Работа» из одного ярлыка
-    /// `mail` (кол. 1), medium `cal` (кол. 2–3), папка B из `m`,`n`,`p` — в
+    /// Стенд E12.1 (4 колонки): `s0` (кол. 0), папка «Работа» из двух ярлыков
+    /// `mail`, `mail2` (кол. 1; D45: из одного ярлыка папки не бывает, вынос
+    /// `mail` распускает её), medium `cal` (кол. 2–3), папка B из `m`,`n`,`p` — в
     /// модели ниже слева остаётся дыра под «Работой».
     private func makeMoveOutHost(columns: Int = 4, magnet: CGFloat = 0) throws -> TesseraTestDragHost {
         // E14.6: компактная раскладка как до E14 (`packed`): новые папки — medium.
         try TesseraTestDragHost(
             packed: [
                 .tile("s0", .small),
-                .folder("Work", .medium, [("mail", .small)]),
+                .folder("Work", .medium, [("mail", .small), ("mail2", .small)]),
                 .tile("cal", .medium),
                 .folder("B", .medium, [("m", .small), ("n", .small), ("p", .small)]),
             ],
@@ -2169,7 +2194,8 @@ final class DragSessionTests: XCTestCase {
         return CGPoint(x: workFrame.midX, y: workFrame.midY + workFrame.height + gap)
     }
 
-    /// Проверяет итог выноса: «Работа» распалась, `mail` — обычный ярлык, B цела.
+    /// Проверяет итог выноса: «Работа» распалась (D45: осталась `mail2`), `mail` —
+    /// обычный ярлык, B цела.
     private func assertMailIsPlainTile(
         _ host: TesseraTestDragHost,
         folderB: AnyHashable,
@@ -2180,6 +2206,7 @@ final class DragSessionTests: XCTestCase {
     ) {
         XCTAssertFalse(host.storeIDs.contains(work), "Работа распалась: \(message)", file: file, line: line)
         XCTAssertTrue(host.storeIDs.contains("mail"), "mail — обычный ярлык сетки: \(message)", file: file, line: line)
+        XCTAssertTrue(host.storeIDs.contains("mail2"), "mail2 заняла место папки: \(message)", file: file, line: line)
         XCTAssertEqual(
             host.folders.first { $0.id == folderB }?.tiles.map { $0.id },
             ["m", "n", "p"] as [AnyHashable],
@@ -2448,7 +2475,7 @@ final class DragSessionTests: XCTestCase {
             host.spin(0.3)
             XCTAssertEqual(
                 host.folders.first { $0.id == f2 }?.tiles.map { $0.id },
-                ["e", "c"] as [AnyHashable],
+                ["e", "h", "c"] as [AnyHashable],
                 "grab=\(grab): ярлык слился с F2"
             )
         }
@@ -2524,7 +2551,7 @@ final class DragSessionTests: XCTestCase {
             host.spin(0.3)
             XCTAssertEqual(
                 host.folders.first { $0.id == f2 }?.tiles.map { $0.id },
-                ["e", "c"] as [AnyHashable],
+                ["e", "h", "c"] as [AnyHashable],
                 "grab=\(grab): ярлык слился с F2"
             )
         }
@@ -2547,7 +2574,7 @@ final class DragSessionTests: XCTestCase {
         host.spin(0.3)
         XCTAssertEqual(
             host.folders.first { $0.id == f2 }?.tiles.map { $0.id },
-            ["e", "a"] as [AnyHashable]
+            ["e", "h", "a"] as [AnyHashable]
         )
     }
 

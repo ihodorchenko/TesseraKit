@@ -136,7 +136,10 @@ final class TileStoreTests: XCTestCase {
     /// переживает round-trip. Заменяет E11.4 (наследование размера).
     func testCreateFolderIsAlwaysMedium() throws {
         let directory = TesseraTestDirectory()
-        let descriptors = makeDescriptors()
+        // D45: папка из одного ярлыка при загрузке распускается, поэтому к трём
+        // переходным папкам добавлено по второму ярлыку (кроме проверки размера
+        // новой папки тест ничего не меняет).
+        let descriptors = makeDescriptors() + ["e", "f", "g"].map { tesseraTestTile($0, size: .small) }
         let store = makeStore(descriptors, in: directory)
 
         let small = try XCTUnwrap(store.createFolder(withTile: "a", columns: columns))
@@ -147,6 +150,9 @@ final class TileStoreTests: XCTestCase {
         XCTAssertTrue(store.resize("c", to: .wide, columns: columns))
         let wide = try XCTUnwrap(store.createFolder(withTile: "c", columns: columns))
         XCTAssertEqual(wide.size, .medium, "Сохранённый wide-размер ярлыка не наследуется")
+        XCTAssertTrue(store.addToFolder("d", folderID: small.id, columns: columns))
+        XCTAssertTrue(store.addToFolder("e", folderID: medium.id, columns: columns))
+        XCTAssertTrue(store.addToFolder("f", folderID: wide.id, columns: columns))
 
         XCTAssertEqual(store.snapshot().folders.map { $0.size }, [.medium, .medium, .medium])
 
@@ -178,18 +184,20 @@ final class TileStoreTests: XCTestCase {
     // MARK: - E11.2/E14.4: вынос из папки на рабочий стол
 
     /// Вынос ярлыка из папки на ячейку: он встаёт на неё, папка остаётся с
-    /// оставшимся содержимым.
+    /// оставшимся содержимым. D45: в папке остаётся два ярлыка (после выноса из
+    /// папки в три), поэтому она не распускается.
     func testExtractFromFolderLandsOnCell() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
         let folder = try XCTUnwrap(store.createFolder(withTile: "a", columns: columns))
         XCTAssertTrue(store.addToFolder("b", folderID: folder.id, columns: columns))
-        XCTAssertEqual(ids(store.snapshot()), [folder.id, "c", "d"])
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: columns))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "d"])
 
         XCTAssertTrue(store.extractFromFolder("b", toCell: tesseraCell(2, 0), columns: columns))
         XCTAssertEqual(store.placement(of: "b"), tesseraCell(2, 0))
-        XCTAssertEqual(ids(store.snapshot()), [folder.id, "c", "d", "b"])
-        XCTAssertEqual(store.folderContaining("a")?.tiles.count, 1)
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "d", "b"])
+        XCTAssertEqual(store.folderContaining("a")?.tiles.count, 2)
     }
 
     /// Вынос последнего ярлыка: папка исчезает, ярлык встаёт на указанную ячейку.
@@ -210,9 +218,11 @@ final class TileStoreTests: XCTestCase {
         let store = makeStore(makeDescriptors(), in: directory)
         let folder = try XCTUnwrap(store.createFolder(withTile: "a", columns: columns))
         XCTAssertTrue(store.addToFolder("b", folderID: folder.id, columns: columns))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: columns))
 
+        // D45: в папке из трёх остаётся два — она не распускается.
         XCTAssertTrue(store.extractFromFolderToNewRow("b", columns: columns))
-        XCTAssertEqual(ids(store.snapshot()), [folder.id, "c", "d", "b"])
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "d", "b"])
         XCTAssertEqual(store.placement(of: "b")?.column, 0)
     }
 
@@ -469,23 +479,28 @@ final class TileStoreTests: XCTestCase {
         )
     }
 
-    /// Перемещение на рабочий стол (`nil`) проходит через то же одобрение D14 и
-    /// распускает опустевшую исходную папку.
-    func testMoveBetweenFoldersReturnsTileToDesktopAndDissolvesEmptyFolder() throws {
+    /// Перемещение на рабочий стол (`nil`) проходит через то же одобрение D14.
+    /// D45: обе исходные папки теряют ярлык и остаются с одним — распускаются, а
+    /// ярлыки встают на ячейки папок; вынесенный ярлык — в новой строке в конце.
+    func testMoveBetweenFoldersReturnsTileToDesktopAndDissolvesFolders() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
         let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
         let folderB = try XCTUnwrap(store.createFolder(withTile: "b", title: "B", columns: columns))
         XCTAssertTrue(store.addToFolder("c", folderID: folderA.id, columns: columns))
 
+        // Из папки A уходит «c»: в ней остаётся «a» — папка распускается.
         XCTAssertTrue(store.moveBetweenFolders("c", to: folderB.id, columns: columns))
+        XCTAssertNil(store.folderContaining("a"))
+        XCTAssertEqual(store.folderContaining("c")?.id, folderB.id)
+        // Из папки B уходит «c»: остаётся «b» — тоже распускается.
         XCTAssertTrue(store.extractFromFolderToNewRow("c", columns: columns))
 
+        XCTAssertTrue(store.snapshot().folders.isEmpty)
         XCTAssertNil(store.folderContaining("c"))
-        XCTAssertEqual(store.folderContaining("a")?.id, folderA.id)
-        XCTAssertEqual(store.folderContaining("b")?.id, folderB.id)
+        XCTAssertEqual(Set(ids(store.snapshot())), ["a", "b", "c", "d"])
         // E14.6: вынос без ячейки — новая строка в конце холста; порядок — по ячейкам.
-        XCTAssertEqual(ids(store.snapshot()), [folderA.id, "d", folderB.id, "c"].map { AnyHashable($0) })
+        XCTAssertEqual(ids(store.snapshot()).last, "c")
         XCTAssertTrue(store.isPinned("c"))
     }
 

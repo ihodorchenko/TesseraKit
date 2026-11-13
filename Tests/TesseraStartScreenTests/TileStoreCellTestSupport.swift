@@ -143,7 +143,9 @@ extension XCTestCase {
     /// - Без пересечений и в границах `[0, columns)` (`TileLayoutEngine.validate`).
     /// - У каждого видимого верхнеуровневого элемента ровно одна ячейка, чужих нет.
     /// - Каждый ярлык каталога встречается ровно один раз: на сетке, в папке или
-    ///   среди откреплённых; папки не пусты, идентификаторы не повторяются.
+    ///   среди откреплённых; в каждой папке не меньше двух ярлыков (D45, кроме
+    ///   переходной папки `createFolder(withTile:)` при `allowSingleTileFolders`),
+    ///   идентификаторы не повторяются.
     /// - При `checkOrder` холст равен `columns`, а порядок снимка — порядок
     ///   чтения ячеек (строка, колонка).
     func tesseraAssertCellInvariants(
@@ -151,6 +153,7 @@ extension XCTestCase {
         columns: Int,
         catalogIDs: [String],
         checkOrder: Bool = true,
+        allowSingleTileFolders: Bool = false,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
@@ -177,7 +180,10 @@ extension XCTestCase {
             switch item {
             case .tile(let tile): seen.append(tile.id.base as? String ?? "?")
             case .folder(let folder):
-                XCTAssertFalse(folder.tiles.isEmpty, "пустая папка на сетке", file: file, line: line)
+                XCTAssertGreaterThanOrEqual(
+                    folder.tiles.count, allowSingleTileFolders ? 1 : TileStore.minimumFolderTileCount,
+                    "папка из 0–1 ярлыка на сетке (D45)", file: file, line: line
+                )
                 seen += folder.tiles.map { $0.id.base as? String ?? "?" }
             case .folderContent: XCTFail("панели в снимке хранилища нет", file: file, line: line)
             }

@@ -297,7 +297,8 @@ final class TileStoreCellOperationsTests: XCTestCase {
     func testCreateFolderInvalidInput() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("T", .small, 0, 0), CellFixtureTile("S", .small, 0, 1)]
-        let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small)])]
+        // D45: в папке не меньше двух ярлыков (одноярлычная при загрузке распускается).
+        let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small), ("x2", .small)])]
         let store = try makeStore(tiles, folders: folders, unpinned: [("u", .small)], in: directory)
 
         for (source, target, columns) in [("T", "T", 6), ("S", "u", 6), ("u", "T", 6), ("S", "f", 6), ("S", "x", 6), ("S", "T", 0)] as [(String, String, Int)] {
@@ -333,8 +334,8 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
         let folders = [
-            CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small)]),
-            CellFixtureFolder("g", .medium, 2, 3, contents: [("y", .small)]),
+            CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small), ("x2", .small)]),
+            CellFixtureFolder("g", .medium, 2, 3, contents: [("y", .small), ("y2", .small)]),
         ]
         let store = try makeStore(tiles, folders: folders, unpinned: [("u", .small)], in: directory)
         let before = store.placements
@@ -355,11 +356,12 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
     // MARK: - Вынос из папки
 
-    /// Вынос на ячейку со своим размером: каскад, папка из двух остаётся с одним.
+    /// Вынос на ячейку со своим размером: каскад; папка из трёх остаётся с двумя
+    /// (D45: из двух осталась бы с одним — распускается, см. `TileStoreFolderMinTwoTests`).
     func testExtractFromFolderToCellKeepsFolderWithRemainingTile() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 3, 0), CellFixtureTile("b", .small, 5, 0)]
-        let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .medium), ("y", .small)])]
+        let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .medium), ("y", .small), ("z", .small)])]
         let store = try makeStore(tiles, folders: folders, in: directory)
 
         XCTAssertTrue(store.extractFromFolder("x", toCell: tesseraCell(3, 0), columns: columns))
@@ -368,22 +370,25 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(store.snapshot().item(withID: "x")?.size, .medium, "размер ярлыка свой")
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(5, 0), "a вытолкнут под x")
         XCTAssertEqual(store.placement(of: "b"), tesseraCell(6, 0), "каскад дошёл до b")
-        XCTAssertEqual(store.placement(of: "f"), tesseraCell(0, 0), "папка с одним ярлыком остаётся (§6.9)")
-        XCTAssertEqual(store.folderContaining("y")?.tiles.map { $0.id }, ["y"])
+        XCTAssertEqual(store.placement(of: "f"), tesseraCell(0, 0), "папка с двумя ярлыками остаётся")
+        XCTAssertEqual(store.folderContaining("y")?.tiles.map { $0.id }, ["y", "z"])
         XCTAssertNil(store.folderContaining("x"))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Вынос последнего ярлыка: папка исчезает, её ячейка — дыра (кроме покрытой ярлыком).
+    /// Вынос последнего ярлыка переходной папки (D45: папка из одного ярлыка —
+    /// только `createFolder(withTile:)`): папка исчезает, её ячейка — дыра.
     func testExtractLastTileRemovesFolderAndLeavesHole() throws {
         let directory = TesseraTestDirectory()
-        let tiles = [CellFixtureTile("a", .small, 0, 3)]
-        let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small)])]
+        let tiles = [CellFixtureTile("a", .small, 0, 3), CellFixtureTile("x", .small, 0, 0)]
+        let folders: [CellFixtureFolder] = []
         let store = try makeStore(tiles, folders: folders, in: directory)
+        let folder = try XCTUnwrap(store.createFolder(withTile: "x", columns: columns))
+        XCTAssertEqual(store.placement(of: folder.id), tesseraCell(0, 0))
 
         XCTAssertTrue(store.extractFromFolder("x", toCell: tesseraCell(4, 4), columns: columns))
 
-        XCTAssertNil(store.placement(of: "f"))
+        XCTAssertNil(store.placement(of: folder.id))
         XCTAssertTrue(store.snapshot().folders.isEmpty)
         XCTAssertEqual(store.placement(of: "x"), tesseraCell(4, 4))
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 3))
@@ -397,17 +402,21 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let tiles = [CellFixtureTile("a", .small, 0, 3)]
         let folders = [
             CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small)]),
-            CellFixtureFolder("g", .medium, 4, 0, contents: [("z", .small)]),
+            CellFixtureFolder("g", .medium, 4, 0, contents: [("z", .small), ("z2", .small)]),
         ]
         let store = try makeStore(tiles, folders: folders, in: directory)
 
+        // D45: из папки f (x, y) уходит x — f распадается в y на своей ячейке.
         XCTAssertTrue(store.extractFromFolderToNewRow("x", columns: columns))
         XCTAssertEqual(store.placement(of: "x"), tesseraCell(6, 0), "после папки g (строки 4–5)")
+        XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0), "y заняла место f")
 
-        // Последний ярлык папки g уходит в новую строку: g исчезает, строки 4–5 свободны.
+        // Из папки g уходит z: g распадается в z2 (малая, строка 4), строки 5 свободна;
+        // новая строка считается по нижней занятой — это x (строка 6).
         XCTAssertTrue(store.extractFromFolderToNewRow("z", columns: columns))
         XCTAssertNil(store.placement(of: "g"))
-        XCTAssertEqual(store.placement(of: "z"), tesseraCell(7, 0), "после x (строка 6), g не считается")
+        XCTAssertEqual(store.placement(of: "z2"), tesseraCell(4, 0))
+        XCTAssertEqual(store.placement(of: "z"), tesseraCell(7, 0), "после x (строка 6)")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
@@ -449,32 +458,35 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
     // MARK: - Между папками
 
-    /// Папка-источник растворилась: её ячейка — дыра, остальное на месте.
-    func testMoveBetweenFoldersDissolvingSourceLeavesHole() throws {
+    /// Папка-источник из двух ярлыков распалась (D45): оставшийся ярлык встал на её
+    /// ячейку (раньше при опустевшей папке тут оставалась дыра), остальное на месте.
+    func testMoveBetweenFoldersDissolvingSourceFillsCellWithRemainingTile() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 4)]
         let folders = [
-            CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small)]),
-            CellFixtureFolder("g", .medium, 2, 2, contents: [("y", .small)]),
+            CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("x2", .small)]),
+            CellFixtureFolder("g", .medium, 2, 2, contents: [("y", .small), ("y2", .small)]),
         ]
         let store = try makeStore(tiles, folders: folders, in: directory)
 
         XCTAssertTrue(store.moveBetweenFolders("x", to: "g", columns: columns))
 
         XCTAssertNil(store.placement(of: "f"))
+        XCTAssertEqual(store.placement(of: "x2"), tesseraCell(0, 0))
         XCTAssertEqual(store.placement(of: "g"), tesseraCell(2, 2))
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 4))
         XCTAssertEqual(store.folderContaining("x")?.id, AnyHashable("g"))
-        XCTAssertFalse(store.placements.values.contains(tesseraCell(0, 0)))
+        XCTAssertNil(store.folderContaining("x2"))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Папка-источник остаётся: ячейки не меняются; та же папка/отказ — no-op.
+    /// Папка-источник остаётся (в ней три ярлыка, D45): ячейки не меняются; та же
+    /// папка/отказ — no-op.
     func testMoveBetweenFoldersKeepingSourceAndNoOps() throws {
         let directory = TesseraTestDirectory()
         let folders = [
-            CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("x2", .small)]),
-            CellFixtureFolder("g", .medium, 2, 2, contents: [("y", .small)]),
+            CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("x2", .small), ("x3", .small)]),
+            CellFixtureFolder("g", .medium, 2, 2, contents: [("y", .small), ("y2", .small)]),
         ]
         let store = try makeStore([], folders: folders, in: directory)
         let before = store.placements
@@ -488,7 +500,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
         XCTAssertTrue(store.moveBetweenFolders("x", to: "g", columns: columns))
         XCTAssertEqual(store.placements, before)
-        XCTAssertEqual(store.folderContaining("x2")?.tiles.map { $0.id }, ["x2"])
+        XCTAssertEqual(store.folderContaining("x2")?.tiles.map { $0.id }, ["x2", "x3"])
     }
 
     // MARK: - Открепление и закрепление
@@ -509,20 +521,22 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Открепление ярлыка из папки; последний ярлык убирает папку, ячейка — дыра.
-    func testUnpinFolderContentAndEmptiedFolder() throws {
+    /// Открепление ярлыков из папки по одному (D45): из трёх — папка остаётся с двумя,
+    /// из двух — распускается, и последний ярлык встаёт на ячейку папки.
+    func testUnpinFolderContentOneByOneDissolvesFolder() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 4)]
-        let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small)])]
+        let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small), ("z", .small)])]
         let store = try makeStore(tiles, folders: folders, in: directory)
 
         XCTAssertTrue(store.unpin("x", columns: columns))
         XCTAssertEqual(store.placement(of: "f"), tesseraCell(0, 0))
-        XCTAssertEqual(store.folderContaining("y")?.tiles.map { $0.id }, ["y"])
+        XCTAssertEqual(store.folderContaining("y")?.tiles.map { $0.id }, ["y", "z"])
 
         XCTAssertTrue(store.unpin("y", columns: columns))
         XCTAssertNil(store.placement(of: "f"))
         XCTAssertTrue(store.snapshot().folders.isEmpty)
+        XCTAssertEqual(store.placement(of: "z"), tesseraCell(0, 0), "оставшийся ярлык — на месте папки")
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 4))
         XCTAssertEqual(Set(store.snapshot().unpinned.map { $0.id }), ["x", "y"])
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
@@ -532,7 +546,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     func testUnpinNoOps() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
-        let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small)])]
+        let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small), ("x2", .small)])]
         let store = try makeStore(tiles, folders: folders, unpinned: [("u", .small)], in: directory)
 
         XCTAssertFalse(store.unpin("u", columns: columns))
@@ -574,7 +588,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     func testPinTileToNewRowNoOps() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
-        let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small)])]
+        let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small), ("x2", .small)])]
         let store = try makeStore(tiles, folders: folders, unpinned: [("u", .small)], in: directory)
 
         XCTAssertFalse(store.pinTile("a", columns: columns))

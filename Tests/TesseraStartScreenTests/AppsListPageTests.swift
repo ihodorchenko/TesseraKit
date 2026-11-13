@@ -600,25 +600,28 @@ final class AppsListPageTests: XCTestCase {
         XCTAssertGreaterThan(table.contentOffset.y, 250, "список не должен прыгать в начало")
     }
 
-    /// Unpin ярлыка из папки: папка не распускается (в ней второй ярлык),
-    /// строки и секции списка не меняются — ярлык остаётся в каталоге с
-    /// состоянием «не закреплён», а хранилище остаётся согласованным.
+    /// Unpin ярлыка из папки: папка не распускается (D45: в ней остаётся два
+    /// ярлыка; из папки в два распускалась бы), строки и секции списка не
+    /// меняются — ярлык остаётся в каталоге с состоянием «не закреплён», а
+    /// хранилище остаётся согласованным.
     func testUnpinFromFolderKeepsSectionsStable() {
         let store = makeStore([
             tile("Alpha", id: "a", size: .small),
             tile("Bravo", id: "b", size: .small),
+            tile("Charlie", id: "c", size: .small),
         ])
         guard let folder = store.createFolder(withTile: "a", title: "Группа", columns: 4) else {
             return XCTFail("Не удалось создать папку")
         }
         XCTAssertTrue(store.addToFolder("b", folderID: folder.id, columns: 4))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: 4))
         XCTAssertEqual(ids(store), [folder.id])
 
         let page = TesseraAppsListPageViewController.make(store: store, columns: 4)
         let table = host(page)
         let structureBefore = rowTitles(page, table)
         let sectionsBefore = sectionTitles(page, table)
-        XCTAssertEqual(structureBefore.flatMap { $0 }, ["Alpha", "Bravo"])
+        XCTAssertEqual(structureBefore.flatMap { $0 }, ["Alpha", "Bravo", "Charlie"])
 
         XCTAssertTrue(pin(false, forTileID: "a", title: "Alpha", page: page, table: table))
 
@@ -627,8 +630,8 @@ final class AppsListPageTests: XCTestCase {
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["a"])
         XCTAssertEqual(
             store.snapshot().folders.first?.tiles.map { $0.id },
-            ["b"],
-            "папка остаётся: в ней второй ярлык"
+            ["b", "c"],
+            "папка остаётся: в ней два ярлыка"
         )
         assertReadingOrder(store, columns: 4, "после unpin из папки")
         XCTAssertEqual(rowTitles(page, table), structureBefore)

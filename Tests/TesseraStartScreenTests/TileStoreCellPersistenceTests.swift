@@ -77,6 +77,8 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         guard case .created(let folder) = store.createFolder(from: "s", onto: "t", title: "Игры", columns: 6) else {
             return XCTFail("папка должна создаться")
         }
+        // D45: чтобы после выноса папка пережила круг записи, в ней три ярлыка.
+        XCTAssertTrue(store.addToFolder("k", folderID: folder.id, columns: 6))
         XCTAssertTrue(store.extractFromFolder("s", toCell: tesseraCell(6, 3), columns: 6))
         let expected = store.placements
 
@@ -84,7 +86,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertEqual(fresh.placements, expected)
         XCTAssertEqual(fresh.snapshot().folders.first?.title, "Игры")
         XCTAssertEqual(fresh.snapshot().folders.first?.id, folder.id)
-        XCTAssertEqual(fresh.snapshot().folders.first?.tiles.map { $0.id }, ["t"])
+        XCTAssertEqual(fresh.snapshot().folders.first?.tiles.map { $0.id }, ["t", "k"])
         tesseraAssertCellInvariants(fresh, columns: 6, catalogIDs: ["t", "s", "k"])
     }
 

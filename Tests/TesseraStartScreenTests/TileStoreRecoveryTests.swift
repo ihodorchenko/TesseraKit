@@ -112,16 +112,18 @@ final class TileStoreRecoveryTests: XCTestCase {
         assertInvariants(store, catalogIDs: ["a", "d"])
     }
 
-    /// Часть ярлыков папки осталась в каталоге: папка остаётся только с ними.
+    /// Часть ярлыков папки осталась в каталоге. D45: в папке остался один ярлык —
+    /// она распускается, ярлык «c» встаёт на её место (раньше папка оставалась с
+    /// одним ярлыком).
     func testLoadPrunesUnknownTilesFromFolder() throws {
         let directory = TesseraTestDirectory()
-        let folderID = try saveLayoutWithFolder(in: directory)
+        _ = try saveLayoutWithFolder(in: directory)
 
         let store = makeStore(catalog(["a", "c", "d"]), in: directory)
         try store.load()
 
-        XCTAssertEqual(ids(store), ["a", folderID, "d"])
-        XCTAssertEqual(store.snapshot().folders.first?.tiles.map { $0.id }, ["c"])
+        XCTAssertEqual(ids(store), ["a", "c", "d"])
+        XCTAssertTrue(store.snapshot().folders.isEmpty)
         assertInvariants(store, catalogIDs: ["a", "c", "d"])
     }
 
@@ -200,8 +202,10 @@ final class TileStoreRecoveryTests: XCTestCase {
         store.setCatalog(catalog(["a", "b", "c", "d", "e"]))
         try store.load()
 
-        XCTAssertEqual(ids(store), ["a", "f1", "f2"])
-        XCTAssertEqual(store.snapshot().folders.map { $0.tiles.map { $0.id } }, [["b", "c"], ["d"]])
+        // D45: у «f2» после чистки дубликата остался один ярлык «d» — папка
+        // распускается, «d» встаёт на её место.
+        XCTAssertEqual(ids(store), ["a", "f1", "d"])
+        XCTAssertEqual(store.snapshot().folders.map { $0.tiles.map { $0.id } }, [["b", "c"]])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["e"])
         assertInvariants(store, catalogIDs: ["a", "b", "c", "d", "e"])
     }
