@@ -1,6 +1,6 @@
 // Раскладка бэйджа плитки в нижнем углу (D29, E15.1).
 // Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §4 «Бэйдж»,
-// «Отступления реализации» (E15), п. 59; docs/W10M-STARTSCREEN.md §1.
+// «Отступления реализации» (E15), пп. 59 и 60 (D47); docs/W10M-STARTSCREEN.md §1.
 
 #if canImport(UIKit)
 import UIKit
@@ -28,9 +28,24 @@ import CoreGraphics
 /// - ``Arrangement/above`` — на узкой плитке (1×1) подпись остаётся полной
 ///   ширины, но поднимается над рядом бэйджа (``titleBottomReserve``). Если при
 ///   этом иконке не хватает высоты, иконка уступает (правило «текст важнее»).
+///   Малая плитка с иконкой этот способ не использует (D47, ниже).
 ///
 /// Способ выбирается по геометрии **без правки** и в правке не меняется:
 /// подпись не прыгает между режимами при входе в редактирование.
+///
+/// ## Малая плитка 1×1 с бэйджем: иконка и бэйдж, без подписи (D47)
+///
+/// Как в W10M, на малой плитке с видимым бэйджем (капсула или точка) подпись не
+/// рисуется: остаются иконка и бэйдж (``Arrangement/iconAndBadge``). Иконка
+/// стоит по центру верхней зоны плитки, над рядом бэйджа
+/// (``smallTileIconFrame(tileSize:inset:bottomReserve:)``), бэйдж — в нижнем углу
+/// у конца строки; они не пересекаются, и иконку не выдавливает ни бэйдж, ни
+/// подпись. Подпись в таком режиме скрыта только визуально: label и value
+/// VoiceOver остаются прежними. Решение «скрыть ли подпись» принимает вызывающий
+/// (``make(tileSize:badgeSize:inset:isRightToLeft:editClearance:hidesTitle:)``):
+/// ему известны размер ярлыка по модели (`TileSize.small`) и наличие иконки —
+/// без иконки подпись остаётся, иначе на плитке не было бы ничего, кроме бэйджа.
+/// Малая плитка без бэйджа и плитки 2×2, 4×2, 4×4 раскладываются как раньше.
 ///
 /// ## Правка: обход стрелки размера
 ///
@@ -43,7 +58,7 @@ import CoreGraphics
 /// на тот же сдвиг. Если бэйдж не помещается правее кнопки (капсула «99+» на
 /// 1×1 уже ≈ 57 pt, крупный Dynamic Type), он **скрывается только на время
 /// правки** (``isHiddenByEditControls``): поднять его вверх между кнопками
-/// значило бы выдавить подпись 1×1.
+/// значило бы наехать на иконку (D47) либо выдавить подпись 1×1.
 struct TesseraTileBadgeLayout: Equatable {
 
     /// Как подпись уступает место бэйджу.
@@ -57,7 +72,22 @@ struct TesseraTileBadgeLayout: Equatable {
 
         /// Подпись над рядом бэйджа, полной ширины.
         case above
+
+        /// Подписи нет: иконка над рядом бэйджа и бэйдж в углу (D47).
+        case iconAndBadge
     }
+
+    /// Наименьшая сторона иконки малой плитки с бэйджем, pt: даже когда бэйдж
+    /// раздут Dynamic Type и верхней зоне не хватает места, иконка не
+    /// пропадает (бэйдж рисуется поверх неё).
+    static let minimumSmallIconSide: CGFloat = 12
+
+    /// Наибольшая сторона иконки малой плитки с бэйджем, pt.
+    static let maximumSmallIconSide: CGFloat = 34
+
+    /// Доля меньшей стороны плитки, выше которой иконка малой плитки с бэйджем
+    /// не растёт.
+    static let smallIconSideFraction: CGFloat = 0.45
 
     /// Зазор между бэйджем и подписью, pt.
     static let titleGap: CGFloat = 4
@@ -88,6 +118,12 @@ struct TesseraTileBadgeLayout: Equatable {
     /// Высота нижнего ряда, которую подпись отдаёт бэйджу (режим «над»), pt.
     var titleBottomReserve: CGFloat = 0
 
+    /// Высота нижнего ряда бэйджа с зазором, которую иконка малой плитки
+    /// оставляет бэйджу (D47), pt. Считается всегда, когда бэйдж есть: решение
+    /// «показывать ли иконку вместо подписи» принимает вызывающий (у живой
+    /// плитки оно зависит от иконки конкретной стороны).
+    var iconBottomReserve: CGFloat = 0
+
     /// Считает раскладку.
     ///
     /// - Parameters:
@@ -98,13 +134,17 @@ struct TesseraTileBadgeLayout: Equatable {
     ///   - isRightToLeft: Направление чтения.
     ///   - editClearance: Сколько нижнего угла у конца строки занимает стрелка
     ///     размера внутри плитки; `0` — вне правки либо стрелки нет.
+    ///   - hidesTitle: `true` — малая плитка с иконкой: подписи нет, подписи
+    ///     ничего не резервируется (``Arrangement/iconAndBadge``, D47). Без
+    ///     бэйджа флаг ничего не меняет.
     /// - Returns: Рамка бэйджа и резерв для подписи.
     static func make(
         tileSize: CGSize,
         badgeSize: CGSize,
         inset: CGFloat,
         isRightToLeft: Bool,
-        editClearance: CGFloat
+        editClearance: CGFloat,
+        hidesTitle: Bool = false
     ) -> TesseraTileBadgeLayout {
         guard badgeSize.width > 0, badgeSize.height > 0,
               tileSize.width > 0, tileSize.height > 0 else {
@@ -142,6 +182,13 @@ struct TesseraTileBadgeLayout: Equatable {
             }
         }
         layout.frame = CGRect(x: x, y: normalY, width: badgeSize.width, height: badgeSize.height)
+        layout.iconBottomReserve = badgeSize.height + titleGap
+
+        // D47: малая плитка с иконкой — подписи нет, резерва тоже.
+        if hidesTitle {
+            layout.arrangement = .iconAndBadge
+            return layout
+        }
 
         // Способ решается по геометрии вне правки (подпись не прыгает).
         let normalReserve = badgeSize.width + titleGap
@@ -155,5 +202,48 @@ struct TesseraTileBadgeLayout: Equatable {
             layout.titleBottomReserve = badgeSize.height + titleGap
         }
         return layout
+    }
+
+    /// Рамка иконки малой плитки с бэйджем (D47).
+    ///
+    /// Иконка стоит по центру **верхней зоны**: от верхнего поля до зазора над
+    /// рядом бэйджа. Зона не зависит от стороны бэйджа и от правки, поэтому в RTL
+    /// и при сдвиге бэйджа от стрелки размера иконка остаётся на месте, а кнопка
+    /// открепления (верхний угол у конца строки) на неё не заходит. Сторона —
+    /// высота зоны, но не больше ``smallIconSideFraction`` меньшей стороны плитки,
+    /// ``maximumSmallIconSide``, ширины контента и ширины между кнопками правки
+    /// (иконка не заходит под кнопку открепления даже в правке); не меньше
+    /// ``minimumSmallIconSide``: при раздутом Dynamic Type бэйдж уходит поверх
+    /// иконки, но иконка остаётся.
+    ///
+    /// - Parameters:
+    ///   - tileSize: Размер плитки.
+    ///   - inset: Поле плитки.
+    ///   - bottomReserve: ``iconBottomReserve`` раскладки бэйджа.
+    /// - Returns: Рамка иконки в координатах плитки.
+    static func smallTileIconFrame(
+        tileSize: CGSize,
+        inset: CGFloat,
+        bottomReserve: CGFloat
+    ) -> CGRect {
+        let zoneHeight = max(0, tileSize.height - inset * 2 - bottomReserve)
+        let contentWidth = max(0, tileSize.width - inset * 2)
+        // Иконка стоит по центру и в правке не должна наезжать на кнопку
+        // открепления в верхнем углу: та заходит в плитку на `диаметр − выступ`
+        // (у малой плитки диаметр — минимальный). Резерв берётся всегда, а не
+        // только в правке, чтобы иконка не прыгала при входе в правку.
+        let buttonReserve = TesseraTileEditControlView.minimumDiameter
+            - TesseraTileEditControlView.cornerOverhang
+        let limit = min(
+            zoneHeight,
+            min(tileSize.width, tileSize.height) * smallIconSideFraction,
+            maximumSmallIconSide,
+            contentWidth,
+            tileSize.width - 2 * buttonReserve - 1
+        )
+        let side = max(minimumSmallIconSide, floor(limit))
+        let x = ((tileSize.width - side) / 2).rounded()
+        let y = inset + max(0, ((zoneHeight - side) / 2).rounded())
+        return CGRect(x: x, y: y, width: side, height: side)
     }
 }

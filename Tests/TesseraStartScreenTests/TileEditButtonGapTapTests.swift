@@ -3,7 +3,7 @@
 //  TesseraStartScreenTests
 //
 //  Тап по выступающей части кнопки правки (E15.10): кнопки «открепить» и
-//  «размер» на плитке сетки выступают за рамку плитки (`cornerOverhang`, 6 pt),
+//  «размер» на плитке сетки выступают за рамку плитки (`cornerOverhang`, 4 pt после D48; было 6 pt),
 //  то есть в зазор между плитками. Тап по этой части раньше срабатывал и по
 //  кнопке (открепление/размер), и по жесту «тап по фону» (зазор — не плитка):
 //  правка неожиданно заканчивалась. Теперь жест фона не принимает касания,
@@ -227,6 +227,35 @@ final class TileEditButtonGapTapTests: XCTestCase {
 
         tap(point, in: host)
         XCTAssertTrue(recorder.events.contains("resize:t0"), "кнопка сработала")
+        XCTAssertTrue(host.coordinator.isEditing, "правка не закончилась")
+    }
+
+    /// D48: выступ 4 pt. Крайняя точка выступающей части кнопки (на 3,5 pt
+    /// правее рамки плитки, у центра кнопки по вертикали) по-прежнему защищена —
+    /// тап по ней открепляет ярлык и не выходит из правки; и у открепления, и у
+    /// стрелки размера выступ ровно 4 pt.
+    func testExtremeOverhangPointIsProtectedWithFourPointOverhang() throws {
+        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4)
+        let (host, recorder) = try makeHost()
+        let id: AnyHashable = "t3"
+        let control = try control(id, in: host)
+        let tile = try XCTUnwrap(host.host.grid.frame(forItemID: id))
+        let unpin = gridFrame(control.unpinButtonFrame, of: control, in: host)
+        let resize = gridFrame(control.resizeButtonFrame, of: control, in: host)
+        XCTAssertEqual(unpin.maxX - tile.maxX, 4, accuracy: 0.01)
+        XCTAssertEqual(tile.minY - unpin.minY, 4, accuracy: 0.01)
+        XCTAssertEqual(resize.maxX - tile.maxX, 4, accuracy: 0.01)
+        XCTAssertEqual(resize.maxY - tile.maxY, 4, accuracy: 0.01)
+
+        for button in [unpin, resize] {
+            let point = CGPoint(x: tile.maxX + 3.5, y: button.midY)
+            XCTAssertNil(host.host.grid.item(at: point), "точка — в зазоре")
+            let outcome = touchDown(at: point, in: host)
+            XCTAssertTrue(outcome.hit is UIButton, "крайняя точка выступа — кнопка")
+            XCTAssertFalse(outcome.backgroundReceived)
+        }
+        tap(CGPoint(x: tile.maxX + 3.5, y: unpin.midY), in: host)
+        XCTAssertTrue(waitForEvent("unpin:t3", recorder, host))
         XCTAssertTrue(host.coordinator.isEditing, "правка не закончилась")
     }
 

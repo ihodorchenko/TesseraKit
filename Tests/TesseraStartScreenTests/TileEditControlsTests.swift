@@ -207,7 +207,7 @@ final class TileEditControlsTests: XCTestCase {
     }
 
     /// Кнопки сидят в углах и закрывают мало: центр малой плитки (иконка)
-    /// свободен, а выступ за рамку не больше 6 pt (зазор сетки 8 pt).
+    /// свободен, а выступ за рамку не больше 4 pt (D48: половина зазора сетки 8 pt).
     func testControlsSitAtCornersWithBoundedOverhang() throws {
         let host = TesseraTestDragHost(descriptors: [tesseraTestTile("s", size: .small)])
         host.coordinator.beginEditing()
@@ -217,6 +217,7 @@ final class TileEditControlsTests: XCTestCase {
         let unpin = control.unpinButtonFrame
         let resize = control.resizeButtonFrame
 
+        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4, "D48: выступ 4 pt")
         XCTAssertGreaterThanOrEqual(unpin.minX, -TesseraTileEditControlView.cornerOverhang - 0.001)
         XCTAssertGreaterThanOrEqual(unpin.minY, -TesseraTileEditControlView.cornerOverhang - 0.001)
         XCTAssertLessThanOrEqual(resize.maxX, bounds.maxX + TesseraTileEditControlView.cornerOverhang + 0.001)

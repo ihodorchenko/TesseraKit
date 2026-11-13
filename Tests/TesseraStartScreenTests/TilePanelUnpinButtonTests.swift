@@ -221,7 +221,7 @@ final class TilePanelUnpinButtonTests: XCTestCase {
 
     /// Диаметр и угол — по правилам десктопной кнопки: диаметр от размера ярлыка
     /// и потолка конфигурации (не меньше 20 pt), центр у угла рамки, выступ
-    /// 6 pt; рамка кнопки — результат общего помощника угла, тот же, что у
+    /// 4 pt (D48); рамка кнопки — результат общего помощника угла, тот же, что у
     /// кнопки плитки сетки.
     func testButtonUsesDesktopSizeAndSharedCornerHelper() throws {
         let host = try makeHost()
@@ -267,8 +267,31 @@ final class TilePanelUnpinButtonTests: XCTestCase {
         let bounds = CGRect(x: 0, y: 0, width: 80, height: 80)
         let ltr = TesseraTileEditControlView.unpinButtonFrame(inTileBounds: bounds, side: 20, isRightToLeft: false)
         let rtl = TesseraTileEditControlView.unpinButtonFrame(inTileBounds: bounds, side: 20, isRightToLeft: true)
-        XCTAssertEqual(ltr, CGRect(x: 66, y: -6, width: 20, height: 20))
-        XCTAssertEqual(rtl, CGRect(x: -6, y: -6, width: 20, height: 20))
+        // D48: выступ 4 pt (был 6).
+        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4)
+        XCTAssertEqual(ltr, CGRect(x: 64, y: -4, width: 20, height: 20))
+        XCTAssertEqual(rtl, CGRect(x: -4, y: -4, width: 20, height: 20))
+    }
+
+    /// D48: допуск зоны кнопки ярлыка панели — выступ 4 pt, но не больше зазора
+    /// панели; сама зона не выходит за рамку ярлыка дальше этого допуска (кнопка
+    /// не заходит на соседа), и общий выступ — один на сетку и панель.
+    func testPanelHitOutsetFollowsTheSharedOverhangAndSpacing() throws {
+        let host = try makeHost()
+        try openPanel(host)
+        let geometry = try panelFrames(host)
+        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4)
+        let expected = min(TesseraTileEditControlView.cornerOverhang, max(0, geometry.spacing))
+        XCTAssertGreaterThan(geometry.tileIDs.count, 0)
+        for (index, id) in geometry.tileIDs.enumerated() {
+            let control = try control(id, in: host)
+            XCTAssertEqual(control.panelHitOutset, expected, accuracy: 0.001, "\(id)")
+            let tile = geometry.frames[index]
+            let zone = control.convert(control.unpinHitFrame, to: host.host.grid)
+            XCTAssertLessThanOrEqual(zone.maxX, tile.maxX + expected + 0.001, "\(id)")
+            XCTAssertGreaterThanOrEqual(zone.minY, tile.minY - expected - 0.001, "\(id)")
+        }
+        host.coordinator.endEditing()
     }
 
     // MARK: - Правило зоны касания
@@ -277,12 +300,14 @@ final class TilePanelUnpinButtonTests: XCTestCase {
     /// угловую четверть и выступ, центр и тело ярлыка — не зона, сама кнопка —
     /// зона; на ярлыке 88 pt зона не меньше 28 pt.
     func testPanelHitZoneRuleLeftToRight() {
+        // D48: выступ — общая константа 4 pt, зона не выходит за него.
+        let overhang = TesseraTileEditControlView.cornerOverhang
         for tileSide: CGFloat in [44, 55, 88] {
             let bounds = CGRect(x: 0, y: 0, width: tileSide, height: tileSide)
             let side: CGFloat = 20
             let button = TesseraTileEditControlView.unpinButtonFrame(inTileBounds: bounds, side: side, isRightToLeft: false)
             let zone = TesseraTileEditControlView.panelUnpinHitZone(
-                buttonFrame: button, tileBounds: bounds, isRightToLeft: false, outset: 6
+                buttonFrame: button, tileBounds: bounds, isRightToLeft: false, outset: overhang
             )
 
             XCTAssertTrue(zone.contains(CGPoint(x: button.midX, y: button.midY)), "центр кнопки — зона, \(tileSide)")
@@ -290,11 +315,11 @@ final class TilePanelUnpinButtonTests: XCTestCase {
             XCTAssertFalse(zone.contains(CGPoint(x: bounds.maxX - 4, y: bounds.maxY - 4)), "противоположный угол, \(tileSide)")
             XCTAssertFalse(zone.contains(CGPoint(x: 4, y: 4)), "левый верхний угол, \(tileSide)")
             XCTAssertFalse(zone.contains(CGPoint(x: 4, y: bounds.maxY - 4)), "левый нижний угол, \(tileSide)")
-            XCTAssertLessThanOrEqual(zone.maxX, bounds.maxX + 6 + 0.001)
-            XCTAssertGreaterThanOrEqual(zone.minY, -6 - 0.001)
+            XCTAssertLessThanOrEqual(zone.maxX, bounds.maxX + overhang + 0.001)
+            XCTAssertGreaterThanOrEqual(zone.minY, -overhang - 0.001)
             XCTAssertGreaterThan(zone.minX, bounds.midX)
             XCTAssertLessThan(zone.maxY, bounds.midY)
-            XCTAssertGreaterThanOrEqual(zone.width, min(44, tileSide / 2 + 6 - 1) - 0.001)
+            XCTAssertGreaterThanOrEqual(zone.width, min(44, tileSide / 2 + overhang - 1) - 0.001)
         }
     }
 
@@ -303,11 +328,12 @@ final class TilePanelUnpinButtonTests: XCTestCase {
         let bounds = CGRect(x: 0, y: 0, width: 80, height: 80)
         let ltrButton = TesseraTileEditControlView.unpinButtonFrame(inTileBounds: bounds, side: 20, isRightToLeft: false)
         let rtlButton = TesseraTileEditControlView.unpinButtonFrame(inTileBounds: bounds, side: 20, isRightToLeft: true)
+        let overhang = TesseraTileEditControlView.cornerOverhang
         let ltr = TesseraTileEditControlView.panelUnpinHitZone(
-            buttonFrame: ltrButton, tileBounds: bounds, isRightToLeft: false, outset: 6
+            buttonFrame: ltrButton, tileBounds: bounds, isRightToLeft: false, outset: overhang
         )
         let rtl = TesseraTileEditControlView.panelUnpinHitZone(
-            buttonFrame: rtlButton, tileBounds: bounds, isRightToLeft: true, outset: 6
+            buttonFrame: rtlButton, tileBounds: bounds, isRightToLeft: true, outset: overhang
         )
 
         XCTAssertEqual(rtl.width, ltr.width, accuracy: 0.001)
@@ -316,7 +342,7 @@ final class TilePanelUnpinButtonTests: XCTestCase {
         XCTAssertTrue(rtl.contains(CGPoint(x: rtlButton.midX, y: rtlButton.midY)))
         XCTAssertFalse(rtl.contains(CGPoint(x: bounds.midX, y: bounds.midY)))
         XCTAssertFalse(rtl.contains(CGPoint(x: bounds.maxX - 4, y: 4)), "правый верхний угол в RTL — не кнопка")
-        XCTAssertGreaterThanOrEqual(rtl.minX, -6 - 0.001)
+        XCTAssertGreaterThanOrEqual(rtl.minX, -overhang - 0.001)
         XCTAssertLessThan(rtl.maxX, bounds.midX)
     }
 
@@ -409,8 +435,9 @@ final class TilePanelUnpinButtonTests: XCTestCase {
         desktop.layoutIfNeeded()
         panel.layoutIfNeeded()
 
-        // E15.2: кнопки — в правых верхних углах: центр кнопки плитки сетки (56, 4),
-        // центр кнопки панели (66, 14); зоны пересекаются в области (41…76, 4…26).
+        // E15.2: кнопки — в правых верхних углах: центр кнопки плитки сетки (54, 6),
+        // центр кнопки панели (64, 16); зоны пересекаются в области, где обе зоны
+        // шире 44 pt вокруг своих центров (выступ 4 pt, D48).
         let nearDesktop = CGPoint(x: 50, y: 5)
         XCTAssertTrue(container.hitTest(nearDesktop, with: nil)?.superview === desktop)
         // Ближе к кнопке панели, хотя зона плитки сетки тоже накрывает точку.

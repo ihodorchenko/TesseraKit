@@ -376,6 +376,28 @@ final class TesseraLiveTileFaceView: UIView {
         }
     }
 
+    /// Плитка малая (1×1, ``TileSize/small``), D47. Выставляет контейнер.
+    var isSmallTile = false {
+        didSet {
+            guard isSmallTile != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    /// Высота нижнего ряда бэйджа с зазором, pt; `0` — бэйджа нет (D47).
+    ///
+    /// Малая плитка с бэйджем и иконкой стороны показывает иконку и бэйдж без
+    /// заголовка и подписи: иконка занимает верхнюю зону над этим рядом
+    /// (``TesseraTileBadgeLayout/smallTileIconFrame(tileSize:inset:bottomReserve:)``).
+    /// Решение принимается для каждой стороны отдельно: у стороны без иконки
+    /// текст остаётся, иначе плитка была бы пустой.
+    var badgeIconBottomReserve: CGFloat = 0 {
+        didSet {
+            guard badgeIconBottomReserve != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
     /// Исходная иконка, уменьшенная копия которой сейчас показана, и её
     /// пиксельный размер: повторная раскладка без изменений кеш не трогает.
     private weak var displayedIconSource: UIImage?
@@ -497,6 +519,24 @@ final class TesseraLiveTileFaceView: UIView {
         guard width > 0, height > 0 else { return }
 
         let inset = TesseraLiveTileFaceView.inset(forWidth: width)
+
+        // D47: малая плитка с бэйджем и иконкой — иконка и бэйдж, без текста.
+        // Иконка рисуется и на плитке уже 80 pt (обычное правило её скрывает).
+        if isSmallTile, badgeIconBottomReserve > 0, let icon = face.icon {
+            let frame = TesseraTileBadgeLayout.smallTileIconFrame(
+                tileSize: bounds.size,
+                inset: inset,
+                bottomReserve: badgeIconBottomReserve
+            )
+            titleLabel.isHidden = true
+            detailLabel.isHidden = true
+            iconView.isHidden = false
+            iconView.frame = frame
+            applyIcon(icon, side: frame.width)
+            return
+        }
+        titleLabel.isHidden = false
+
         // Нижний ряд делит с бэйджем текст: он уже на `badgeTrailingReserve`
         // либо поднят на `badgeBottomReserve` (D29, E15.1).
         let contentWidth = width - 2 * inset - badgeTrailingReserve
@@ -689,6 +729,19 @@ public final class TesseraLiveTileView: UIView {
     var badgeEditClearance: CGFloat = 0 {
         didSet {
             guard badgeEditClearance != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    /// Плитка малая (1×1, ``TileSize/small``), D47: сторона с иконкой и бэйджем
+    /// показывает их без текста. Выставляет ячейка сетки по модели ярлыка; у
+    /// самостоятельного контейнера вне сетки `false` — раскладка прежняя.
+    var isSmallTile = false {
+        didSet {
+            guard isSmallTile != oldValue else { return }
+            for face in [frontView, backView] {
+                face.isSmallTile = isSmallTile
+            }
             setNeedsLayout()
         }
     }
@@ -1025,6 +1078,7 @@ public final class TesseraLiveTileView: UIView {
         for face in [frontView, backView] {
             face.badgeTrailingReserve = badgeLayout.titleTrailingReserve
             face.badgeBottomReserve = badgeLayout.titleBottomReserve
+            face.badgeIconBottomReserve = badgeLayout.iconBottomReserve
         }
     }
 
