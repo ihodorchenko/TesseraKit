@@ -234,7 +234,8 @@ final class TileGridAccessibilityTests: XCTestCase {
         return try XCTUnwrap(host.host.panelCell(folderID: folderID))
     }
 
-    /// «Убрать из папки» выносит ярлык на рабочий стол сразу после папки.
+    /// «Убрать из папки» выносит ярлык на рабочий стол на первую свободную ячейку
+    /// после папки (E14.5: порядок чтения по ячейкам).
     func testPanelShortcutRemoveFromFolderAction() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
@@ -261,8 +262,14 @@ final class TileGridAccessibilityTests: XCTestCase {
 
         XCTAssertEqual(host.folders.first { $0.id == work }?.tiles.map { $0.id }, ["b"] as [AnyHashable])
         let order = host.storeIDs
-        XCTAssertEqual(order.firstIndex(of: "c"), (order.firstIndex(of: work) ?? -2) + 1,
-                       "Ярлык встаёт сразу после папки")
+        XCTAssertGreaterThan(
+            order.firstIndex(of: "c") ?? -1,
+            order.firstIndex(of: work) ?? Int.max,
+            "Ярлык встаёт после папки в порядке чтения"
+        )
+        let workCell = try XCTUnwrap(host.store.placement(of: work))
+        let cCell = try XCTUnwrap(host.store.placement(of: "c"))
+        XCTAssertTrue(TileGridPlacement.isReadingOrdered(workCell, before: cCell), "Ячейка — после ячейки папки")
     }
 
     /// «Переместить в папку <другая>» переносит ярлык панели в другую папку.

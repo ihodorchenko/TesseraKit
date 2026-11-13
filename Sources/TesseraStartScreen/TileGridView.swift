@@ -107,7 +107,7 @@ import TesseraCore
 /// }
 /// grid.onLongPress = { item, point in editCoordinator.beginEditing(at: item, point: point) }
 /// grid.onScrollOffsetChanged = { offset in background.apply(offsetY: offset.y) }
-/// grid.reload(snapshot: store.snapshot())
+/// grid.reload(snapshot: store.snapshot(columns: grid.columns))   // с таблицей ячеек (E14.5)
 /// ```
 ///
 /// ## Данные
@@ -568,8 +568,17 @@ public final class TesseraTileGridView: UIView {
                 pushDisplayItemsToLayout(reason: .items)
                 collectionView.reloadData()
             }
+            columnsDidChange?(newValue)
         }
     }
+
+    /// Внутренний колбэк смены числа колонок (E14.5).
+    ///
+    /// Координатор редактирования сообщает новую ширину `TileStore` (ячейки
+    /// хранятся на холсте конкретной ширины, D32) и, если идёт правка,
+    /// пересобирает снимок под неё. Вызывается после того, как раскладка уже
+    /// получила новое значение; публичным API не является.
+    var columnsDidChange: ((Int) -> Void)?
 
     /// Внешние поля сетки в точках. По умолчанию 16 со всех сторон.
     ///
@@ -1535,19 +1544,30 @@ public final class TesseraTileGridView: UIView {
         // Верхняя граница виртуальной сетки — последняя занятая строка базовой
         // упаковки: ниже неё слотов нет. Панели в снимке нет по построению, а
         // при раскрытой папке метод вышел бы раньше.
-        let packedItems: [(id: AnyHashable, size: TileSize)] = items.map { item in
-            (
-                id: item.id,
-                size: TileLayoutEngine.fittingSize(item.size, columns: columnCount)
+        // E14.5: с применимой таблицей явных ячеек (`TileGridPlacementTable`)
+        // последняя занятая строка берётся по ячейкам — дыры внутри раскладки
+        // входят в виртуальную сетку; без таблицы — упаковка по порядку.
+        let rowCount: Int
+        if let placements = explicitPlacements(for: items, table: snapshot?.placementTable) {
+            rowCount = placements.reduce(0) { result, placed in
+                let fitted = TileLayoutEngine.fittingSize(placed.size, columns: columnCount)
+                return max(result, placed.cell.row + fitted.unitRows)
+            }
+        } else {
+            let packedItems: [(id: AnyHashable, size: TileSize)] = items.map { item in
+                (
+                    id: item.id,
+                    size: TileLayoutEngine.fittingSize(item.size, columns: columnCount)
+                )
+            }
+            let slots = TileLayoutEngine.pack(
+                items: packedItems,
+                columns: columnCount,
+                unit: metrics.unit
             )
-        }
-        let slots = TileLayoutEngine.pack(
-            items: packedItems,
-            columns: columnCount,
-            unit: metrics.unit
-        )
-        let rowCount = slots.reduce(0) { result, slot in
-            max(result, slot.row + slot.unitRows)
+            rowCount = slots.reduce(0) { result, slot in
+                max(result, slot.row + slot.unitRows)
+            }
         }
         guard rowCount > 0 else { return [] }
 
@@ -1751,6 +1771,78 @@ public final class TesseraTileGridView: UIView {
             restIndex += 1
         }
         return insertion
+    }
+
+    /// Логическая ячейка базовой раскладки под точкой (E14.5, D21, D33).
+    ///
+    /// Палец решает, **в какую клетку** падает элемент: строка и колонка
+    /// считаются по шагу `юнит + зазор` от начала сетки (зазор между клетками
+    /// относится к клетке слева/выше, как в
+    /// ``baseInsertionIndex(forGridPoint:items:draggingID:)``). Колонка
+    /// логическая, незеркальная: в RTL точка отражается внутри ширины сетки, так
+    /// что колонка 0 — начало чтения. Результат **не ограничен** холстом: над
+    /// полями и ниже контента он выходит за `0 ..< columns` / занятые строки, это
+    /// решает вызывающий (`clamped`, цель «новая строка»).
+    ///
+    /// - Parameter point: Точка в координатах сетки.
+    /// - Returns: Строка и колонка или `nil`, если раскладку посчитать нельзя
+    ///   (нулевая ширина, нечисловая точка).
+    func baseCell(forGridPoint point: CGPoint) -> (row: Int, column: Int)? {
+        guard let geometry = baseLayoutGeometry() else { return nil }
+        let key = geometry.key
+        let metrics = geometry.metrics
+        let pitch = metrics.unit + metrics.spacing
+        guard pitch.isFinite, pitch > 0 else { return nil }
+
+        let content = contentPoint(fromGridPoint: point)
+        let localX = key.isRightToLeft
+            ? geometry.gridLeft + metrics.width - content.x
+            : content.x - geometry.gridLeft
+        guard localX.isFinite, content.y.isFinite else { return nil }
+
+        // Границы в Double до приведения к Int: при немыслимых координатах
+        // `Int(_:)` не должен упасть.
+        let limit: CGFloat = 1_000_000
+        let column = min(max((localX / pitch).rounded(.down), -limit), limit)
+        let row = min(max(((content.y - geometry.top) / pitch).rounded(.down), -limit), limit)
+        return (row: Int(row), column: Int(column))
+    }
+
+    /// Рамка в координатах сетки, которую элемент размера `size` займёт на
+    /// ячейке `cell` базовой раскладки (E14.5).
+    ///
+    /// Ячейка ограничивается холстом (`TileLayoutEngine.clamped`), след ужимается
+    /// под узкую сетку; RTL зеркалируется внутри ширины сетки, как в раскладке.
+    /// Магнит снимка (E8.9) притягивает его к центру этой рамки.
+    ///
+    /// - Parameters:
+    ///   - cell: Желаемая ячейка левого верхнего угла (логическая).
+    ///   - size: Размер элемента (D15).
+    /// - Returns: Рамка или `nil`, если геометрию не посчитать.
+    func baseFrame(forCell cell: TileGridPlacement, size: TileSize) -> CGRect? {
+        guard let geometry = baseLayoutGeometry() else { return nil }
+        let key = geometry.key
+        let metrics = geometry.metrics
+        let fitted = TileLayoutEngine.fittingSize(size, columns: key.columns)
+        let target = TileLayoutEngine.clamped(cell: cell, size: size, columns: key.columns)
+        let slot = TileLayoutSlot(
+            id: AnyHashable(0),
+            size: fitted,
+            column: target.column,
+            row: target.row,
+            unit: metrics.unit
+        )
+        var rect = TileLayoutEngine.rect(
+            for: slot,
+            unit: metrics.unit,
+            gap: metrics.spacing,
+            origin: CGPoint(x: geometry.gridLeft, y: geometry.top)
+        )
+        if key.isRightToLeft {
+            let localX = rect.minX - geometry.gridLeft
+            rect.origin.x = geometry.gridLeft + metrics.width - localX - rect.width
+        }
+        return gridFrame(fromContentFrame: rect)
     }
 
     /// Переводит рамку из координат контента в координаты сетки (E11.7).
