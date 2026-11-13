@@ -4970,11 +4970,36 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///
     /// - Parameter recognizer: Жест координатора.
     @objc private func handleBackgroundTap(_ recognizer: UITapGestureRecognizer) {
+        performBackgroundTap(at: recognizer.location(in: grid))
+    }
+
+    /// Решение жеста «тап по фону»: вышел ли тап в точке из редактирования.
+    ///
+    /// Вынесено из обработчика, чтобы тест мог прогнать «касание → решение
+    /// `shouldReceive` → действие» без настоящего `UITapGestureRecognizer`.
+    ///
+    /// - Parameter point: Точка тапа в координатах сетки.
+    func performBackgroundTap(at point: CGPoint) {
         guard isEditing, dragSession == nil else { return }
-        let point = recognizer.location(in: grid)
         guard grid.item(at: point) == nil else { return }
         endEditing()
     }
+
+    /// Попадает ли касание в зону кнопки правки.
+    ///
+    /// Решение принимает сам контейнер кнопок тем же `hitTest`, которым кнопки
+    /// получают касания (зоны касания, RTL-зеркалирование, видимость, наложения
+    /// соседних оверлеев), поэтому жест фона и кнопки не могут разойтись.
+    ///
+    /// - Parameter touch: Касание жеста фона.
+    /// - Returns: `true`, если под касанием кнопка «открепить» или «размер».
+    private func isEditControlHit(by touch: UITouch) -> Bool {
+        guard let host = editControlsHost, host.superview === grid else { return false }
+        return host.hitTest(touch.location(in: host), with: nil) != nil
+    }
+
+    /// Жест «тап по фону» (для тестов: проверка `isEnabled` и `shouldReceive`).
+    var backgroundTapGestureRecognizer: UIGestureRecognizer { backgroundTapRecognizer }
 
     // MARK: - Уведомления
 
@@ -5129,7 +5154,11 @@ extension TesseraTileEditCoordinator: UIGestureRecognizerDelegate {
         guard isEnabled else { return false }
 
         if gestureRecognizer === backgroundTapRecognizer {
-            return isEditing && dragSession == nil
+            // Касание в зоне любой кнопки правки (плитка сетки или ярлык панели,
+            // включая выступ в зазор и расширенную до 44 pt зону) принадлежит
+            // кнопке: иначе тап по выступающей части сработал бы и как «тап по
+            // пустому месту» и вывел бы из правки (E15.10).
+            return isEditing && dragSession == nil && !isEditControlHit(by: touch)
         }
         if gestureRecognizer === longPressRecognizer {
             var view: UIView? = touch.view
