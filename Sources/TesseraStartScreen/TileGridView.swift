@@ -3245,6 +3245,15 @@ final class TesseraTileCell: UICollectionViewCell {
     /// Скрытие сильнее дима: `contentView.alpha` = 0, пока флаг включён.
     private var isSourceHidden = false
 
+    /// Ярлык в модели — малый (1×1, ``TileSize/small``), D47.
+    ///
+    /// Малая плитка с видимым бэйджем и иконкой показывает иконку и бэйдж без
+    /// подписи (``TesseraTileBadgeLayout/Arrangement/iconAndBadge``). Признак
+    /// берётся из модели, а не из геометрии: на любой ширине сетки малая плитка
+    /// ведёт себя одинаково, а 2×2 и больше не затрагиваются. Выставляет
+    /// `configure`; у папки и переиспользованной ячейки — `false`.
+    private(set) var isSmallTile = false
+
     /// Текстовая часть `accessibilityValue` для плитки-папки без состояния
     /// раскрытия (число ярлыков), E10.2.
     ///
@@ -3331,6 +3340,7 @@ final class TesseraTileCell: UICollectionViewCell {
         isFolderExpanded: Bool = false
     ) {
         itemID = item.id
+        isSmallTile = item.tile?.size == .small
 
         switch item {
         case .tile(let descriptor):
@@ -3473,6 +3483,7 @@ final class TesseraTileCell: UICollectionViewCell {
         badgeView.isHidden = true
         liveView.isHidden = false
         liveView.badge = badge
+        liveView.isSmallTile = isSmallTile
         liveView.badgeEditClearance = badgeEditClearance
 
         guard let engine else {
@@ -3800,6 +3811,8 @@ final class TesseraTileCell: UICollectionViewCell {
         alpha = 1
 
         itemID = nil
+        isSmallTile = false
+        liveTileView?.isSmallTile = false
         onActivate = nil
         iconView.image = nil
         iconView.tintColor = nil
@@ -3944,21 +3957,37 @@ final class TesseraTileCell: UICollectionViewCell {
         // правке он обходит стрелку размера. Подпись уступает ему место:
         // сужается рядом с ним либо поднимается над его рядом.
         let badgeSize = badgeView.intrinsicContentSize
+        let hasImage = iconView.image != nil
+        // D47: малая плитка с бэйджем и иконкой — иконка и бэйдж, подписи нет
+        // (label и value VoiceOver не меняются). Без иконки подпись остаётся.
         let badgeLayout = TesseraTileBadgeLayout.make(
             tileSize: bounds.size,
             badgeSize: badgeSize,
             inset: inset,
             isRightToLeft: isRightToLeft,
-            editClearance: badgeEditClearance
+            editClearance: badgeEditClearance,
+            hidesTitle: isSmallTile && hasImage
         )
         badgeView.frame = badgeLayout.frame
         badgeView.alpha = badgeLayout.isHiddenByEditControls ? 0 : 1
+
+        if badgeLayout.arrangement == .iconAndBadge {
+            titleLabel.isHidden = true
+            titleLabel.frame = .zero
+            iconView.isHidden = false
+            iconView.frame = TesseraTileBadgeLayout.smallTileIconFrame(
+                tileSize: bounds.size,
+                inset: inset,
+                bottomReserve: badgeLayout.iconBottomReserve
+            )
+            return
+        }
+        titleLabel.isHidden = false
 
         let titleWidth = max(0, contentWidth - badgeLayout.titleTrailingReserve)
         let titleFits = fitTitleFont(toWidth: titleWidth)
 
         // Иконка — в верхнем углу по направлению чтения (§9).
-        let hasImage = iconView.image != nil
         var iconSide = hasImage ? max(14, min(34, minimumSide * 0.22)) : 0
         let lineHeight = titleLabel.font.lineHeight
 
@@ -4039,6 +4068,8 @@ final class TesseraTileCell: UICollectionViewCell {
         iconView.isHidden = true
         iconView.frame = .zero
         badgeView.frame = .zero
+        // Подпись могла быть скрыта прежним ярлыком малой плитки (D47).
+        titleLabel.isHidden = false
 
         let titleFits = fitTitleFont(toWidth: contentWidth)
         titleLabel.numberOfLines = titleFits ? 2 : 1

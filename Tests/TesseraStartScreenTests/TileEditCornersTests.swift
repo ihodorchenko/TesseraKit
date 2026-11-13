@@ -150,11 +150,14 @@ final class TileEditCornersTests: XCTestCase {
                 XCTAssertFalse(resizeZone.isEmpty, label)
                 XCTAssertLessThanOrEqual(unpinZone.maxY, side / 2 + 0.001, "открепление — верхняя половина: \(label)")
                 XCTAssertGreaterThanOrEqual(resizeZone.minY, side / 2 - 0.001, "стрелка — нижняя половина: \(label)")
-                XCTAssertGreaterThanOrEqual(unpinZone.width, 42 - 0.001, "ширина зоны \(label)")
-                XCTAssertGreaterThanOrEqual(unpinZone.height, 42 - 0.001, "высота зоны \(label)")
-                XCTAssertGreaterThanOrEqual(resizeZone.width, 42 - 0.001, label)
-                XCTAssertGreaterThanOrEqual(resizeZone.height, 42 - 0.001, label)
-                if side >= 55 {
+                // D48: выступ 4 pt придвинул центр кнопки к оси плитки на 2 pt, и
+                // обрезка по оси стала глубже: 50 pt — ≈ 40 × 41, 55 pt — ≈ 42,5 × 43,5,
+                // от 62 pt — полные 44 × 44.
+                XCTAssertGreaterThanOrEqual(unpinZone.width, 40 - 0.001, "ширина зоны \(label)")
+                XCTAssertGreaterThanOrEqual(unpinZone.height, 41 - 0.001, "высота зоны \(label)")
+                XCTAssertGreaterThanOrEqual(resizeZone.width, 40 - 0.001, label)
+                XCTAssertGreaterThanOrEqual(resizeZone.height, 41 - 0.001, label)
+                if side >= 62 {
                     XCTAssertEqual(unpinZone.width, 44, accuracy: 0.001, label)
                     XCTAssertEqual(unpinZone.height, 44, accuracy: 0.001, label)
                     XCTAssertEqual(resizeZone.width, 44, accuracy: 0.001, label)
@@ -358,7 +361,7 @@ final class TileEditCornersTests: XCTestCase {
 
     /// Ширины 375/390/402/414 pt, 6 колонок: у плиток 1×1, 2×2 и 4×2 с бэйджами
     /// (капсула, «99+», точка) бэйдж в правке не пересекает ни стрелку размера, ни
-    /// открепление; бэйдж остаётся видимым (кроме «99+» на 1×1 при ширинах ≤ 402 pt:
+    /// открепление; бэйдж остаётся видимым (кроме «99+» на 1×1 — плитка уже 58 pt, D48:
     /// скрыт только на время правки). Измеренные зазоры выводятся в лог.
     func testBadgeDoesNotOverlapButtonsInRealEditSession() throws {
         let badges: [(String, TileBadge)] = [("count 3", .count(3)), ("99+", .count(150)), ("dot", .dot)]
@@ -390,7 +393,9 @@ final class TileEditCornersTests: XCTestCase {
                     control.layoutIfNeeded()
                     let tile = try XCTUnwrap(host.host.grid.frame(forItemID: AnyHashable(id)), label)
 
-                    let expectHidden = badgeName == "99+" && id.hasPrefix("s") && width <= 402
+                    // D48: при выступе 4 pt «99+» (34 pt) не помещается правее стрелки
+                    // на плитках уже 58 pt, то есть на всех четырёх ширинах (было ≤ 402 pt).
+                    let expectHidden = badgeName == "99+" && id.hasPrefix("s") && tile.width < 18 + 34 + 6
                     XCTAssertEqual(
                         badgeView.alpha, expectHidden ? 0 : 1, accuracy: 0.001,
                         "видимость бэйджа в правке: \(label)"

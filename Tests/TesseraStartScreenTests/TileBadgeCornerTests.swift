@@ -9,7 +9,16 @@
 //  §4, «Отступления реализации (E15)», п. 59; docs/W10M-STARTSCREEN.md §1.
 //
 //  Ширины экрана 375/390/402/414 pt при 6 колонках (поля 16, зазор 8): малая
-//  плитка 50,5 / 53 / 55 / 57 pt, средняя и широкая — по формуле раскладки.
+//  плитка 50,3 / 53 / 55 / 57 pt, средняя и широкая — по формуле раскладки.
+//
+//  D47: малая плитка (TileSize.small) с бэйджем и иконкой показывает иконку и
+//  бэйдж без подписи — этот режим покрывает `TileSmallBadgeIconTests`; здесь
+//  ячейка получает в модель тот же `TileSize`, что и её геометрия (раньше тест
+//  везде ставил .small), поэтому проверки подписи относятся к 2×2 и 4×2, а для
+//  малой плитки — к режиму «иконка и бэйдж».
+//  D48: выступ кнопок правки 4 pt — стрелка заходит в плитку на 16 pt (было 14),
+//  бэйдж сдвигается на 12 pt (было 10), «99+» на 1×1 скрыт в правке на всех
+//  четырёх ширинах (было ≤ 402 pt).
 //
 
 #if canImport(UIKit)
@@ -65,6 +74,7 @@ final class TileBadgeCornerTests: XCTestCase {
         badge: TileBadge,
         title: String = "Почта",
         withIcon: Bool = true,
+        descriptorSize: TileSize = .medium,
         rightToLeft: Bool = false,
         category: UIContentSizeCategory = .large,
         editClearance: CGFloat = 0
@@ -90,7 +100,7 @@ final class TileBadgeCornerTests: XCTestCase {
             cell.contentView.semanticContentAttribute = .forceRightToLeft
         }
         child.view.addSubview(cell)
-        var descriptor = tesseraTestTile(title, size: .small, badge: badge)
+        var descriptor = tesseraTestTile(title, size: descriptorSize, badge: badge)
         if withIcon {
             descriptor.icon = UIImage(systemName: "envelope.fill")
         }
@@ -123,7 +133,7 @@ final class TileBadgeCornerTests: XCTestCase {
                 for (badgeName, badge) in badges {
                     for rtl in [false, true] {
                         let label = "\(Int(width)) pt \(tileSize) \(badgeName) rtl=\(rtl)"
-                        let cell = makeCell(size: size, badge: badge, rightToLeft: rtl)
+                        let cell = makeCell(size: size, badge: badge, descriptorSize: tileSize, rightToLeft: rtl)
                         let view = badgeView(of: cell)
                         let frame = view.frame
                         let margin = inset(for: size)
@@ -171,11 +181,20 @@ final class TileBadgeCornerTests: XCTestCase {
                     for rtl in [false, true] {
                         for title in ["Почта", "Календарь событий", "Конфиденциальность"] {
                             let label = "\(Int(width)) pt \(tileSize) \(badgeName) rtl=\(rtl) «\(title)»"
-                            let cell = makeCell(size: size, badge: badge, title: title, rightToLeft: rtl)
+                            let cell = makeCell(
+                                size: size, badge: badge, title: title, descriptorSize: tileSize, rightToLeft: rtl
+                            )
                             let badgeFrame = badgeView(of: cell).frame
                             let titleFrame = titleLabel(of: cell).frame
                             let icon = iconView(of: cell)
 
+                            if tileSize == .small {
+                                // D47: малая плитка с иконкой и бэйджем — подписи нет.
+                                XCTAssertTrue(titleLabel(of: cell).isHidden, "подписи нет: \(label)")
+                                XCTAssertFalse(icon.isHidden, "иконка есть: \(label)")
+                                XCTAssertFalse(icon.frame.intersects(badgeFrame), "иконка × бэйдж: \(label)")
+                                continue
+                            }
                             XCTAssertGreaterThan(titleFrame.width, 0, "подпись есть: \(label)")
                             XCTAssertGreaterThan(titleFrame.height, 0, "подпись есть: \(label)")
                             XCTAssertFalse(titleFrame.intersects(badgeFrame), "подпись × бэйдж: \(label)")
@@ -245,6 +264,7 @@ final class TileBadgeCornerTests: XCTestCase {
                             size: size,
                             badge: .count(150),
                             title: "Календарь",
+                            descriptorSize: tileSize,
                             rightToLeft: rtl,
                             category: category
                         )
@@ -295,7 +315,8 @@ final class TileBadgeCornerTests: XCTestCase {
     /// В правке бэйдж не пересекает ни стрелку размера (тот же угол), ни кнопку
     /// открепления (верхний угол) на 1×1, 2×2, 4×2 при всех ширинах, для
     /// капсулы, «99+» и точки; бэйдж остаётся видимым (кроме «99+» на 1×1 при
-    /// ширинах экрана ≤ 402 pt: там он скрыт только на время правки).
+    /// плитке уже 58 pt, то есть на всех четырёх ширинах: там он скрыт только на
+    /// время правки).
     func testBadgeClearsResizeAndUnpinButtonsInEditMode() {
         for width in screenWidths {
             for (tileSize, size) in tileSizes(screenWidth: width) {
@@ -309,13 +330,18 @@ final class TileBadgeCornerTests: XCTestCase {
                         let cell = makeCell(
                             size: size,
                             badge: badge,
+                            descriptorSize: tileSize,
                             rightToLeft: rtl,
                             editClearance: clearance
                         )
                         let view = badgeView(of: cell)
-                        // Единственный случай скрытия: капсула «99+» на 1×1 уже ≈ 57 pt
-                        // (ширины экрана ≤ 402) не помещается правее стрелки.
-                        let expectHidden = badgeName == "count 99+" && tileSize == .small && width <= 402
+                        // Единственный случай скрытия: капсула «99+» (34 pt) на 1×1 не
+                        // помещается правее стрелки (16 pt в плитке + зазор 2 pt) с
+                        // полем 6 pt, пока плитка уже 58 pt. D48 (выступ 4 pt) сдвинул
+                        // границу: раньше скрытие было при ширинах экрана ≤ 402 pt, теперь
+                        // плитки 50,3…57 pt, то есть все четыре ширины, скрыты.
+                        let expectHidden = badgeName == "count 99+" && tileSize == .small
+                            && size.width < 18 + 34 + 6
                         XCTAssertEqual(
                             view.alpha, expectHidden ? 0 : 1, accuracy: 0.001,
                             "видимость бэйджа в правке: \(label)"
@@ -355,7 +381,7 @@ final class TileBadgeCornerTests: XCTestCase {
     func testEditShiftMovesBadgeAlongBottomRowOnly() {
         let size = CGSize(width: 53, height: 53)
         let clearance = TesseraTileEditControlView.badgeClearance(forTileSize: size, maxDiameter: 28)
-        XCTAssertEqual(clearance, 14, accuracy: 0.001, "стрелка 20 pt, выступ 6 pt")
+        XCTAssertEqual(clearance, 16, accuracy: 0.001, "стрелка 20 pt, выступ 4 pt (D48)")
         for rtl in [false, true] {
             let normal = badgeView(of: makeCell(size: size, badge: .count(3), rightToLeft: rtl)).frame
             let editing = badgeView(
@@ -364,7 +390,7 @@ final class TileBadgeCornerTests: XCTestCase {
             XCTAssertEqual(editing.minY, normal.minY, accuracy: 0.001)
             XCTAssertEqual(editing.size, normal.size)
             let shift = rtl ? editing.minX - normal.minX : normal.minX - editing.minX
-            XCTAssertEqual(shift, 10, accuracy: 0.5, "сдвиг = отступ стрелки + зазор − поле")
+            XCTAssertEqual(shift, 12, accuracy: 0.5, "сдвиг = отступ стрелки + зазор − поле")
         }
     }
 
@@ -373,7 +399,7 @@ final class TileBadgeCornerTests: XCTestCase {
     func testBadgeHiddenOnlyWhileEditingWhenItCannotClearTheButton() {
         let size = CGSize(width: 50, height: 50)
         let clearance = TesseraTileEditControlView.badgeClearance(forTileSize: size, maxDiameter: 28)
-        // Капсула такой ширины гарантированно не помещается (50 − 2·6 − 16 = 22).
+        // Капсула такой ширины гарантированно не помещается (50 − 6 − 18 = 26 < 30).
         let layoutEditing = TesseraTileBadgeLayout.make(
             tileSize: size,
             badgeSize: CGSize(width: 30, height: 20),
@@ -396,7 +422,7 @@ final class TileBadgeCornerTests: XCTestCase {
     /// Выход из правки возвращает бэйдж в угол.
     func testBadgeReturnsToCornerWhenEditingEnds() {
         let size = CGSize(width: 53, height: 53)
-        let cell = makeCell(size: size, badge: .count(3), editClearance: 14)
+        let cell = makeCell(size: size, badge: .count(3), editClearance: 16)
         let shifted = badgeView(of: cell).frame
         cell.setBadgeEditClearance(0, animated: false)
         cell.layoutIfNeeded()
@@ -415,7 +441,7 @@ final class TileBadgeCornerTests: XCTestCase {
                     tileSize: tile, badgeSize: badge, inset: 6, isRightToLeft: false, editClearance: 0
                 )
                 let editing = TesseraTileBadgeLayout.make(
-                    tileSize: tile, badgeSize: badge, inset: 6, isRightToLeft: false, editClearance: 14
+                    tileSize: tile, badgeSize: badge, inset: 6, isRightToLeft: false, editClearance: 16
                 )
                 XCTAssertEqual(normal.arrangement, editing.arrangement, "\(tile) \(badge)")
             }
@@ -429,7 +455,7 @@ final class TileBadgeCornerTests: XCTestCase {
             badgeSize: .zero,
             inset: 6,
             isRightToLeft: false,
-            editClearance: 14
+            editClearance: 16
         )
         XCTAssertEqual(layout, TesseraTileBadgeLayout())
     }
