@@ -302,6 +302,17 @@ public final class TileStore: ObservableObject {
     /// версии. `nil` — нечитаемых файлов не встречалось.
     public private(set) var lastUnreadableFileBackupURL: URL?
 
+    /// Ширина холста, на которую рассчитаны сохранённые ячейки (E14.1, D32).
+    ///
+    /// `nil` — ячеек ещё нет: файл версии 1 или первый запуск, ширина сетки
+    /// хоста пока не известна. Как только хост сообщает ширину
+    /// (``placeItems(columns:)`` или любая операция с `columns`), ячейки
+    /// назначаются однократным прогоном `TileLayoutEngine.packCompact` по
+    /// текущему порядку и сразу сохраняются. Если ширина хоста отличается от
+    /// `canvasColumns`, файл не перезаписывается: для хоста действует проекция
+    /// ``placements(forColumns:)``.
+    public private(set) var canvasColumns: Int?
+
     /// Каталог, в котором лежит JSON-файл состояния.
     public let directoryURL: URL
 
@@ -348,7 +359,23 @@ public final class TileStore: ObservableObject {
     var currentDate: () -> Date = { Date() }
 
     /// Версия схемы JSON-файла.
-    private static let schemaVersion = 1
+    ///
+    /// Версия 2 (E14.1, D33): у каждого верхнеуровневого элемента есть ячейка
+    /// `row`/`column`, а в документе — ширина холста `columns`. Версия 1
+    /// читается и мигрирует лениво (``placeItems(columns:)``).
+    private static let schemaVersion = 2
+
+    /// Явные ячейки верхнеуровневых элементов по каноническому ключу (E14.1).
+    ///
+    /// Есть записи и для невидимых ключей (ярлыков вне текущего каталога): они
+    /// хранят свою ячейку, но не участвуют в раскладке и коллизиях (D30).
+    /// Пока ``canvasColumns`` равно `nil` («нераскладочное» состояние: файл
+    /// версии 1 или первый запуск до того, как стала известна ширина), словарь пуст.
+    private var placementsByKey: [String: TileGridPlacement] = [:]
+
+    /// Последняя ширина сетки хоста, которую хранилище узнало из вызова с
+    /// `columns` (``placeItems(columns:)``, ``resize(_:to:columns:)`` и т. п.).
+    private var hostColumns: Int?
 
     /// Каноническое число колонок сетки по умолчанию (6, D26).
     ///
@@ -407,8 +434,18 @@ public final class TileStore: ObservableObject {
     /// Ярлыки вне каталога, стоящие прямо на сетке, не удаляются: они остаются
     /// невидимыми ключами и держат своё место до возвращения в каталог.
     ///
+    /// Ячейки (E14.1): если они уже есть (``canvasColumns``), новые ярлыки
+    /// получают строку в конце холста, а вернувшиеся невидимые — свою прежнюю
+    /// ячейку, если она свободна от видимых элементов, иначе тоже новую строку
+    /// в конце. Без ячеек (первый запуск) раскладка первого запуска назначается
+    /// при первом ``placeItems(columns:)``. Метод файл не пишет.
+    ///
     /// - Parameter descriptors: Каталог ярлыков в начальном порядке.
     public func setCatalog(_ descriptors: [TileDescriptor]) {
+        // Видимые до смены каталога ключи: при конфликте ячеек они сильнее тех,
+        // что только что вернулись в каталог (E14.1, D30).
+        let settledBefore = Set(visibleGridKeys())
+
         var seen = Set<String>()
         var unique: [TileDescriptor] = []
         unique.reserveCapacity(descriptors.count)
@@ -447,6 +484,13 @@ public final class TileStore: ObservableObject {
                 gridOrder.append(key)
             }
         }
+
+        // E14.1: ячейки появившихся ключей — новая строка в конце холста (если
+        // ячейки уже есть), вернувшиеся невидимые встают на своё место, если оно
+        // свободно. Без ячеек (нераскладочное состояние) ничего не делается:
+        // первый запуск раскладывается прогоном `packCompact`, когда известна
+        // ширина (``placeItems(columns:)``).
+        reconcilePlacements(settled: settledBefore)
 
         notifyChange()
     }
@@ -535,6 +579,7 @@ public final class TileStore: ObservableObject {
     ///   или в папке).
     @discardableResult
     public func pinTile(_ tileID: AnyHashable, at index: Int? = nil, columns: Int?) -> Int? {
+        noteHostColumns(columns)
         let key = TileStore.storageKey(for: tileID)
         guard let catalogPosition = catalogIndex[key], !gridOrder.contains(key) else { return nil }
         guard folderContaining(tileID) == nil else { return nil }
@@ -611,7 +656,7 @@ public final class TileStore: ObservableObject {
     /// - Returns: `true`, если состояние изменилось.
     @discardableResult
     public func resize(_ itemID: AnyHashable, to size: TileSize) -> Bool {
-        resize(itemID, to: size, columns: TileStore.defaultGridColumns)
+        performResize(itemID, to: size, columns: TileStore.defaultGridColumns)
     }
 
     /// Меняет размер элемента и переставляет конфликтующие плитки (E8.7).
@@ -634,6 +679,12 @@ public final class TileStore: ObservableObject {
     /// - Returns: `true`, если размер изменился.
     @discardableResult
     public func resize(_ itemID: AnyHashable, to size: TileSize, columns: Int) -> Bool {
+        noteHostColumns(columns)
+        return performResize(itemID, to: size, columns: columns)
+    }
+
+    /// Общая часть двух ``resize(_:to:)``-перегрузок; ширину хоста не запоминает.
+    private func performResize(_ itemID: AnyHashable, to size: TileSize, columns: Int) -> Bool {
         let key = TileStore.storageKey(for: itemID)
 
         // Текущий авторитетный размер: у папки он в записи, у ярлыка — в `sizes`.
@@ -745,6 +796,7 @@ public final class TileStore: ObservableObject {
     /// - Returns: `true`, если порядок изменился.
     @discardableResult
     public func canonicalizeVisibleOrder(columns: Int) -> Bool {
+        noteHostColumns(columns)
         guard canonicalizeOrder(columns: columns) else { return false }
         didChange()
         return true
@@ -830,6 +882,7 @@ public final class TileStore: ObservableObject {
         toIndex index: Int,
         columns: Int?
     ) -> (changed: Bool, index: Int?) {
+        noteHostColumns(columns)
         let key = TileStore.storageKey(for: itemID)
         var visible = visibleGridKeys()
         guard let from = visible.firstIndex(of: key) else { return (false, nil) }
@@ -1111,12 +1164,122 @@ public final class TileStore: ObservableObject {
         return materialize(record)
     }
 
+    // MARK: - Ячейки на холсте (E14.1, D30–D33)
+
+    /// Сохранённые ячейки видимых верхнеуровневых элементов на холсте шириной
+    /// ``canvasColumns`` (логические координаты, 0 — начало чтения).
+    ///
+    /// Пусто, пока ячеек нет (``canvasColumns`` равно `nil`). Это именно
+    /// сохранённая раскладка: для хоста с другой шириной используйте
+    /// ``placements(forColumns:)``. Содержимое папок ячеек не имеет.
+    public var placements: [AnyHashable: TileGridPlacement] {
+        guard canvasColumns != nil else { return [:] }
+        return storedVisiblePlacements()
+    }
+
+    /// Ячейка элемента на сохранённом холсте.
+    ///
+    /// - Parameter id: Идентификатор ярлыка или папки на сетке.
+    /// - Returns: Ячейка или `nil`, если ячеек ещё нет либо элемента нет на
+    ///   видимой сетке.
+    public func placement(of id: AnyHashable) -> TileGridPlacement? {
+        guard canvasColumns != nil else { return nil }
+        let key = TileStore.storageKey(for: id)
+        guard visibleGridKeys().contains(key) else { return nil }
+        return placementsByKey[key]
+    }
+
+    /// Ячейки видимых элементов для хоста с шириной `columns` (D32).
+    ///
+    /// Если `columns` совпадает с ``canvasColumns``, возвращается сохранённая
+    /// раскладка с дырами. Иначе — **проекция**: плитки в порядке чтения
+    /// сохранённых ячеек (строка, затем колонка) упаковываются
+    /// `TileLayoutEngine.packCompact` под ширину хоста, без дыр. Проекция
+    /// считается на лету и **файл не перезаписывает**: возврат к прежней
+    /// ширине без правок возвращает дыры. Без ячеек (``canvasColumns`` равно
+    /// `nil`) это упаковка текущего порядка модели. Ярлык шире `columns`
+    /// занимает ужатый след (``TileLayoutEngine/fittingSize(_:columns:)``).
+    ///
+    /// Первая операция редактирования при несовпадении ширины принимает
+    /// раскладку под ширину хоста как новый холст (обновляется
+    /// ``canvasColumns``). Переходное правило E14.1: пока операции работают по
+    /// порядку, она строится упаковкой порядка модели (E14.2/E14.5 заменят это
+    /// логикой по координатам, D31).
+    ///
+    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: Ячейки по идентификаторам; пусто при `columns <= 0`.
+    public func placements(forColumns columns: Int) -> [AnyHashable: TileGridPlacement] {
+        guard columns > 0 else { return [:] }
+        if canvasColumns == columns {
+            return storedVisiblePlacements()
+        }
+        var result: [AnyHashable: TileGridPlacement] = [:]
+        for (key, placement) in projectedPlacements(columns: columns) {
+            if let id = visibleItemID(forKey: key) {
+                result[id] = placement
+            }
+        }
+        return result
+    }
+
+    /// Идентификаторы видимых элементов в порядке чтения ячеек для ширины
+    /// `columns` (строка, затем колонка; при равных ячейках — порядок модели).
+    ///
+    /// Для ширины, совпадающей с ``canvasColumns``, порядок берётся из
+    /// сохранённых ячеек; иначе — из проекции (``placements(forColumns:)``).
+    ///
+    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: Идентификаторы в порядке чтения; пусто при `columns <= 0`.
+    public func placementReadingOrder(forColumns columns: Int) -> [AnyHashable] {
+        guard columns > 0 else { return [] }
+        let cells = canvasColumns == columns
+            ? placementsByKey
+            : projectedPlacements(columns: columns)
+        return TileStore.readingSorted(visibleGridKeys(), by: cells).compactMap { visibleItemID(forKey: $0) }
+    }
+
+    /// Сообщает хранилищу ширину сетки хоста и, если ячеек ещё нет, назначает их
+    /// (ленивая миграция v1 → v2 и раскладка первого запуска, E14.1, D33).
+    ///
+    /// Однократно: если ячеек нет (файл версии 1 или первый запуск), текущий
+    /// порядок видимых элементов упаковывается прежним
+    /// `TileLayoutEngine.packCompact` для `columns` — внешне ничего не
+    /// меняется, — ячейки невидимых ключей ставятся в новые строки в конце, и
+    /// результат сразу сохраняется (при ``autosaves``). Если ячейки уже есть,
+    /// метод только запоминает ширину; файл не трогается, даже если ширина
+    /// отличается от ``canvasColumns`` (D32). Миграция ждёт, пока
+    /// зарегистрирован каталог и есть что раскладывать; тогда её выполнят
+    /// ``load()`` или следующий вызов. Миграция не сохраняет файл, который
+    /// ещё не прочитан ``load()`` (иначе затёрла бы его).
+    ///
+    /// Ширина запоминается и операциями с `columns` (``resize(_:to:columns:)``,
+    /// ``moveItem(_:toIndex:columns:)``, ``pinTile(_:at:columns:)``,
+    /// ``canonicalizeVisibleOrder(columns:)``). Пересчёт ячеек после операций
+    /// идёт для запомненной ширины.
+    ///
+    /// Уведомление ``onChange`` не отправляется: снимок сетки не меняется.
+    ///
+    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
+    /// - Returns: `true`, если ячейки назначены этим вызовом.
+    @discardableResult
+    public func placeItems(columns: Int) -> Bool {
+        guard columns > 0 else { return false }
+        hostColumns = columns
+        let wasUnplaced = canvasColumns == nil
+        migrateIfPossible()
+        return wasUnplaced && canvasColumns != nil
+    }
+
     // MARK: - Персистентность
 
     /// Сохраняет состояние в JSON атомарной записью (§5).
     ///
     /// Каталог создаётся при необходимости. Запись атомарная: файл либо старый,
     /// либо новый целиком — оборванный запуск не оставит половину раскладки.
+    /// Пишется схема версии 2 (E14.1): у каждого элемента `row`/`column`, в
+    /// документе — ширина холста `columns`; пока ячеек нет
+    /// (``canvasColumns`` равно `nil`), поля опускаются, и следующий `load()`
+    /// считает файл нераскладочным.
     ///
     /// Если ``load()`` нашёл нечитаемый файл и не смог отложить его в
     /// резервную копию, запись сначала повторяет эту попытку и при неудаче
@@ -1130,6 +1293,7 @@ public final class TileStore: ObservableObject {
 
         let document = TileStoreDocument(
             version: TileStore.schemaVersion,
+            columns: canvasColumns,
             items: makeDocumentItems(),
             sizes: sizes,
             folders: folderRecords.map {
@@ -1156,6 +1320,14 @@ public final class TileStore: ObservableObject {
     /// без единого ярлыка каталога распускается (E10.3c). Папка, которая есть
     /// в файле, но отсутствует в порядке сетки, не теряется — она встаёт в
     /// конец сетки.
+    ///
+    /// Файл версии 1 (ячеек нет) мигрирует лениво (E14.1, D33): `load()` идёт до
+    /// того, как известна ширина сетки, поэтому ячейки назначает
+    /// ``placeItems(columns:)`` — однократным прогоном `packCompact` по
+    /// сохранённому порядку, с немедленной записью версии 2. Если ширина уже
+    /// известна, миграция выполняется в конце `load()`. Версия новее
+    /// поддерживаемой обрабатывается как и раньше (резервная копия, состояние
+    /// не меняется).
     ///
     /// Если файла нет — ничего не происходит (первый запуск). Ошибка чтения не
     /// меняет текущее состояние и пробрасывается вызывающему. Если файл
@@ -1194,6 +1366,10 @@ public final class TileStore: ObservableObject {
             pruneFoldersAgainstCatalog()
         }
         restoredFromDisk = true
+        // E14.1: ячейки из файла приводятся к инвариантам (границы, коллизии
+        // видимых); файл версии 1 мигрирует, если хост уже сообщил ширину.
+        reconcilePlacements()
+        migrateIfPossible()
         notifyChange()
     }
 
@@ -1317,15 +1493,60 @@ public final class TileStore: ObservableObject {
         }
 
         gridOrder = order
+        applyStoredPlacements(from: document)
+    }
+
+    /// Накладывает на модель ячейки из документа (E14.1).
+    ///
+    /// Нераскладочное состояние (``canvasColumns`` равно `nil`, ячеек нет):
+    /// файл версии 1; в документе нет ширины холста; **частичный** набор —
+    /// хотя бы у одного уцелевшего элемента нет `row`/`column`. Ячейки тогда
+    /// назначит ленивая миграция.
+    ///
+    /// Отдельные плохие значения (отрицательные, чрезмерные, не помещающиеся в
+    /// холст) — «нарушители»: запись о них отбрасывается, и ``reconcilePlacements(settled:)``
+    /// переносит их в новые строки в конце. Коллизии видимых элементов также
+    /// разрешает он — когда известно, кто видим.
+    ///
+    /// - Parameter document: Прочитанный документ.
+    private func applyStoredPlacements(from document: TileStoreDocument) {
+        placementsByKey = [:]
+        canvasColumns = nil
+        guard let columns = document.columns, columns > 0 else { return }
+
+        var firstItems: [String: TileStoreDocument.Item] = [:]
+        for item in document.items where firstItems[item.key] == nil {
+            firstItems[item.key] = item
+        }
+
+        var parsed: [String: TileGridPlacement] = [:]
+        for key in gridOrder {
+            guard let item = firstItems[key], let row = item.row, let column = item.column else {
+                return
+            }
+            parsed[key] = TileGridPlacement(row: row, column: column)
+        }
+
+        for (key, placement) in parsed where isPlacementValid(placement, forKey: key, columns: columns) {
+            placementsByKey[key] = placement
+        }
+        canvasColumns = columns
     }
 
     /// Раскладка в виде элементов JSON-документа, с признаком «ярлык/папка».
     ///
-    /// - Returns: Элементы в порядке сетки.
+    /// - Returns: Элементы в порядке сетки (с ячейками, если они есть).
     private func makeDocumentItems() -> [TileStoreDocument.Item] {
         let folderKeys = Set(folderRecords.map { $0.key })
+        let hasCanvas = canvasColumns != nil
         return gridOrder.map { key in
-            TileStoreDocument.Item(kind: folderKeys.contains(key) ? .folder : .tile, key: key)
+            let placement = hasCanvas ? placementsByKey[key] : nil
+            return TileStoreDocument.Item(
+                kind: folderKeys.contains(key) ? .folder : .tile,
+                key: key,
+                row: placement?.row,
+                column: placement?.column
+            )
         }
     }
 
@@ -1333,6 +1554,12 @@ public final class TileStore: ObservableObject {
 
     /// Сообщает об изменении: сначала сохранение (если включено), затем снимок.
     private func didChange() {
+        // E14.1, переходное правило (D31): операции пока работают по порядку,
+        // поэтому после каждой из них ячейки пересчитываются `packCompact` по
+        // новому порядку для текущей ширины. Сохранённые координаты всегда
+        // равны тому, что показывает сетка; в E14.2/E14.5 это заменяется
+        // логикой по координатам.
+        repackPlacementsAfterMutation()
         if autosaves {
             saveIfPossible()
         }
@@ -1457,6 +1684,225 @@ public final class TileStore: ObservableObject {
             keys = reordered
         }
         return applyVisibleOrder(keys)
+    }
+
+    // MARK: - Ячейки: внутренние операции (E14.1)
+
+    /// Запоминает ширину хоста из вызова с `columns`.
+    ///
+    /// - Parameter columns: Число колонок; `nil` и неположительные игнорируются.
+    private func noteHostColumns(_ columns: Int?) {
+        guard let columns = columns, columns > 0 else { return }
+        hostColumns = columns
+    }
+
+    /// Ширина, для которой пересчитываются ячейки после операции: последняя
+    /// ширина хоста, иначе ширина холста, иначе умолчание (D26).
+    private var effectiveColumns: Int {
+        hostColumns ?? canvasColumns ?? TileStore.defaultGridColumns
+    }
+
+    /// Размер элемента по ключу: папка, затем сохранённый размер, затем каталог.
+    private func storedSize(ofKey key: String) -> TileSize {
+        if let record = folderRecords.first(where: { $0.key == key }) { return record.size }
+        if let size = sizes[key] { return size }
+        if let index = catalogIndex[key] { return catalog[index].size }
+        return .medium
+    }
+
+    /// Размер элемента, ужатый под ширину холста (D15, E14.1).
+    private func footprint(ofKey key: String, columns: Int) -> TileSize {
+        TileLayoutEngine.fittingSize(storedSize(ofKey: key), columns: columns)
+    }
+
+    /// Идентификатор видимого элемента по ключу.
+    private func visibleItemID(forKey key: String) -> AnyHashable? {
+        if let record = folderRecords.first(where: { $0.key == key }) { return record.id }
+        if let index = catalogIndex[key] { return catalog[index].id }
+        return nil
+    }
+
+    /// Сохранённые ячейки видимых элементов по идентификаторам.
+    private func storedVisiblePlacements() -> [AnyHashable: TileGridPlacement] {
+        var result: [AnyHashable: TileGridPlacement] = [:]
+        for key in visibleGridKeys() {
+            guard let placement = placementsByKey[key], let id = visibleItemID(forKey: key) else { continue }
+            result[id] = placement
+        }
+        return result
+    }
+
+    /// Прежняя компактная упаковка (`packCompact`) ключей в заданном порядке.
+    ///
+    /// - Parameters:
+    ///   - keys: Ключи в порядке упаковки.
+    ///   - columns: Ширина холста, больше нуля.
+    /// - Returns: Ячейки по ключам (элемент, который не поместился, пропускается).
+    private func packedPlacements(of keys: [String], columns: Int) -> [String: TileGridPlacement] {
+        guard columns > 0 else { return [:] }
+        let slots = TileLayoutEngine.packCompact(
+            items: keys.map { (id: AnyHashable($0), size: footprint(ofKey: $0, columns: columns)) },
+            columns: columns,
+            unit: 1
+        )
+        var result: [String: TileGridPlacement] = [:]
+        for slot in slots {
+            guard let key = slot.id.base as? String else { continue }
+            result[key] = TileGridPlacement(row: slot.row, column: slot.column)
+        }
+        return result
+    }
+
+    /// Проекция раскладки на ширину `columns` без дыр (D32): видимые элементы
+    /// в порядке чтения сохранённых ячеек (без ячеек — в порядке модели)
+    /// упаковываются `packCompact`.
+    private func projectedPlacements(columns: Int) -> [String: TileGridPlacement] {
+        var keys = visibleGridKeys()
+        if canvasColumns != nil {
+            keys = TileStore.readingSorted(keys, by: placementsByKey)
+        }
+        return packedPlacements(of: keys, columns: columns)
+    }
+
+    /// Ключи в порядке чтения ячеек (строка, колонка); при равных ячейках и без
+    /// ячеек — исходный порядок (сортировка устойчива за счёт индекса).
+    private static func readingSorted(_ keys: [String], by cells: [String: TileGridPlacement]) -> [String] {
+        keys.enumerated().sorted { lhs, rhs in
+            switch (cells[lhs.element], cells[rhs.element]) {
+            case let (left?, right?):
+                if left != right { return TileGridPlacement.isReadingOrdered(left, before: right) }
+                return lhs.offset < rhs.offset
+            case (nil, _?): return false
+            case (_?, nil): return true
+            case (nil, nil): return lhs.offset < rhs.offset
+            }
+        }.map { $0.element }
+    }
+
+    /// Допустима ли ячейка: неотрицательна, не чрезмерна и целиком в холсте.
+    private func isPlacementValid(_ placement: TileGridPlacement, forKey key: String, columns: Int) -> Bool {
+        guard placement.row >= 0, placement.column >= 0,
+              placement.row <= TileStore.maxPlacementRow,
+              placement.column < columns else { return false }
+        let size = footprint(ofKey: key, columns: columns)
+        return placement.column + size.unitColumns <= columns
+    }
+
+    /// Разумный предел строки в файле: больше — мусор, а не раскладка.
+    private static let maxPlacementRow = 100_000
+
+    /// Однократная ленивая миграция: назначает ячейки прогоном `packCompact`.
+    ///
+    /// Нужны ширина хоста, зарегистрированный каталог и непустой порядок.
+    /// После миграции файл сразу сохраняется, но только если он не
+    /// затёрт непрочитанное состояние (``restoredFromDisk`` либо файла нет).
+    private func migrateIfPossible() {
+        guard canvasColumns == nil, let columns = hostColumns, columns > 0,
+              catalogRegistered, !gridOrder.isEmpty else { return }
+        placementsByKey = packedPlacements(of: visibleGridKeys(), columns: columns)
+        canvasColumns = columns
+        reconcilePlacements()
+
+        guard autosaves, restoredFromDisk || !FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        saveIfPossible()
+    }
+
+    /// Переходное правило E14.1 (D31): пересчёт ячеек после операции.
+    ///
+    /// Видимые элементы упаковываются `packCompact` по текущему порядку для
+    /// ``effectiveColumns``; холст становится этой ширины (первая операция при
+    /// несовпадении ширины принимает проекцию как новый холст, D32). Ячейки
+    /// невидимых ключей сохраняются, если помещаются. Заменяется логикой по
+    /// координатам в E14.2/E14.5.
+    private func repackPlacementsAfterMutation() {
+        let columns = effectiveColumns
+        guard columns > 0 else { return }
+        let visible = visibleGridKeys()
+        let visibleSet = Set(visible)
+        var next = packedPlacements(of: visible, columns: columns)
+        for key in gridOrder where !visibleSet.contains(key) {
+            if let placement = placementsByKey[key] { next[key] = placement }
+        }
+        placementsByKey = next
+        canvasColumns = columns
+        reconcilePlacements()
+    }
+
+    /// Приводит ячейки к инвариантам холста (E14.1, D30).
+    ///
+    /// Ничего не делает, пока ячеек нет. Иначе:
+    /// - записи для ключей, которых нет в порядке сетки, удаляются;
+    /// - видимые элементы (в порядке сетки, «устоявшиеся» — `settled` — вперёд)
+    ///   сохраняют свою ячейку, если она целиком в холсте и не пересекается с
+    ///   уже принятыми; остальные — нарушители и новички — упаковываются
+    ///   `packCompact` в **новые строки в конце холста** (первая строка после
+    ///   последней занятой видимыми элементами; один новичок встаёт в колонку 0);
+    /// - невидимые ключи сохраняют ячейку, если она в границах холста, и **не
+    ///   участвуют в коллизиях**; без допустимой ячейки они получают её в
+    ///   строках после видимых.
+    ///
+    /// - Parameter settled: Ключи, видимые до изменения каталога.
+    private func reconcilePlacements(settled: Set<String> = []) {
+        guard let columns = canvasColumns, columns > 0 else { return }
+
+        let visible = visibleGridKeys()
+        let visibleSet = Set(visible)
+        let indexInGrid = Dictionary(
+            gridOrder.enumerated().map { ($1, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        // Прямоугольник элемента: (строка, колонка, ширина, высота) в юнитах.
+        typealias Rect = (row: Int, column: Int, width: Int, height: Int)
+        func overlaps(_ a: Rect, _ b: Rect) -> Bool {
+            a.column < b.column + b.width && b.column < a.column + a.width
+                && a.row < b.row + b.height && b.row < a.row + a.height
+        }
+
+        var accepted: [Rect] = []
+        var next: [String: TileGridPlacement] = [:]
+        var pendingVisible: [String] = []
+
+        let priority = visible.filter { settled.contains($0) } + visible.filter { !settled.contains($0) }
+        for key in priority {
+            let size = footprint(ofKey: key, columns: columns)
+            if let placement = placementsByKey[key],
+               isPlacementValid(placement, forKey: key, columns: columns) {
+                let rect: Rect = (placement.row, placement.column, size.unitColumns, size.unitRows)
+                if !accepted.contains(where: { overlaps($0, rect) }) {
+                    accepted.append(rect)
+                    next[key] = placement
+                    continue
+                }
+            }
+            pendingVisible.append(key)
+        }
+        pendingVisible.sort { (indexInGrid[$0] ?? 0) < (indexInGrid[$1] ?? 0) }
+
+        var pendingHidden: [String] = []
+        for key in gridOrder where !visibleSet.contains(key) {
+            if let placement = placementsByKey[key], isPlacementValid(placement, forKey: key, columns: columns) {
+                next[key] = placement
+            } else {
+                pendingHidden.append(key)
+            }
+        }
+
+        // Новые строки в конце: ниже последней занятой видимыми строки.
+        var baseRow = accepted.map { $0.row + $0.height }.max() ?? 0
+        for group in [pendingVisible, pendingHidden] where !group.isEmpty {
+            let packed = packedPlacements(of: group, columns: columns)
+            var bottom = baseRow
+            for key in group {
+                guard let cell = packed[key] else { continue }
+                next[key] = TileGridPlacement(row: baseRow + cell.row, column: cell.column)
+                let size = footprint(ofKey: key, columns: columns)
+                bottom = max(bottom, baseRow + cell.row + size.unitRows)
+            }
+            baseRow = bottom
+        }
+
+        placementsByKey = next
     }
 
     /// Убирает из папок ярлыки, которых больше нет в каталоге, и распускает
@@ -1590,13 +2036,19 @@ private struct FolderRecord {
 /// Версионированный документ состояния (читается только TileStore).
 ///
 /// Каталог ярлыков в файл не попадает: `action` — замыкание, его нельзя
-/// сериализовать. Хранится только раскладка: порядок, размеры, папки.
+/// сериализовать. Хранится только раскладка: порядок, ячейки и ширина холста
+/// (версия 2, E14.1), размеры, папки.
 /// Ключи элементов — канонические строки (см. `TileStore.storageKey(for:)`),
 /// поэтому схема не зависит от типа `AnyHashable`-идентификатора.
 private struct TileStoreDocument: Codable {
 
     /// Версия схемы; запись читается, только если она не новее текущей.
     var version: Int
+
+    /// Ширина холста в юнитах, на которую рассчитаны `row`/`column` (версия 2).
+    ///
+    /// В файле версии 1 и в нераскладочном состоянии поля нет.
+    var columns: Int?
 
     /// Порядок элементов сетки.
     var items: [Item]
@@ -1618,6 +2070,12 @@ private struct TileStoreDocument: Codable {
 
         var kind: Kind
         var key: String
+
+        /// Строка левого верхнего угла элемента (версия 2).
+        var row: Int?
+
+        /// Колонка левого верхнего угла элемента (версия 2).
+        var column: Int?
     }
 
     /// Папка в файле состояния.
