@@ -234,12 +234,12 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), original)
     }
 
-    /// Файл более новой схемы (версия текущей + 1) не затирается схемой v1.
+    /// Файл более новой схемы (версия текущей + 1) не затирается схемой v2.
     func testNewerSchemaFileIsBackedUpBeforeAutosave() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        // Текущая схема — 1 (`TileStore.schemaVersion`), файл записан версией 2.
-        let original = Data(#"{"version":2,"items":[],"sizes":{},"folders":[],"future":true}"#.utf8)
+        // Текущая схема — 2 (`TileStore.schemaVersion`, E14.1), файл записан версией 3.
+        let original = Data(#"{"version":3,"items":[],"sizes":{},"folders":[],"future":true}"#.utf8)
         let store = makeStore(catalog(["a", "b"]), in: directory, autosaves: true)
         try original.write(to: store.fileURL)
 
@@ -247,7 +247,7 @@ final class TileStoreRecoveryTests: XCTestCase {
             guard case TileStoreError.unsupportedSchemaVersion(let version)? = error as? TileStoreError else {
                 return XCTFail("Ожидалась unsupportedSchemaVersion, пришло: \(error)")
             }
-            XCTAssertEqual(version, 2)
+            XCTAssertEqual(version, 3)
         }
 
         let backups = try backupFiles(in: directory)

@@ -853,6 +853,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         observeScrollView()
         observeStore()
         observeNotifications()
+        reportGridWidthToStore()
         // E11.5: панель раскрытой папки переконфигурируется при каждом снимке —
         // custom actions её ярлыков добираются отложенной сверкой.
         grid.panelShortcutsDidConfigure = { [weak self] _, _ in
@@ -1648,6 +1649,18 @@ public final class TesseraTileEditCoordinator: NSObject {
         _ = store.canonicalizeVisibleOrder(columns: grid.columns)
     }
 
+    /// Сообщает `TileStore` ширину сетки (E14.1, D33).
+    ///
+    /// Хранилище узнаёт ширину только от хоста: по ней оно назначает ячейки
+    /// файлу версии 1 и раскладке первого запуска (``TileStore/placeItems(columns:)``,
+    /// однократно и без уведомления подписчиков), а затем пересчитывает ячейки
+    /// после операций. Вызывается при создании координатора и на входе в
+    /// правку/drag — там же, где порядок канонизируется.
+    private func reportGridWidthToStore() {
+        guard grid.columns > 0 else { return }
+        store.placeItems(columns: grid.columns)
+    }
+
     /// Канонизирует порядок модели перед редактированием (E12.10).
     ///
     /// Хост может принести неканоничную модель: упаковка поднимает малую
@@ -1662,6 +1675,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// хостом, по-прежнему ловит m2-проверка на захвате.
     private func canonicalizeModelOrderForEditing() {
         guard grid.columns > 0 else { return }
+        reportGridWidthToStore()
         let gridWasInSync = gridMatches(store.snapshot())
         guard store.canonicalizeVisibleOrder(columns: grid.columns) else { return }
         if gridWasInSync {
