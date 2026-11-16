@@ -3598,6 +3598,19 @@ final class TesseraTileCell: UICollectionViewCell {
     /// `configure`; у папки и переиспользованной ячейки — `false`.
     private(set) var isSmallTile = false
 
+    /// Папка в модели — малая (1×1, ``TileSize/small``), E15.7.
+    ///
+    /// Малая папка с видимым бэйджем не рисует подпись (как малая плитка с
+    /// иконкой, D47): мини-сетка превью стоит над рядом бэйджа, бэйдж — в
+    /// нижнем углу. Без бэйджа и у папок 2×2 и больше раскладка прежняя.
+    /// Выставляет `configure`; у ярлыка и переиспользованной ячейки — `false`.
+    private var isSmallFolder = false
+
+    /// Текстовая часть `accessibilityValue` плитки-папки для бэйджа-агрегата
+    /// (D44, E15.7): число для суммы, «есть уведомление» для точки; `nil` —
+    /// бэйджа нет.
+    private var folderAccessibilityBadgeText: String?
+
     /// Текстовая часть `accessibilityValue` для плитки-папки без состояния
     /// раскрытия (число ярлыков), E10.2.
     ///
@@ -3685,7 +3698,13 @@ final class TesseraTileCell: UICollectionViewCell {
     ) {
         itemID = item.id
         isSmallTile = item.tile?.size == .small
-        if case .folder = item { showsFolderItem = true } else { showsFolderItem = false }
+        if case .folder(let folder) = item {
+            showsFolderItem = true
+            isSmallFolder = folder.size == .small
+        } else {
+            showsFolderItem = false
+            isSmallFolder = false
+        }
 
         switch item {
         case .tile(let descriptor):
@@ -3750,8 +3769,12 @@ final class TesseraTileCell: UICollectionViewCell {
         badgeView.isHidden = false
     }
 
-    /// Папка: мини-сетка содержимого либо иконка-превью/заглушка, заголовок;
-    /// бэйджа у папки нет.
+    /// Папка: мини-сетка содержимого либо иконка-превью/заглушка, заголовок и
+    /// бэйдж-агрегат (D44, E15.7).
+    ///
+    /// Бэйдж папки — сумма числовых бэйджей её ярлыков (точка, если числовых
+    /// нет): ``TileFolder/aggregateBadge(of:)``. Считается здесь, при применении
+    /// снимка, а не в layout. Мини-иконки превью сохраняют свои бэйджи.
     ///
     /// Закрытая папка показывает до четырёх первых иконок ярлыков (D17): это
     /// WP-превью содержимого вместо одиночной иконки. Пустая папка сохраняет
@@ -3766,8 +3789,9 @@ final class TesseraTileCell: UICollectionViewCell {
         titleLabel.text = folder.title.isEmpty
             ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
             : folder.title
-        badgeView.badge = .none
-        badgeView.isHidden = true
+        let aggregate = folder.aggregateBadge
+        badgeView.badge = aggregate
+        badgeView.isHidden = !aggregate.isVisible
 
         guard !folder.tiles.isEmpty else {
             endFolderPreview()
@@ -4019,15 +4043,23 @@ final class TesseraTileCell: UICollectionViewCell {
             ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
             : folder.title
         folderAccessibilityCountText = folder.tiles.isEmpty ? nil : String(folder.tiles.count)
+        // D44/E15.7: тот же помощник, что у плитки (D34): число суммы либо
+        // «есть уведомление» для точки.
+        folderAccessibilityBadgeText = folder.aggregateBadge.accessibilityValueText
         updateFolderAccessibilityValue()
     }
 
-    /// Собирает `accessibilityValue` папки с учётом раскрытия (E10.2).
+    /// Собирает `accessibilityValue` папки с учётом бэйджа и раскрытия (E10.2,
+    /// E15.7).
     ///
-    /// Число ярлыков сохраняется, к нему добавляется «раскрыта»; закрытая папка
-    /// озвучивается как раньше — только число.
+    /// Первым идёт значение бэйджа-агрегата (если он есть), затем число
+    /// ярлыков и состояние «раскрыта». Папка без бэйджа озвучивается как
+    /// раньше — число ярлыков, закрытая — только оно.
     private func updateFolderAccessibilityValue() {
         var parts: [String] = []
+        if let folderAccessibilityBadgeText {
+            parts.append(folderAccessibilityBadgeText)
+        }
         if let folderAccessibilityCountText {
             parts.append(folderAccessibilityCountText)
         }
@@ -4156,6 +4188,7 @@ final class TesseraTileCell: UICollectionViewCell {
         onActivate = nil
         onRename = nil
         showsFolderItem = false
+        isSmallFolder = false
         iconView.image = nil
         iconView.tintColor = nil
         titleLabel.text = nil
@@ -4169,6 +4202,7 @@ final class TesseraTileCell: UICollectionViewCell {
         badgeEditClearance = 0
         liveTileView?.badgeEditClearance = 0
         folderAccessibilityCountText = nil
+        folderAccessibilityBadgeText = nil
         setSourceHidden(false)
     }
 
@@ -4387,7 +4421,7 @@ final class TesseraTileCell: UICollectionViewCell {
         )
     }
 
-    /// Раскладывает превью папки и заголовок под ним (D17).
+    /// Раскладывает превью папки, заголовок под ним и бэйдж-агрегат (D17, D44).
     ///
     /// Превью — квадрат 2×2, прижатый к **верхнему** углу плитки по направлению
     /// чтения (§9): в LTR — к левому, в RTL — к правому. Так закрытая папка
@@ -4395,6 +4429,14 @@ final class TesseraTileCell: UICollectionViewCell {
     /// что и плитки, а не висят по центру. Отступ от края — как у плитки
     /// (`inset`), поэтому превью не липнет к границе ячейки. Заголовок прижат
     /// к низу, как у ярлыка.
+    ///
+    /// Бэйдж-агрегат (E15.7) сидит в нижнем углу у конца строки и обходит
+    /// стрелку размера в правке — той же раскладкой ``TesseraTileBadgeLayout``,
+    /// что у плитки: подпись сужается рядом с ним либо поднимается над его рядом,
+    /// а превью уступает место подписи и ряду бэйджа. Малая папка (1×1) с
+    /// видимым бэйджем не рисует подпись (как малая плитка с иконкой, D47):
+    /// мини-сетка стоит по центру над рядом бэйджа. Малая папка без бэйджа и
+    /// папки 2×2 и больше без бэйджа раскладываются как раньше.
     ///
     /// Если плитка низкая (крупный Dynamic Type, тонкая 1×1-папка), приоритет у
     /// заголовка: превью ужимается вместе с мини-плитками.
@@ -4406,32 +4448,69 @@ final class TesseraTileCell: UICollectionViewCell {
         let minimumSide = min(bounds.width, bounds.height)
         let inset = max(6, min(12, minimumSide * 0.08))
         let contentWidth = max(0, bounds.width - inset * 2)
+        let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
 
         iconView.isHidden = true
         iconView.frame = .zero
-        badgeView.frame = .zero
         // Подпись могла быть скрыта прежним ярлыком малой плитки (D47).
         titleLabel.isHidden = false
 
-        let titleFits = fitTitleFont(toWidth: contentWidth)
+        // E15.7: бэйдж-агрегат — в нижнем углу у конца строки; без бэйджа
+        // `intrinsicContentSize` нулевой и раскладка пустая.
+        let badgeSize = badgeView.intrinsicContentSize
+        let hasBadge = badgeSize.width > 0 && badgeSize.height > 0
+        let badgeLayout = TesseraTileBadgeLayout.make(
+            tileSize: bounds.size,
+            badgeSize: badgeSize,
+            inset: inset,
+            isRightToLeft: isRightToLeft,
+            editClearance: badgeEditClearance,
+            hidesTitle: isSmallFolder && hasBadge
+        )
+        badgeView.frame = badgeLayout.frame
+        badgeView.alpha = badgeLayout.isHiddenByEditControls ? 0 : 1
+
+        if badgeLayout.arrangement == .iconAndBadge {
+            // 1×1 с бэйджем: подписи нет (label и value VoiceOver прежние),
+            // мини-сетка — по центру верхней зоны над рядом бэйджа.
+            titleLabel.isHidden = true
+            titleLabel.frame = .zero
+            preview.frame = TesseraTileBadgeLayout.smallTileIconFrame(
+                tileSize: bounds.size,
+                inset: inset,
+                bottomReserve: badgeLayout.iconBottomReserve
+            )
+            return
+        }
+
+        let titleWidth = max(0, contentWidth - badgeLayout.titleTrailingReserve)
+        let titleFits = fitTitleFont(toWidth: titleWidth)
         titleLabel.numberOfLines = titleFits ? 2 : 1
         let measuredTitle = titleLabel.sizeThatFits(
-            CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
+            CGSize(width: titleWidth, height: CGFloat.greatestFiniteMagnitude)
         )
+        let bottomReserve = badgeLayout.titleBottomReserve
         let titleHeight = min(
             ceil(measuredTitle.height),
             titleLabel.font.lineHeight * 2,
-            bounds.height * 0.32
+            max(0, bounds.height - bottomReserve) * 0.32
         )
+        // В RTL бэйдж слева, поэтому подпись «рядом» сдвигается вправо.
+        let titleX = isRightToLeft ? inset + badgeLayout.titleTrailingReserve : inset
         titleLabel.frame = CGRect(
-            x: inset,
-            y: bounds.height - inset - titleHeight,
-            width: contentWidth,
+            x: titleX,
+            y: bounds.height - inset - bottomReserve - titleHeight,
+            width: titleWidth,
             height: titleHeight
         )
 
+        // Нижний ряд — подпись и бэйдж рядом: если бэйдж выше подписи (одна
+        // строка при крупной капсуле), превью уступает место ему.
+        let bottomRowHeight = badgeLayout.arrangement == .beside
+            ? max(titleHeight, badgeSize.height)
+            : titleHeight
         let gap = max(2, minimumSide * 0.03)
-        let available = max(0, bounds.height - inset * 2 - titleHeight - gap)
+        let available = max(0, bounds.height - inset * 2 - bottomRowHeight - bottomReserve - gap)
         let blockSide = min(contentWidth, available)
         guard blockSide > 0 else {
             preview.frame = .zero
@@ -4441,7 +4520,6 @@ final class TesseraTileCell: UICollectionViewCell {
         // §9, RTL: мини-сетка зеркалится — прижимается к правому верхнему углу,
         // чтобы порядок чтения остался прежним. Заголовок внизу не зеркалится:
         // его выравнивание задаёт сама подпись (`.natural`).
-        let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
         preview.frame = CGRect(
             x: isRightToLeft ? bounds.width - inset - blockSide : inset,
             y: inset,
