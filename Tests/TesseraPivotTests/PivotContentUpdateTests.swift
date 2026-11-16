@@ -4,13 +4,13 @@
 //
 //  Контрактные тесты обновления контента секций (задача E10.12а).
 //  Проектный документ: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (SwiftUI-фасад
-//  `PivotView`), §5 «Синхронизация» (один писатель `contentOffset`),
+//  `TesseraPivotView`), §5 «Синхронизация» (один писатель `contentOffset`),
 //  docs/CORE-IOS-DESIGN.md «Отступления реализации» п. 7 (W1: `reload` пейджера
 //  сохраняет страницу и контроллеры по `id`, SwiftUI-контент обновляется через
 //  `TesseraContentHosting`).
 //
 //  Проверяются: новый контент при тех же `id`/заголовках доходит до страниц
-//  (и через `PivotView`, и через контроллер); страница, контроллеры, скролл и
+//  (и через `TesseraPivotView`, и через контроллер); страница, контроллеры, скролл и
 //  `@StateObject` контента сохраняются; во время перехода обновление
 //  откладывается; колбэк прогресса не вызывается синхронно внутри `reload`.
 //
@@ -45,7 +45,7 @@ struct PivotProbeContent: View {
     }
 }
 
-/// Хранилище SwiftUI-харнесса: смена значения перерисовывает `PivotView`.
+/// Хранилище SwiftUI-харнесса: смена значения перерисовывает `TesseraPivotView`.
 final class PivotProbeStore: ObservableObject {
     @Published var value = "A"
 }
@@ -54,13 +54,13 @@ final class PivotProbeStore: ObservableObject {
 /// состояния хранилища.
 struct PivotProbeHarness: View {
     @ObservedObject var store: PivotProbeStore
-    let delegate: PivotDelegate?
+    let delegate: TesseraPivotDelegate?
 
     var body: some View {
         let value = store.value
-        return PivotView(
+        return TesseraPivotView(
             sections: (0..<3).map { index in
-                PivotSection(
+                TesseraPivotSection(
                     id: index,
                     title: "S\(index)",
                     content: TesseraSwiftUIContentProvider {
@@ -90,9 +90,9 @@ final class PivotContentUpdateTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    private func makeSections(value: String, count: Int = 4) -> [PivotSection] {
+    private func makeSections(value: String, count: Int = 4) -> [TesseraPivotSection] {
         (0..<count).map { index in
-            PivotSection(
+            TesseraPivotSection(
                 id: index,
                 title: "S\(index)",
                 content: TesseraSwiftUIContentProvider {
@@ -113,7 +113,7 @@ final class PivotContentUpdateTests: XCTestCase {
 
     /// SwiftUI-страницы пейджера по значению их контента.
     private func pageHosts(
-        of pivot: PivotViewController
+        of pivot: TesseraPivotViewController
     ) -> [UIHostingController<PivotProbeContent>] {
         pivot.pagerViewController.children.compactMap {
             $0 as? UIHostingController<PivotProbeContent>
@@ -122,7 +122,7 @@ final class PivotContentUpdateTests: XCTestCase {
 
     private func pageHost(
         _ index: Int,
-        of pivot: PivotViewController
+        of pivot: TesseraPivotViewController
     ) -> UIHostingController<PivotProbeContent>? {
         pageHosts(of: pivot).first { $0.rootView.value.hasSuffix("-\(index)") }
     }
@@ -132,7 +132,7 @@ final class PivotContentUpdateTests: XCTestCase {
     /// Тот же набор `id`/заголовков с новым контентом: страница остаётся
     /// прежней, контроллеры переиспользуются, `rootView` обновлён.
     func testRefreshSectionContentUpdatesExistingPagesInPlace() throws {
-        let pivot = PivotViewController(sections: makeSections(value: "A"))
+        let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
         pivot.selectSection(at: 2, animated: false)
         let scrollView = try XCTUnwrap(pivot.pagerScrollView)
@@ -153,7 +153,7 @@ final class PivotContentUpdateTests: XCTestCase {
     /// пейджера оборвал бы анимацию) и применяется по его завершении.
     func testRefreshSectionContentIsDeferredDuringAnimatedTransition() throws {
         try XCTSkipIf(TesseraAccessibility.isReduceMotionEnabled, "Нужен анимированный переход")
-        let pivot = PivotViewController(sections: makeSections(value: "A"))
+        let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
 
         pivot.selectSection(at: 1, animated: true)
@@ -174,7 +174,7 @@ final class PivotContentUpdateTests: XCTestCase {
     /// `didChangeProgress` синхронно; итоговое значение приходит следующим
     /// проходом главной очереди.
     func testReloadDefersProgressCallback() throws {
-        let pivot = PivotViewController(sections: makeSections(value: "A"))
+        let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
         pivot.selectSection(at: 2, animated: false)
         let spy = PivotTransitionSpy()
@@ -194,7 +194,7 @@ final class PivotContentUpdateTests: XCTestCase {
     /// `reload` с тем же положением не порождает колбэков прогресса вовсе —
     /// нет цикла «колбэк → состояние SwiftUI → обновление → reload».
     func testReloadWithUnchangedProgressDoesNotNotifyDelegate() throws {
-        let pivot = PivotViewController(sections: makeSections(value: "A"))
+        let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
         pivot.selectSection(at: 1, animated: false)
         let spy = PivotTransitionSpy()
@@ -208,7 +208,7 @@ final class PivotContentUpdateTests: XCTestCase {
 
     // MARK: - SwiftUI-фасад
 
-    /// `PivotView` доносит новый контент секций с теми же `id`/заголовками
+    /// `TesseraPivotView` доносит новый контент секций с теми же `id`/заголовками
     /// (до E10.12а `sectionsDiffer` сравнивал только `id`+`title` и reload не
     /// вызывался): страница, хостинг-контроллер и `@StateObject` сохраняются.
     func testPivotViewPropagatesContentForSameIdentifiers() throws {
@@ -218,8 +218,8 @@ final class PivotContentUpdateTests: XCTestCase {
         host(hosting)
 
         let pivot = try XCTUnwrap(
-            hosting.children.compactMap { $0 as? PivotViewController }.first,
-            "PivotView должен встроить PivotViewController"
+            hosting.children.compactMap { $0 as? TesseraPivotViewController }.first,
+            "TesseraPivotView должен встроить TesseraPivotViewController"
         )
         pivot.selectSection(at: 1, animated: false)
         spinRunLoop()

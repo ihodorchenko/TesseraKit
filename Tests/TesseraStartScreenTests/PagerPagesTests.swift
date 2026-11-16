@@ -27,12 +27,12 @@ final class PagerPagesTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    private func makeLeftPanel() -> QuickPanelProviding {
-        QuickPanelProvider { UIViewController() }
+    private func makeLeftPanel() -> TesseraQuickPanelProviding {
+        TesseraQuickPanelProvider { UIViewController() }
     }
 
     private func makeScreen(
-        leftPanel: QuickPanelProviding? = nil,
+        leftPanel: TesseraQuickPanelProviding? = nil,
         rightPage: (() -> UIViewController)? = nil
     ) -> TesseraStartScreenViewController {
         let screen = TesseraStartScreenViewController()

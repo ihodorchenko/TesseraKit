@@ -1,6 +1,6 @@
 // Конфигурация внешнего вида панорамы.
 // Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная архитектура»
-// (PanoramaStyle: ширина секции (peek), множитель параллакса, шрифты/цвета
+// (TesseraPanoramaStyle: ширина секции (peek), множитель параллакса, шрифты/цвета
 // заголовков, поведение фона), §4 «Геометрия и математика ядра»
 // (itemWidth = screenWidth − peek, peek 16–64 pt; backgroundOffset =
 // offset.x × parallaxFactor, типично 0.4–0.6), §7 «Accessibility» (Dynamic Type,
@@ -13,7 +13,7 @@ import UIKit
 /// оформление заголовков и поведение фона (docs/PANORAMA-IOS-DESIGN.md §3).
 ///
 /// Тип — конфиг-структура с дефолтами у всех полей: достаточно создать
-/// `PanoramaStyle()`, чтобы получить системный вид. Стиль не хранит состояние и
+/// `TesseraPanoramaStyle()`, чтобы получить системный вид. Стиль не хранит состояние и
 /// не зависит от иерархии представлений — это снимок настроек, который компонент
 /// читает при применении.
 ///
@@ -22,7 +22,7 @@ import UIKit
 ///   предпочтение оформления. При `isReduceMotionEnabled` компонент отключает
 ///   параллакс и анимации заголовков, оставляя простой снап
 ///   (docs/PANORAMA-IOS-DESIGN.md §7).
-public struct PanoramaStyle {
+public struct TesseraPanoramaStyle {
 
     /// Поведение фона панорамы (docs/PANORAMA-IOS-DESIGN.md §3, §9).
     ///
@@ -185,7 +185,7 @@ public struct PanoramaStyle {
     ///
     /// - Parameter other: Стиль для сравнения.
     /// - Returns: `true`, если применение `other` вместо `self` ничего не меняет.
-    func isEquivalent(to other: PanoramaStyle) -> Bool {
+    func isEquivalent(to other: TesseraPanoramaStyle) -> Bool {
         peek == other.peek
             && parallaxFactor == other.parallaxFactor
             && headerFont == other.headerFont

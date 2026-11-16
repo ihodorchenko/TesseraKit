@@ -27,16 +27,16 @@ import UIKit
 ///
 /// Отдельный view поверх контейнера плитки, **не часть флипа**: при перевороте
 /// бэйдж остаётся на месте и не поворачивается вместе со стороной (§4).
-/// Содержимое берётся напрямую из модели ярлыка ``TileBadge`` (D12): это
-/// ровно те же три состояния, что хранит `TileDescriptor.badge`, поэтому
+/// Содержимое берётся напрямую из модели ярлыка ``TesseraTileBadge`` (D12): это
+/// ровно те же три состояния, что хранит `TesseraTileDescriptor.badge`, поэтому
 /// преобразование не нужно и модель остаётся единственным источником истины.
 ///
 /// Вид:
-/// - ``TileBadge/dot`` — красный круг без текста (есть новое, число
+/// - ``TesseraTileBadge/dot`` — красный круг без текста (есть новое, число
 ///   неизвестно);
-/// - ``TileBadge/count(_:)`` — красная капсула с числом; больше 99 показывается
+/// - ``TesseraTileBadge/count(_:)`` — красная капсула с числом; больше 99 показывается
 ///   как «99+», чтобы бэйдж не растягивал плитку;
-/// - ``TileBadge/none`` — бэйджа нет.
+/// - ``TesseraTileBadge/none`` — бэйджа нет.
 ///
 /// Бэйдж не является отдельным элементом VoiceOver: озвучивание счётчика —
 /// часть плитки (§9, «Плитка — один элемент»). Хост задаёт
@@ -55,11 +55,11 @@ public final class TesseraLiveTileBadgeView: UIView {
 
     // MARK: - Публичные свойства
 
-    /// Текущий бэйдж модели ярлыка (D12). По умолчанию ``TileBadge/none``.
+    /// Текущий бэйдж модели ярлыка (D12). По умолчанию ``TesseraTileBadge/none``.
     ///
     /// `.count(0)` и отрицательные счётчики не показываются — так же, как
-    /// ``TileBadge/isVisible`` в модели.
-    public var badge: TileBadge = .none {
+    /// ``TesseraTileBadge/isVisible`` в модели.
+    public var badge: TesseraTileBadge = .none {
         didSet {
             guard badge != oldValue else { return }
             applyBadge()
@@ -87,7 +87,7 @@ public final class TesseraLiveTileBadgeView: UIView {
     private let countLabel = UILabel()
 
     /// Нормализованный бэйдж: неположительный счётчик — это отсутствие бэйджа.
-    private var normalizedBadge: TileBadge {
+    private var normalizedBadge: TesseraTileBadge {
         switch badge {
         case .count(let value):
             return value > 0 ? .count(value) : .none
@@ -376,7 +376,7 @@ final class TesseraLiveTileFaceView: UIView {
         }
     }
 
-    /// Плитка малая (1×1, ``TileSize/small``), D47. Выставляет контейнер.
+    /// Плитка малая (1×1, ``TesseraTileSize/small``), D47. Выставляет контейнер.
     var isSmallTile = false {
         didSet {
             guard isSmallTile != oldValue else { return }
@@ -733,7 +733,7 @@ public final class TesseraLiveTileView: UIView {
         }
     }
 
-    /// Плитка малая (1×1, ``TileSize/small``), D47: сторона с иконкой и бэйджем
+    /// Плитка малая (1×1, ``TesseraTileSize/small``), D47: сторона с иконкой и бэйджем
     /// показывает их без текста. Выставляет ячейка сетки по модели ярлыка; у
     /// самостоятельного контейнера вне сетки `false` — раскладка прежняя.
     var isSmallTile = false {
@@ -748,9 +748,9 @@ public final class TesseraLiveTileView: UIView {
 
     /// Бэйдж ярлыка (D12/D15): красная точка или счётчик.
     ///
-    /// Хост передаёт ``TileDescriptor/badge`` напрямую; бэйдж не участвует во
+    /// Хост передаёт ``TesseraTileDescriptor/badge`` напрямую; бэйдж не участвует во
     /// флипе и живёт поверх обеих сторон (§4).
-    public var badge: TileBadge {
+    public var badge: TesseraTileBadge {
         get { badgeView.badge }
         set { badgeView.badge = newValue }
     }
@@ -765,7 +765,7 @@ public final class TesseraLiveTileView: UIView {
     ///
     /// Тап пальцем обрабатывает хост (ячейка сетки), но VoiceOver активирует
     /// сам accessibility-элемент плитки, минуя ячейку. Хост передаёт сюда
-    /// ``TileDescriptor/action``; если действие не задано, плитка остаётся
+    /// ``TesseraTileDescriptor/action``; если действие не задано, плитка остаётся
     /// статичным элементом, несмотря на признак кнопки.
     public var onActivate: (() -> Void)?
 

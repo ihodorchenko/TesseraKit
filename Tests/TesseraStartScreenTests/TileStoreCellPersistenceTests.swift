@@ -2,7 +2,7 @@
 //  TileStoreCellPersistenceTests.swift
 //  TesseraStartScreenTests
 //
-//  Персистентность и граничные случаи операций `TileStore` по ячейкам (E14.4).
+//  Персистентность и граничные случаи операций `TesseraTileStore` по ячейкам (E14.4).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 и «Отступления
 //  реализации (E14)»; решения D31–D33 в docs/STATE.md.
 //
@@ -19,14 +19,14 @@ import XCTest
 
 final class TileStoreCellPersistenceTests: XCTestCase {
 
-    private func reload(_ store: TileStore, catalog: [String], in directory: TesseraTestDirectory) throws -> TileStore {
-        let fresh = TileStore(directoryURL: directory.url)
+    private func reload(_ store: TesseraTileStore, catalog: [String], in directory: TesseraTestDirectory) throws -> TesseraTileStore {
+        let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(catalog.map { tesseraTestTile($0, size: .small) })
         try fresh.load()
         return fresh
     }
 
-    private func fileItems(_ store: TileStore) throws -> [[String: Any]] {
+    private func fileItems(_ store: TesseraTileStore) throws -> [[String: Any]] {
         let data = try Data(contentsOf: store.fileURL)
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         return try XCTUnwrap(object["items"] as? [[String: Any]])
@@ -51,7 +51,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         let expected = store.placements
         XCTAssertEqual(store.placement(of: "d"), tesseraCell(3, 0))
 
-        let fresh = TileStore(directoryURL: directory.url)
+        let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(tiles.map { tesseraTestTile($0.id, size: .medium) })
         try fresh.load()
 
@@ -152,7 +152,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
     /// упаковкой порядка и применяет правку.
     func testOperationBeforeCanvasExistsAdoptsPackedLayout() throws {
         let directory = TesseraTestDirectory()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.setCatalog([tesseraTestTile("a", size: .small), tesseraTestTile("b", size: .small), tesseraTestTile("c", size: .small)])
         XCTAssertNil(store.canvasColumns)
 

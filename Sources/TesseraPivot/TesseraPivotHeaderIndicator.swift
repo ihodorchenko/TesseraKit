@@ -1,5 +1,5 @@
 //
-//  PivotHeaderIndicator.swift
+//  TesseraPivotHeaderIndicator.swift
 //  TesseraPivot
 //
 //  Индикатор активного заголовка пивота.
@@ -31,7 +31,7 @@ import UIKit
 /// и ``move(toCenterX:)`` (`transform` в горячем пути). Размер `bounds` в
 /// горячем пути не трогается, `setNeedsLayout` не вызывается.
 ///
-/// Порядок использования — только через ``PivotHeaderStripView``: он владеет
+/// Порядок использования — только через ``TesseraPivotHeaderStripView``: он владеет
 /// геометрией ленты и содержимым ячеек. Публичная поверхность самого индикатора
 /// ограничена видом (цвет, толщина, ширина) и чистыми функциями для тестов.
 ///
@@ -40,8 +40,8 @@ import UIKit
 /// Индикатор не анимируется сам по себе: он повторяет жест пользователя, пока
 /// палец двигает пейджер (§8). Поэтому Reduce Motion его не отключает —
 /// отключаются только самодвижущиеся анимации (например, автоцентрирование
-/// ленты, см. `PivotHeaderStripView.scrollToCenter(index:animated:)`).
-public final class PivotHeaderIndicator: UIView {
+/// ленты, см. `TesseraPivotHeaderStripView.scrollToCenter(index:animated:)`).
+public final class TesseraPivotHeaderIndicator: UIView {
 
     // MARK: - Чистые функции (математика §4)
 
@@ -68,7 +68,7 @@ public final class PivotHeaderIndicator: UIView {
     ///
     /// - Parameters:
     ///   - centers: Центры заголовков в координатах контента ленты, в порядке
-    ///     чтения (в RTL — уже зеркалированные, см. `PivotHeaderStripView`).
+    ///     чтения (в RTL — уже зеркалированные, см. `TesseraPivotHeaderStripView`).
     ///   - t: Нормализованный по направлению чтения прогресс
     ///     `contentOffset.x / pageWidth` (§4).
     /// - Returns: Центр индикатора в тех же координатах, что и `centers`.
@@ -121,7 +121,7 @@ public final class PivotHeaderIndicator: UIView {
     /// Цвет подчёркивания — акцентный цвет стиля (§3: «вид индикатора —
     /// подчёркивание и/или акцентный цвет текста»).
     ///
-    /// Лента выставляет его из ``PivotHeaderStripView/activeColor``. Динамические
+    /// Лента выставляет его из ``TesseraPivotHeaderStripView/activeColor``. Динамические
     /// системные цвета работают как есть: подчёркивание — фон вью, тему меняет
     /// UIKit.
     public var activeColor: UIColor {
@@ -158,7 +158,7 @@ public final class PivotHeaderIndicator: UIView {
     /// Создаёт индикатор с акцентным цветом.
     ///
     /// - Parameter activeColor: Цвет подчёркивания; по умолчанию `.systemBlue` —
-    ///   дефолт ``PivotStyle/activeColor``.
+    ///   дефолт ``TesseraPivotStyle/activeColor``.
     public init(activeColor: UIColor = .systemBlue) {
         self.activeColor = activeColor
         super.init(frame: .zero)
@@ -189,7 +189,7 @@ public final class PivotHeaderIndicator: UIView {
 
     /// Раскладывает подчёркивание на базовую позицию внутри ленты.
     ///
-    /// Вызывается только из layout-прохода ``PivotHeaderStripView`` (§7). Здесь
+    /// Вызывается только из layout-прохода ``TesseraPivotHeaderStripView`` (§7). Здесь
     /// допустим `bounds`/`center`; после этого ``move(toCenterX:)`` сдвигает
     /// подчёркивание одним `transform` и layout больше не трогает.
     ///

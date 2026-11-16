@@ -2,7 +2,7 @@
 //  TileStoreVisibleOrderTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты видимых и невидимых ключей сетки в `TileStore` (W2: E10.3a, после
+//  Тесты видимых и невидимых ключей сетки в `TesseraTileStore` (W2: E10.3a, после
 //  E14.6 — на операциях по ячейкам).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»,
 //  «Отступления реализации» п. 4–5 и (E14) п. 52–54; план — docs/PLAN.md,
@@ -33,7 +33,7 @@ final class TileStoreVisibleOrderTests: XCTestCase {
 
     private let columns = 6
 
-    private func ids(_ store: TileStore) -> [AnyHashable] {
+    private func ids(_ store: TesseraTileStore) -> [AnyHashable] {
         store.snapshot().items.map { $0.id }
     }
 
@@ -43,7 +43,7 @@ final class TileStoreVisibleOrderTests: XCTestCase {
     private func makeStoreHiding(
         _ hidden: Set<String>,
         in directory: TesseraTestDirectory
-    ) throws -> TileStore {
+    ) throws -> TesseraTileStore {
         let all: [CellFixtureTile] = [
             CellFixtureTile("a", .small, 0, 0),
             CellFixtureTile("b", .small, 0, 1),
@@ -61,11 +61,11 @@ final class TileStoreVisibleOrderTests: XCTestCase {
 
     /// Поднимает хранилище с полным каталогом поверх файла, записанного `store`.
     private func reloadWithFullCatalog(
-        savedBy store: TileStore,
+        savedBy store: TesseraTileStore,
         in directory: TesseraTestDirectory
-    ) throws -> TileStore {
+    ) throws -> TesseraTileStore {
         try store.save()
-        let reloaded = TileStore(directoryURL: directory.url)
+        let reloaded = TesseraTileStore(directoryURL: directory.url)
         reloaded.autosaves = false
         reloaded.setCatalog(["a", "b", "c", "d"].map { tesseraTestTile($0, size: .small) })
         try reloaded.load()

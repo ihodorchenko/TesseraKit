@@ -100,7 +100,7 @@ public final class TesseraPanoHeaderView: UIView {
         ///
         /// Если задан, вид масштабирует его через
         /// `UIFontMetrics(forTextStyle:).scaledFont(for:)` — именно так
-        /// `PanoramaStyle.headerFont` из §3 попадает в заголовки.
+        /// `TesseraPanoramaStyle.headerFont` из §3 попадает в заголовки.
         /// `nil` означает «взять `UIFont.preferredFont(forTextStyle:)`».
         ///
         /// - Important: Передавайте немасштабированный шрифт. Если передать
@@ -112,7 +112,7 @@ public final class TesseraPanoHeaderView: UIView {
         /// поэтому цвет может быть любым, включая акцентный.
         public var textColor: UIColor
 
-        /// Цвет активного заголовка (`PanoramaStyle.headerActiveColor`, E9.7).
+        /// Цвет активного заголовка (`TesseraPanoramaStyle.headerActiveColor`, E9.7).
         ///
         /// `nil` — заголовки одного цвета ``textColor``. Иначе цвет
         /// интерполируется по прогрессу `t`: вес акцента у заголовка равен его
@@ -674,7 +674,7 @@ public final class TesseraPanoHeaderView: UIView {
     /// Шрифт заголовков под текущую категорию Dynamic Type.
     ///
     /// - если задан ``Style/baseFont`` — `UIFontMetrics` масштабирует его
-    ///   (интеграция с `PanoramaStyle.headerFont`, §3);
+    ///   (интеграция с `TesseraPanoramaStyle.headerFont`, §3);
     /// - иначе берётся системный `preferredFont(forTextStyle:)`.
     private var scaledFont: UIFont {
         let metrics = UIFontMetrics(forTextStyle: style.textStyle)

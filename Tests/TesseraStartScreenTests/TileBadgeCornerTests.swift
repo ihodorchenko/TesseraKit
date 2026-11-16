@@ -11,9 +11,9 @@
 //  Ширины экрана 375/390/402/414 pt при 6 колонках (поля 16, зазор 8): малая
 //  плитка 50,3 / 53 / 55 / 57 pt, средняя и широкая — по формуле раскладки.
 //
-//  D47: малая плитка (TileSize.small) с бэйджем и иконкой показывает иконку и
+//  D47: малая плитка (TesseraTileSize.small) с бэйджем и иконкой показывает иконку и
 //  бэйдж без подписи — этот режим покрывает `TileSmallBadgeIconTests`; здесь
-//  ячейка получает в модель тот же `TileSize`, что и её геометрия (раньше тест
+//  ячейка получает в модель тот же `TesseraTileSize`, что и её геометрия (раньше тест
 //  везде ставил .small), поэтому проверки подписи относятся к 2×2 и 4×2, а для
 //  малой плитки — к режиму «иконка и бэйдж».
 //  D48: выступ кнопок правки 4 pt — стрелка заходит в плитку на 16 pt (было 14),
@@ -44,12 +44,12 @@ final class TileBadgeCornerTests: XCTestCase {
 
     private struct Shape {
         let name: String
-        let size: TileSize
+        let size: TesseraTileSize
         let multiplier: (CGFloat) -> CGSize
     }
 
     /// Размеры плиток для ширины экрана при 6 колонках, полях 16 и зазоре 8.
-    private func tileSizes(screenWidth: CGFloat) -> [(TileSize, CGSize)] {
+    private func tileSizes(screenWidth: CGFloat) -> [(TesseraTileSize, CGSize)] {
         let unit = (screenWidth - 32 - 5 * 8) / 6
         return [
             (.small, CGSize(width: unit, height: unit)),
@@ -58,7 +58,7 @@ final class TileBadgeCornerTests: XCTestCase {
         ]
     }
 
-    private let badges: [(String, TileBadge)] = [
+    private let badges: [(String, TesseraTileBadge)] = [
         ("count 3", .count(3)),
         ("count 99+", .count(150)),
         ("dot", .dot),
@@ -71,10 +71,10 @@ final class TileBadgeCornerTests: XCTestCase {
     /// Ячейка в окне с переопределённой категорией Dynamic Type и направлением.
     private func makeCell(
         size: CGSize,
-        badge: TileBadge,
+        badge: TesseraTileBadge,
         title: String = "Почта",
         withIcon: Bool = true,
-        descriptorSize: TileSize = .medium,
+        descriptorSize: TesseraTileSize = .medium,
         rightToLeft: Bool = false,
         category: UIContentSizeCategory = .large,
         editClearance: CGFloat = 0

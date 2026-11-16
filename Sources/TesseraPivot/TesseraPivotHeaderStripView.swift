@@ -1,9 +1,9 @@
 //
-//  PivotHeaderStripView.swift
+//  TesseraPivotHeaderStripView.swift
 //  TesseraPivot
 //
 //  Лента заголовков пивота: горизонтальный UICollectionView + отдельный индикатор.
-//  Контракт: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (PivotHeaderStripView —
+//  Контракт: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (TesseraPivotHeaderStripView —
 //  «UICollectionView заголовков + индикатор», режим ленты по ширине контента или
 //  равные ширины), §4 «Математика ядра» (индикатор интерполируется между
 //  центрами заголовков; окраска — по расстоянию от `t`; автоцентрирование —
@@ -35,7 +35,7 @@ import TesseraCore
 /// ## Порядок использования
 ///
 /// ```swift
-/// let strip = PivotHeaderStripView()
+/// let strip = TesseraPivotHeaderStripView()
 /// strip.titles = sections.map(\.title)
 /// strip.mode = style.stripMode
 /// strip.titleFont = style.titleFont
@@ -50,9 +50,9 @@ import TesseraCore
 ///
 /// ## Режимы ширины (§3)
 ///
-/// - ``PivotStyle/StripMode/content`` — ячейка по ширине текста; лента
+/// - ``TesseraPivotStyle/StripMode/content`` — ячейка по ширине текста; лента
 ///   скроллится, если не помещается;
-/// - ``PivotStyle/StripMode/fill`` — равные ширины: заголовки делят ширину
+/// - ``TesseraPivotStyle/StripMode/fill`` — равные ширины: заголовки делят ширину
 ///   ленты поровну, лента не скроллится.
 ///
 /// Режим — это запрос вызывающего; лента вправе отступить от `.fill` на крупном
@@ -78,7 +78,7 @@ import TesseraCore
 ///
 /// Все методы — главный поток: UIKit-вью не рассчитана на фоновые вызовы
 /// (docs/CORE-IOS-DESIGN.md §3, «вся работа на главном потоке UI»).
-public final class PivotHeaderStripView: UIView {
+public final class TesseraPivotHeaderStripView: UIView {
 
     // MARK: - Данные
 
@@ -97,7 +97,7 @@ public final class PivotHeaderStripView: UIView {
 
     /// Режим ширины заголовков (§3).
     ///
-    /// Стиль (``PivotStyle``) хранит запрос пользователя, а лента применяет его
+    /// Стиль (``TesseraPivotStyle``) хранит запрос пользователя, а лента применяет его
     /// с поправкой на §8:
     /// - на accessibility-размерах `.fill` уступает `.content`, если равная
     ///   ширина меньше ширины самого длинного заголовка — текст не усекается до
@@ -108,7 +108,7 @@ public final class PivotHeaderStripView: UIView {
     ///
     /// На обычных размерах `.fill` усекает длинные заголовки хвостом
     /// (`.byTruncatingTail`) — это осознанный компромисс режима «равные ширины».
-    public var mode: PivotStyle.StripMode = .content {
+    public var mode: TesseraPivotStyle.StripMode = .content {
         didSet {
             guard mode != oldValue else { return }
             invalidateHeaderGeometry(reloadData: false)
@@ -136,7 +136,7 @@ public final class PivotHeaderStripView: UIView {
     /// Промежуточные оттенки неактивных соседей получаются непрерывной
     /// интерполяцией от ``inactiveColor`` к этому цвету по расстоянию от `t`
     /// (§4, «Окраска текста»). По умолчанию `.systemBlue` — дефолт
-    /// ``PivotStyle/activeColor``.
+    /// ``TesseraPivotStyle/activeColor``.
     public var activeColor: UIColor = .systemBlue {
         didSet {
             guard activeColor != oldValue else { return }
@@ -146,7 +146,7 @@ public final class PivotHeaderStripView: UIView {
     }
 
     /// Цвет неактивного заголовка (§4). По умолчанию `.systemGray` — дефолт
-    /// ``PivotStyle/inactiveColor``.
+    /// ``TesseraPivotStyle/inactiveColor``.
     public var inactiveColor: UIColor = .systemGray {
         didSet {
             guard inactiveColor != oldValue else { return }
@@ -160,7 +160,7 @@ public final class PivotHeaderStripView: UIView {
     /// ``titleTextStyle`` и пересобирает при смене категории размера текста.
     /// Передавать уже масштабированный шрифт нельзя — он будет масштабирован
     /// повторно; передавайте базовый размер. По умолчанию — системный semibold
-    /// 17 pt, как у ``PivotStyle/titleFont``.
+    /// 17 pt, как у ``TesseraPivotStyle/titleFont``.
     public var titleFont: UIFont = .systemFont(ofSize: 17, weight: .semibold) {
         didSet {
             guard titleFont != oldValue else { return }
@@ -169,7 +169,7 @@ public final class PivotHeaderStripView: UIView {
     }
 
     /// Текстовый стиль, метрики которого масштабируют ``titleFont`` (§8).
-    /// По умолчанию `.headline` — как у ``PivotStyle/titleTextStyle``.
+    /// По умолчанию `.headline` — как у ``TesseraPivotStyle/titleTextStyle``.
     public var titleTextStyle: UIFont.TextStyle = .headline {
         didSet {
             guard titleTextStyle != oldValue else { return }
@@ -181,7 +181,7 @@ public final class PivotHeaderStripView: UIView {
     ///
     /// Неактивные заголовки показываются ``titleFont`` как есть, активный — тот
     /// же шрифт с этой жирностью. По умолчанию `.semibold`: совпадает с
-    /// дефолтным ``PivotStyle/titleFont``, поэтому «из коробки» акцент передаётся
+    /// дефолтным ``TesseraPivotStyle/titleFont``, поэтому «из коробки» акцент передаётся
     /// цветом, а не скачком ширины текста. Классический WP-контраст получается,
     /// если задать ``titleFont`` без жирности (`.regular`) — тогда активный
     /// заголовок станет semibold.
@@ -197,7 +197,7 @@ public final class PivotHeaderStripView: UIView {
     /// `1` (по умолчанию) — заголовок на полпути между секциями уже полностью
     /// неактивен; большее значение подсвечивает и дальних соседей. Отрицательные
     /// и нулевые значения трактуются как «без размывания» (см.
-    /// ``PivotHeaderIndicator/blendFactor(distanceFromProgress:span:)``).
+    /// ``TesseraPivotHeaderIndicator/blendFactor(distanceFromProgress:span:)``).
     public var highlightSpan: CGFloat = 1 {
         didSet {
             guard highlightSpan != oldValue else { return }
@@ -207,7 +207,7 @@ public final class PivotHeaderStripView: UIView {
 
     /// Показывать подчёркивание под активным заголовком.
     ///
-    /// Для `PivotStyle.IndicatorStyle.accentText` контроллер выставляет `false`
+    /// Для `TesseraPivotStyle.IndicatorStyle.accentText` контроллер выставляет `false`
     /// (§3: вид индикатора — только акцентный текст). Непрерывная окраска
     /// заголовков от флага не зависит — она работает всегда (§4).
     public var showsIndicator: Bool = true {
@@ -264,7 +264,7 @@ public final class PivotHeaderStripView: UIView {
     /// Доступен на уровне модуля (`@testable`), чтобы контрактные тесты E2.7
     /// могли проверить, что в горячем пути меняется только `transform`;
     /// в публичную поверхность не входит — геометрией владеет лента.
-    internal private(set) var indicator: PivotHeaderIndicator
+    internal private(set) var indicator: TesseraPivotHeaderIndicator
 
     /// Последний применённый прогресс. Хранится, чтобы перекрашивать заново
     /// появляющиеся ячейки и повторять положение индикатора при собственной
@@ -315,7 +315,7 @@ public final class PivotHeaderStripView: UIView {
     public override init(frame: CGRect) {
         headerLayout = PivotHeaderFlowLayout()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: headerLayout)
-        indicator = PivotHeaderIndicator()
+        indicator = TesseraPivotHeaderIndicator()
         super.init(frame: frame)
         commonInit()
     }
@@ -326,7 +326,7 @@ public final class PivotHeaderStripView: UIView {
     public required init?(coder: NSCoder) {
         headerLayout = PivotHeaderFlowLayout()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: headerLayout)
-        indicator = PivotHeaderIndicator()
+        indicator = TesseraPivotHeaderIndicator()
         super.init(coder: coder)
         commonInit()
     }
@@ -720,7 +720,7 @@ public final class PivotHeaderStripView: UIView {
     }
 
     /// Действующий режим ширины: запрос вызывающего плюс поправки §8.
-    private var effectiveMode: PivotStyle.StripMode {
+    private var effectiveMode: TesseraPivotStyle.StripMode {
         guard mode == .fill else { return .content }
         guard titles.count > 1, bounds.width > 0 else { return .fill }
 
@@ -778,7 +778,7 @@ public final class PivotHeaderStripView: UIView {
         if indicator.isHidden {
             indicator.isHidden = false
         }
-        let contentCenter = PivotHeaderIndicator.indicatorCenter(
+        let contentCenter = TesseraPivotHeaderIndicator.indicatorCenter(
             centers: contentCenters,
             progress: lastProgress
         )
@@ -846,7 +846,7 @@ public final class PivotHeaderStripView: UIView {
         guard titles.indices.contains(index) else { return }
 
         let isActive = index == activeIndex
-        let factor = PivotHeaderIndicator.blendFactor(
+        let factor = TesseraPivotHeaderIndicator.blendFactor(
             distanceFromProgress: CGFloat(index) - lastProgress,
             span: highlightSpan
         )
@@ -922,7 +922,7 @@ public final class PivotHeaderStripView: UIView {
 
 // MARK: - UICollectionViewDataSource
 
-extension PivotHeaderStripView: UICollectionViewDataSource {
+extension TesseraPivotHeaderStripView: UICollectionViewDataSource {
 
     /// Число заголовков — по одному на секцию.
     public func collectionView(
@@ -950,7 +950,7 @@ extension PivotHeaderStripView: UICollectionViewDataSource {
 
 // MARK: - UICollectionViewDelegateFlowLayout
 
-extension PivotHeaderStripView: UICollectionViewDelegateFlowLayout {
+extension TesseraPivotHeaderStripView: UICollectionViewDelegateFlowLayout {
 
     /// Размер ячейки: высота — вся лента, ширина — по режиму (§3).
     public func collectionView(
@@ -1060,7 +1060,7 @@ private final class PivotHeaderCell: UICollectionViewCell {
     ///   - font: Уже масштабированный шрифт состояния.
     ///   - isActive: Ближайший ли это к прогрессу заголовок (жирность + `.selected`).
     ///   - factor: Коэффициент акцента `0...1` из
-    ///     ``PivotHeaderIndicator/blendFactor(distanceFromProgress:span:)``.
+    ///     ``TesseraPivotHeaderIndicator/blendFactor(distanceFromProgress:span:)``.
     ///   - activeColor: Цвет полного акцента.
     ///   - inactiveColor: Цвет неактивного заголовка.
     func apply(

@@ -10,7 +10,7 @@
 //
 //  Проверяются: ширина секции «экран минус peek», чистая политика
 //  `TesseraSnapPolicy` на этой ширине (ближайший центр, порог скорости, кламп
-//  границ, вырожденные входы) и та же политика в связке с `PanoScrollView`.
+//  границ, вырожденные входы) и та же политика в связке с `TesseraPanoScrollView`.
 //
 
 #if canImport(UIKit)
@@ -37,8 +37,8 @@ final class PanoSnapTests: XCTestCase {
     private func makeScrollView(
         sectionCount: Int = 4,
         width: CGFloat? = nil
-    ) -> PanoScrollView {
-        let scrollView = PanoScrollView(peek: peek)
+    ) -> TesseraPanoScrollView {
+        let scrollView = TesseraPanoScrollView(peek: peek)
         scrollView.frame = CGRect(
             x: 0,
             y: 0,
@@ -66,9 +66,9 @@ final class PanoSnapTests: XCTestCase {
         )
     }
 
-    /// Цель снапа, которую `PanoScrollView` подставит системе.
+    /// Цель снапа, которую `TesseraPanoScrollView` подставит системе.
     private func scrollViewTarget(
-        _ scrollView: PanoScrollView,
+        _ scrollView: TesseraPanoScrollView,
         proposed: CGFloat,
         velocity: CGFloat = 0
     ) -> CGFloat {
@@ -302,7 +302,7 @@ final class PanoSnapTests: XCTestCase {
     /// замедление `.fast`, направление заблокировано, bounce включается только
     /// при числе секций больше одной (§8).
     func testSnapConfigurationMatchesDocument() {
-        let scrollView = PanoScrollView(frame: .zero)
+        let scrollView = TesseraPanoScrollView(frame: .zero)
 
         XCTAssertFalse(scrollView.isPagingEnabled)
         XCTAssertEqual(scrollView.decelerationRate, .fast)
@@ -317,9 +317,9 @@ final class PanoSnapTests: XCTestCase {
         XCTAssertFalse(scrollView.alwaysBounceHorizontal)
     }
 
-    // MARK: - Снап в связке с PanoScrollView
+    // MARK: - Снап в связке с TesseraPanoScrollView
 
-    /// `PanoScrollView` подставляет политике именно `itemWidth = экран − peek`:
+    /// `TesseraPanoScrollView` подставляет политике именно `itemWidth = экран − peek`:
     /// 400 pt при шаге 342 — это секция 1, хотя при шаге 390 это была бы 0.
     func testScrollViewSnapUsesPeekItemWidth() {
         let scrollView = makeScrollView()

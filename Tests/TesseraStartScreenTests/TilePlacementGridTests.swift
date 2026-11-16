@@ -15,7 +15,7 @@
 //  - дифф снимка: смена одних ячеек (те же элементы в том же порядке) —
 //    изменение раскладки и анимируется как перестановка; тот же снимок кадры не
 //    меняет;
-//  - `TileStore.snapshot(columns:)` для другой ширины сетки игнорируется (рамки
+//  - `TesseraTileStore.snapshot(columns:)` для другой ширины сетки игнорируется (рамки
 //    упаковки); равенство рамок сетки и ячеек модели после операций — в
 //    `TileCellWiringTests` (после E14.6 операции оставляют дыры, и прежнее
 //    сравнение «таблица = упаковка» потеряло смысл);
@@ -32,12 +32,12 @@ final class TilePlacementGridTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    private func cell(_ row: Int, _ column: Int) -> TileGridPlacement {
-        TileGridPlacement(row: row, column: column)
+    private func cell(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
+        TesseraTileGridPlacement(row: row, column: column)
     }
 
-    private func small(_ id: String) -> TileGridItem { .tile(tesseraTestTile(id, size: .small)) }
-    private func medium(_ id: String) -> TileGridItem { .tile(tesseraTestTile(id, size: .medium)) }
+    private func small(_ id: String) -> TesseraTileGridItem { .tile(tesseraTestTile(id, size: .small)) }
+    private func medium(_ id: String) -> TesseraTileGridItem { .tile(tesseraTestTile(id, size: .medium)) }
 
     private func layoutGrid(_ grid: TesseraTileGridView) {
         grid.layoutIfNeeded()
@@ -63,11 +63,11 @@ final class TilePlacementGridTests: XCTestCase {
     }
 
     /// Снимок с дырами: a и b в первой строке с зазором, c ниже и правее.
-    private func holeSnapshot(columns: Int = 4) -> TileGridSnapshot {
-        TileGridSnapshot(
+    private func holeSnapshot(columns: Int = 4) -> TesseraTileGridSnapshot {
+        TesseraTileGridSnapshot(
             items: [small("a"), small("b"), medium("c")],
             unpinned: [],
-            placementTable: TileGridPlacementTable(
+            placementTable: TesseraTileGridPlacementTable(
                 cells: ["a": cell(0, 0), "b": cell(0, 3), "c": cell(3, 1)],
                 columns: columns
             )
@@ -118,18 +118,18 @@ final class TilePlacementGridTests: XCTestCase {
 
     /// Негодная таблица: рамки и сетки, и базовой раскладки — упаковка по порядку.
     func testInvalidTableFallsBackInGridAndBaseFrames() throws {
-        let items: [TileGridItem] = [small("a"), small("b"), medium("c")]
-        let broken = TileGridPlacementTable(
+        let items: [TesseraTileGridItem] = [small("a"), small("b"), medium("c")]
+        let broken = TesseraTileGridPlacementTable(
             cells: ["a": cell(0, 0), "b": cell(0, 0), "c": cell(3, 1)],
             columns: 4
         )
 
         let reference = makeGrid()
-        reference.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
+        reference.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: []))
         layoutGrid(reference)
 
         let grid = makeGrid()
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: [], placementTable: broken))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: [], placementTable: broken))
         layoutGrid(grid)
 
         let base = try XCTUnwrap(grid.baseContentFrames(for: items, placementTable: broken))
@@ -173,13 +173,13 @@ final class TilePlacementGridTests: XCTestCase {
     /// по-прежнему пуст.
     func testOpeningFolderKeepsHolesBelowBand() throws {
         let folder = tesseraTestFolder("f", tileCount: 6)
-        let items: [TileGridItem] = [.folder(folder), small("s"), small("x"), small("y")]
-        let table = TileGridPlacementTable(
+        let items: [TesseraTileGridItem] = [.folder(folder), small("s"), small("x"), small("y")]
+        let table = TesseraTileGridPlacementTable(
             cells: ["f": cell(0, 0), "s": cell(0, 2), "x": cell(5, 0), "y": cell(8, 3)],
             columns: 4
         )
         let grid = makeGrid()
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: [], placementTable: table))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: [], placementTable: table))
         layoutGrid(grid)
 
         let closedX = try XCTUnwrap(grid.frame(forItemID: "x"))
@@ -192,8 +192,8 @@ final class TilePlacementGridTests: XCTestCase {
         let panelIndex = try XCTUnwrap(grid.displayItems.firstIndex { $0.isFolderPanel })
         XCTAssertEqual(
             panelIndex,
-            TileLayoutEngine.folderPanelInsertionIndex(
-                placements: items.map { TilePlacedItem(id: $0.id, size: $0.size, cell: table.cells[$0.id]!) },
+            TesseraTileLayoutEngine.folderPanelInsertionIndex(
+                placements: items.map { TesseraTilePlacedItem(id: $0.id, size: $0.size, cell: table.cells[$0.id]!) },
                 columns: 4,
                 expandedFolderID: folder.id
             )
@@ -227,10 +227,10 @@ final class TilePlacementGridTests: XCTestCase {
         let beforeC = try XCTUnwrap(host.grid.frame(forItemID: "c"))
         let beforeA = try XCTUnwrap(host.grid.frame(forItemID: "a"))
 
-        let moved = TileGridSnapshot(
+        let moved = TesseraTileGridSnapshot(
             items: holeSnapshot().items,
             unpinned: [],
-            placementTable: TileGridPlacementTable(
+            placementTable: TesseraTileGridPlacementTable(
                 cells: ["a": cell(0, 0), "b": cell(0, 3), "c": cell(6, 0)],
                 columns: 4
             )
@@ -283,10 +283,10 @@ final class TilePlacementGridTests: XCTestCase {
         layoutGrid(grid)
         let before = try XCTUnwrap(grid.frame(forItemID: "c"))
 
-        grid.reload(snapshot: TileGridSnapshot(
+        grid.reload(snapshot: TesseraTileGridSnapshot(
             items: holeSnapshot().items,
             unpinned: [],
-            placementTable: TileGridPlacementTable(
+            placementTable: TesseraTileGridPlacementTable(
                 cells: ["a": cell(0, 0), "b": cell(0, 3), "c": cell(5, 1)],
                 columns: 4
             )
@@ -312,9 +312,9 @@ final class TilePlacementGridTests: XCTestCase {
     // MARK: - Снимок хранилища
 
     /// Случайный каталог: ярлыки разных размеров (малые чаще).
-    private func randomCatalog(seed: UInt64, count: Int) -> [TileDescriptor] {
+    private func randomCatalog(seed: UInt64, count: Int) -> [TesseraTileDescriptor] {
         var generator = TesseraTestSeededGenerator(seed: seed)
-        let sizes: [TileSize] = [.small, .small, .medium, .medium, .wide, .large]
+        let sizes: [TesseraTileSize] = [.small, .small, .medium, .medium, .wide, .large]
         return (0..<count).map { index in
             tesseraTestTile("t\(index)", size: sizes[generator.int(upperBound: sizes.count)])
         }
@@ -323,7 +323,7 @@ final class TilePlacementGridTests: XCTestCase {
     /// Таблица для другой ширины сетки игнорируется: рамки прежние.
     func testStoreSnapshotForOtherWidthFallsBackToPack() throws {
         let directory = TesseraTestDirectory()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog(randomCatalog(seed: 5, count: 12))
         store.placeItems(columns: 6)

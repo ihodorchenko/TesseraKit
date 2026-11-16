@@ -5,10 +5,10 @@
 //  Тесты правой страницы — списка приложений (E10.9, трек T2; W4-B, E10.5).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §6 «Страница справа:
 //  список приложений + настройки» — `UITableView` с секциями по буквам и
-//  `sectionIndexTitles` (нативный паттерн), источник истины — `TileStore`.
+//  `sectionIndexTitles` (нативный паттерн), источник истины — `TesseraTileStore`.
 //
-//  W4 → E14.5/E14.6: pin из списка идёт через `TileStore.pinTile(_:columns:)`
-//  (новая строка в конце холста), unpin — через `TileStore.unpin(_:columns:)` и
+//  W4 → E14.5/E14.6: pin из списка идёт через `TesseraTileStore.pinTile(_:columns:)`
+//  (новая строка в конце холста), unpin — через `TesseraTileStore.unpin(_:columns:)` и
 //  `collapseEmptyRows(columns:)` (дыра остаётся, схлопывается только пустая
 //  строка); секции списка и позиция чтения при этом не меняются.
 //
@@ -41,8 +41,8 @@ final class AppsListPageTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeStore(_ descriptors: [TileDescriptor]) -> TileStore {
-        let store = TileStore(directoryURL: directory.url)
+    private func makeStore(_ descriptors: [TesseraTileDescriptor]) -> TesseraTileStore {
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog(descriptors)
         return store
@@ -52,9 +52,9 @@ final class AppsListPageTests: XCTestCase {
         _ title: String,
         id: String? = nil,
         icon: UIImage? = nil,
-        size: TileSize = .medium
-    ) -> TileDescriptor {
-        TileDescriptor(id: id ?? title, title: title, icon: icon, action: {}, size: size)
+        size: TesseraTileSize = .medium
+    ) -> TesseraTileDescriptor {
+        TesseraTileDescriptor(id: id ?? title, title: title, icon: icon, action: {}, size: size)
     }
 
     /// Поднимает страницу в окне и возвращает её таблицу.
@@ -268,7 +268,7 @@ final class AppsListPageTests: XCTestCase {
     // актуальные accessibility value/custom action.
 
     /// Идентификаторы элементов видимого порядка сетки.
-    private func ids(_ store: TileStore) -> [AnyHashable] {
+    private func ids(_ store: TesseraTileStore) -> [AnyHashable] {
         store.snapshot().items.map { $0.id }
     }
 
@@ -369,14 +369,14 @@ final class AppsListPageTests: XCTestCase {
     /// Проверяет, что порядок снимка — порядок чтения компактной раскладки:
     /// слоты `pack` идут строго по (строка, колонка) в порядке снимка (E10.15).
     private func assertReadingOrder(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         columns: Int,
         _ message: @autoclosure () -> String = "",
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let items = store.snapshot().layoutItems
-        let slots = TileLayoutEngine.pack(items: items, columns: columns, unit: 1)
+        let slots = TesseraTileLayoutEngine.pack(items: items, columns: columns, unit: 1)
         XCTAssertEqual(slots.count, items.count, message(), file: file, line: line)
         for (previous, next) in zip(slots, slots.dropFirst()) {
             let ordered = previous.row < next.row
@@ -395,7 +395,7 @@ final class AppsListPageTests: XCTestCase {
     /// Проверяет, что порядок снимка — порядок чтения ячеек модели (E14.5):
     /// строка, затем колонка; дыры порядок не меняют.
     private func assertCellReadingOrder(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         columns: Int,
         _ message: @autoclosure () -> String = "",
         file: StaticString = #filePath,
@@ -439,7 +439,7 @@ final class AppsListPageTests: XCTestCase {
         XCTAssertTrue(store.isPinned("s"))
         XCTAssertTrue(store.snapshot().unpinned.isEmpty)
         XCTAssertEqual(ids(store), ["a", "w", "s"], "порядок модели — порядок чтения ячеек")
-        XCTAssertEqual(store.placement(of: "s"), TileGridPlacement(row: 4, column: 0), "новая строка после «Wide»")
+        XCTAssertEqual(store.placement(of: "s"), TesseraTileGridPlacement(row: 4, column: 0), "новая строка после «Wide»")
         XCTAssertEqual(
             store.snapshot().items.firstIndex { $0.id == AnyHashable("s") },
             2,
@@ -539,8 +539,8 @@ final class AppsListPageTests: XCTestCase {
         XCTAssertFalse(store.isPinned("a"))
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["a"])
         XCTAssertEqual(ids(store), ["b", "w", "c"], "порядок — порядок чтения ячеек, без репака")
-        XCTAssertEqual(store.placement(of: "b"), TileGridPlacement(row: 0, column: 1), "дыра на месте «Alpha» осталась")
-        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 4, column: 0))
+        XCTAssertEqual(store.placement(of: "b"), TesseraTileGridPlacement(row: 0, column: 1), "дыра на месте «Alpha» осталась")
+        XCTAssertEqual(store.placement(of: "c"), TesseraTileGridPlacement(row: 4, column: 0))
         assertCellReadingOrder(store, columns: 4, "после unpin из списка")
         XCTAssertEqual(rowTitles(page, table), structureBefore, "unpin не меняет секции списка")
         XCTAssertEqual(sectionTitles(page, table), sectionsBefore)
@@ -565,8 +565,8 @@ final class AppsListPageTests: XCTestCase {
 
         XCTAssertEqual(changes, 2, "unpin и схлопывание строк — два изменения модели")
         XCTAssertEqual(ids(store), ["a", "b", "c"])
-        XCTAssertEqual(store.placement(of: "a"), TileGridPlacement(row: 0, column: 0))
-        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 2, column: 0), "строки 2–3 схлопнуты")
+        XCTAssertEqual(store.placement(of: "a"), TesseraTileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(store.placement(of: "c"), TesseraTileGridPlacement(row: 2, column: 0), "строки 2–3 схлопнуты")
         assertCellReadingOrder(store, columns: 4, "после unpin и схлопывания")
     }
 

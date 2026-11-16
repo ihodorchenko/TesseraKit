@@ -7,7 +7,7 @@
 //  «Отступления реализации (E16)», п. 65; решение D40 в docs/STATE.md.
 //
 //  Проверяется:
-//  - `TileStore.moveWithinFolder(_:folderID:toIndex:)`: вперёд/назад, ужатие
+//  - `TesseraTileStore.moveWithinFolder(_:folderID:toIndex:)`: вперёд/назад, ужатие
 //    индекса, no-op (без `onChange` и записи), чужие идентификаторы, круг записи,
 //    одно уведомление, ячейки и размеры не меняются, одобрение хоста не
 //    спрашивается, невидимые члены (до регистрации каталога);
@@ -35,10 +35,10 @@ final class TileFolderReorderTests: XCTestCase {
 
     /// Папка F (medium, (0,0)) из `contents` и плитка `a` справа от неё.
     private func makeStore(
-        contents: [(String, TileSize)] = [("x", .small), ("y", .small), ("z", .small), ("w", .small)],
+        contents: [(String, TesseraTileSize)] = [("x", .small), ("y", .small), ("z", .small), ("w", .small)],
         in directory: TesseraTestDirectory,
         autosaves: Bool = false
-    ) throws -> TileStore {
+    ) throws -> TesseraTileStore {
         try TileStoreCellFixture.makeStore(
             columns: columns,
             tiles: [CellFixtureTile("a", .small, 0, 4)],
@@ -48,7 +48,7 @@ final class TileFolderReorderTests: XCTestCase {
         )
     }
 
-    private func order(_ store: TileStore, folder: AnyHashable = "F") -> [AnyHashable] {
+    private func order(_ store: TesseraTileStore, folder: AnyHashable = "F") -> [AnyHashable] {
         store.snapshot().folders.first { $0.id == folder }?.tiles.map { $0.id } ?? []
     }
 
@@ -57,7 +57,7 @@ final class TileFolderReorderTests: XCTestCase {
         var orders: [[AnyHashable]] = []
     }
 
-    private func record(_ store: TileStore) -> ChangeRecorder {
+    private func record(_ store: TesseraTileStore) -> ChangeRecorder {
         let recorder = ChangeRecorder()
         store.onChange = { snapshot in
             recorder.orders.append(snapshot.folders.first?.tiles.map { $0.id } ?? [])
@@ -168,7 +168,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertTrue(store.moveWithinFolder("w", folderID: "F", toIndex: 0))
         XCTAssertEqual(order(store), ["w", "x", "y", "z"] as [AnyHashable])
 
-        let fresh = TileStore(directoryURL: directory.url)
+        let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(["a", "x", "y", "z", "w"].map { tesseraTestTile($0, size: .small) })
         try fresh.load()
         XCTAssertEqual(order(fresh), ["w", "x", "y", "z"] as [AnyHashable], "Порядок в файле")
@@ -240,7 +240,7 @@ final class TileFolderReorderTests: XCTestCase {
         let source = try makeStore(in: directory, autosaves: true)
         try source.save()
 
-        let fresh = TileStore(directoryURL: directory.url)
+        let fresh = TesseraTileStore(directoryURL: directory.url)
         try fresh.load()
         XCTAssertFalse(
             fresh.moveWithinFolder("x", folderID: "F", toIndex: 2),
@@ -256,7 +256,7 @@ final class TileFolderReorderTests: XCTestCase {
 
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
         var reorders: [(tile: AnyHashable, folder: AnyHashable, index: Int)] = []
-        var grouping: [TileGroupingAction] = []
+        var grouping: [TesseraTileGroupingAction] = []
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
@@ -269,7 +269,7 @@ final class TileFolderReorderTests: XCTestCase {
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
-            didFailGrouping action: TileGroupingAction,
+            didFailGrouping action: TesseraTileGroupingAction,
             tileID: AnyHashable,
             folderID: AnyHashable?
         ) {
@@ -282,7 +282,7 @@ final class TileFolderReorderTests: XCTestCase {
     }
 
     private func makeHost(
-        contents: [(String, TileSize)] = [("x", .small), ("y", .small), ("z", .small)]
+        contents: [(String, TesseraTileSize)] = [("x", .small), ("y", .small), ("z", .small)]
     ) throws -> TesseraTestDragHost {
         try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 3, 0)],

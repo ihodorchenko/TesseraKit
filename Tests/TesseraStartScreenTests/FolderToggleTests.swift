@@ -53,9 +53,9 @@ final class FolderToggleTests: XCTestCase {
     /// - Returns: Модель папки.
     private func makeFolder(
         _ id: String,
-        tiles: [TileDescriptor] = [tesseraTestTile("f-tile")]
-    ) -> TileFolder {
-        TileFolder(id: id, title: id, tiles: tiles)
+        tiles: [TesseraTileDescriptor] = [tesseraTestTile("f-tile")]
+    ) -> TesseraTileFolder {
+        TesseraTileFolder(id: id, title: id, tiles: tiles)
     }
 
     /// Сетка, разложенная вручную: окно не нужно, коллекция получает bounds.
@@ -64,12 +64,12 @@ final class FolderToggleTests: XCTestCase {
     ///   - items: Элементы снимка в порядке отображения.
     ///   - columns: Число колонок сетки.
     /// - Returns: Готовая сетка без окна.
-    private func makeGrid(_ items: [TileGridItem], columns: Int = 4) -> TesseraTileGridView {
+    private func makeGrid(_ items: [TesseraTileGridItem], columns: Int = 4) -> TesseraTileGridView {
         let grid = TesseraTileGridView(
             frame: CGRect(x: 0, y: 0, width: gridWidth, height: 844)
         )
         grid.columns = columns
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: []))
         layout(grid)
         return grid
     }
@@ -173,7 +173,7 @@ final class FolderToggleTests: XCTestCase {
         let folder = makeFolder("f")
         let tileA = tesseraTestTile("a")
         let tileB = tesseraTestTile("b")
-        let items: [TileGridItem] = [.tile(tileA), .folder(folder), .tile(tileB)]
+        let items: [TesseraTileGridItem] = [.tile(tileA), .folder(folder), .tile(tileB)]
         let grid = makeGrid(items)
         let index = folderIndex(in: grid, folderID: folder.id)
 
@@ -227,7 +227,7 @@ final class FolderToggleTests: XCTestCase {
     func testPanelIsInsertedBelowFolderAndPushesContentBelow() throws {
         let folder = makeFolder("f", tiles: (0..<9).map { tesseraTestTile("t\($0)") })
         let wide = tesseraTestTile("wide", size: .wide)
-        let items: [TileGridItem] = [.folder(folder), .tile(wide)]
+        let items: [TesseraTileGridItem] = [.folder(folder), .tile(wide)]
         let grid = makeGrid(items)
 
         let folderFrame = try XCTUnwrap(grid.frame(forItemID: folder.id))
@@ -242,7 +242,7 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(panelIndices(in: grid), [panelIndex])
 
         let panelFrame = try XCTUnwrap(frame(in: grid, at: panelIndex))
-        let panelHeight = TileLayoutEngine.panelHeight(
+        let panelHeight = TesseraTileLayoutEngine.panelHeight(
             for: folder,
             width: contentWidth,
             columns: 4
@@ -273,7 +273,7 @@ final class FolderToggleTests: XCTestCase {
     func testNeighbourInFolderRowStaysInPlace() throws {
         let folder = makeFolder("f")
         let small = tesseraTestTile("small", size: .small)
-        let items: [TileGridItem] = [.folder(folder), .tile(small)]
+        let items: [TesseraTileGridItem] = [.folder(folder), .tile(small)]
         let grid = makeGrid(items)
 
         let smallBefore = try XCTUnwrap(grid.frame(forItemID: small.id))
@@ -291,7 +291,7 @@ final class FolderToggleTests: XCTestCase {
     func testPanelKeepsItemsAboveFolderInPlace() throws {
         let folder = makeFolder("f", tiles: (0..<9).map { tesseraTestTile("t\($0)") })
         let wide = tesseraTestTile("wide", size: .wide)
-        let items: [TileGridItem] = [.tile(wide), .folder(folder)]
+        let items: [TesseraTileGridItem] = [.tile(wide), .folder(folder)]
         let grid = makeGrid(items)
 
         let wideFrame = try XCTUnwrap(grid.frame(forItemID: wide.id))
@@ -340,7 +340,7 @@ final class FolderToggleTests: XCTestCase {
     /// плитка папки остаётся на прежнем индексе.
     func testCloseFolderRestoresDataItems() {
         let folder = makeFolder("f")
-        let items: [TileGridItem] = [
+        let items: [TesseraTileGridItem] = [
             .tile(tesseraTestTile("a")),
             .folder(folder),
             .tile(tesseraTestTile("b")),
@@ -411,7 +411,7 @@ final class FolderToggleTests: XCTestCase {
         grid.onFolderExpansionChanged = { events.append(($0.id, $1)) }
         grid.openFolder(folder, animated: false)
 
-        grid.reload(snapshot: TileGridSnapshot(items: [.tile(tesseraTestTile("a"))], unpinned: []))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: [.tile(tesseraTestTile("a"))], unpinned: []))
 
         XCTAssertNil(grid.expandedFolderID)
         XCTAssertFalse(hasPanel(in: grid, folderID: folder.id))

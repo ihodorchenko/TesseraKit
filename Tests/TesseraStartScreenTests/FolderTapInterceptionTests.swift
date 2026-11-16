@@ -32,18 +32,18 @@ final class FolderTapInterceptionTests: XCTestCase {
     ///
     /// - Parameter id: Идентификатор папки.
     /// - Returns: Модель папки.
-    private func makeFolder(_ id: String) -> TileFolder {
-        TileFolder(id: id, title: id, tiles: [tesseraTestTile("\(id)-tile")])
+    private func makeFolder(_ id: String) -> TesseraTileFolder {
+        TesseraTileFolder(id: id, title: id, tiles: [tesseraTestTile("\(id)-tile")])
     }
 
     /// Сетка с элементами снимка, разложенная без окна.
     ///
     /// - Parameter items: Элементы в порядке отображения.
     /// - Returns: Готовая сетка.
-    private func makeGrid(_ items: [TileGridItem]) -> TesseraTileGridView {
+    private func makeGrid(_ items: [TesseraTileGridItem]) -> TesseraTileGridView {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         grid.columns = 4
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: []))
         grid.layoutIfNeeded()
         grid.subviews
             .compactMap { $0 as? UICollectionView }
@@ -109,8 +109,8 @@ final class FolderTapInterceptionTests: XCTestCase {
     func testHandlerReturningTrueSuppressesExpansionAndTap() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.tile(tesseraTestTile("a")), .folder(folder)])
-        var handled: [TileFolder] = []
-        var tapped: [TileGridItem] = []
+        var handled: [TesseraTileFolder] = []
+        var tapped: [TesseraTileGridItem] = []
         grid.folderTapHandler = { candidate in
             handled.append(candidate)
             return true
@@ -132,7 +132,7 @@ final class FolderTapInterceptionTests: XCTestCase {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
         var handled = 0
-        var tapped: [TileGridItem] = []
+        var tapped: [TesseraTileGridItem] = []
         grid.folderTapHandler = { _ in
             handled += 1
             return false
@@ -151,7 +151,7 @@ final class FolderTapInterceptionTests: XCTestCase {
     func testNoHandlerAllowsExpansionAndTap() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
-        var tapped: [TileGridItem] = []
+        var tapped: [TesseraTileGridItem] = []
         grid.onTap = { tapped.append($0) }
 
         try tap(grid: grid, at: folderIndex(in: grid, id: folder.id))
@@ -171,7 +171,7 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertEqual(grid.expandedFolderID, folder.id)
 
         var handled = 0
-        var tapped: [TileGridItem] = []
+        var tapped: [TesseraTileGridItem] = []
         grid.folderTapHandler = { _ in
             handled += 1
             return true
@@ -224,7 +224,7 @@ final class FolderTapInterceptionTests: XCTestCase {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
         let collectionView = try collectionView(in: grid)
-        var tapped: [TileGridItem] = []
+        var tapped: [TesseraTileGridItem] = []
         grid.onTap = { tapped.append($0) }
 
         grid.openFolder(folder, animated: false)
@@ -250,7 +250,7 @@ final class FolderTapInterceptionTests: XCTestCase {
         let tile = tesseraTestTile("a")
         let grid = makeGrid([.tile(tile), .folder(folder)])
         var handled = 0
-        var tapped: [TileGridItem] = []
+        var tapped: [TesseraTileGridItem] = []
         grid.folderTapHandler = { _ in
             handled += 1
             return true

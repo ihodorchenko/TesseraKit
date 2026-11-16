@@ -39,7 +39,7 @@ final class TileEditOverhangTests: XCTestCase {
 
     /// Стенд: правка включена; плитки одного размера в ряд по 6 колонок.
     private func makeHost(
-        descriptors: [TileDescriptor],
+        descriptors: [TesseraTileDescriptor],
         width: CGFloat,
         rightToLeft: Bool = false
     ) -> TesseraTestDragHost {

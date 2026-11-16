@@ -31,7 +31,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
     // MARK: - Шпионы
 
     /// Поставщик хука, записывающий колбэки появления/скрытия (§7).
-    private final class PanelSpy: QuickPanelProviding {
+    private final class PanelSpy: TesseraQuickPanelProviding {
         let name: String
         private(set) var appearCount = 0
         private(set) var disappearCount = 0
@@ -56,7 +56,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
     }
 
     /// UIKit-делегат экрана: страницы и видимость хука.
-    private final class DelegateSpy: StartScreenDelegate {
+    private final class DelegateSpy: TesseraStartScreenDelegate {
         private(set) var pages: [TesseraStartScreenPage] = []
         private(set) var hookVisibility: [Bool] = []
 
@@ -205,7 +205,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
     }
 
     private func makeScreen(
-        leftPanel: QuickPanelProviding?,
+        leftPanel: TesseraQuickPanelProviding?,
         rightPage: Bool = true
     ) -> TesseraStartScreenViewController {
         let screen = TesseraStartScreenViewController()
@@ -487,13 +487,13 @@ final class StartScreenControllerReviewTests: XCTestCase {
             jitter: 0,
             seed: 1
         )
-        let tile = TileDescriptor(
+        let tile = TesseraTileDescriptor(
             id: "live",
             title: "Live",
             action: {},
             liveContent: FlippingProvider()
         )
-        screen.reload(grid: TileGridSnapshot(items: [.tile(tile)], unpinned: []))
+        screen.reload(grid: TesseraTileGridSnapshot(items: [.tile(tile)], unpinned: []))
         host(screen)
         appear(screen)
 
@@ -525,12 +525,12 @@ final class StartScreenControllerReviewTests: XCTestCase {
         let screen = makeScreen(leftPanel: nil, rightPage: false)
         screen.wallpaperParallaxFactor = 0.6
         screen.wallpaperImage = UIImage()
-        let few = (0..<2).map { TileGridItem.tile(tesseraTestTile("t\($0)")) }
-        screen.reload(grid: TileGridSnapshot(items: few, unpinned: []))
+        let few = (0..<2).map { TesseraTileGridItem.tile(tesseraTestTile("t\($0)")) }
+        screen.reload(grid: TesseraTileGridSnapshot(items: few, unpinned: []))
         host(screen)
 
-        let many = (0..<60).map { TileGridItem.tile(tesseraTestTile("t\($0)")) }
-        screen.gridView.update(snapshot: TileGridSnapshot(items: many, unpinned: []), animated: false)
+        let many = (0..<60).map { TesseraTileGridItem.tile(tesseraTestTile("t\($0)")) }
+        screen.gridView.update(snapshot: TesseraTileGridSnapshot(items: many, unpinned: []), animated: false)
         let collectionView = try gridCollectionView(of: screen)
         collectionView.layoutIfNeeded()
         layout(screen)
@@ -543,14 +543,14 @@ final class StartScreenControllerReviewTests: XCTestCase {
         let screen = makeScreen(leftPanel: nil, rightPage: false)
         screen.wallpaperParallaxFactor = 0.6
         screen.wallpaperImage = UIImage()
-        let folder = TileFolder(
+        let folder = TesseraTileFolder(
             id: "folder",
             title: "Folder",
             // Шесть колонок по умолчанию (D26): плиток нужно столько, чтобы панель
             // вдвое превысила вьюпорт.
             tiles: (0..<200).map { tesseraTestTile("f\($0)", size: .small) }
         )
-        screen.reload(grid: TileGridSnapshot(items: [.folder(folder)], unpinned: []))
+        screen.reload(grid: TesseraTileGridSnapshot(items: [.folder(folder)], unpinned: []))
         host(screen)
 
         screen.gridView.openFolder(folder, animated: false)

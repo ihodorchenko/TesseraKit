@@ -1,6 +1,6 @@
 // Делегат пивота.
 // Проектный документ: docs/PIVOT-IOS-DESIGN.md — §3 «Архитектура»
-// (PivotDelegate — didSelectSection, didChangeProgress) и §5 «Синхронизация
+// (TesseraPivotDelegate — didSelectSection, didChangeProgress) и §5 «Синхронизация
 // ленты и пейджера» (один источник истины и один писатель contentOffset).
 
 #if canImport(UIKit)
@@ -18,7 +18,7 @@ import UIKit
 /// (`didSelectSectionAt` и `didChangeProgress`); показ секции по завершении
 /// перехода — опциональное событие с пустой реализацией по умолчанию
 /// (docs/PIVOT-IOS-DESIGN.md §3).
-public protocol PivotDelegate: AnyObject {
+public protocol TesseraPivotDelegate: AnyObject {
 
     /// Пользователь выбрал секцию тапом по заголовку в ленте.
     ///
@@ -31,7 +31,7 @@ public protocol PivotDelegate: AnyObject {
     /// - Parameters:
     ///   - pivot: Пивот-источник события.
     ///   - index: Индекс выбранной секции в порядке чтения.
-    func pivot(_ pivot: PivotViewController, didSelectSectionAt index: Int)
+    func pivot(_ pivot: TesseraPivotViewController, didSelectSectionAt index: Int)
 
     /// Непрерывный прогресс прокрутки изменился.
     ///
@@ -48,7 +48,7 @@ public protocol PivotDelegate: AnyObject {
     /// - Parameters:
     ///   - pivot: Пивот-источник события.
     ///   - t: Нормализованный прогресс `t = contentOffset.x / pageWidth`.
-    func pivot(_ pivot: PivotViewController, didChangeProgress t: CGFloat)
+    func pivot(_ pivot: TesseraPivotViewController, didChangeProgress t: CGFloat)
 
     /// Пивот завершил переход и показывает секцию `index`.
     ///
@@ -60,14 +60,14 @@ public protocol PivotDelegate: AnyObject {
     /// - Parameters:
     ///   - pivot: Пивот-источник события.
     ///   - index: Индекс показанной секции в порядке чтения.
-    func pivot(_ pivot: PivotViewController, didShowSectionAt index: Int)
+    func pivot(_ pivot: TesseraPivotViewController, didShowSectionAt index: Int)
 }
 
-public extension PivotDelegate {
+public extension TesseraPivotDelegate {
     /// Реализация по умолчанию: показ секции не интересует делегата.
     ///
     /// Пустое тело позволяет подписаться только на выбор и прогресс
     /// (docs/PIVOT-IOS-DESIGN.md §3).
-    func pivot(_ pivot: PivotViewController, didShowSectionAt index: Int) {}
+    func pivot(_ pivot: TesseraPivotViewController, didShowSectionAt index: Int) {}
 }
 #endif

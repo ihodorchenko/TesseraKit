@@ -1,18 +1,18 @@
 // Хранилище состояния «Рабочего стола»: порядок, размеры, папки и закрепления.
 //
 // Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  - §3 «Плиточная сетка»: раскладку в юнитах считает TileLayoutEngine
-//    (чистые функции, файл TileLayoutEngine.swift); порядок элементов, размеры,
-//    закрепления и папки — задача TileStore;
-//  - §5 «Режим редактирования»: «TileStore сохраняет порядок/размеры/закрепления
+//  - §3 «Плиточная сетка»: раскладку в юнитах считает TesseraTileLayoutEngine
+//    (чистые функции, файл TesseraTileLayoutEngine.swift); порядок элементов, размеры,
+//    закрепления и папки — задача TesseraTileStore;
+//  - §5 «Режим редактирования»: «TesseraTileStore сохраняет порядок/размеры/закрепления
 //    (JSON/файл), выживает между запусками»;
-//  - §6 «Страница справа»: TileStore — единственный источник истины и для сетки,
+//  - §6 «Страница справа»: TesseraTileStore — единственный источник истины и для сетки,
 //    и для списка приложений (двусторонний pin/unpin, правило «один писатель»);
 //  - §14 «Уточнения MVP» и D12–D15 в docs/STATE.md: ярлык — просто действие
 //    (без поля type), папки создаются/меняются только через функцию одобрения
 //    хоста, у ярлыков четыре размера.
 //
-// Модель ярлыка и папки — `TileDescriptor.swift` / `TileFolder.swift` (E4.2):
+// Модель ярлыка и папки — `TesseraTileDescriptor.swift` / `TesseraTileFolder.swift` (E4.2):
 // хранилище не дублирует их, а надстраивает состояние поверх каталога ярлыков.
 //
 // Поток: все методы рассчитаны на главный поток — состояние рабочего стола не
@@ -33,19 +33,19 @@ import UIKit
 /// рисовались по одному снимку и не дёргали хранилище на каждый элемент.
 ///
 /// ``folderContent(_:)`` — не элемент данных, а UI-состояние раскрытия (D17):
-/// `TileStore` и файл состояния её не содержат, а вью-слой **вставляет** её
+/// `TesseraTileStore` и файл состояния её не содержат, а вью-слой **вставляет** её
 /// отдельным элементом сразу после плитки папки. Плитка папки при этом остаётся
 /// в наборе и на экране: панель — полноширинная строка под ней. Она живёт в этом
-/// же перечислении, чтобы раскладка (`TileLayoutEngine`/
+/// же перечислении, чтобы раскладка (`TesseraTileLayoutEngine`/
 /// `TesseraTileCollectionViewLayout`) видела раскрытую панель в общем порядке
 /// элементов.
-public enum TileGridItem {
+public enum TesseraTileGridItem {
 
     /// Ярлык с текущим размером из хранилища.
-    case tile(TileDescriptor)
+    case tile(TesseraTileDescriptor)
 
     /// Папка вместе с её ярлыками (в порядке папки).
-    case folder(TileFolder)
+    case folder(TesseraTileFolder)
 
     /// Полноширинная панель раскрытой папки (D17, E7.1).
     ///
@@ -55,10 +55,10 @@ public enum TileGridItem {
     /// полноширинную строку сразу после строки, в которой заканчивается папка
     /// (``folderContent(_:)`` растягивается на всю ширину). В данных панели нет:
     /// это представление состояния «папка раскрыта», поэтому в снимке
-    /// `TileStore` панель не появляется и между запусками не сохраняется.
+    /// `TesseraTileStore` панель не появляется и между запусками не сохраняется.
     /// Идентификатор панели совпадает с идентификатором папки — по нему
     /// раскладка находит строку папки, после которой встаёт панель.
-    case folderContent(TileFolder)
+    case folderContent(TesseraTileFolder)
 
     /// Идентификатор элемента (ярлыка, папки или панели папки).
     public var id: AnyHashable {
@@ -73,11 +73,11 @@ public enum TileGridItem {
     ///
     /// У панели раскрытой папки собственного размера в юнитах нет: она всегда
     /// занимает всю ширину сетки, а её высоту считает
-    /// ``TileLayoutEngine/panelHeight(for:width:columns:)``. Для единообразия
-    /// возвращается ``TileSize/wide`` — ближайший «полноширинный» размер D15.
+    /// ``TesseraTileLayoutEngine/panelHeight(for:width:columns:)``. Для единообразия
+    /// возвращается ``TesseraTileSize/wide`` — ближайший «полноширинный» размер D15.
     /// Раскладка не упаковывает панель по этой метке: панель — отдельная строка
     /// под папкой (``panelFolder``), а не плитка.
-    public var size: TileSize {
+    public var size: TesseraTileSize {
         switch self {
         case .tile(let descriptor): return descriptor.size
         case .folder(let folder): return folder.size
@@ -86,7 +86,7 @@ public enum TileGridItem {
     }
 
     /// Ярлык, если элемент — ярлык.
-    public var tile: TileDescriptor? {
+    public var tile: TesseraTileDescriptor? {
         guard case .tile(let descriptor) = self else { return nil }
         return descriptor
     }
@@ -95,15 +95,15 @@ public enum TileGridItem {
     ///
     /// Панель раскрытой папки (``folderContent(_:)``) сюда не попадает: это не
     /// элемент данных, и её папка доступна через ``panelFolder``. Так
-    /// ``TileGridSnapshot/folders`` и обходы снимка не считают одну папку
+    /// ``TesseraTileGridSnapshot/folders`` и обходы снимка не считают одну папку
     /// дважды, когда панель добавлена к набору элементов вью-слоем.
-    public var folder: TileFolder? {
+    public var folder: TesseraTileFolder? {
         guard case .folder(let folder) = self else { return nil }
         return folder
     }
 
     /// Папка, если элемент — панель раскрытой папки.
-    public var panelFolder: TileFolder? {
+    public var panelFolder: TesseraTileFolder? {
         guard case .folderContent(let folder) = self else { return nil }
         return folder
     }
@@ -118,7 +118,7 @@ public enum TileGridItem {
     ///
     /// У панели раскрытой папки содержимое берётся из ``panelFolder``: панель —
     /// представление, а не второй экземпляр папки.
-    public var folderTiles: [TileDescriptor] {
+    public var folderTiles: [TesseraTileDescriptor] {
         guard case .folder(let folder) = self else { return [] }
         return folder.tiles
     }
@@ -127,17 +127,17 @@ public enum TileGridItem {
 /// Снимок сетки рабочего стола — то, что читают UI и раскладка.
 ///
 /// Снимок — значение: он не связан с хранилищем и не меняется задним числом.
-/// Пиксельной геометрии в нём нет: раскладку считает `TileLayoutEngine` (§3),
+/// Пиксельной геометрии в нём нет: раскладку считает `TesseraTileLayoutEngine` (§3),
 /// а снимок даёт порядок, размеры и папки. ``layoutItems`` — готовый вход для
-/// `TileLayoutEngine.pack(items:columns:unit:)`.
-public struct TileGridSnapshot {
+/// `TesseraTileLayoutEngine.pack(items:columns:unit:)`.
+public struct TesseraTileGridSnapshot {
 
     /// Элементы сетки в порядке отображения: слева направо, сверху вниз.
-    public let items: [TileGridItem]
+    public let items: [TesseraTileGridItem]
 
     /// Ярлыки вне сетки: их можно прикрепить; из них же строится список
     /// приложений (§6, двусторонний pin/unpin).
-    public let unpinned: [TileDescriptor]
+    public let unpinned: [TesseraTileDescriptor]
 
     /// Необязательная таблица явных ячеек (E14.3, D30).
     ///
@@ -146,10 +146,10 @@ public struct TileGridSnapshot {
     /// есть, полна и корректна для текущего числа колонок сетки, плитки встают
     /// на свои ячейки, а дыры остаются. Неполная, некорректная или рассчитанная
     /// на другую ширину таблица игнорируется целиком — см.
-    /// ``TileGridPlacementTable``. `TileStore.snapshot()` таблицу не прикладывает
+    /// ``TesseraTileGridPlacementTable``. `TesseraTileStore.snapshot()` таблицу не прикладывает
     /// (ширина сетки ему неизвестна); снимок с таблицей для конкретной ширины
-    /// строит ``TileStore/snapshot(columns:)``.
-    public let placementTable: TileGridPlacementTable?
+    /// строит ``TesseraTileStore/snapshot(columns:)``.
+    public let placementTable: TesseraTileGridPlacementTable?
 
     /// Создаёт снимок.
     ///
@@ -158,26 +158,26 @@ public struct TileGridSnapshot {
     ///   - unpinned: Ярлыки вне сетки.
     ///   - placementTable: Таблица явных ячеек; `nil` — раскладка по порядку.
     init(
-        items: [TileGridItem],
-        unpinned: [TileDescriptor],
-        placementTable: TileGridPlacementTable? = nil
+        items: [TesseraTileGridItem],
+        unpinned: [TesseraTileDescriptor],
+        placementTable: TesseraTileGridPlacementTable? = nil
     ) {
         self.items = items
         self.unpinned = unpinned
         self.placementTable = placementTable
     }
 
-    /// Пары «идентификатор — размер» в порядке сетки для `TileLayoutEngine`.
+    /// Пары «идентификатор — размер» в порядке сетки для `TesseraTileLayoutEngine`.
     ///
     /// Хранилище не считает раскладку само (§3): оно отдаёт данные, а движок
     /// упаковывает их в юнитные координаты.
     ///
-    /// Панель раскрытой папки (``TileGridItem/folderContent(_:)``) в пары не
+    /// Панель раскрытой папки (``TesseraTileGridItem/folderContent(_:)``) в пары не
     /// входит: у неё нет юнитного размера, а её строку и высоту считает
-    /// раскладка по идентификатору папки. В снимке `TileStore` панели нет, но
+    /// раскладка по идентификатору папки. В снимке `TesseraTileStore` панели нет, но
     /// вью-слой может добавить её к набору элементов — фильтр делает
     /// `layoutItems` безопасным и для такого набора.
-    public var layoutItems: [(id: AnyHashable, size: TileSize)] {
+    public var layoutItems: [(id: AnyHashable, size: TesseraTileSize)] {
         items.compactMap { item in
             guard !item.isFolderPanel else { return nil }
             return (id: item.id, size: item.size)
@@ -188,7 +188,7 @@ public struct TileGridSnapshot {
     ///
     /// Панель раскрытой папки не учитывается: папка уже есть в снимке как
     /// плитка-папка, а панель — её представление (D17).
-    public var folders: [TileFolder] {
+    public var folders: [TesseraTileFolder] {
         items.compactMap { $0.folder }
     }
 
@@ -201,19 +201,19 @@ public struct TileGridSnapshot {
     ///
     /// - Parameter id: Идентификатор ярлыка или папки.
     /// - Returns: Элемент сетки или `nil`, если его нет на сетке.
-    public func item(withID id: AnyHashable) -> TileGridItem? {
+    public func item(withID id: AnyHashable) -> TesseraTileGridItem? {
         items.first { $0.id == id }
     }
 }
 
 // MARK: - Одобрение операций с папками (D14)
 
-/// Операция группировки, которую TileStore спрашивает у хоста (D14).
+/// Операция группировки, которую TesseraTileStore спрашивает у хоста (D14).
 ///
 /// Порядок важен для UI-подсказок: `createFolder` — «собрать папку», `addToFolder`
 /// — «положить ярлык в существующую папку», `moveBetweenFolders` — «перенести
 /// ярлык в другую папку или обратно на рабочий стол».
-public enum TileGroupingAction: Equatable {
+public enum TesseraTileGroupingAction: Equatable {
 
     /// Создание папки из ярлыка.
     case createFolder
@@ -228,21 +228,21 @@ public enum TileGroupingAction: Equatable {
 /// Функция одобрения операций с папками (D14).
 ///
 /// Хост решает, разрешена ли операция; по умолчанию разрешено всё
-/// (`TileStore.approval` = allow-all). Вызывается синхронно на главном потоке
+/// (`TesseraTileStore.approval` = allow-all). Вызывается синхронно на главном потоке
 /// до изменения состояния, поэтому функция обязана быть быстрой и не должна
-/// трогать сам `TileStore` (иначе получится рекурсия по уведомлениям).
+/// трогать сам `TesseraTileStore` (иначе получится рекурсия по уведомлениям).
 ///
 /// - Parameters:
 ///   - folder: Папка-цель; `nil` для `createFolder` и для переноса на рабочий стол.
 ///   - tile: Ярлык, с которым выполняется операция.
 ///   - action: Тип операции.
 /// - Returns: `true` — операцию выполнять, `false` — отказать без изменения состояния.
-public typealias TileGroupingApproval = (_ folder: TileFolder?, _ tile: TileDescriptor, _ action: TileGroupingAction) -> Bool
+public typealias TesseraTileGroupingApproval = (_ folder: TesseraTileFolder?, _ tile: TesseraTileDescriptor, _ action: TesseraTileGroupingAction) -> Bool
 
 // MARK: - Ошибки персистентности
 
 /// Ошибки работы с сохранённым состоянием.
-public enum TileStoreError: Error, CustomStringConvertible {
+public enum TesseraTileStoreError: Error, CustomStringConvertible {
 
     /// Файл записан более новой версией схемы: читать его нельзя.
     case unsupportedSchemaVersion(Int)
@@ -250,7 +250,7 @@ public enum TileStoreError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .unsupportedSchemaVersion(let version):
-            return "TileStore: неподдерживаемая версия схемы \(version)"
+            return "TesseraTileStore: неподдерживаемая версия схемы \(version)"
         }
     }
 }
@@ -264,12 +264,12 @@ public enum TileStoreError: Error, CustomStringConvertible {
 /// сериализуются) и отдельно — раскладку: порядок элементов сетки, размеры и
 /// папки. Сетка и список приложений только читают снимок и вызывают операции
 /// редактирования, поэтому правило «один писатель» (§6) выполняется: пишет
-/// только TileStore.
+/// только TesseraTileStore.
 ///
 /// Использование:
 ///
 /// ```swift
-/// let store = TileStore()                        // Application Support/TesseraStartScreen
+/// let store = TesseraTileStore()                        // Application Support/TesseraStartScreen
 /// store.approval = { folder, tile, action in true }   // дефолт — разрешено (D14)
 /// store.setCatalog(descriptors)                  // ярлыки приложения с действиями
 /// try? store.load()                              // восстановить раскладку
@@ -277,18 +277,18 @@ public enum TileStoreError: Error, CustomStringConvertible {
 /// store.resize("weather", to: .wide, columns: 6) // D15: 1×1 / 2×2 / 4×2 / 4×4
 /// ```
 ///
-/// Размеры. `TileDescriptor` несёт размер-по-умолчанию (D15, §3), но
-/// авторитетный размер хранит TileStore: в снимке ярлыки приходят уже с текущим
+/// Размеры. `TesseraTileDescriptor` несёт размер-по-умолчанию (D15, §3), но
+/// авторитетный размер хранит TesseraTileStore: в снимке ярлыки приходят уже с текущим
 /// размером, а смена размера — операция хранилища (§5, resize в edit-режиме).
 ///
-/// Идентификаторы. `TileDescriptor.id` и `TileFolder.id` — `AnyHashable`.
+/// Идентификаторы. `TesseraTileDescriptor.id` и `TesseraTileFolder.id` — `AnyHashable`.
 /// В файл они попадают в каноническом виде (`s:` — String, `i:` — Int,
 /// `u:` — UUID, `o:` — прочее через `String(describing:)`), поэтому
 /// раскладка не зависит от типа идентификатора. Хэшируемые типы без
 /// стабильного `description` в персистентности не поддерживаются.
 ///
 /// - Note: Все методы и коллбэки вызываются на главном потоке.
-public final class TileStore: ObservableObject {
+public final class TesseraTileStore: ObservableObject {
 
     // MARK: - Публичные настройки
 
@@ -302,7 +302,7 @@ public final class TileStore: ObservableObject {
     ///
     /// Вызывается на главном потоке, после сохранения (если включено
     /// ``autosaves``). Хранилище в колбэке не модифицируется — только читается.
-    public var onChange: ((TileGridSnapshot) -> Void)?
+    public var onChange: ((TesseraTileGridSnapshot) -> Void)?
 
     /// Функция одобрения операций с папками (D14).
     ///
@@ -310,7 +310,7 @@ public final class TileStore: ObservableObject {
     /// Проверяется до изменения состояния в операциях с папками:
     /// `createFolder(from:onto:title:columns:)`, ``addToFolder(_:folderID:columns:)``,
     /// ``moveBetweenFolders(_:to:columns:)`` и ``extractFromFolder(_:toCell:columns:)``.
-    public var approval: TileGroupingApproval = { _, _, _ in true }
+    public var approval: TesseraTileGroupingApproval = { _, _, _ in true }
 
     /// Автосохранение после каждой операции редактирования (по умолчанию включено).
     ///
@@ -336,7 +336,7 @@ public final class TileStore: ObservableObject {
     /// `nil` — ячеек ещё нет: файл версии 1 или первый запуск, ширина сетки
     /// хоста пока не известна. Как только хост сообщает ширину
     /// (``placeItems(columns:)`` или любая операция с `columns`), ячейки
-    /// назначаются однократным прогоном `TileLayoutEngine.packCompact` по
+    /// назначаются однократным прогоном `TesseraTileLayoutEngine.packCompact` по
     /// текущему порядку и сразу сохраняются. Если ширина хоста отличается от
     /// `canvasColumns`, файл не перезаписывается: для хоста действует проекция
     /// ``placements(forColumns:)``.
@@ -351,7 +351,7 @@ public final class TileStore: ObservableObject {
     // MARK: - Внутреннее состояние
 
     /// Каталог ярлыков в порядке регистрации (действия, иконки, бейджи).
-    private var catalog: [TileDescriptor] = []
+    private var catalog: [TesseraTileDescriptor] = []
 
     /// Индекс каталога по каноническому ключу идентификатора.
     private var catalogIndex: [String: Int] = [:]
@@ -365,7 +365,7 @@ public final class TileStore: ObservableObject {
     /// Авторитетные размеры ярлыков по каноническому ключу.
     ///
     /// Папка хранит свой размер в ``FolderRecord/size``.
-    private var sizes: [String: TileSize] = [:]
+    private var sizes: [String: TesseraTileSize] = [:]
 
     /// Папки в порядке сетки (в `gridOrder` они стоят по своим ключам).
     private var folderRecords: [FolderRecord] = []
@@ -400,7 +400,7 @@ public final class TileStore: ObservableObject {
     /// хранят свою ячейку, но не участвуют в раскладке и коллизиях (D30).
     /// Пока ``canvasColumns`` равно `nil` («нераскладочное» состояние: файл
     /// версии 1 или первый запуск до того, как стала известна ширина), словарь пуст.
-    private var placementsByKey: [String: TileGridPlacement] = [:]
+    private var placementsByKey: [String: TesseraTileGridPlacement] = [:]
 
     /// Последняя ширина сетки хоста, которую хранилище узнало из вызова с
     /// `columns` (``placeItems(columns:)``, ``resize(_:to:columns:)`` и т. п.).
@@ -433,15 +433,15 @@ public final class TileStore: ObservableObject {
     ///
     /// Их окончательные ячейки считает `resolveDissolvedTiles()` движком
     /// (`inserting` на ячейке папки: бо́льший ярлык выталкивает соседей вниз).
-    private var pendingDissolvedTiles: [(key: String, cell: TileGridPlacement)] = []
+    private var pendingDissolvedTiles: [(key: String, cell: TesseraTileGridPlacement)] = []
 
     /// Каноническое число колонок сетки по умолчанию (6, D26).
     ///
     /// Нужно, когда ширина сетки хоста ещё не известна (``effectiveColumns``):
-    /// у `TileStore` нет ширины экрана.
-    /// экрана. Значение — ``TileLayoutEngine/defaultColumns``. Если хост задал
+    /// у `TesseraTileStore` нет ширины экрана.
+    /// экрана. Значение — ``TesseraTileLayoutEngine/defaultColumns``. Если хост задал
     /// своё число колонок, вызывающий передаёт его в ``resize(_:to:columns:)``.
-    static let defaultGridColumns = TileLayoutEngine.defaultColumns
+    static let defaultGridColumns = TesseraTileLayoutEngine.defaultColumns
 
     // MARK: - Инициализация
 
@@ -451,7 +451,7 @@ public final class TileStore: ObservableObject {
     ///   умолчанию (Application Support/TesseraStartScreen). Каталог
     ///   инжектируется для тестов и для изоляции нескольких рабочих столов.
     public init(directoryURL: URL? = nil) {
-        let directory = directoryURL ?? TileStore.defaultDirectoryURL()
+        let directory = directoryURL ?? TesseraTileStore.defaultDirectoryURL()
         self.directoryURL = directory
         self.fileURL = directory.appendingPathComponent("tiles.json", isDirectory: false)
     }
@@ -479,7 +479,7 @@ public final class TileStore: ObservableObject {
     /// момент загрузки, останутся в файле, но не попадут в снимок, пока не
     /// появятся в каталоге.
     ///
-    /// Размер новых ярлыков берётся из `TileDescriptor.size` (по умолчанию
+    /// Размер новых ярлыков берётся из `TesseraTileDescriptor.size` (по умолчанию
     /// `.medium` — D12). Передавайте каталог целиком одним вызовом: ярлыки, не
     /// попавшие в текущий вызов, считаются удалёнными и вычищаются из папок.
     ///
@@ -504,16 +504,16 @@ public final class TileStore: ObservableObject {
     /// при первом ``placeItems(columns:)``. Метод файл не пишет.
     ///
     /// - Parameter descriptors: Каталог ярлыков в начальном порядке.
-    public func setCatalog(_ descriptors: [TileDescriptor]) {
+    public func setCatalog(_ descriptors: [TesseraTileDescriptor]) {
         // Видимые до смены каталога ключи: при конфликте ячеек они сильнее тех,
         // что только что вернулись в каталог (E14.1, D30).
         let settledBefore = Set(visibleGridKeys())
 
         var seen = Set<String>()
-        var unique: [TileDescriptor] = []
+        var unique: [TesseraTileDescriptor] = []
         unique.reserveCapacity(descriptors.count)
         for descriptor in descriptors {
-            let key = TileStore.storageKey(for: descriptor.id)
+            let key = TesseraTileStore.storageKey(for: descriptor.id)
             guard seen.insert(key).inserted else { continue }
             unique.append(descriptor)
         }
@@ -522,7 +522,7 @@ public final class TileStore: ObservableObject {
         catalogRegistered = true
         catalogIndex.removeAll(keepingCapacity: true)
         for (index, descriptor) in unique.enumerated() {
-            catalogIndex[TileStore.storageKey(for: descriptor.id)] = index
+            catalogIndex[TesseraTileStore.storageKey(for: descriptor.id)] = index
         }
 
         // Ярлыки, которых хранилище ещё не знало (нет сохранённого размера):
@@ -530,7 +530,7 @@ public final class TileStore: ObservableObject {
         // повторная регистрация каталога не воскрешает откреплённые ярлыки.
         var introduced = Set<String>()
         for descriptor in unique {
-            let key = TileStore.storageKey(for: descriptor.id)
+            let key = TesseraTileStore.storageKey(for: descriptor.id)
             if sizes[key] == nil {
                 sizes[key] = descriptor.size
                 introduced.insert(key)
@@ -542,7 +542,7 @@ public final class TileStore: ObservableObject {
         if !restoredFromDisk {
             let onGrid = Set(gridOrder)
             for descriptor in unique {
-                let key = TileStore.storageKey(for: descriptor.id)
+                let key = TesseraTileStore.storageKey(for: descriptor.id)
                 guard introduced.contains(key), !onGrid.contains(key) else { continue }
                 gridOrder.append(key)
             }
@@ -562,8 +562,8 @@ public final class TileStore: ObservableObject {
     ///
     /// - Parameter id: Идентификатор ярлыка.
     /// - Returns: Ярлык из каталога с текущим размером или `nil`.
-    public func descriptor(withID id: AnyHashable) -> TileDescriptor? {
-        guard let index = catalogIndex[TileStore.storageKey(for: id)] else { return nil }
+    public func descriptor(withID id: AnyHashable) -> TesseraTileDescriptor? {
+        guard let index = catalogIndex[TesseraTileStore.storageKey(for: id)] else { return nil }
         return resolved(catalog[index])
     }
 
@@ -576,11 +576,11 @@ public final class TileStore: ObservableObject {
     ///
     /// Раскрытая панель папки (D17) в снимок не попадает: хранилище хранит
     /// данные, а состояние «папка раскрыта» — представление. Хост добавляет
-    /// ``TileGridItem/folderContent(_:)`` к копии элементов сам, поэтому
+    /// ``TesseraTileGridItem/folderContent(_:)`` к копии элементов сам, поэтому
     /// персистентность не меняется.
     ///
     /// - Returns: Согласованный снимок сетки.
-    public func snapshot() -> TileGridSnapshot {
+    public func snapshot() -> TesseraTileGridSnapshot {
         makeSnapshot(orderedBy: nil)
     }
 
@@ -598,8 +598,8 @@ public final class TileStore: ObservableObject {
     ///   `nil` — сохранённые ячейки, а без них (нераскладочное состояние) —
     ///   порядок модели.
     /// - Returns: Снимок без таблицы ячеек.
-    private func makeSnapshot(orderedBy columns: Int?) -> TileGridSnapshot {
-        var items: [TileGridItem] = []
+    private func makeSnapshot(orderedBy columns: Int?) -> TesseraTileGridSnapshot {
+        var items: [TesseraTileGridItem] = []
         var placedKeys = Set<String>()
 
         for key in readingOrderedKeys(forColumns: columns) {
@@ -613,16 +613,16 @@ public final class TileStore: ObservableObject {
         }
 
         let unpinned = catalog
-            .filter { !placedKeys.contains(TileStore.storageKey(for: $0.id)) }
+            .filter { !placedKeys.contains(TesseraTileStore.storageKey(for: $0.id)) }
             .map(resolved)
 
-        return TileGridSnapshot(items: items, unpinned: unpinned)
+        return TesseraTileGridSnapshot(items: items, unpinned: unpinned)
     }
 
     /// Снимок сетки с таблицей явных ячеек для ширины `columns` (E14.3, D30).
     ///
     /// Те же элементы и ярлыки вне сетки, что у ``snapshot()``, плюс
-    /// ``TileGridSnapshot/placementTable``: ячейки из ``placements(forColumns:)``
+    /// ``TesseraTileGridSnapshot/placementTable``: ячейки из ``placements(forColumns:)``
     /// (сохранённая раскладка с дырами, если `columns` совпадает с
     /// ``canvasColumns``, иначе проекция без дыр, D32) и заявленная ширина
     /// `columns`. Сетка той же ширины раскладывает плитки на эти ячейки; сетка
@@ -635,16 +635,16 @@ public final class TileStore: ObservableObject {
     ///
     /// - Parameter columns: Число колонок сетки хоста, больше нуля.
     /// - Returns: Снимок; при `columns <= 0` таблица не прикладывается.
-    public func snapshot(columns: Int) -> TileGridSnapshot {
+    public func snapshot(columns: Int) -> TesseraTileGridSnapshot {
         guard columns > 0 else { return snapshot() }
         // E14.7: порядок элементов — порядок чтения именно тех ячеек, что идут в
         // таблице (для другой ширины — проекции), чтобы VoiceOver читал плитки
         // так, как они лежат на экране.
         let base = makeSnapshot(orderedBy: columns)
-        return TileGridSnapshot(
+        return TesseraTileGridSnapshot(
             items: base.items,
             unpinned: base.unpinned,
-            placementTable: TileGridPlacementTable(
+            placementTable: TesseraTileGridPlacementTable(
                 cells: placements(forColumns: columns),
                 columns: columns
             )
@@ -658,7 +658,7 @@ public final class TileStore: ObservableObject {
     /// - Parameter tileID: Идентификатор ярлыка.
     /// - Returns: `true`, если ярлык есть на сетке или в папке.
     public func isPinned(_ tileID: AnyHashable) -> Bool {
-        let key = TileStore.storageKey(for: tileID)
+        let key = TesseraTileStore.storageKey(for: tileID)
         return gridOrder.contains(key) || folderRecords.contains { $0.tileKeys.contains(key) }
     }
 
@@ -668,13 +668,13 @@ public final class TileStore: ObservableObject {
     ///
     /// По памяти о Windows 10 Mobile папка — всегда плитка 2×2, и от размера
     /// ярлыка-цели он не зависит; wide/large цель замещается средней папкой.
-    static let newFolderSize: TileSize = .medium
+    static let newFolderSize: TesseraTileSize = .medium
 
     /// Итог атомарного создания папки из двух ярлыков (E11.6, E14.4).
     enum AtomicFolderResult {
 
         /// Оба шага одобрены: папка создана, второй ярлык лежит в ней.
-        case created(TileFolder)
+        case created(TesseraTileFolder)
 
         /// Хост отклонил создание папки (первый шаг) либо ярлыков нет на сетке.
         case createDenied
@@ -688,8 +688,8 @@ public final class TileStore: ObservableObject {
     ///
     /// - Parameter tileID: Идентификатор ярлыка.
     /// - Returns: Папка или `nil`, если ярлык не в папке.
-    public func folderContaining(_ tileID: AnyHashable) -> TileFolder? {
-        let key = TileStore.storageKey(for: tileID)
+    public func folderContaining(_ tileID: AnyHashable) -> TesseraTileFolder? {
+        let key = TesseraTileStore.storageKey(for: tileID)
         guard let record = folderRecords.first(where: { $0.tileKeys.contains(key) }) else {
             return nil
         }
@@ -704,7 +704,7 @@ public final class TileStore: ObservableObject {
     /// Пусто, пока ячеек нет (``canvasColumns`` равно `nil`). Это именно
     /// сохранённая раскладка: для хоста с другой шириной используйте
     /// ``placements(forColumns:)``. Содержимое папок ячеек не имеет.
-    public var placements: [AnyHashable: TileGridPlacement] {
+    public var placements: [AnyHashable: TesseraTileGridPlacement] {
         guard canvasColumns != nil else { return [:] }
         return storedVisiblePlacements()
     }
@@ -714,9 +714,9 @@ public final class TileStore: ObservableObject {
     /// - Parameter id: Идентификатор ярлыка или папки на сетке.
     /// - Returns: Ячейка или `nil`, если ячеек ещё нет либо элемента нет на
     ///   видимой сетке.
-    public func placement(of id: AnyHashable) -> TileGridPlacement? {
+    public func placement(of id: AnyHashable) -> TesseraTileGridPlacement? {
         guard canvasColumns != nil else { return nil }
-        let key = TileStore.storageKey(for: id)
+        let key = TesseraTileStore.storageKey(for: id)
         guard visibleGridKeys().contains(key) else { return nil }
         return placementsByKey[key]
     }
@@ -726,11 +726,11 @@ public final class TileStore: ObservableObject {
     /// Если `columns` совпадает с ``canvasColumns``, возвращается сохранённая
     /// раскладка с дырами. Иначе — **проекция**: плитки в порядке чтения
     /// сохранённых ячеек (строка, затем колонка) упаковываются
-    /// `TileLayoutEngine.packCompact` под ширину хоста, без дыр. Проекция
+    /// `TesseraTileLayoutEngine.packCompact` под ширину хоста, без дыр. Проекция
     /// считается на лету и **файл не перезаписывает**: возврат к прежней
     /// ширине без правок возвращает дыры. Без ячеек (``canvasColumns`` равно
     /// `nil`) это упаковка текущего порядка модели. Ярлык шире `columns`
-    /// занимает ужатый след (``TileLayoutEngine/fittingSize(_:columns:)``).
+    /// занимает ужатый след (``TesseraTileLayoutEngine/fittingSize(_:columns:)``).
     ///
     /// Первая операция редактирования при несовпадении ширины принимает
     /// раскладку под ширину хоста как новый холст (обновляется
@@ -739,12 +739,12 @@ public final class TileStore: ObservableObject {
     ///
     /// - Parameter columns: Число колонок сетки хоста, больше нуля.
     /// - Returns: Ячейки по идентификаторам; пусто при `columns <= 0`.
-    public func placements(forColumns columns: Int) -> [AnyHashable: TileGridPlacement] {
+    public func placements(forColumns columns: Int) -> [AnyHashable: TesseraTileGridPlacement] {
         guard columns > 0 else { return [:] }
         if canvasColumns == columns {
             return storedVisiblePlacements()
         }
-        var result: [AnyHashable: TileGridPlacement] = [:]
+        var result: [AnyHashable: TesseraTileGridPlacement] = [:]
         for (key, placement) in projectedPlacements(columns: columns) {
             if let id = visibleItemID(forKey: key) {
                 result[id] = placement
@@ -783,10 +783,10 @@ public final class TileStore: ObservableObject {
             let cells = canvasColumns == columns
                 ? placementsByKey
                 : projectedPlacements(columns: columns)
-            return TileStore.readingSorted(visible, by: cells)
+            return TesseraTileStore.readingSorted(visible, by: cells)
         }
         guard canvasColumns != nil else { return visible }
-        return TileStore.readingSorted(visible, by: placementsByKey)
+        return TesseraTileStore.readingSorted(visible, by: placementsByKey)
     }
 
     /// Сообщает хранилищу ширину сетки хоста и, если ячеек ещё нет, назначает их
@@ -794,7 +794,7 @@ public final class TileStore: ObservableObject {
     ///
     /// Однократно: если ячеек нет (файл версии 1 или первый запуск), текущий
     /// порядок видимых элементов упаковывается прежним
-    /// `TileLayoutEngine.packCompact` для `columns` — внешне ничего не
+    /// `TesseraTileLayoutEngine.packCompact` для `columns` — внешне ничего не
     /// меняется, — ячейки невидимых ключей ставятся в новые строки в конце, и
     /// результат сразу сохраняется (при ``autosaves``). Если ячейки уже есть,
     /// метод только запоминает ширину; файл не трогается, даже если ширина
@@ -841,7 +841,7 @@ public final class TileStore: ObservableObject {
         }
 
         let document = TileStoreDocument(
-            version: TileStore.schemaVersion,
+            version: TesseraTileStore.schemaVersion,
             columns: canvasColumns,
             items: makeDocumentItems(),
             sizes: sizes,
@@ -886,7 +886,7 @@ public final class TileStore: ObservableObject {
     /// хранилище продолжает работу с текущим состоянием, а автосохранение
     /// пишет новый файл, не затирая нечитаемый (E10.3d).
     ///
-    /// - Throws: Ошибку чтения/декодирования или ``TileStoreError``.
+    /// - Throws: Ошибку чтения/декодирования или ``TesseraTileStoreError``.
     public func load() throws {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
 
@@ -897,8 +897,8 @@ public final class TileStore: ObservableObject {
         let document: TileStoreDocument
         do {
             document = try JSONDecoder().decode(TileStoreDocument.self, from: data)
-            guard document.version <= TileStore.schemaVersion else {
-                throw TileStoreError.unsupportedSchemaVersion(document.version)
+            guard document.version <= TesseraTileStore.schemaVersion else {
+                throw TesseraTileStoreError.unsupportedSchemaVersion(document.version)
             }
         } catch {
             // Содержимое прочитано, но понять его нельзя: откладываем файл в
@@ -986,7 +986,7 @@ public final class TileStore: ObservableObject {
             .map {
                 FolderRecord(
                     key: $0.key,
-                    id: TileStore.identifier(fromStorageKey: $0.key),
+                    id: TesseraTileStore.identifier(fromStorageKey: $0.key),
                     title: $0.title,
                     size: $0.size,
                     tileKeys: $0.tileKeys
@@ -1019,7 +1019,7 @@ public final class TileStore: ObservableObject {
         // каталогу доведёт дело (``pruneFoldersAgainstCatalog()``).
         underfilledFolderKeys = Set(
             folderRecords
-                .filter { $0.tileKeys.count < TileStore.minimumFolderTileCount }
+                .filter { $0.tileKeys.count < TesseraTileStore.minimumFolderTileCount }
                 .map { $0.key }
         )
         pendingDissolvedTiles = []
@@ -1079,12 +1079,12 @@ public final class TileStore: ObservableObject {
             firstItems[item.key] = item
         }
 
-        var parsed: [String: TileGridPlacement] = [:]
+        var parsed: [String: TesseraTileGridPlacement] = [:]
         for key in gridOrder {
             guard let item = firstItems[key], let row = item.row, let column = item.column else {
                 return
             }
-            parsed[key] = TileGridPlacement(row: row, column: column)
+            parsed[key] = TesseraTileGridPlacement(row: row, column: column)
         }
 
         for (key, placement) in parsed where isPlacementValid(placement, forKey: key, columns: columns) {
@@ -1216,11 +1216,11 @@ public final class TileStore: ObservableObject {
     /// ширина хоста, иначе ширина холста, иначе умолчание (D26). Внутренняя:
     /// страница списка приложений берёт её, когда хост не передал колонки (E14.5).
     var effectiveColumns: Int {
-        hostColumns ?? canvasColumns ?? TileStore.defaultGridColumns
+        hostColumns ?? canvasColumns ?? TesseraTileStore.defaultGridColumns
     }
 
     /// Размер элемента по ключу: папка, затем сохранённый размер, затем каталог.
-    private func storedSize(ofKey key: String) -> TileSize {
+    private func storedSize(ofKey key: String) -> TesseraTileSize {
         if let record = folderRecords.first(where: { $0.key == key }) { return record.size }
         if let size = sizes[key] { return size }
         if let index = catalogIndex[key] { return catalog[index].size }
@@ -1228,8 +1228,8 @@ public final class TileStore: ObservableObject {
     }
 
     /// Размер элемента, ужатый под ширину холста (D15, E14.1).
-    private func footprint(ofKey key: String, columns: Int) -> TileSize {
-        TileLayoutEngine.fittingSize(storedSize(ofKey: key), columns: columns)
+    private func footprint(ofKey key: String, columns: Int) -> TesseraTileSize {
+        TesseraTileLayoutEngine.fittingSize(storedSize(ofKey: key), columns: columns)
     }
 
     /// Идентификатор видимого элемента по ключу.
@@ -1240,8 +1240,8 @@ public final class TileStore: ObservableObject {
     }
 
     /// Сохранённые ячейки видимых элементов по идентификаторам.
-    private func storedVisiblePlacements() -> [AnyHashable: TileGridPlacement] {
-        var result: [AnyHashable: TileGridPlacement] = [:]
+    private func storedVisiblePlacements() -> [AnyHashable: TesseraTileGridPlacement] {
+        var result: [AnyHashable: TesseraTileGridPlacement] = [:]
         for key in visibleGridKeys() {
             guard let placement = placementsByKey[key], let id = visibleItemID(forKey: key) else { continue }
             result[id] = placement
@@ -1255,17 +1255,17 @@ public final class TileStore: ObservableObject {
     ///   - keys: Ключи в порядке упаковки.
     ///   - columns: Ширина холста, больше нуля.
     /// - Returns: Ячейки по ключам (элемент, который не поместился, пропускается).
-    private func packedPlacements(of keys: [String], columns: Int) -> [String: TileGridPlacement] {
+    private func packedPlacements(of keys: [String], columns: Int) -> [String: TesseraTileGridPlacement] {
         guard columns > 0 else { return [:] }
-        let slots = TileLayoutEngine.packCompact(
+        let slots = TesseraTileLayoutEngine.packCompact(
             items: keys.map { (id: AnyHashable($0), size: footprint(ofKey: $0, columns: columns)) },
             columns: columns,
             unit: 1
         )
-        var result: [String: TileGridPlacement] = [:]
+        var result: [String: TesseraTileGridPlacement] = [:]
         for slot in slots {
             guard let key = slot.id.base as? String else { continue }
-            result[key] = TileGridPlacement(row: slot.row, column: slot.column)
+            result[key] = TesseraTileGridPlacement(row: slot.row, column: slot.column)
         }
         return result
     }
@@ -1273,21 +1273,21 @@ public final class TileStore: ObservableObject {
     /// Проекция раскладки на ширину `columns` без дыр (D32): видимые элементы
     /// в порядке чтения сохранённых ячеек (без ячеек — в порядке модели)
     /// упаковываются `packCompact`.
-    private func projectedPlacements(columns: Int) -> [String: TileGridPlacement] {
+    private func projectedPlacements(columns: Int) -> [String: TesseraTileGridPlacement] {
         var keys = visibleGridKeys()
         if canvasColumns != nil {
-            keys = TileStore.readingSorted(keys, by: placementsByKey)
+            keys = TesseraTileStore.readingSorted(keys, by: placementsByKey)
         }
         return packedPlacements(of: keys, columns: columns)
     }
 
     /// Ключи в порядке чтения ячеек (строка, колонка); при равных ячейках и без
     /// ячеек — исходный порядок (сортировка устойчива за счёт индекса).
-    private static func readingSorted(_ keys: [String], by cells: [String: TileGridPlacement]) -> [String] {
+    private static func readingSorted(_ keys: [String], by cells: [String: TesseraTileGridPlacement]) -> [String] {
         keys.enumerated().sorted { lhs, rhs in
             switch (cells[lhs.element], cells[rhs.element]) {
             case let (left?, right?):
-                if left != right { return TileGridPlacement.isReadingOrdered(left, before: right) }
+                if left != right { return TesseraTileGridPlacement.isReadingOrdered(left, before: right) }
                 return lhs.offset < rhs.offset
             case (nil, _?): return false
             case (_?, nil): return true
@@ -1297,9 +1297,9 @@ public final class TileStore: ObservableObject {
     }
 
     /// Допустима ли ячейка: неотрицательна, не чрезмерна и целиком в холсте.
-    private func isPlacementValid(_ placement: TileGridPlacement, forKey key: String, columns: Int) -> Bool {
+    private func isPlacementValid(_ placement: TesseraTileGridPlacement, forKey key: String, columns: Int) -> Bool {
         guard placement.row >= 0, placement.column >= 0,
-              placement.row <= TileStore.maxPlacementRow,
+              placement.row <= TesseraTileStore.maxPlacementRow,
               placement.column < columns else { return false }
         let size = footprint(ofKey: key, columns: columns)
         return placement.column + size.unitColumns <= columns
@@ -1356,7 +1356,7 @@ public final class TileStore: ObservableObject {
         }
 
         var accepted: [Rect] = []
-        var next: [String: TileGridPlacement] = [:]
+        var next: [String: TesseraTileGridPlacement] = [:]
         var pendingVisible: [String] = []
 
         let priority = visible.filter { settled.contains($0) } + visible.filter { !settled.contains($0) }
@@ -1391,7 +1391,7 @@ public final class TileStore: ObservableObject {
             var bottom = baseRow
             for key in group {
                 guard let cell = packed[key] else { continue }
-                next[key] = TileGridPlacement(row: baseRow + cell.row, column: cell.column)
+                next[key] = TesseraTileGridPlacement(row: baseRow + cell.row, column: cell.column)
                 let size = footprint(ofKey: key, columns: columns)
                 bottom = max(bottom, baseRow + cell.row + size.unitRows)
             }
@@ -1435,7 +1435,7 @@ public final class TileStore: ObservableObject {
         var removedAny = false
         for key in folderRecords.map({ $0.key }) where affected.contains(key) {
             guard let record = folderRecords.first(where: { $0.key == key }),
-                  record.tileKeys.count < TileStore.minimumFolderTileCount else { continue }
+                  record.tileKeys.count < TesseraTileStore.minimumFolderTileCount else { continue }
             dissolveFolder(withKey: key)
             removedAny = true
         }
@@ -1449,7 +1449,7 @@ public final class TileStore: ObservableObject {
     /// самое по набору размещений, ``dissolveFolderIfNeeded(withKey:in:columns:)``).
     /// Пустая папка просто исчезает. Ярлык с одним оставшимся ключом
     /// занимает в `gridOrder` индекс папки, а его ячейка — ячейка папки, ужатая
-    /// под холст (``TileLayoutEngine/clamped(cell:size:columns:)``); окончательно
+    /// под холст (``TesseraTileLayoutEngine/clamped(cell:size:columns:)``); окончательно
     /// решает ``resolveDissolvedTiles()`` (выталкивание соседей), если ячейки
     /// уже есть.
     ///
@@ -1474,7 +1474,7 @@ public final class TileStore: ObservableObject {
         }
 
         if let columns = canvasColumns, columns > 0, let folderCell {
-            let cell = TileLayoutEngine.clamped(
+            let cell = TesseraTileLayoutEngine.clamped(
                 cell: folderCell,
                 size: storedSize(ofKey: remaining),
                 columns: columns
@@ -1485,7 +1485,7 @@ public final class TileStore: ObservableObject {
     }
 
     /// Доводит ячейки ярлыков, занявших место распущенных папок (D45):
-    /// ставит каждый на ячейку папки через `TileLayoutEngine.inserting`.
+    /// ставит каждый на ячейку папки через `TesseraTileLayoutEngine.inserting`.
     ///
     /// Бо́льший ярлык (wide, large) выталкивает соседей вниз каскадом (D31),
     /// слишком правая колонка сдвигается влево, меньший оставляет дыру. Если
@@ -1499,15 +1499,15 @@ public final class TileStore: ObservableObject {
         guard !pending.isEmpty, let columns = canvasColumns, columns > 0 else { return }
 
         let pendingKeys = Set(pending.map { $0.key })
-        var items: [TilePlacedItem] = []
+        var items: [TesseraTilePlacedItem] = []
         for key in visibleGridKeys() where !pendingKeys.contains(key) {
             guard let cell = placementsByKey[key] else { return }
-            items.append(TilePlacedItem(id: AnyHashable(key), size: storedSize(ofKey: key), cell: cell))
+            items.append(TesseraTilePlacedItem(id: AnyHashable(key), size: storedSize(ofKey: key), cell: cell))
         }
-        guard TileLayoutEngine.validate(items, columns: columns).isEmpty else { return }
+        guard TesseraTileLayoutEngine.validate(items, columns: columns).isEmpty else { return }
 
         for entry in pending where catalogIndex[entry.key] != nil {
-            items = TileLayoutEngine.inserting(
+            items = TesseraTileLayoutEngine.inserting(
                 id: AnyHashable(entry.key),
                 size: storedSize(ofKey: entry.key),
                 at: entry.cell,
@@ -1518,16 +1518,16 @@ public final class TileStore: ObservableObject {
         for item in items {
             if let key = item.id.base as? String { placementsByKey[key] = item.cell }
         }
-        applyVisibleOrder(TileStore.readingSorted(visibleGridKeys(), by: placementsByKey))
+        applyVisibleOrder(TesseraTileStore.readingSorted(visibleGridKeys(), by: placementsByKey))
     }
 
     /// Ярлык с авторитетным размером из хранилища.
     ///
     /// - Parameter descriptor: Запись каталога.
     /// - Returns: Копия ярлыка с текущим размером.
-    private func resolved(_ descriptor: TileDescriptor) -> TileDescriptor {
+    private func resolved(_ descriptor: TesseraTileDescriptor) -> TesseraTileDescriptor {
         var copy = descriptor
-        copy.size = sizes[TileStore.storageKey(for: descriptor.id)] ?? descriptor.size
+        copy.size = sizes[TesseraTileStore.storageKey(for: descriptor.id)] ?? descriptor.size
         return copy
     }
 
@@ -1535,8 +1535,8 @@ public final class TileStore: ObservableObject {
     ///
     /// - Parameter record: Внутренняя запись папки.
     /// - Returns: Папка с разрешёнными ярлыками и их размерами.
-    private func materialize(_ record: FolderRecord) -> TileFolder {
-        TileFolder(
+    private func materialize(_ record: FolderRecord) -> TesseraTileFolder {
+        TesseraTileFolder(
             id: record.id,
             title: record.title,
             icon: record.icon,
@@ -1570,7 +1570,7 @@ public final class TileStore: ObservableObject {
 
     /// Восстанавливает идентификатор папки из канонического ключа.
     ///
-    /// Папки создаёт только TileStore, поэтому на практике это всегда `String`
+    /// Папки создаёт только TesseraTileStore, поэтому на практике это всегда `String`
     /// (`folder-UUID`); остальные ветки — для чтения старых/ручных файлов.
     ///
     /// - Parameter key: Строковый ключ из файла состояния.
@@ -1595,7 +1595,7 @@ public final class TileStore: ObservableObject {
 // MARK: - Операции по ячейкам (E14.4, D30–D33)
 
 /// Операции над верхнеуровневыми элементами **по координатам**: движок
-/// (`TileLayoutEngine+Placement`) считает новые ячейки, хранилище применяет их
+/// (`TesseraTileLayoutEngine+Placement`) считает новые ячейки, хранилище применяет их
 /// как есть (E14.4).
 ///
 /// Индексного API нет (E14.6, D33): позиция элемента — ячейка, порядок чтения
@@ -1624,7 +1624,7 @@ public final class TileStore: ObservableObject {
 /// отказ хоста) ничего не меняет и возвращает `false`; уведомление и запись —
 /// ровно одна на успешную операцию. Операции с группировкой спрашивают у хоста
 /// одобрение (D14).
-extension TileStore {
+extension TesseraTileStore {
 
     // MARK: Перенос
 
@@ -1632,7 +1632,7 @@ extension TileStore {
     ///
     /// Элемент встаёт на `cell`, ограниченную холстом (слишком правая колонка
     /// сдвигается влево); плитки, которые мешают, выталкиваются вниз каскадом
-    /// (`TileLayoutEngine.inserting`). Место, которое элемент освободил, остаётся
+    /// (`TesseraTileLayoutEngine.inserting`). Место, которое элемент освободил, остаётся
     /// дырой — репака нет. Одобрение хоста не спрашивается: это операция
     /// раскладки, а не группировки (D14).
     ///
@@ -1643,14 +1643,14 @@ extension TileStore {
     /// - Returns: `true`, если раскладка изменилась; `false` — элемента нет на
     ///   сетке, элемент уже на этой ячейке и ничего не двигается либо `columns <= 0`.
     @discardableResult
-    public func moveItem(_ itemID: AnyHashable, toCell cell: TileGridPlacement, columns: Int) -> Bool {
+    public func moveItem(_ itemID: AnyHashable, toCell cell: TesseraTileGridPlacement, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let key = TileStore.storageKey(for: itemID)
+        let key = TesseraTileStore.storageKey(for: itemID)
         guard visibleGridKeys().contains(key) else { return false }
 
         let basis = cellBasis(columns: columns)
-        let moved = TileLayoutEngine.inserting(
+        let moved = TesseraTileLayoutEngine.inserting(
             id: AnyHashable(key),
             size: storedSize(ofKey: key),
             at: cell,
@@ -1665,7 +1665,7 @@ extension TileStore {
 
     /// Переносит ярлык или папку в новую строку в конце холста (E14.4, D33).
     ///
-    /// Цель — `TileLayoutEngine.newRowCell`: первая строка после последней
+    /// Цель — `TesseraTileLayoutEngine.newRowCell`: первая строка после последней
     /// занятой (без учёта самого переносимого элемента), колонка 0. Остальное —
     /// как в ``moveItem(_:toCell:columns:)``.
     ///
@@ -1677,17 +1677,17 @@ extension TileStore {
     public func moveItemToNewRow(_ itemID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let key = TileStore.storageKey(for: itemID)
+        let key = TesseraTileStore.storageKey(for: itemID)
         guard visibleGridKeys().contains(key) else { return false }
 
         let basis = cellBasis(columns: columns)
-        let cell = TileLayoutEngine.newRowCell(
+        let cell = TesseraTileLayoutEngine.newRowCell(
             size: storedSize(ofKey: key),
             columns: columns,
             placements: basis,
             excluding: AnyHashable(key)
         )
-        let moved = TileLayoutEngine.inserting(
+        let moved = TesseraTileLayoutEngine.inserting(
             id: AnyHashable(key),
             size: storedSize(ofKey: key),
             at: cell,
@@ -1706,7 +1706,7 @@ extension TileStore {
     ///
     /// Якорная ячейка остаётся (если новая ширина не помещается, колонка
     /// сдвигается влево); рост выталкивает мешающие плитки вниз каскадом
-    /// (`TileLayoutEngine.resizing`), уменьшение оставляет дыру. Ярлык в папке
+    /// (`TesseraTileLayoutEngine.resizing`), уменьшение оставляет дыру. Ярлык в папке
     /// или вне сетки просто меняет авторитетный размер, ячейки не меняются.
     ///
     /// - Parameters:
@@ -1716,19 +1716,19 @@ extension TileStore {
     /// - Returns: `true`, если размер изменился; `false` — элемента нет, размер
     ///   тот же либо `columns <= 0`.
     @discardableResult
-    public func resize(_ itemID: AnyHashable, to size: TileSize, columns: Int) -> Bool {
+    public func resize(_ itemID: AnyHashable, to size: TesseraTileSize, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let key = TileStore.storageKey(for: itemID)
+        let key = TesseraTileStore.storageKey(for: itemID)
 
         let folderIndex = folderRecords.firstIndex { $0.key == key }
         guard folderIndex != nil || catalogIndex[key] != nil else { return false }
-        let currentSize: TileSize? = folderIndex.map { folderRecords[$0].size } ?? sizes[key]
+        let currentSize: TesseraTileSize? = folderIndex.map { folderRecords[$0].size } ?? sizes[key]
         guard currentSize != size else { return false }
 
         // Раскладка считается до записи размера: базис несёт прежние размеры.
         let basis = cellBasis(columns: columns)
-        let resized = TileLayoutEngine.resizing(
+        let resized = TesseraTileLayoutEngine.resizing(
             id: AnyHashable(key),
             to: size,
             in: basis,
@@ -1750,7 +1750,7 @@ extension TileStore {
     /// Создаёт папку из двух ярлыков на месте цели (E14.4, D20, D31).
     ///
     /// Папка всегда средняя (2×2, E12.2). Она встаёт на ячейку ярлыка-цели
-    /// через `TileLayoutEngine.inserting`: малая цель растёт до 2×2 и выталкивает
+    /// через `TesseraTileLayoutEngine.inserting`: малая цель растёт до 2×2 и выталкивает
     /// соседей вниз каскадом, слишком правая колонка сдвигается влево. Ярлыки
     /// цели и источника уходят с верхнего уровня, их ячейки остаются дырами,
     /// кроме тех, что накрыла папка. Внутри папки порядок: цель, затем источник.
@@ -1773,8 +1773,8 @@ extension TileStore {
     ) -> AtomicFolderResult {
         guard columns > 0 else { return .createDenied }
         noteHostColumns(columns)
-        let sourceKey = TileStore.storageKey(for: sourceID)
-        let targetKey = TileStore.storageKey(for: targetID)
+        let sourceKey = TesseraTileStore.storageKey(for: sourceID)
+        let targetKey = TesseraTileStore.storageKey(for: targetID)
         let visible = Set(visibleGridKeys())
         guard sourceKey != targetKey,
               let sourceCatalog = catalogIndex[sourceKey],
@@ -1790,19 +1790,19 @@ extension TileStore {
 
         let folderID = AnyHashable("folder-" + UUID().uuidString)
         var record = FolderRecord(
-            key: TileStore.storageKey(for: folderID),
+            key: TesseraTileStore.storageKey(for: folderID),
             id: folderID,
             title: title,
-            size: TileStore.newFolderSize,
+            size: TesseraTileStore.newFolderSize,
             tileKeys: [targetKey]
         )
         guard approval(nil, catalog[targetCatalog], .createFolder) else { return .createDenied }
         guard approval(materialize(record), catalog[sourceCatalog], .addToFolder) else { return .addDenied }
 
         record.tileKeys.append(sourceKey)
-        var items = TileLayoutEngine.removing(id: AnyHashable(sourceKey), from: basis)
-        items = TileLayoutEngine.removing(id: AnyHashable(targetKey), from: items)
-        items = TileLayoutEngine.inserting(
+        var items = TesseraTileLayoutEngine.removing(id: AnyHashable(sourceKey), from: basis)
+        items = TesseraTileLayoutEngine.removing(id: AnyHashable(targetKey), from: items)
+        items = TesseraTileLayoutEngine.inserting(
             id: AnyHashable(record.key),
             size: record.size,
             at: targetItem.cell,
@@ -1821,7 +1821,7 @@ extension TileStore {
     /// Создаёт папку из одного ярлыка на его месте (E14.5, D20, D31).
     ///
     /// Папка всегда 2×2 и встаёт на ячейку
-    /// ярлыка через `TileLayoutEngine.inserting`: соседи выталкиваются вниз
+    /// ярлыка через `TesseraTileLayoutEngine.inserting`: соседи выталкиваются вниз
     /// каскадом. Хост одобряет создание (`.createFolder`).
     ///
     /// D45: папка из одного ярлыка — **переходное** состояние: хост обязан
@@ -1838,10 +1838,10 @@ extension TileStore {
     /// - Returns: Созданная папка или `nil` (нет ярлыка на сетке, `columns <= 0`
     ///   либо отказ хоста).
     @discardableResult
-    public func createFolder(withTile tileID: AnyHashable, title: String = "", columns: Int) -> TileFolder? {
+    public func createFolder(withTile tileID: AnyHashable, title: String = "", columns: Int) -> TesseraTileFolder? {
         guard columns > 0 else { return nil }
         noteHostColumns(columns)
-        let tileKey = TileStore.storageKey(for: tileID)
+        let tileKey = TesseraTileStore.storageKey(for: tileID)
         guard let catalogPosition = catalogIndex[tileKey],
               visibleGridKeys().contains(tileKey) else {
             return nil
@@ -1852,14 +1852,14 @@ extension TileStore {
 
         let folderID = AnyHashable("folder-" + UUID().uuidString)
         let record = FolderRecord(
-            key: TileStore.storageKey(for: folderID),
+            key: TesseraTileStore.storageKey(for: folderID),
             id: folderID,
             title: title,
-            size: TileStore.newFolderSize,
+            size: TesseraTileStore.newFolderSize,
             tileKeys: [tileKey]
         )
-        var items = TileLayoutEngine.removing(id: AnyHashable(tileKey), from: basis)
-        items = TileLayoutEngine.inserting(
+        var items = TesseraTileLayoutEngine.removing(id: AnyHashable(tileKey), from: basis)
+        items = TesseraTileLayoutEngine.inserting(
             id: AnyHashable(record.key),
             size: record.size,
             at: tileItem.cell,
@@ -1890,8 +1890,8 @@ extension TileStore {
     public func addToFolder(_ tileID: AnyHashable, folderID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let tileKey = TileStore.storageKey(for: tileID)
-        let folderKey = TileStore.storageKey(for: folderID)
+        let tileKey = TesseraTileStore.storageKey(for: tileID)
+        let folderKey = TesseraTileStore.storageKey(for: folderID)
 
         guard let catalogPosition = catalogIndex[tileKey],
               let folderIndex = folderRecords.firstIndex(where: { $0.key == folderKey }),
@@ -1903,7 +1903,7 @@ extension TileStore {
             return false
         }
 
-        let items = TileLayoutEngine.removing(id: AnyHashable(tileKey), from: cellBasis(columns: columns))
+        let items = TesseraTileLayoutEngine.removing(id: AnyHashable(tileKey), from: cellBasis(columns: columns))
         gridOrder.removeAll { $0 == tileKey }
         folderRecords[folderIndex].tileKeys.append(tileKey)
         commitCells(items, columns: columns)
@@ -1930,7 +1930,7 @@ extension TileStore {
     /// - Returns: `true`, если состояние изменилось; `false` — ярлыка нет в папке,
     ///   хост запретил либо `columns <= 0`.
     @discardableResult
-    public func extractFromFolder(_ tileID: AnyHashable, toCell cell: TileGridPlacement, columns: Int) -> Bool {
+    public func extractFromFolder(_ tileID: AnyHashable, toCell cell: TesseraTileGridPlacement, columns: Int) -> Bool {
         performExtract(tileID, cell: cell, columns: columns)
     }
 
@@ -1972,8 +1972,8 @@ extension TileStore {
     public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let tileKey = TileStore.storageKey(for: tileID)
-        let folderKey = TileStore.storageKey(for: folderID)
+        let tileKey = TesseraTileStore.storageKey(for: tileID)
+        let folderKey = TesseraTileStore.storageKey(for: folderID)
 
         guard let catalogPosition = catalogIndex[tileKey],
               let sourceIndex = folderRecords.firstIndex(where: { $0.tileKeys.contains(tileKey) }),
@@ -1998,9 +1998,9 @@ extension TileStore {
 
     /// Переименовывает папку (E15.5, D35; W10M §6.7).
     ///
-    /// Название нормализуется (``TileFolder/normalizedTitle(_:)``: пробелы и
+    /// Название нормализуется (``TesseraTileFolder/normalizedTitle(_:)``: пробелы и
     /// переводы строк по краям отбрасываются, переводы строк внутри становятся
-    /// пробелами, длина — не больше ``TileFolder/maximumTitleLength``). Пустое
+    /// пробелами, длина — не больше ``TesseraTileFolder/maximumTitleLength``). Пустое
     /// название возвращает **название по умолчанию** — то же, что получает новая
     /// папка (`folderScreen.defaultTitle`, en/ru; редактор подставляет его же,
     /// а `TesseraTileEditConfiguration.folderTitle` лишь перекрывает). Размер,
@@ -2018,11 +2018,11 @@ extension TileStore {
     ///   нормализованное название совпало с текущим (ни сохранения, ни `onChange`).
     @discardableResult
     public func renameFolder(_ folderID: AnyHashable, to newTitle: String) -> Bool {
-        let folderKey = TileStore.storageKey(for: folderID)
+        let folderKey = TesseraTileStore.storageKey(for: folderID)
         guard let index = folderRecords.firstIndex(where: { $0.key == folderKey }) else {
             return false
         }
-        var title = TileFolder.normalizedTitle(newTitle)
+        var title = TesseraTileFolder.normalizedTitle(newTitle)
         if title.isEmpty {
             title = TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
         }
@@ -2036,13 +2036,13 @@ extension TileStore {
     /// Переставляет ярлык внутри папки (E16.1, D40; W10M §6.5).
     ///
     /// Порядок ярлыков в папке — порядок `FolderRecord.tileKeys`: он же
-    /// попадает в файл, в ``TileFolder/tiles`` снимка и в превью/панель.
+    /// попадает в файл, в ``TesseraTileFolder/tiles`` снимка и в превью/панель.
     /// Операция меняет только его: размеры, ячейки и состав папок не меняются,
     /// ширины сетки не нужно. Одобрение хоста (D14) не спрашивается — состав
     /// папки не меняется (в отличие от переноса между папками).
     ///
     /// `toIndex` — индекс **среди видимых ярлыков папки** (тех, что есть в
-    /// каталоге и попадают в ``TileFolder/tiles``); значение вне
+    /// каталоге и попадают в ``TesseraTileFolder/tiles``); значение вне
     /// `0...count - 1` ужимается к границе. Невидимые члены (ключи, которых нет
     /// в каталоге: до первого ``setCatalog(_:)`` после ``load()``) в расчёте
     /// не участвуют и остаются на своих местах в записи — после регистрации
@@ -2061,8 +2061,8 @@ extension TileStore {
     ///   `onChange`).
     @discardableResult
     public func moveWithinFolder(_ tileID: AnyHashable, folderID: AnyHashable, toIndex: Int) -> Bool {
-        let folderKey = TileStore.storageKey(for: folderID)
-        let tileKey = TileStore.storageKey(for: tileID)
+        let folderKey = TesseraTileStore.storageKey(for: folderID)
+        let tileKey = TesseraTileStore.storageKey(for: tileID)
         guard let folderIndex = folderRecords.firstIndex(where: { $0.key == folderKey }) else {
             return false
         }
@@ -2101,7 +2101,7 @@ extension TileStore {
     public func unpin(_ tileID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let key = TileStore.storageKey(for: tileID)
+        let key = TesseraTileStore.storageKey(for: tileID)
 
         if let index = folderRecords.firstIndex(where: { $0.tileKeys.contains(key) }) {
             var items = cellBasis(columns: columns)
@@ -2115,7 +2115,7 @@ extension TileStore {
         }
 
         guard catalogIndex[key] != nil, gridOrder.contains(key) else { return false }
-        let items = TileLayoutEngine.removing(id: AnyHashable(key), from: cellBasis(columns: columns))
+        let items = TesseraTileLayoutEngine.removing(id: AnyHashable(key), from: cellBasis(columns: columns))
         gridOrder.removeAll { $0 == key }
         commitCells(items, columns: columns)
         didChange()
@@ -2136,7 +2136,7 @@ extension TileStore {
     public func pinTile(_ tileID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let key = TileStore.storageKey(for: tileID)
+        let key = TesseraTileStore.storageKey(for: tileID)
         guard let catalogPosition = catalogIndex[key], !gridOrder.contains(key),
               folderContaining(tileID) == nil else { return false }
 
@@ -2145,8 +2145,8 @@ extension TileStore {
         }
         let size = storedSize(ofKey: key)
         let basis = cellBasis(columns: columns)
-        let cell = TileLayoutEngine.newRowCell(size: size, columns: columns, placements: basis)
-        let items = TileLayoutEngine.inserting(
+        let cell = TesseraTileLayoutEngine.newRowCell(size: size, columns: columns, placements: basis)
+        let items = TesseraTileLayoutEngine.inserting(
             id: AnyHashable(key),
             size: size,
             at: cell,
@@ -2176,7 +2176,7 @@ extension TileStore {
         noteHostColumns(columns)
 
         let basis = cellBasis(columns: columns)
-        let collapsed = TileLayoutEngine.collapsingEmptyRows(in: basis, columns: columns)
+        let collapsed = TesseraTileLayoutEngine.collapsingEmptyRows(in: basis, columns: columns)
         guard collapsed != basis else { return false }
         commitCells(collapsed, columns: columns)
         didChange()
@@ -2191,10 +2191,10 @@ extension TileStore {
     ///   - tileID: Ярлык, лежащий в папке.
     ///   - cell: Ячейка; `nil` — новая строка в конце холста.
     ///   - columns: Число колонок сетки хоста.
-    private func performExtract(_ tileID: AnyHashable, cell: TileGridPlacement?, columns: Int) -> Bool {
+    private func performExtract(_ tileID: AnyHashable, cell: TesseraTileGridPlacement?, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
-        let key = TileStore.storageKey(for: tileID)
+        let key = TesseraTileStore.storageKey(for: tileID)
 
         guard let catalogPosition = catalogIndex[key],
               let sourceIndex = folderRecords.firstIndex(where: { $0.tileKeys.contains(key) }) else {
@@ -2212,8 +2212,8 @@ extension TileStore {
         dissolveFolderIfNeeded(withKey: folderKey, in: &items, columns: columns)
 
         let size = storedSize(ofKey: key)
-        let target = cell ?? TileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
-        items = TileLayoutEngine.inserting(
+        let target = cell ?? TesseraTileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
+        items = TesseraTileLayoutEngine.inserting(
             id: AnyHashable(key),
             size: size,
             at: target,
@@ -2231,7 +2231,7 @@ extension TileStore {
     /// Ничего не делает, если ярлыков в папке достаточно. Иначе папка исчезает
     /// из модели и из набора `items`; единственный оставшийся видимый ярлык
     /// встаёт на **ячейку папки со своим размером** через
-    /// `TileLayoutEngine.inserting`: бо́льший (wide, large) выталкивает соседей
+    /// `TesseraTileLayoutEngine.inserting`: бо́льший (wide, large) выталкивает соседей
     /// вниз каскадом (D31), слишком правая колонка сдвигается влево, меньший
     /// оставляет дыру. Размер ярлыка — авторитетный размер хранилища
     /// (``storedSize(ofKey:)``), его выбор пользователя не теряется. Пустая
@@ -2250,23 +2250,23 @@ extension TileStore {
     @discardableResult
     private func dissolveFolderIfNeeded(
         withKey folderKey: String,
-        in items: inout [TilePlacedItem],
+        in items: inout [TesseraTilePlacedItem],
         columns: Int
     ) -> String? {
         guard let index = folderRecords.firstIndex(where: { $0.key == folderKey }),
-              folderRecords[index].tileKeys.count < TileStore.minimumFolderTileCount else {
+              folderRecords[index].tileKeys.count < TesseraTileStore.minimumFolderTileCount else {
             return nil
         }
         let record = folderRecords.remove(at: index)
         gridOrder.removeAll { $0 == folderKey }
         let folderCell = items.first { $0.id == AnyHashable(folderKey) }?.cell
-        items = TileLayoutEngine.removing(id: AnyHashable(folderKey), from: items)
+        items = TesseraTileLayoutEngine.removing(id: AnyHashable(folderKey), from: items)
 
         guard record.tileKeys.count == 1, let remaining = record.tileKeys.first,
               catalogIndex[remaining] != nil, let cell = folderCell else {
             return nil
         }
-        items = TileLayoutEngine.inserting(
+        items = TesseraTileLayoutEngine.inserting(
             id: AnyHashable(remaining),
             size: storedSize(ofKey: remaining),
             at: cell,
@@ -2290,16 +2290,16 @@ extension TileStore {
     ///
     /// - Parameter columns: Число колонок, больше нуля.
     /// - Returns: Элементы в порядке сетки; идентификатор — канонический ключ.
-    private func cellBasis(columns: Int) -> [TilePlacedItem] {
+    private func cellBasis(columns: Int) -> [TesseraTilePlacedItem] {
         let keys = visibleGridKeys()
 
-        func build(from cells: [String: TileGridPlacement]) -> [TilePlacedItem] {
-            var items: [TilePlacedItem] = []
+        func build(from cells: [String: TesseraTileGridPlacement]) -> [TesseraTilePlacedItem] {
+            var items: [TesseraTilePlacedItem] = []
             items.reserveCapacity(keys.count)
             var missing: [String] = []
             for key in keys {
                 if let cell = cells[key] {
-                    items.append(TilePlacedItem(id: AnyHashable(key), size: storedSize(ofKey: key), cell: cell))
+                    items.append(TesseraTilePlacedItem(id: AnyHashable(key), size: storedSize(ofKey: key), cell: cell))
                 } else {
                     missing.append(key)
                 }
@@ -2307,8 +2307,8 @@ extension TileStore {
             // Защита: у видимого ключа нет ячейки — новая строка в конце.
             for key in missing {
                 let size = storedSize(ofKey: key)
-                let cell = TileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
-                items = TileLayoutEngine.inserting(
+                let cell = TesseraTileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
+                items = TesseraTileLayoutEngine.inserting(
                     id: AnyHashable(key), size: size, at: cell, into: items, columns: columns
                 )
             }
@@ -2317,7 +2317,7 @@ extension TileStore {
 
         let stored = canvasColumns == columns ? placementsByKey : projectedPlacements(columns: columns)
         let items = build(from: stored)
-        if TileLayoutEngine.validate(items, columns: columns).isEmpty {
+        if TesseraTileLayoutEngine.validate(items, columns: columns).isEmpty {
             return items
         }
         return build(from: projectedPlacements(columns: columns))
@@ -2336,8 +2336,8 @@ extension TileStore {
     /// - Parameters:
     ///   - items: Размещения всех видимых элементов после операции.
     ///   - columns: Ширина холста (ширина хоста).
-    private func commitCells(_ items: [TilePlacedItem], columns: Int) {
-        var next: [String: TileGridPlacement] = [:]
+    private func commitCells(_ items: [TesseraTilePlacedItem], columns: Int) {
+        var next: [String: TesseraTileGridPlacement] = [:]
         for item in items {
             if let key = item.id.base as? String { next[key] = item.cell }
         }
@@ -2348,7 +2348,7 @@ extension TileStore {
         placementsByKey = next
         canvasColumns = columns
 
-        let ordered = TileStore.readingSorted(items.compactMap { $0.id.base as? String }, by: next)
+        let ordered = TesseraTileStore.readingSorted(items.compactMap { $0.id.base as? String }, by: next)
         applyVisibleOrder(ordered)
         reconcilePlacements()
     }
@@ -2358,8 +2358,8 @@ extension TileStore {
 
 /// Внутренняя запись папки: ярлыки хранятся ключами, а не копиями.
 ///
-/// Копии `TileDescriptor` внутри папки устаревали бы при перерегистрации
-/// каталога (новые подписи/иконки), поэтому публичная ``TileFolder``
+/// Копии `TesseraTileDescriptor` внутри папки устаревали бы при перерегистрации
+/// каталога (новые подписи/иконки), поэтому публичная ``TesseraTileFolder``
 /// собирается по запросу.
 private struct FolderRecord {
 
@@ -2376,7 +2376,7 @@ private struct FolderRecord {
     var icon: UIImage?
 
     /// Размер плитки-папки.
-    var size: TileSize
+    var size: TesseraTileSize
 
     /// Канонические ключи ярлыков в порядке отображения.
     var tileKeys: [String]
@@ -2384,12 +2384,12 @@ private struct FolderRecord {
 
 // MARK: - JSON-схема состояния
 
-/// Версионированный документ состояния (читается только TileStore).
+/// Версионированный документ состояния (читается только TesseraTileStore).
 ///
 /// Каталог ярлыков в файл не попадает: `action` — замыкание, его нельзя
 /// сериализовать. Хранится только раскладка: порядок, ячейки и ширина холста
 /// (версия 2, E14.1), размеры, папки.
-/// Ключи элементов — канонические строки (см. `TileStore.storageKey(for:)`),
+/// Ключи элементов — канонические строки (см. `TesseraTileStore.storageKey(for:)`),
 /// поэтому схема не зависит от типа `AnyHashable`-идентификатора.
 private struct TileStoreDocument: Codable {
 
@@ -2405,7 +2405,7 @@ private struct TileStoreDocument: Codable {
     var items: [Item]
 
     /// Размеры ярлыков по каноническим ключам.
-    var sizes: [String: TileSize]
+    var sizes: [String: TesseraTileSize]
 
     /// Папки с составом и размерами.
     var folders: [Folder]
@@ -2433,7 +2433,7 @@ private struct TileStoreDocument: Codable {
     struct Folder: Codable {
         var key: String
         var title: String
-        var size: TileSize
+        var size: TesseraTileSize
         var tileKeys: [String]
     }
 }

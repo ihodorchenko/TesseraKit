@@ -386,20 +386,20 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertTrue(headerLabels(in: header).allSatisfy { accentLabel(of: $0) == nil })
     }
 
-    /// `PanoramaStyle.headerActiveColor` доходит до слоя заголовков панорамы;
+    /// `TesseraPanoramaStyle.headerActiveColor` доходит до слоя заголовков панорамы;
     /// совпадающий с `headerColor` — акцент не нужен.
     func testPanoramaStyleHeaderActiveColorReachesHeaderLayer() {
         let sections = (0..<3).map { index in
-            PanoramaSection(id: index, title: "S\(index)") { UIViewController() }
+            TesseraPanoramaSection(id: index, title: "S\(index)") { UIViewController() }
         }
-        let panorama = PanoramaViewController(
+        let panorama = TesseraPanoramaViewController(
             sections: sections,
-            style: PanoramaStyle(headerColor: .white, headerActiveColor: .systemYellow)
+            style: TesseraPanoramaStyle(headerColor: .white, headerActiveColor: .systemYellow)
         )
         panorama.loadViewIfNeeded()
         XCTAssertEqual(panorama.headerView.style.activeTextColor, .systemYellow)
 
-        panorama.style = PanoramaStyle(headerColor: .white, headerActiveColor: .white)
+        panorama.style = TesseraPanoramaStyle(headerColor: .white, headerActiveColor: .white)
         XCTAssertNil(panorama.headerView.style.activeTextColor)
     }
 

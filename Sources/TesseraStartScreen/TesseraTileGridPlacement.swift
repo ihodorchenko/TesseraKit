@@ -1,7 +1,7 @@
 // Координаты верхнеуровневого элемента сетки рабочего стола (E14.1, D30–D33).
 //
 // Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»
-// (персистентность TileStore) и решения D30–D33 в docs/STATE.md.
+// (персистентность TesseraTileStore) и решения D30–D33 в docs/STATE.md.
 
 import Foundation
 
@@ -12,11 +12,11 @@ import Foundation
 /// (в RTL это правый край, зеркалит только вью-слой, документ §9), `row == 0` —
 /// верхняя строка. Ячейка задаёт левый верхний угол элемента; его след на
 /// холсте определяется размером (D15, при узкой сетке — с поправкой
-/// ``TileLayoutEngine/fittingSize(_:columns:)``).
+/// ``TesseraTileLayoutEngine/fittingSize(_:columns:)``).
 ///
 /// Значение хранится в `tiles.json` (схема версии 2) вместе с шириной холста;
-/// про ширину см. ``TileStore/canvasColumns``.
-public struct TileGridPlacement: Equatable, Hashable, Codable, Sendable {
+/// про ширину см. ``TesseraTileStore/canvasColumns``.
+public struct TesseraTileGridPlacement: Equatable, Hashable, Codable, Sendable {
 
     /// Строка левого верхнего угла (отсчёт от 0, сверху вниз).
     public var row: Int
@@ -40,7 +40,7 @@ public struct TileGridPlacement: Equatable, Hashable, Codable, Sendable {
     ///   - lhs: Первая ячейка.
     ///   - rhs: Вторая ячейка.
     /// - Returns: `true`, если `lhs` читается раньше `rhs`.
-    public static func isReadingOrdered(_ lhs: TileGridPlacement, before rhs: TileGridPlacement) -> Bool {
+    public static func isReadingOrdered(_ lhs: TesseraTileGridPlacement, before rhs: TesseraTileGridPlacement) -> Bool {
         if lhs.row != rhs.row { return lhs.row < rhs.row }
         return lhs.column < rhs.column
     }

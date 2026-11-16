@@ -1,11 +1,11 @@
 //
-//  PivotViewController.swift
+//  TesseraPivotViewController.swift
 //  TesseraPivot
 //
 //  Оркестратор пивота: крупный заголовок приложения, лента заголовков и
 //  полноэкранный пейджер из TesseraCore.
 //  Контракт: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (компоновка сверху вниз:
-//  PivotTitleView → PivotHeaderStripView → пейджер), §4 «Математика ядра»
+//  PivotTitleView → TesseraPivotHeaderStripView → пейджер), §4 «Математика ядра»
 //  (автоцентрирование ленты по завершении перехода), §5 «Синхронизация ленты и
 //  пейджера» (один источник истины и один писатель `contentOffset`), §6
 //  «Вертикальный скролл внутри страницы» (вариант B: пейджер — только
@@ -34,22 +34,22 @@ import TesseraCore
 /// Компоновка сверху вниз (§3):
 ///
 /// ```
-/// PivotViewController
-///     ├─ крупный заголовок приложения (UILabel, опционально — ``PivotStyle/appTitle``)
-///     ├─ PivotHeaderStripView   ← лента заголовков + индикатор, вне пейджера,
+/// TesseraPivotViewController
+///     ├─ крупный заголовок приложения (UILabel, опционально — ``TesseraPivotStyle/appTitle``)
+///     ├─ TesseraPivotHeaderStripView   ← лента заголовков + индикатор, вне пейджера,
 ///     │                            поэтому закреплена по вертикали (§6)
-///     └─ TesseraPagerViewController (режим .paged) ← страницы из ``PivotSection``
+///     └─ TesseraPagerViewController (режим .paged) ← страницы из ``TesseraPivotSection``
 /// ```
 ///
 /// ## Синхронизация (§5)
 ///
 /// - свайп → лента: `didChangeProgress` пейджера передаётся в
-///   ``PivotHeaderStripView/apply(progress:)``; никакой обратной записи нет;
+///   ``TesseraPivotHeaderStripView/apply(progress:)``; никакой обратной записи нет;
 /// - тап по заголовку → пейджер: ``selectSection(at:animated:)`` вызывает
 ///   `go(toPage:animated:)`; при Reduce Motion переход без анимации (§8);
 /// - завершение перехода (`didShowPageAt`) → автоцентрирование ленты,
 ///   озвучивание названия секции и колбэк делегата
-///   ``PivotDelegate/pivot(_:didShowSectionAt:)``.
+///   ``TesseraPivotDelegate/pivot(_:didShowSectionAt:)``.
 ///
 /// ## Вертикальный скролл (§6, вариант B)
 ///
@@ -71,7 +71,7 @@ import TesseraCore
 /// - Important: Работает только на главном потоке: UI-состояние не
 ///   размазывается по модулям (docs/CORE-IOS-DESIGN.md §3). Делегат не
 ///   удерживается.
-public final class PivotViewController: UIViewController {
+public final class TesseraPivotViewController: UIViewController {
 
     // MARK: - Константы компоновки
 
@@ -104,16 +104,16 @@ public final class PivotViewController: UIViewController {
     /// Меняется только через ``reload(sections:)`` (и инициализатор). Секции —
     /// источник истины и для ленты (заголовки), и для пейджера (страницы,
     /// docs/PIVOT-IOS-DESIGN.md §3).
-    public private(set) var sections: [PivotSection] = []
+    public private(set) var sections: [TesseraPivotSection] = []
 
     /// Внешний вид пивота (docs/PIVOT-IOS-DESIGN.md §3).
     ///
     /// Любое присваивание применяется к ленте и крупному заголовку: у сеттеров
-    /// ``PivotHeaderStripView`` есть сравнение с прежним значением, поэтому
+    /// ``TesseraPivotHeaderStripView`` есть сравнение с прежним значением, поэтому
     /// повторная установка того же стиля не перезагружает ячейки. Шрифты
     /// заголовков лента масштабирует сама по Dynamic Type (§8); крупный заголовок
     /// приложения пересчитывается контроллером.
-    public var style: PivotStyle {
+    public var style: TesseraPivotStyle {
         didSet {
             guard isViewLoaded else { return }
             applyStyle()
@@ -123,8 +123,8 @@ public final class PivotViewController: UIViewController {
     /// Наблюдатель выбора, прогресса и показа секции.
     ///
     /// Не удерживается (docs/PIVOT-IOS-DESIGN.md §5: делегат только читает
-    /// состояние). Публичные колбэки — из ``PivotDelegate``.
-    public weak var delegate: PivotDelegate?
+    /// состояние). Публичные колбэки — из ``TesseraPivotDelegate``.
+    public weak var delegate: TesseraPivotDelegate?
 
     // MARK: - Внутренние представления
 
@@ -134,7 +134,7 @@ public final class PivotViewController: UIViewController {
     /// Доступна на уровне модуля (`@testable`), чтобы контрактные тесты E2.7
     /// могли проверить синхронизацию тапа/свайпа; в публичную поверхность не
     /// входит — геометрией и содержимым ленты владеет контроллер.
-    let headerStripView = PivotHeaderStripView()
+    let headerStripView = TesseraPivotHeaderStripView()
 
     /// Пейджер Core в режиме `.paged` (§2: снап даёт `isPagingEnabled`).
     ///
@@ -144,7 +144,7 @@ public final class PivotViewController: UIViewController {
 
     /// Крупный заголовок приложения (WP-поведение, §1, §9).
     ///
-    /// Показывается только при непустом ``PivotStyle/appTitle``; при `nil`
+    /// Показывается только при непустом ``TesseraPivotStyle/appTitle``; при `nil`
     /// заголовок интегрируется снаружи через `navigationItem.largeTitle` (§9).
     private let appTitleLabel = UILabel()
 
@@ -236,7 +236,7 @@ public final class PivotViewController: UIViewController {
 
     /// Секции, обновление контента которых отложено до конца перехода
     /// (E10.12а, см. ``refreshSectionContent(_:)``).
-    private var deferredContentSections: [PivotSection]?
+    private var deferredContentSections: [TesseraPivotSection]?
 
     /// Запланирована ли повторная попытка применить отложенный контент.
     private var isContentRefreshRetryScheduled = false
@@ -287,7 +287,7 @@ public final class PivotViewController: UIViewController {
     ///     начальное состояние (страницы можно передать позже через
     ///     ``reload(sections:)``).
     ///   - style: Внешний вид; по умолчанию системный.
-    public init(sections: [PivotSection] = [], style: PivotStyle = PivotStyle()) {
+    public init(sections: [TesseraPivotSection] = [], style: TesseraPivotStyle = TesseraPivotStyle()) {
         self.sections = sections
         self.style = style
         self.pagerViewController = TesseraPagerViewController(
@@ -369,7 +369,7 @@ public final class PivotViewController: UIViewController {
     ///
     /// - Parameter sections: Новые секции в порядке чтения. Пустой массив
     ///   допустим: лента скрывается (§9).
-    public func reload(sections newSections: [PivotSection]) {
+    public func reload(sections newSections: [TesseraPivotSection]) {
         let previousID: AnyHashable? = sections.indices.contains(currentSectionIndex)
             ? sections[currentSectionIndex].id
             : nil
@@ -409,7 +409,7 @@ public final class PivotViewController: UIViewController {
 
     /// Доносит новый контент секций при неизменных `id` и заголовках (E10.12а).
     ///
-    /// Путь SwiftUI-фасада: ``PivotView`` не может сравнить поставщиков
+    /// Путь SwiftUI-фасада: ``TesseraPivotView`` не может сравнить поставщиков
     /// контента, поэтому на каждом обновлении с тем же набором `id`/заголовков
     /// передаёт секции сюда. Контент обновляется через ``reload(sections:)``:
     /// после W1 пейджер переиспользует контроллеры с сохранившимся `id` и
@@ -425,7 +425,7 @@ public final class PivotViewController: UIViewController {
     ///
     /// - Parameter newSections: Секции с теми же `id` и заголовками, что и
     ///   текущие, но, возможно, с новым контентом.
-    func refreshSectionContent(_ newSections: [PivotSection]) {
+    func refreshSectionContent(_ newSections: [TesseraPivotSection]) {
         guard isViewLoaded else {
             // До загрузки вида `viewDidLoad` сам пересоберёт пейджер из `sections`.
             sections = newSections
@@ -740,7 +740,7 @@ public final class PivotViewController: UIViewController {
 
     /// Пересчитывает шрифт крупного заголовка под Dynamic Type (§8).
     ///
-    /// В `PivotStyle` нет отдельного шрифта заголовка приложения (§3: стиль
+    /// В `TesseraPivotStyle` нет отдельного шрифта заголовка приложения (§3: стиль
     /// описывает ленту), поэтому используется системный bold-шрифт метрик
     /// `.largeTitle` — семантически это крупный заголовок экрана.
     private func updateAppTitleFont() {
@@ -874,7 +874,7 @@ public final class PivotViewController: UIViewController {
     ///
     /// Лента не двигает пейджер сама (§5): она лишь сообщает индекс, а
     /// `contentOffset` пишет контроллер через ``selectSection(at:animated:)``.
-    /// Делегат получает выбор до перехода, как описано в ``PivotDelegate``.
+    /// Делегат получает выбор до перехода, как описано в ``TesseraPivotDelegate``.
     private func handleHeaderTap(at index: Int) {
         guard sections.indices.contains(index) else { return }
 
@@ -1078,7 +1078,7 @@ public final class PivotViewController: UIViewController {
     /// без изменений: по `id` пейджер переиспользует контроллер контента и
     /// сохраняет текущую страницу при `reload` (§5, §7).
     private static func makePageDescriptors(
-        for sections: [PivotSection]
+        for sections: [TesseraPivotSection]
     ) -> [TesseraPageDescriptor] {
         sections.map { section in
             TesseraPageDescriptor(
@@ -1092,7 +1092,7 @@ public final class PivotViewController: UIViewController {
 
 // MARK: - TesseraPagerDelegate (§5)
 
-extension PivotViewController: TesseraPagerDelegate {
+extension TesseraPivotViewController: TesseraPagerDelegate {
 
     /// Свайп → лента: единственная точка непрерывной синхронизации (§5).
     ///

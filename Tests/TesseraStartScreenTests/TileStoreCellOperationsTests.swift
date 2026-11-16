@@ -2,7 +2,7 @@
 //  TileStoreCellOperationsTests.swift
 //  TesseraStartScreenTests
 //
-//  Операции `TileStore` по ячейкам (E14.4): перенос, resize на месте, папки,
+//  Операции `TesseraTileStore` по ячейкам (E14.4): перенос, resize на месте, папки,
 //  открепление/закрепление, схлопывание пустых строк.
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 и «Отступления
 //  реализации (E14)»; решения D20, D30–D33 в docs/STATE.md; план — E14.4.
@@ -29,10 +29,10 @@ final class TileStoreCellOperationsTests: XCTestCase {
     private func makeStore(
         _ tiles: [CellFixtureTile],
         folders: [CellFixtureFolder] = [],
-        unpinned: [(String, TileSize)] = [],
+        unpinned: [(String, TesseraTileSize)] = [],
         in directory: TesseraTestDirectory,
         columns: Int = 6
-    ) throws -> TileStore {
+    ) throws -> TesseraTileStore {
         try TileStoreCellFixture.makeStore(
             columns: columns, tiles: tiles, folders: folders, unpinned: unpinned, in: directory
         )
@@ -41,7 +41,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
     private func catalogIDs(
         _ tiles: [CellFixtureTile],
         folders: [CellFixtureFolder] = [],
-        unpinned: [(String, TileSize)] = []
+        unpinned: [(String, TesseraTileSize)] = []
     ) -> [String] {
         tiles.map { $0.id } + folders.flatMap { $0.contents.map { $0.id } } + unpinned.map { $0.0 }
     }
@@ -274,7 +274,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         var notifications = 0
         store.onChange = { _ in notifications += 1 }
 
-        var actions: [TileGroupingAction] = []
+        var actions: [TesseraTileGroupingAction] = []
         store.approval = { _, _, action in actions.append(action); return action != .createFolder }
         guard case .createDenied = store.createFolder(from: "S", onto: "T", columns: columns) else {
             return XCTFail("ожидался отказ создания")
@@ -445,7 +445,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertFalse(store.extractFromFolderToNewRow("a", columns: columns))
         XCTAssertFalse(store.extractFromFolder("x", toCell: tesseraCell(1, 1), columns: 0))
 
-        var seen: [(TileGroupingAction, Bool)] = []
+        var seen: [(TesseraTileGroupingAction, Bool)] = []
         store.approval = { folder, _, action in seen.append((action, folder == nil)); return false }
         XCTAssertFalse(store.extractFromFolder("x", toCell: tesseraCell(1, 1), columns: columns))
         XCTAssertEqual(seen.count, 1)
@@ -660,7 +660,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1)]
         let store = try makeStore(tiles, in: directory)
-        var snapshots: [TileGridSnapshot] = []
+        var snapshots: [TesseraTileGridSnapshot] = []
         store.onChange = { snapshots.append($0) }
 
         guard case .created(let folder) = store.createFolder(from: "a", onto: "b", columns: columns) else {
@@ -701,10 +701,10 @@ final class TileStoreCellOperationsTests: XCTestCase {
     }
 }
 
-private extension TileStore {
+private extension TesseraTileStore {
 
     /// Размер ярлыка из каталога хранилища (для проверки resize внутри папки).
-    func tileSizeInFolder(_ id: AnyHashable) -> TileSize? {
+    func tileSizeInFolder(_ id: AnyHashable) -> TesseraTileSize? {
         folderContaining(id)?.tiles.first { $0.id == id }?.size
     }
 }

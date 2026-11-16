@@ -2,12 +2,12 @@
 //  TileStoreCellTestSupport.swift
 //  TesseraStartScreenTests
 //
-//  Общие помощники тестов операций по ячейкам `TileStore` (E14.4).
+//  Общие помощники тестов операций по ячейкам `TesseraTileStore` (E14.4).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и
 //  «Отступления реализации (E14)»; решения D30–D33 в docs/STATE.md.
 //
 //  Фикстура записывает файл схемы версии 2 с явными ячейками (в том числе с
-//  дырами) и грузит его в `TileStore`, так что стартовая раскладка точная и не
+//  дырами) и грузит его в `TesseraTileStore`, так что стартовая раскладка точная и не
 //  зависит от упаковки. Проверка инвариантов — одна на все тесты.
 //
 
@@ -17,18 +17,18 @@ import XCTest
 @testable import TesseraStartScreen
 
 /// Короткая запись ячейки в тестах.
-func tesseraCell(_ row: Int, _ column: Int) -> TileGridPlacement {
-    TileGridPlacement(row: row, column: column)
+func tesseraCell(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
+    TesseraTileGridPlacement(row: row, column: column)
 }
 
 /// Ярлык верхнего уровня в фикстуре.
 struct CellFixtureTile {
     var id: String
-    var size: TileSize
+    var size: TesseraTileSize
     var row: Int
     var column: Int
 
-    init(_ id: String, _ size: TileSize, _ row: Int, _ column: Int) {
+    init(_ id: String, _ size: TesseraTileSize, _ row: Int, _ column: Int) {
         self.id = id
         self.size = size
         self.row = row
@@ -39,12 +39,12 @@ struct CellFixtureTile {
 /// Папка верхнего уровня в фикстуре: содержимое задаётся парами «id — размер».
 struct CellFixtureFolder {
     var id: String
-    var size: TileSize
+    var size: TesseraTileSize
     var row: Int
     var column: Int
-    var contents: [(id: String, size: TileSize)]
+    var contents: [(id: String, size: TesseraTileSize)]
 
-    init(_ id: String, _ size: TileSize = .medium, _ row: Int, _ column: Int, contents: [(String, TileSize)]) {
+    init(_ id: String, _ size: TesseraTileSize = .medium, _ row: Int, _ column: Int, contents: [(String, TesseraTileSize)]) {
         self.id = id
         self.size = size
         self.row = row
@@ -70,11 +70,11 @@ enum TileStoreCellFixture {
         columns: Int,
         tiles: [CellFixtureTile],
         folders: [CellFixtureFolder] = [],
-        unpinned: [(String, TileSize)] = [],
+        unpinned: [(String, TesseraTileSize)] = [],
         ghosts: [CellFixtureTile] = [],
         in directory: TesseraTestDirectory,
         autosaves: Bool = true
-    ) throws -> TileStore {
+    ) throws -> TesseraTileStore {
         var catalog = tiles.map { tesseraTestTile($0.id, size: $0.size) }
         catalog += folders.flatMap { $0.contents.map { tesseraTestTile($0.id, size: $0.size) } }
         catalog += unpinned.map { tesseraTestTile($0.0, size: $0.1) }
@@ -107,7 +107,7 @@ enum TileStoreCellFixture {
         func isBefore(_ lhs: [String: Any], _ rhs: [String: Any]) -> Bool {
             let left = tesseraCell(lhs["row"] as? Int ?? 0, lhs["column"] as? Int ?? 0)
             let right = tesseraCell(rhs["row"] as? Int ?? 0, rhs["column"] as? Int ?? 0)
-            return TileGridPlacement.isReadingOrdered(left, before: right)
+            return TesseraTileGridPlacement.isReadingOrdered(left, before: right)
         }
         items = items.enumerated().sorted { lhs, rhs in
             let l = lhs.element, r = rhs.element
@@ -124,7 +124,7 @@ enum TileStoreCellFixture {
             "folders": folderObjects,
         ]
 
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(catalog)
         try directory.create()
@@ -140,7 +140,7 @@ extension XCTestCase {
 
     /// Проверяет инварианты модели после операции по ячейкам (E14.4).
     ///
-    /// - Без пересечений и в границах `[0, columns)` (`TileLayoutEngine.validate`).
+    /// - Без пересечений и в границах `[0, columns)` (`TesseraTileLayoutEngine.validate`).
     /// - У каждого видимого верхнеуровневого элемента ровно одна ячейка, чужих нет.
     /// - Каждый ярлык каталога встречается ровно один раз: на сетке, в папке или
     ///   среди откреплённых; в каждой папке не меньше двух ярлыков (D45, кроме
@@ -149,7 +149,7 @@ extension XCTestCase {
     /// - При `checkOrder` холст равен `columns`, а порядок снимка — порядок
     ///   чтения ячеек (строка, колонка).
     func tesseraAssertCellInvariants(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         columns: Int,
         catalogIDs: [String],
         checkOrder: Bool = true,
@@ -166,12 +166,12 @@ extension XCTestCase {
         )
         XCTAssertEqual(snapshot.items.count, cells.count, file: file, line: line)
 
-        let placed = snapshot.items.compactMap { item -> TilePlacedItem? in
+        let placed = snapshot.items.compactMap { item -> TesseraTilePlacedItem? in
             guard let cell = cells[item.id] else { return nil }
-            return TilePlacedItem(id: item.id, size: item.size, cell: cell)
+            return TesseraTilePlacedItem(id: item.id, size: item.size, cell: cell)
         }
         XCTAssertEqual(
-            TileLayoutEngine.validate(placed, columns: columns), [],
+            TesseraTileLayoutEngine.validate(placed, columns: columns), [],
             "пересечения или выход за холст", file: file, line: line
         )
 
@@ -181,7 +181,7 @@ extension XCTestCase {
             case .tile(let tile): seen.append(tile.id.base as? String ?? "?")
             case .folder(let folder):
                 XCTAssertGreaterThanOrEqual(
-                    folder.tiles.count, allowSingleTileFolders ? 1 : TileStore.minimumFolderTileCount,
+                    folder.tiles.count, allowSingleTileFolders ? 1 : TesseraTileStore.minimumFolderTileCount,
                     "папка из 0–1 ярлыка на сетке (D45)", file: file, line: line
                 )
                 seen += folder.tiles.map { $0.id.base as? String ?? "?" }
@@ -202,7 +202,7 @@ extension XCTestCase {
             let sorted = snapshot.items.compactMap { cells[$0.id] }
             XCTAssertEqual(
                 sorted,
-                sorted.sorted { TileGridPlacement.isReadingOrdered($0, before: $1) },
+                sorted.sorted { TesseraTileGridPlacement.isReadingOrdered($0, before: $1) },
                 file: file, line: line
             )
         }

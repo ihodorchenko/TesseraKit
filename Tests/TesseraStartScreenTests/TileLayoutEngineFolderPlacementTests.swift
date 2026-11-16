@@ -10,7 +10,7 @@
 //  placements:...)` и `rowsBelowOffset(placements:...)` работают по готовым
 //  ячейкам и не делают репак: строки ниже полосы папки сохраняют дыры, а панель
 //  сдвигает их вниз на высоту панели (в точках — слой раскладки). На компактной
-//  раскладке результат обязан совпасть со старыми вариантами по `TileGridItem`.
+//  раскладке результат обязан совпасть со старыми вариантами по `TesseraTileGridItem`.
 //
 
 #if canImport(UIKit)
@@ -30,7 +30,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         let placements = [placementItem("f", .medium, 3, 0)]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
+            TesseraTileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
             5
         )
     }
@@ -45,7 +45,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
+            TesseraTileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
             4
         )
     }
@@ -58,7 +58,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
+            TesseraTileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
             2
         )
     }
@@ -66,7 +66,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
     /// Папки нет в наборе — `nil`.
     func testBandEndOfUnknownFolderIsNil() {
         XCTAssertNil(
-            TileLayoutEngine.folderBandEndRow(
+            TesseraTileLayoutEngine.folderBandEndRow(
                 forFolder: "none", in: [placementItem("a", .small, 0, 0)], columns: columns
             )
         )
@@ -79,11 +79,11 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
             placementItem("a", .small, 2, 4),
             placementItem("b", .wide, 3, 0),
         ]
-        let slots = TileLayoutEngine.slots(placements: placements, columns: columns, unit: 1, fitting: true)
+        let slots = TesseraTileLayoutEngine.slots(placements: placements, columns: columns, unit: 1, fitting: true)
 
         XCTAssertEqual(
-            TileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
-            TileLayoutEngine.folderBandEndRow(for: slots[0], in: slots)
+            TesseraTileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
+            TesseraTileLayoutEngine.folderBandEndRow(for: slots[0], in: slots)
         )
     }
 
@@ -99,7 +99,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderPanelInsertionIndex(
+            TesseraTileLayoutEngine.folderPanelInsertionIndex(
                 placements: placements, columns: columns, expandedFolderID: "f"
             ),
             3
@@ -114,7 +114,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.folderPanelInsertionIndex(
+            TesseraTileLayoutEngine.folderPanelInsertionIndex(
                 placements: placements, columns: columns, expandedFolderID: "f"
             ),
             1
@@ -126,12 +126,12 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         let placements = [placementItem("f", .medium, 0, 0)]
 
         XCTAssertNil(
-            TileLayoutEngine.folderPanelInsertionIndex(
+            TesseraTileLayoutEngine.folderPanelInsertionIndex(
                 placements: placements, columns: columns, expandedFolderID: nil
             )
         )
         XCTAssertNil(
-            TileLayoutEngine.folderPanelInsertionIndex(
+            TesseraTileLayoutEngine.folderPanelInsertionIndex(
                 placements: placements, columns: columns, expandedFolderID: "zzz"
             )
         )
@@ -147,13 +147,13 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
             placementItem("far", .small, 9, 3),
         ]
 
-        let offset = TileLayoutEngine.rowsBelowOffset(
+        let offset = TesseraTileLayoutEngine.rowsBelowOffset(
             placements: placements, columns: columns, expandedFolderID: "f", panelHeight: 100, spacing: 8
         )
 
         XCTAssertEqual(offset, 108)
         XCTAssertEqual(
-            TileLayoutEngine.slots(placements: placements, columns: columns, unit: 1, fitting: true).map(\.row),
+            TesseraTileLayoutEngine.slots(placements: placements, columns: columns, unit: 1, fitting: true).map(\.row),
             [0, 9]
         )
     }
@@ -166,7 +166,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.rowsBelowOffset(
+            TesseraTileLayoutEngine.rowsBelowOffset(
                 placements: placements, columns: columns, expandedFolderID: "f", panelHeight: 100
             ),
             0
@@ -180,7 +180,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         let cases: [(AnyHashable?, CGFloat)] = [(nil, 100), ("f", 0), ("zzz", 100), ("f", .nan)]
         for (expanded, height) in cases {
             XCTAssertEqual(
-                TileLayoutEngine.rowsBelowOffset(
+                TesseraTileLayoutEngine.rowsBelowOffset(
                     placements: placements, columns: columns, expandedFolderID: expanded, panelHeight: height
                 ),
                 0
@@ -194,7 +194,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
 
         for spacing in [CGFloat(-4), .nan] {
             XCTAssertEqual(
-                TileLayoutEngine.rowsBelowOffset(
+                TesseraTileLayoutEngine.rowsBelowOffset(
                     placements: placements, columns: columns, expandedFolderID: "f",
                     panelHeight: 100, spacing: spacing
                 ),
@@ -206,9 +206,9 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
     // MARK: - Совместимость со старым API на компактной раскладке
 
     /// Для компактной упаковки новые варианты совпадают со старыми по
-    /// `TileGridItem` (индекс вставки и отступ строк под панелью).
+    /// `TesseraTileGridItem` (индекс вставки и отступ строк под панелью).
     func testPlacementVariantsMatchLegacyItemsAPIOnCompactLayout() {
-        let sizes = TileSize.allCases
+        let sizes = TesseraTileSize.allCases
 
         for seed in 1...25 {
             var generator = TesseraTestSeededGenerator(seed: UInt64(seed))
@@ -216,36 +216,36 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
             let folderSize = sizes[generator.int(upperBound: sizes.count)]
             let folderPosition = generator.int(upperBound: 6)
 
-            var items: [TileGridItem] = []
+            var items: [TesseraTileGridItem] = []
             for index in 0..<6 {
                 items.append(.tile(tesseraTestTile("t\(index)", size: sizes[generator.int(upperBound: sizes.count)])))
             }
             items.insert(.folder(tesseraTestFolder("f", tileCount: 3, size: folderSize)), at: folderPosition)
 
-            let packed = TileLayoutEngine.pack(
+            let packed = TesseraTileLayoutEngine.pack(
                 items: items.map { (id: $0.id, size: $0.size) },
                 columns: columns,
                 unit: 1
             )
             let placements = packed.map {
-                TilePlacedItem(id: $0.id, size: $0.size, cell: TileGridPlacement(row: $0.row, column: $0.column))
+                TesseraTilePlacedItem(id: $0.id, size: $0.size, cell: TesseraTileGridPlacement(row: $0.row, column: $0.column))
             }
             let context = "seed \(seed), columns \(columns)"
 
             XCTAssertEqual(
-                TileLayoutEngine.folderPanelInsertionIndex(
+                TesseraTileLayoutEngine.folderPanelInsertionIndex(
                     placements: placements, columns: columns, expandedFolderID: "f"
                 ),
-                TileLayoutEngine.folderPanelInsertionIndex(
+                TesseraTileLayoutEngine.folderPanelInsertionIndex(
                     items: items, columns: columns, expandedFolderID: "f"
                 ),
                 context
             )
             XCTAssertEqual(
-                TileLayoutEngine.rowsBelowOffset(
+                TesseraTileLayoutEngine.rowsBelowOffset(
                     placements: placements, columns: columns, expandedFolderID: "f", panelHeight: 120
                 ),
-                TileLayoutEngine.rowsBelowOffset(
+                TesseraTileLayoutEngine.rowsBelowOffset(
                     items: items, columns: columns, expandedFolderID: "f", panelHeight: 120
                 ),
                 context
@@ -262,14 +262,14 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
             placementItem("f", .medium, 2, 0),
             placementItem("below", .small, 4, 0),
         ]
-        let withoutTop = TileLayoutEngine.removing(id: "top", from: placements)
+        let withoutTop = TesseraTileLayoutEngine.removing(id: "top", from: placements)
 
         XCTAssertEqual(
-            TileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
-            TileLayoutEngine.folderBandEndRow(forFolder: "f", in: withoutTop, columns: columns)
+            TesseraTileLayoutEngine.folderBandEndRow(forFolder: "f", in: placements, columns: columns),
+            TesseraTileLayoutEngine.folderBandEndRow(forFolder: "f", in: withoutTop, columns: columns)
         )
         XCTAssertEqual(
-            TileLayoutEngine.rowsBelowOffset(
+            TesseraTileLayoutEngine.rowsBelowOffset(
                 placements: withoutTop, columns: columns, expandedFolderID: "f", panelHeight: 90
             ),
             98

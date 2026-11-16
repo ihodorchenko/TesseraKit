@@ -378,7 +378,7 @@ stateDiagram-v2
 
 - Start layout XML for mobile (архив): https://web.archive.org/web/20200920120847/https://docs.microsoft.com/en-us/windows/configuration/mobile-devices/start-layout-xml-mobile
 - Start tile layout, Windows Drivers: https://learn.microsoft.com/en-us/previous-versions/dn772303(v=vs.85)
-- TileSize enum: https://learn.microsoft.com/en-us/uwp/api/windows.ui.startscreen.tilesize
+- TesseraTileSize enum: https://learn.microsoft.com/en-us/uwp/api/windows.ui.startscreen.tilesize
 - Tile and toast visual assets: https://learn.microsoft.com/en-us/previous-versions/windows/apps/hh781198(v=win.10)
 - Create adaptive tiles: https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/create-adaptive-tiles
 - Badge notifications: https://learn.microsoft.com/en-us/windows/apps/develop/notifications/badges

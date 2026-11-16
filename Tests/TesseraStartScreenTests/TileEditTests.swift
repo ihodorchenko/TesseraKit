@@ -9,7 +9,7 @@
 //  размера).
 //
 //  Публичного помощника «позиция drop» в координаторе нет: resize-цикл —
-//  `TileSize.cycleOrder`, число колонок сетки и `supportedSizesProvider`
+//  `TesseraTileSize.cycleOrder`, число колонок сетки и `supportedSizesProvider`
 //  (подробнее — `TileSizeCycleTests`), а цель drop считается по рамкам
 //  `TesseraTileGridView` (приватный `isPointInDropCenter`). Поэтому resize-цикл
 //  проверяется через реальный `TesseraTileEditCoordinator.cycleSize(of:)`
@@ -28,17 +28,17 @@ final class TileEditTests: XCTestCase {
     // MARK: - Вспомогательные средства
 
     private func makeStore(
-        _ descriptors: [TileDescriptor],
+        _ descriptors: [TesseraTileDescriptor],
         in directory: TesseraTestDirectory
-    ) -> TileStore {
-        let store = TileStore(directoryURL: directory.url)
+    ) -> TesseraTileStore {
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog(descriptors)
         return store
     }
 
     /// Сетка, разложенная вручную: окно не нужно, коллекция получает bounds.
-    private func makeGrid(store: TileStore, columns: Int = 4) -> TesseraTileGridView {
+    private func makeGrid(store: TesseraTileStore, columns: Int = 4) -> TesseraTileGridView {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
         grid.columns = columns
         grid.reload(snapshot: store.snapshot())
@@ -54,18 +54,18 @@ final class TileEditTests: XCTestCase {
     /// Набор размеров — D15 (`allCases` — порядок «по возрастанию»); порядок
     /// resize-цикла задан отдельно и явно: small → wide → medium → large (D28).
     func testTileSizeCycleOrderMatchesD15() {
-        XCTAssertEqual(TileSize.allCases, [.small, .medium, .wide, .large])
-        XCTAssertEqual(TileSize.cycleOrder, [.small, .wide, .medium, .large])
-        XCTAssertEqual(TileSize.small.unitSize, CGSize(width: 1, height: 1))
-        XCTAssertEqual(TileSize.medium.unitSize, CGSize(width: 2, height: 2))
-        XCTAssertEqual(TileSize.wide.unitSize, CGSize(width: 4, height: 2))
-        XCTAssertEqual(TileSize.large.unitSize, CGSize(width: 4, height: 4))
+        XCTAssertEqual(TesseraTileSize.allCases, [.small, .medium, .wide, .large])
+        XCTAssertEqual(TesseraTileSize.cycleOrder, [.small, .wide, .medium, .large])
+        XCTAssertEqual(TesseraTileSize.small.unitSize, CGSize(width: 1, height: 1))
+        XCTAssertEqual(TesseraTileSize.medium.unitSize, CGSize(width: 2, height: 2))
+        XCTAssertEqual(TesseraTileSize.wide.unitSize, CGSize(width: 4, height: 2))
+        XCTAssertEqual(TesseraTileSize.large.unitSize, CGSize(width: 4, height: 4))
     }
 
     // MARK: - Resize-цикл
 
     /// Координатор проходит полный цикл D28 и возвращается к исходному размеру,
-    /// меняя авторитетный размер в `TileStore` (D15, §5).
+    /// меняя авторитетный размер в `TesseraTileStore` (D15, §5).
     func testCycleSizeFollowsResizeOrder() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a", size: .small)], in: directory)

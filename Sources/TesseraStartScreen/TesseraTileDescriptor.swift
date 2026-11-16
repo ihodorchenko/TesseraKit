@@ -3,7 +3,7 @@
 // (модель раскладки, юнитные координаты), §14 «Уточнения MVP» п. 1 и 4
 // (D12/D15: ярлык — просто действие без поля `type`; четыре размера плиток).
 // D14 (папки и функция одобрения) описан в docs/STATE.md; модель папки —
-// в TileFolder.swift, операции с папками — в TileStore.
+// в TesseraTileFolder.swift, операции с папками — в TesseraTileStore.
 
 #if canImport(UIKit)
 import UIKit
@@ -23,10 +23,10 @@ import CoreGraphics
 /// Значения — именно размеры в юнитах, а не в точках: сетка пересчитывается
 /// под любую ширину экрана, а положение ярлыков хранится в юнитных координатах
 /// (документ §3, «Модель раскладки»). `String`-сырое значение используется
-/// персистентностью `TileStore` (E4.6). Порядок объявления случаев — порядок
+/// персистентностью `TesseraTileStore` (E4.6). Порядок объявления случаев — порядок
 /// «по возрастанию» (`CaseIterable`), а **не** порядок цикла по тапу на стрелку
 /// размера: цикл задан явно в ``cycleOrder`` (D28, E15.3).
-public enum TileSize: String, CaseIterable, Codable, Hashable {
+public enum TesseraTileSize: String, CaseIterable, Codable, Hashable {
     /// 1×1 юнит.
     case small
 
@@ -46,7 +46,7 @@ public enum TileSize: String, CaseIterable, Codable, Hashable {
     /// ``large`` (набор из четырёх размеров — D15). Он задан явно и не берётся
     /// из `allCases`: порядок объявления («по возрастанию») для цикла никто не
     /// выбирал. Формат хранения не затронут — сохраняется сам размер.
-    static let cycleOrder: [TileSize] = [.small, .wide, .medium, .large]
+    static let cycleOrder: [TesseraTileSize] = [.small, .wide, .medium, .large]
 
     /// Следующий размер цикла среди поддерживаемых (D28, E15.3).
     ///
@@ -60,8 +60,8 @@ public enum TileSize: String, CaseIterable, Codable, Hashable {
     ///
     /// - Parameter supported: Поддерживаемые элементу размеры.
     /// - Returns: Следующий размер; равен `self`, когда менять нечего.
-    func next(among supported: [TileSize]) -> TileSize {
-        let order = TileSize.cycleOrder
+    func next(among supported: [TesseraTileSize]) -> TesseraTileSize {
+        let order = TesseraTileSize.cycleOrder
         guard let start = order.firstIndex(of: self) else { return self }
         for offset in 1...order.count {
             let candidate = order[(start + offset) % order.count]
@@ -106,7 +106,7 @@ public enum TileSize: String, CaseIterable, Codable, Hashable {
 /// Бейдж не является частью live-флипа: это отдельный элемент угла плитки
 /// (документ §4, «Бейдж»). Модель хранит намерение, а внешний вид и озвучивание
 /// для VoiceOver строит компонент.
-public enum TileBadge: Equatable, Hashable {
+public enum TesseraTileBadge: Equatable, Hashable {
     /// Бейджа нет.
     case none
 
@@ -163,15 +163,15 @@ public enum TileBadge: Equatable, Hashable {
 /// контента. Действие — единственный способ поведения: тап по плитке вызывает
 /// ``action``, а переходы, открытие папок и прочая навигация остаются за хостом.
 ///
-/// Модель — обычное значение (`struct`): `TileStore` хранит массив ярлыков и
+/// Модель — обычное значение (`struct`): `TesseraTileStore` хранит массив ярлыков и
 /// заменяет/меняет их копии, не превращая компонент в источник глобального
 /// состояния. Живой контент (флипы, стахгер, паузы) — задача `LiveTileEngine`
 /// (E4.3, документ §4): ярлык несёт ссылку на провайдера
 /// (``liveContent``), а сетка отдаёт её движку при показе ячейки.
-public struct TileDescriptor {
+public struct TesseraTileDescriptor {
     /// Стабильный идентификатор ярлыка.
     ///
-    /// Должен быть уникален в пределах рабочего стола: по нему `TileStore`
+    /// Должен быть уникален в пределах рабочего стола: по нему `TesseraTileStore`
     /// находит ярлык для resize, unpin и операций с папками (D14). Поведение при
     /// повторяющихся идентификаторах не определено.
     public let id: AnyHashable
@@ -191,14 +191,14 @@ public struct TileDescriptor {
     /// Действие по тапу. Вызывается на главном потоке компонентом.
     ///
     /// Замыкание — часть идентичности ярлыка и не заменяется при resize;
-    /// для смены поведения хост создаёт новый ``TileDescriptor``.
+    /// для смены поведения хост создаёт новый ``TesseraTileDescriptor``.
     public let action: () -> Void
 
     /// Бейдж внимания — красная точка или счётчик (D12). По умолчанию `.none`.
-    public var badge: TileBadge
+    public var badge: TesseraTileBadge
 
     /// Размер плитки в юнитах (D15). По умолчанию `.medium`.
-    public var size: TileSize
+    public var size: TesseraTileSize
 
     /// Источник живого контента плитки (§4, «Контентная модель»; D15).
     ///
@@ -208,7 +208,7 @@ public struct TileDescriptor {
     /// движок сам читает стороны, планирует флипы стахгером и ставит их на
     /// паузу вне экрана/в фоне/при Reduce Motion.
     ///
-    /// - Note: Провайдер — runtime-ссылка, как ``action``: `TileStore` не
+    /// - Note: Провайдер — runtime-ссылка, как ``action``: `TesseraTileStore` не
     ///   сериализует его и не сравнивает ярлыки по этому полю. Хост передаёт
     ///   провайдера при регистрации каталога вместе с действием и иконкой.
     public var liveContent: TesseraLiveTileContentProvider?
@@ -229,8 +229,8 @@ public struct TileDescriptor {
         title: String,
         icon: UIImage? = nil,
         action: @escaping () -> Void,
-        badge: TileBadge = .none,
-        size: TileSize = .medium,
+        badge: TesseraTileBadge = .none,
+        size: TesseraTileSize = .medium,
         liveContent: TesseraLiveTileContentProvider? = nil
     ) {
         self.id = id

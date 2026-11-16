@@ -2,7 +2,7 @@
 //  TileStoreCellPropertyTests.swift
 //  TesseraStartScreenTests
 //
-//  Свойство-тест операций `TileStore` по ячейкам (E14.4): случайные
+//  Свойство-тест операций `TesseraTileStore` по ячейкам (E14.4): случайные
 //  последовательности операций (seeded, воспроизводимо), после каждой —
 //  инварианты модели.
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 и «Отступления
@@ -25,7 +25,7 @@ import XCTest
 
 final class TileStoreCellPropertyTests: XCTestCase {
 
-    private static let sizes: [TileSize] = [.small, .medium, .wide, .large]
+    private static let sizes: [TesseraTileSize] = [.small, .medium, .wide, .large]
     private static let widths = [3, 4, 6]
 
     /// Случайные последовательности операций по ячейкам.
@@ -50,7 +50,7 @@ final class TileStoreCellPropertyTests: XCTestCase {
         let ids = (0..<14).map { "t\($0)" }
         let catalog = ids.map { tesseraTestTile($0, size: TileStoreCellPropertyTests.sizes[rng.int(upperBound: 4)]) }
 
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog(catalog)
         var columns = TileStoreCellPropertyTests.widths[rng.int(upperBound: 3)]
@@ -142,7 +142,7 @@ final class TileStoreCellPropertyTests: XCTestCase {
 
         // Круг записи: холст последней успешной ширины переживает сохранение.
         try store.save()
-        let fresh = TileStore(directoryURL: directory.url)
+        let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(catalog)
         try fresh.load()
         if let canvas = store.canvasColumns {

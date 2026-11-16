@@ -7,14 +7,14 @@
 //  решение D35 в docs/STATE.md.
 //
 //  Проверяется:
-//  - модель: `TileStore.renameFolder(_:to:)` (обрезка пробелов, пустое имя —
+//  - модель: `TesseraTileStore.renameFolder(_:to:)` (обрезка пробелов, пустое имя —
 //    имя по умолчанию, предел 64 символа, неизвестная папка, то же имя без
 //    уведомления, круг записи, одно `onChange`, ячейка/размер/состав целы);
 //  - сетка: правка имени в открытой панели (поле, return, тап мимо, пустое имя,
 //    итоговое имя в обработчике, высота шапки, закрытие панели, смена
 //    обработчика, предел при вводе), клавиатура (поле над ней, возврат полей и
 //    смещения, Reduce Motion), RTL и Dynamic Type;
-//  - координатор: обработчик, `TileStore`, делегат, имя по умолчанию из
+//  - координатор: обработчик, `TesseraTileStore`, делегат, имя по умолчанию из
 //    конфигурации, вход/выход из режима редактирования, выключенный координатор;
 //  - VoiceOver: действие «Переименовать» на заголовке панели и плитке папки,
 //    подпись поля, фокус до и после правки;
@@ -40,7 +40,7 @@ final class TileFolderRenameTests: XCTestCase {
     private func makeStore(
         in directory: TesseraTestDirectory,
         autosaves: Bool = false
-    ) throws -> TileStore {
+    ) throws -> TesseraTileStore {
         try TileStoreCellFixture.makeStore(
             columns: columns,
             tiles: [CellFixtureTile("a0", .small, 3, 0)],
@@ -50,17 +50,17 @@ final class TileFolderRenameTests: XCTestCase {
         )
     }
 
-    private func folderTitle(_ store: TileStore, id: AnyHashable = "F") -> String? {
+    private func folderTitle(_ store: TesseraTileStore, id: AnyHashable = "F") -> String? {
         store.snapshot(columns: columns).folders.first { $0.id == id }?.title
     }
 
-    private func countNotifications(_ store: TileStore) -> () -> Int {
+    private func countNotifications(_ store: TesseraTileStore) -> () -> Int {
         var count = 0
         store.onChange = { _ in count += 1 }
         return { count }
     }
 
-    // MARK: - TileStore.renameFolder
+    // MARK: - TesseraTileStore.renameFolder
 
     /// Пробелы и переводы строк по краям отбрасываются; результат записан в модель.
     func testRenameTrimsSurroundingWhitespaceAndNewlines() throws {
@@ -90,7 +90,7 @@ final class TileFolderRenameTests: XCTestCase {
     func testRenameCapsLengthAndTrimsAfterCut() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
-        XCTAssertEqual(TileFolder.maximumTitleLength, 64)
+        XCTAssertEqual(TesseraTileFolder.maximumTitleLength, 64)
 
         XCTAssertTrue(store.renameFolder("F", to: String(repeating: "я", count: 100)))
         XCTAssertEqual(folderTitle(store), String(repeating: "я", count: 64))
@@ -150,13 +150,13 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(store.renameFolder("F", to: "Работа"))
 
         let catalog = ["a0", "x", "y", "z"].map { tesseraTestTile($0, size: .small) }
-        let fresh = TileStore(directoryURL: directory.url)
+        let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(catalog)
         try fresh.load()
         XCTAssertEqual(folderTitle(fresh), "Работа")
 
         XCTAssertTrue(store.renameFolder("F", to: ""))
-        let again = TileStore(directoryURL: directory.url)
+        let again = TesseraTileStore(directoryURL: directory.url)
         again.setCatalog(catalog)
         try again.load()
         XCTAssertEqual(folderTitle(again), TesseraStartScreenStrings.string(.folderScreenDefaultTitle))
@@ -166,7 +166,7 @@ final class TileFolderRenameTests: XCTestCase {
     func testRenameNotifiesOnChangeOnce() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
-        var snapshots: [TileGridSnapshot] = []
+        var snapshots: [TesseraTileGridSnapshot] = []
         store.onChange = { snapshots.append($0) }
 
         XCTAssertTrue(store.renameFolder("F", to: "Работа"))
@@ -200,7 +200,7 @@ final class TileFolderRenameTests: XCTestCase {
 
     private struct GridFixture {
         let host: TesseraTestWindowedGrid
-        let folder: TileFolder
+        let folder: TesseraTileFolder
         let recorder: Recorder
         var grid: TesseraTileGridView { host.grid }
     }
@@ -210,7 +210,7 @@ final class TileFolderRenameTests: XCTestCase {
     private func makeGridFixture(
         installsHandler: Bool = true,
         title: String = "Работа",
-        extraItems: [TileGridItem] = [],
+        extraItems: [TesseraTileGridItem] = [],
         size: CGSize = TesseraTestWindowedGrid.defaultSize
     ) -> GridFixture {
         let folder = tesseraTestFolder("F", tileCount: 4, title: title)
@@ -414,7 +414,7 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(panel.beginTitleEditing())
         type(String(repeating: "ы", count: 90) + "\nхвост", in: panel)
         pressReturn(in: panel)
-        XCTAssertEqual(fixture.recorder.renames.first?.1.count, TileFolder.maximumTitleLength)
+        XCTAssertEqual(fixture.recorder.renames.first?.1.count, TesseraTileFolder.maximumTitleLength)
         XCTAssertFalse(fixture.recorder.renames.first?.1.contains("\n") ?? true)
     }
 
@@ -500,7 +500,7 @@ final class TileFolderRenameTests: XCTestCase {
     /// прокручена так, что шапка панели у нижнего края экрана (клавиатура её
     /// перекроет). Reduce Motion включён: прокрутка без анимации.
     private func makeScrollingFixture() throws -> (GridFixture, TesseraFolderPanelCell, CGFloat) {
-        let tiles: [TileGridItem] = (0..<4).map { .tile(tesseraTestTile("t\($0)", size: .medium)) }
+        let tiles: [TesseraTileGridItem] = (0..<4).map { .tile(tesseraTestTile("t\($0)", size: .medium)) }
         let folder = tesseraTestFolder("F", tileCount: 4, title: "Работа")
         let host = TesseraTestWindowedGrid(
             items: tiles + [.folder(folder)] + (0..<6).map { .tile(tesseraTestTile("u\($0)", size: .wide)) },
@@ -623,7 +623,7 @@ final class TileFolderRenameTests: XCTestCase {
         let expected = TesseraFolderPanelCell.makeTitleFont(compatibleWith: large)
         XCTAssertLessThanOrEqual(
             expected.lineHeight,
-            TileLayoutEngine.panelHeaderHeight,
+            TesseraTileLayoutEngine.panelHeaderHeight,
             "Строка заголовка помещается в шапку на AX5"
         )
         panel.refreshTypography()
@@ -753,7 +753,7 @@ final class TileFolderRenameTests: XCTestCase {
         return try XCTUnwrap(host.host.panelCell(folderID: "F"))
     }
 
-    /// Координатор ставит обработчик; правка имени в панели меняет `TileStore`,
+    /// Координатор ставит обработчик; правка имени в панели меняет `TesseraTileStore`,
     /// сетку и вызывает делегат один раз с итоговым именем; размер, ячейка и
     /// состав не меняются.
     func testCoordinatorHandlerRenamesStoreGridAndNotifiesDelegate() throws {

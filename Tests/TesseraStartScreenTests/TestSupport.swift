@@ -5,7 +5,7 @@
 //  Общие детерминированные помощники тестов рабочего стола (E4.7).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»
 //  (тесты на случайных конфигурациях плиток), §5 «Режим редактирования»
-//  (персистентность TileStore), §14 «Уточнения MVP» (D12–D15).
+//  (персистентность TesseraTileStore), §14 «Уточнения MVP» (D12–D15).
 //
 //  Все помощники — только для тестов: публичного API target'а они не касаются.
 //  «Случайность» всегда seeded, поэтому прогон воспроизводим и не флакует.
@@ -54,7 +54,7 @@ struct TesseraTestSeededGenerator {
 
 // MARK: - Временная директория
 
-/// Временный каталог для тестов персистентности `TileStore`.
+/// Временный каталог для тестов персистентности `TesseraTileStore`.
 ///
 /// Каталог удаляется в `deinit`: тесты не оставляют мусор в песочнице
 /// симулятора и не зависят от порядка прогона.
@@ -87,13 +87,13 @@ final class TesseraTestDirectory {
 ///   - id: Идентификатор ярлыка.
 ///   - size: Размер плитки, по умолчанию `.medium` (D12).
 ///   - badge: Бейдж внимания, по умолчанию `.none`.
-/// - Returns: Готовый `TileDescriptor`.
+/// - Returns: Готовый `TesseraTileDescriptor`.
 func tesseraTestTile(
     _ id: String,
-    size: TileSize = .medium,
-    badge: TileBadge = .none
-) -> TileDescriptor {
-    TileDescriptor(
+    size: TesseraTileSize = .medium,
+    badge: TesseraTileBadge = .none
+) -> TesseraTileDescriptor {
+    TesseraTileDescriptor(
         id: id,
         title: id,
         action: {},
@@ -106,7 +106,7 @@ func tesseraTestTile(
 ///
 /// - Parameter items: Элементы сетки.
 /// - Returns: Идентификаторы в том же порядке.
-func tesseraTestIDs(_ items: [TileGridItem]) -> [AnyHashable] {
+func tesseraTestIDs(_ items: [TesseraTileGridItem]) -> [AnyHashable] {
     items.map { $0.id }
 }
 
@@ -122,9 +122,9 @@ func tesseraTestFolder(
     _ id: String,
     tileCount: Int = 4,
     title: String? = nil,
-    size: TileSize = .medium
-) -> TileFolder {
-    TileFolder(
+    size: TesseraTileSize = .medium
+) -> TesseraTileFolder {
+    TesseraTileFolder(
         id: id,
         title: title ?? id,
         tiles: (0..<tileCount).map { tesseraTestTile("\(id)-tile\($0)", size: .small) },
@@ -166,16 +166,16 @@ final class TesseraTestLiveProvider: TesseraLiveTileContentProvider {
 ///   - badge: Бейдж внимания.
 ///   - size: Размер плитки.
 ///   - action: Действие ярлыка (по умолчанию пустое).
-/// - Returns: Готовый `TileDescriptor` с live-контентом.
+/// - Returns: Готовый `TesseraTileDescriptor` с live-контентом.
 func tesseraTestLiveTile(
     _ id: String,
     front: TesseraLiveTileFace,
     back: TesseraLiveTileFace? = nil,
-    badge: TileBadge = .none,
-    size: TileSize = .medium,
+    badge: TesseraTileBadge = .none,
+    size: TesseraTileSize = .medium,
     action: @escaping () -> Void = {}
-) -> TileDescriptor {
-    TileDescriptor(
+) -> TesseraTileDescriptor {
+    TesseraTileDescriptor(
         id: id,
         title: id,
         action: action,
@@ -209,13 +209,13 @@ final class TesseraTestWindowedGrid {
     ///
     /// - Parameters:
     ///   - items: Элементы снимка в порядке отображения.
-    ///   - snapshot: Готовый снимок (например, `TileStore.snapshot(columns:)` с
+    ///   - snapshot: Готовый снимок (например, `TesseraTileStore.snapshot(columns:)` с
     ///     таблицей ячеек, E14.5); вместо `items`, если задан.
     ///   - columns: Число колонок сетки.
     ///   - size: Размер окна и сетки.
     init(
-        items: [TileGridItem] = [],
-        snapshot: TileGridSnapshot? = nil,
+        items: [TesseraTileGridItem] = [],
+        snapshot: TesseraTileGridSnapshot? = nil,
         columns: Int = 4,
         size: CGSize = TesseraTestWindowedGrid.defaultSize
     ) {
@@ -224,7 +224,7 @@ final class TesseraTestWindowedGrid {
         grid = TesseraTileGridView(frame: CGRect(origin: .zero, size: size))
         grid.columns = columns
         window.addSubview(grid)
-        grid.reload(snapshot: snapshot ?? TileGridSnapshot(items: items, unpinned: []))
+        grid.reload(snapshot: snapshot ?? TesseraTileGridSnapshot(items: items, unpinned: []))
         layout()
     }
 
@@ -247,8 +247,8 @@ final class TesseraTestWindowedGrid {
     /// Применяет снимок без анимации и доводит раскладку.
     ///
     /// - Parameter items: Новые элементы снимка.
-    func reload(_ items: [TileGridItem]) {
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
+    func reload(_ items: [TesseraTileGridItem]) {
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: []))
         layout()
     }
 
@@ -332,10 +332,10 @@ final class TesseraTestWindowedGrid {
 enum TesseraTestPackedEntry {
 
     /// Ярлык верхнего уровня.
-    case tile(String, TileSize)
+    case tile(String, TesseraTileSize)
 
     /// Папка верхнего уровня с содержимым (размеры ярлыков внутри).
-    case folder(String, TileSize, [(String, TileSize)])
+    case folder(String, TesseraTileSize, [(String, TesseraTileSize)])
 
     /// Идентификатор элемента.
     var id: String {
@@ -345,18 +345,18 @@ enum TesseraTestPackedEntry {
     }
 
     /// Запрошенный размер элемента.
-    var size: TileSize {
+    var size: TesseraTileSize {
         switch self {
         case let .tile(_, size), let .folder(_, size, _): return size
         }
     }
 }
 
-/// Стенд windowed-drag-сессий: окно с сеткой, `TileStore` и живым
+/// Стенд windowed-drag-сессий: окно с сеткой, `TesseraTileStore` и живым
 /// координатором редактирования (E10.5).
 ///
 /// Сетка строится из снимка хранилища с таблицей ячеек
-/// (`TileStore.snapshot(columns:)`, E14.5), поэтому проверки координатора «модель
+/// (`TesseraTileStore.snapshot(columns:)`, E14.5), поэтому проверки координатора «модель
 /// и снимок согласованы» проходят штатно. Анимации настоящие: завершение
 /// ожидается прокруткой run loop (`waitUntil`), без фиксированных пауз.
 final class TesseraTestDragHost {
@@ -365,7 +365,7 @@ final class TesseraTestDragHost {
     let directory: TesseraTestDirectory
 
     /// Единственный писатель модели.
-    let store: TileStore
+    let store: TesseraTileStore
 
     /// Окно с сеткой.
     let host: TesseraTestWindowedGrid
@@ -383,20 +383,20 @@ final class TesseraTestDragHost {
     ///     тесты не писали на диск.
     ///   - windowSize: Размер окна и сетки (ширина экрана для проверок геометрии).
     ///   - prepare: Подготовка модели до постройки сетки (например, создание
-    ///     папки через `TileStore`); получает хранилище и ширину сетки для
+    ///     папки через `TesseraTileStore`); получает хранилище и ширину сетки для
     ///     операций по ячейкам (E14.6). Раскладка до `prepare` — упаковка
     ///     каталога (`placeItems`), операции работают по ячейкам: дыры остаются.
     convenience init(
-        descriptors: [TileDescriptor],
+        descriptors: [TesseraTileDescriptor],
         columns: Int = 4,
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(),
         autosaves: Bool = false,
         windowSize: CGSize = TesseraTestWindowedGrid.defaultSize,
-        prepare: ((TileStore, Int) -> Void)? = nil
+        prepare: ((TesseraTileStore, Int) -> Void)? = nil
     ) {
         let directory = TesseraTestDirectory()
         try? directory.create()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(descriptors)
         store.placeItems(columns: columns)
@@ -411,7 +411,7 @@ final class TesseraTestDragHost {
     }
 
     /// Создаёт стенд с точной раскладкой по ячейкам (E14.5): файл схемы версии 2
-    /// с дырами (`TileStoreCellFixture`) загружается в `TileStore`, а сетка
+    /// с дырами (`TileStoreCellFixture`) загружается в `TesseraTileStore`, а сетка
     /// строится из `snapshot(columns:)`.
     ///
     /// - Parameters:
@@ -423,7 +423,7 @@ final class TesseraTestDragHost {
     convenience init(
         cells tiles: [CellFixtureTile],
         folders: [CellFixtureFolder] = [],
-        unpinned: [(String, TileSize)] = [],
+        unpinned: [(String, TesseraTileSize)] = [],
         columns: Int = 4,
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
             mergeHoverDuration: 0.05,
@@ -444,7 +444,7 @@ final class TesseraTestDragHost {
     }
 
     /// Создаёт стенд с раскладкой, **упакованной как до E14** (E14.6): элементы в
-    /// порядке массива упаковываются `TileLayoutEngine.packCompact` для `columns`,
+    /// порядке массива упаковываются `TesseraTileLayoutEngine.packCompact` для `columns`,
     /// результат записывается файлом версии 2 (`TileStoreCellFixture`), так что
     /// ячейки точные, а порядок модели — порядок чтения. Для тестов, чья геометрия
     /// была рассчитана на компактную раскладку, которую раньше давали операции по
@@ -458,14 +458,14 @@ final class TesseraTestDragHost {
     convenience init(
         packed entries: [TesseraTestPackedEntry],
         columns: Int = 4,
-        unpinned: [(String, TileSize)] = [],
+        unpinned: [(String, TesseraTileSize)] = [],
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
             mergeHoverDuration: 0.05,
             magnetSnapRadius: 0,
             reorderPreviewDwell: 0
         )
     ) throws {
-        let slots = TileLayoutEngine.packCompact(
+        let slots = TesseraTileLayoutEngine.packCompact(
             items: entries.map { (id: AnyHashable($0.id), size: $0.size) },
             columns: columns,
             unit: 1
@@ -497,7 +497,7 @@ final class TesseraTestDragHost {
     /// Общая часть: окно с сеткой из снимка хранилища и живой координатор.
     private init(
         directory: TesseraTestDirectory,
-        store: TileStore,
+        store: TesseraTileStore,
         columns: Int,
         configuration: TesseraTileEditConfiguration,
         windowSize: CGSize = TesseraTestWindowedGrid.defaultSize
@@ -565,7 +565,7 @@ final class TesseraTestDragHost {
     }
 
     /// Папки в порядке сетки.
-    var folders: [TileFolder] {
+    var folders: [TesseraTileFolder] {
         store.snapshot().folders
     }
 
@@ -614,7 +614,7 @@ final class TesseraTestDragHost {
     /// - Returns: Точка или `nil`, если геометрию не посчитать.
     func cellPoint(row: Int, column: Int, fx: CGFloat = 0.5, fy: CGFloat = 0.5) -> CGPoint? {
         guard let frame = host.grid.baseFrame(
-            forCell: TileGridPlacement(row: row, column: column),
+            forCell: TesseraTileGridPlacement(row: row, column: column),
             size: .small
         ) else {
             return nil
@@ -623,12 +623,12 @@ final class TesseraTestDragHost {
     }
 
     /// Рамка клетки малой плитки `(строка, колонка)` в координатах сетки.
-    func cellFrame(row: Int, column: Int, size: TileSize = .small) -> CGRect? {
-        host.grid.baseFrame(forCell: TileGridPlacement(row: row, column: column), size: size)
+    func cellFrame(row: Int, column: Int, size: TesseraTileSize = .small) -> CGRect? {
+        host.grid.baseFrame(forCell: TesseraTileGridPlacement(row: row, column: column), size: size)
     }
 
     /// Ячейки, которые сейчас показывает сетка (таблица снимка сетки).
-    var gridCells: [AnyHashable: TileGridPlacement]? {
+    var gridCells: [AnyHashable: TesseraTileGridPlacement]? {
         host.grid.snapshot?.placementTable?.cells
     }
 }

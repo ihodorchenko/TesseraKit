@@ -1,10 +1,10 @@
 //
-//  StartScreenView.swift
+//  TesseraStartScreenView.swift
 //  TesseraStartScreen
 //
 //  SwiftUI-фасад рабочего стола.
 //  Контракт: docs/STARTSCREEN-IOS-DESIGN.md — §2 «Архитектура»
-//  (StartScreenView → StartScreenViewController; StartScreenDelegate — события
+//  (TesseraStartScreenView → StartScreenViewController; TesseraStartScreenDelegate — события
 //  тапа и переходов), §3 «Плиточная сетка» (снимок сетки — единственный вход
 //  данных), §6 «Страница справа» и §7 «Страница слева» (боковые страницы —
 //  только если хост их задал, D13), §8 «Параллакс фона» (обои и множитель),
@@ -16,9 +16,9 @@
 //  - фасад не дублирует механику: пейджер, сетка, параллакс, режим
 //    редактирования и папки живут в UIKit-ядре (E4.1–E4.5), а SwiftUI-структура
 //    только создаёт и обновляет `TesseraStartScreenViewController` и переводит
-//    его события в `StartScreenDelegate` (как `PivotView` в E2.5);
-//  - данные приходят значением — снимком `TileGridSnapshot`; фасад не владеет
-//    `TileStore` и не подписывается на него (правило «один писатель», §6);
+//    его события в `TesseraStartScreenDelegate` (как `TesseraPivotView` в E2.5);
+//  - данные приходят значением — снимком `TesseraTileGridSnapshot`; фасад не владеет
+//    `TesseraTileStore` и не подписывается на него (правило «один писатель», §6);
 //  - `updateUIViewController` — единственное место применения конфигурации:
 //    каждое поле сравнивается с текущим состоянием контроллера, поэтому
 //    перерисовка SwiftUI не перезагружает страницы и не пересоздаёт пейджер.
@@ -44,7 +44,7 @@ import TesseraCore
 /// страницы по завершении перехода. Внутри компонента строки по умолчанию
 /// английские (значения совпадают с умолчаниями
 /// ``TesseraStartScreenViewController``); хост локализует их, передав свой стиль.
-public struct StartScreenStyle {
+public struct TesseraStartScreenStyle {
 
     /// Обои рабочего стола (§8).
     ///
@@ -101,15 +101,15 @@ public struct StartScreenStyle {
 /// опциональные боковые страницы, D13), вертикальная сетка ярлыков с
 /// параллаксом обоев и режим редактирования остаются в UIKit-ядре. Фасад
 /// декларативно задаёт снимок сетки, боковые страницы и стиль, а события
-/// отдаёт через ``StartScreenDelegate``.
+/// отдаёт через ``TesseraStartScreenDelegate``.
 ///
 /// ```swift
-/// @StateObject private var store = TileStore()
+/// @StateObject private var store = TesseraTileStore()
 ///
 /// var body: some View {
-///     StartScreenView(
+///     TesseraStartScreenView(
 ///         snapshot: store.snapshot(columns: 6),   // ширина сетки; ячейки и дыры (E14.5)
-///         style: StartScreenStyle(startPageTitle: "Начало"),
+///         style: TesseraStartScreenStyle(startPageTitle: "Начало"),
 ///         rightPage: { TesseraAppsListPageViewController.make(store: store) },
 ///         delegate: host
 ///     )
@@ -127,7 +127,7 @@ public struct StartScreenStyle {
 ///   из последнего снимка по `id`, то есть с актуальным `action`;
 /// - боковые страницы пересобираются при смене «есть/нет» и при смене типа
 ///   поставщика хука. Новый экземпляр того же типа (например,
-///   `QuickPanelProvider`, созданный в `body`) и новая фабрика `rightPage`
+///   `TesseraQuickPanelProvider`, созданный в `body`) и новая фабрика `rightPage`
 ///   пейджер не пересобирают: они подменяются «тихо» и используются при
 ///   следующем создании страницы и для колбэков хука. Чтобы пересоздать уже
 ///   загруженную боковую страницу, пересоздайте представление (`.id(…)`) или
@@ -140,7 +140,7 @@ public struct StartScreenStyle {
 /// Если хост одновременно владеет `TileEditCoordinator`, он анимирует resize,
 /// reorder и drag сам. Фасад сравнивает снимок с фактическим состоянием сетки,
 /// поэтому уже применённое координатором изменение повторно не перезагружается;
-/// обновляйте SwiftUI-состояние после `TileStore.onChange`, чтобы порядок
+/// обновляйте SwiftUI-состояние после `TesseraTileStore.onChange`, чтобы порядок
 /// «координатор → SwiftUI» сохранялся.
 ///
 /// ## Раскрытие папок (D17, E7.3)
@@ -159,11 +159,11 @@ public struct StartScreenStyle {
 ///
 /// ## Делегат
 ///
-/// ``StartScreenDelegate`` — протокол с классовой связностью, а SwiftUI-структура
+/// ``TesseraStartScreenDelegate`` — протокол с классовой связностью, а SwiftUI-структура
 /// не может хранить `weak`-ссылку. Поэтому фасад передаёт делегата координатору,
-/// который удерживает последнее значение ``StartScreenView`` и пробрасывает все
+/// который удерживает последнее значение ``TesseraStartScreenView`` и пробрасывает все
 /// колбэки. Делегат удерживается сильной ссылкой, пока представление
-/// установлено (как в `PivotView`/`PanoramaView`).
+/// установлено (как в `TesseraPivotView`/`TesseraPanoramaView`).
 ///
 /// ## Accessibility (§9)
 ///
@@ -190,20 +190,20 @@ public struct StartScreenStyle {
 ///   анимаций, которые нужно было бы отключать.
 ///
 /// - Note: Все колбэки и обновления выполняются на главном потоке.
-public struct StartScreenView: UIViewControllerRepresentable {
+public struct TesseraStartScreenView: UIViewControllerRepresentable {
 
     // MARK: - Входные данные
 
     /// Снимок сетки: элементы, их порядок и размеры (§3, D15).
     ///
-    /// Снимок — значение из `TileStore`: фасад его только отображает.
-    private let snapshot: TileGridSnapshot
+    /// Снимок — значение из `TesseraTileStore`: фасад его только отображает.
+    private let snapshot: TesseraTileGridSnapshot
 
     /// Обои, множитель параллакса и названия страниц.
-    private let style: StartScreenStyle
+    private let style: TesseraStartScreenStyle
 
     /// Поставщик левой страницы-хука (§7); `nil` — страницы нет (D13).
-    private let leftPanel: QuickPanelProviding?
+    private let leftPanel: TesseraQuickPanelProviding?
 
     /// Фабрика правой страницы — списка приложений (§6); `nil` — страницы нет
     /// (D13). Пейджер лениво выгружает страницы ±1, поэтому фабрика может
@@ -223,12 +223,12 @@ public struct StartScreenView: UIViewControllerRepresentable {
     /// `nil` (по умолчанию) — папка раскрывается нативной панелью сетки. Если
     /// замыкание вернуло `true`, нативное раскрытие не выполняется: хост сам
     /// обрабатывает тап (например, показывает прежний экран папки). При `true`
-    /// событие ``StartScreenDelegate/startScreen(_:didTapFolder:)`` не приходит,
+    /// событие ``TesseraStartScreenDelegate/startScreen(_:didTapFolder:)`` не приходит,
     /// чтобы навигация не выполнилась дважды.
-    private let folderTapHandler: ((TileFolder) -> Bool)?
+    private let folderTapHandler: ((TesseraTileFolder) -> Bool)?
 
     /// Наблюдатель событий рабочего стола.
-    private let delegate: StartScreenDelegate?
+    private let delegate: TesseraStartScreenDelegate?
 
     /// Создаёт фасад рабочего стола.
     ///
@@ -243,13 +243,13 @@ public struct StartScreenView: UIViewControllerRepresentable {
     ///     раскрытие панелью.
     ///   - delegate: Наблюдатель тапов и переходов; необязателен.
     public init(
-        snapshot: TileGridSnapshot,
-        style: StartScreenStyle = StartScreenStyle(),
-        leftPanel: QuickPanelProviding? = nil,
+        snapshot: TesseraTileGridSnapshot,
+        style: TesseraStartScreenStyle = TesseraStartScreenStyle(),
+        leftPanel: TesseraQuickPanelProviding? = nil,
         rightPage: (() -> UIViewController)? = nil,
         yieldsLeftEdgeToSystemGesture: Bool = false,
-        folderTapHandler: ((TileFolder) -> Bool)? = nil,
-        delegate: StartScreenDelegate? = nil
+        folderTapHandler: ((TesseraTileFolder) -> Bool)? = nil,
+        delegate: TesseraStartScreenDelegate? = nil
     ) {
         self.snapshot = snapshot
         self.style = style
@@ -262,7 +262,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
 
     // MARK: - UIViewControllerRepresentable
 
-    /// Создаёт координатор — мост колбэков UIKit в ``StartScreenDelegate``.
+    /// Создаёт координатор — мост колбэков UIKit в ``TesseraStartScreenDelegate``.
     ///
     /// - Returns: Координатор, удерживаемый SwiftUI.
     public func makeCoordinator() -> Coordinator {
@@ -291,7 +291,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
     ///
     /// Метод вызывается при каждой перерисовке SwiftUI, поэтому все применения
     /// сравнивают значения с текущим состоянием (см. документацию
-    /// ``StartScreenView``): пересборка страниц и перезагрузка сетки случаются
+    /// ``TesseraStartScreenView``): пересборка страниц и перезагрузка сетки случаются
     /// только при реальных изменениях.
     ///
     /// - Parameters:
@@ -337,13 +337,13 @@ public struct StartScreenView: UIViewControllerRepresentable {
     /// появление) должна дойти до сетки, иначе плитка не станет живой (E10.8).
     fileprivate struct ShortcutSignature: Equatable {
         let id: AnyHashable
-        let size: TileSize
+        let size: TesseraTileSize
         let title: String
-        let badge: TileBadge
+        let badge: TesseraTileBadge
         let iconIdentifier: ObjectIdentifier?
         let liveContentIdentifier: ObjectIdentifier?
 
-        init(shortcut: TileDescriptor) {
+        init(shortcut: TesseraTileDescriptor) {
             id = shortcut.id
             size = shortcut.size
             title = shortcut.title
@@ -355,7 +355,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
 
     /// Сравниваемые признаки элемента сетки.
     ///
-    /// `TileGridSnapshot` и `TileGridItem` не `Equatable`: в ярлыке есть
+    /// `TesseraTileGridSnapshot` и `TesseraTileGridItem` не `Equatable`: в ярлыке есть
     /// замыкание `action`, у которого нет семантики равенства. Поэтому «то же
     /// самое» определяется тем, что видно и озвучивается: идентификатор,
     /// размер (D15), подпись, бейдж (D12), ссылка на иконку, live-провайдер и
@@ -365,15 +365,15 @@ public struct StartScreenView: UIViewControllerRepresentable {
     /// идентификатор, но это разные состояния экрана.
     fileprivate struct ItemSignature: Equatable {
         let id: AnyHashable
-        let size: TileSize
+        let size: TesseraTileSize
         let title: String
-        let badge: TileBadge
+        let badge: TesseraTileBadge
         let iconIdentifier: ObjectIdentifier?
         let liveContentIdentifier: ObjectIdentifier?
         let folderContents: [ShortcutSignature]
         let isFolderPanel: Bool
 
-        init(item: TileGridItem) {
+        init(item: TesseraTileGridItem) {
             id = item.id
             size = item.size
 
@@ -405,7 +405,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
     }
 
     /// Признаки массива элементов — вход сравнения снимков.
-    fileprivate static func signatures(for items: [TileGridItem]) -> [ItemSignature] {
+    fileprivate static func signatures(for items: [TesseraTileGridItem]) -> [ItemSignature] {
         items.map { ItemSignature(item: $0) }
     }
 
@@ -425,23 +425,23 @@ public struct StartScreenView: UIViewControllerRepresentable {
     /// поэтому сравнение по ссылке пересобирало бы пейджер на каждый кадр
     /// (E10.8). Смена типа — это смена страницы; новый экземпляр того же типа
     /// подменяется без пересборки.
-    fileprivate static func providerType(of value: QuickPanelProviding) -> ObjectIdentifier {
+    fileprivate static func providerType(of value: TesseraQuickPanelProviding) -> ObjectIdentifier {
         ObjectIdentifier(type(of: value))
     }
 
     // MARK: - Координатор
 
-    /// Мост событий UIKit-ядра в ``StartScreenDelegate``.
+    /// Мост событий UIKit-ядра в ``TesseraStartScreenDelegate``.
     ///
     /// Живёт столько же, сколько представление: его удерживает SwiftUI, поэтому
     /// слабая ссылка контроллера (``TesseraStartScreenViewController/delegate``)
     /// не теряет наблюдателя между перерисовками. Сам координатор — UIKit-делегат
     /// контроллера: страницы и видимость хука пересылаются хосту как есть, а
     /// тапы сетки (`onTap`) — с ярлыком из последнего снимка.
-    public final class Coordinator: NSObject, StartScreenDelegate, TesseraPagerDelegate {
+    public final class Coordinator: NSObject, TesseraStartScreenDelegate, TesseraPagerDelegate {
 
         /// Последняя версия описания из SwiftUI: источник делегата и конфигурации.
-        fileprivate var parent: StartScreenView
+        fileprivate var parent: TesseraStartScreenView
 
         /// Контроллер экрана. Слабо: иерархией владеет SwiftUI.
         fileprivate weak var screenViewController: TesseraStartScreenViewController?
@@ -459,7 +459,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// Создаёт координатор поверх описания рабочего стола.
         ///
         /// - Parameter parent: Описание из `makeCoordinator()`.
-        fileprivate init(parent: StartScreenView) {
+        fileprivate init(parent: TesseraStartScreenView) {
             self.parent = parent
             super.init()
         }
@@ -478,7 +478,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         ///   - isInitial: `true` при создании вида — все поля применяются без
         ///     сравнений.
         fileprivate func applyConfiguration(
-            _ description: StartScreenView,
+            _ description: TesseraStartScreenView,
             to screen: TesseraStartScreenViewController,
             isInitial: Bool
         ) {
@@ -495,12 +495,12 @@ public struct StartScreenView: UIViewControllerRepresentable {
         }
 
         /// Применяет стиль, не трогая неизменившиеся поля.
-        private func apply(style: StartScreenStyle, to screen: TesseraStartScreenViewController) {
+        private func apply(style: TesseraStartScreenStyle, to screen: TesseraStartScreenViewController) {
             if screen.wallpaperImage !== style.wallpaper {
                 screen.wallpaperImage = style.wallpaper
             }
 
-            let factor = StartScreenView.sanitizedParallaxFactor(style.wallpaperParallaxFactor)
+            let factor = TesseraStartScreenView.sanitizedParallaxFactor(style.wallpaperParallaxFactor)
             if factor != screen.wallpaperParallaxFactor {
                 screen.wallpaperParallaxFactor = style.wallpaperParallaxFactor
             }
@@ -535,14 +535,14 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// конфигурации (поставщик и фабрика, созданные в `body`) подменяются
         /// без пересборки (E10.8).
         private func applySidePages(
-            leftPanel: QuickPanelProviding?,
+            leftPanel: TesseraQuickPanelProviding?,
             rightPage: (() -> UIViewController)?,
             to screen: TesseraStartScreenViewController,
             force: Bool
         ) {
             let hasLeftPanel = leftPanel != nil
             let hasRightPage = rightPage != nil
-            let leftPanelType = leftPanel.map { StartScreenView.providerType(of: $0) }
+            let leftPanelType = leftPanel.map { TesseraStartScreenView.providerType(of: $0) }
 
             let needsRebuild = force
                 || appliedHasLeftPanel != hasLeftPanel
@@ -567,14 +567,14 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// раньше, чем придёт перерисовка SwiftUI — тогда повторного
         /// `reloadData` не будет и анимация не сорвётся.
         private func applyGrid(
-            _ snapshot: TileGridSnapshot,
+            _ snapshot: TesseraTileGridSnapshot,
             to screen: TesseraStartScreenViewController,
             force: Bool
         ) {
             if !force {
-                let desired = StartScreenView.signatures(for: snapshot.items)
-                let current = StartScreenView.signatures(for: screen.gridView.items)
-                // E14.5: снимок с таблицей явных ячеек (`TileStore.snapshot(columns:)`)
+                let desired = TesseraStartScreenView.signatures(for: snapshot.items)
+                let current = TesseraStartScreenView.signatures(for: screen.gridView.items)
+                // E14.5: снимок с таблицей явных ячеек (`TesseraTileStore.snapshot(columns:)`)
                 // меняет раскладку и тогда, когда состав и размеры те же — например,
                 // после открепления остаётся дыра. Снимок без таблицы раскладку не
                 // задаёт и показанную таблицу не затирает.
@@ -591,7 +591,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// сетки ничего не пересобирает. Хост может менять перехватчик между
         /// перерисовками SwiftUI.
         private func applyFolderTapHandler(
-            _ handler: ((TileFolder) -> Bool)?,
+            _ handler: ((TesseraTileFolder) -> Bool)?,
             to screen: TesseraStartScreenViewController
         ) {
             screen.gridView.folderTapHandler = handler
@@ -604,8 +604,8 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// Сетка отдаёт тапы только через `onTap`, поэтому фасад забирает это
         /// замыкание себе: иначе ни тап пальцем, ни активация VoiceOver не
         /// дошли бы до делегата. Хосту, которому нужно своё поведение тапа,
-        /// следует использовать ``StartScreenDelegate``, а не переопределять
-        /// `onTap` (см. документацию ``StartScreenView``). Переходы страниц и
+        /// следует использовать ``TesseraStartScreenDelegate``, а не переопределять
+        /// `onTap` (см. документацию ``TesseraStartScreenView``). Переходы страниц и
         /// видимость хука приходят через UIKit-делегат контроллера.
         ///
         /// - Parameter screen: Контроллер, созданный в `makeUIViewController`.
@@ -647,12 +647,12 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// Тап по элементу сетки (палец или активация VoiceOver).
         ///
         /// Действие ярлыка не выполняется (D12): компонент сообщает событие, а
-        /// `TileDescriptor.action` вызывает хост — иначе действие выполнилось бы
+        /// `TesseraTileDescriptor.action` вызывает хост — иначе действие выполнилось бы
         /// дважды, если хост тоже на него подписан. Ярлык и папка берутся из
         /// последнего снимка SwiftUI по `id`: сетка не перезагружается ради
         /// нового замыкания `action` (оно несравнимо), но делегат получает
         /// актуальное (E10.8).
-        private func handleTap(_ item: TileGridItem) {
+        private func handleTap(_ item: TesseraTileGridItem) {
             guard let screen = screenViewController else { return }
 
             switch item {
@@ -674,7 +674,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         /// - Parameters:
         ///   - folder: Папка, к которой относится событие.
         ///   - expanded: `true` — панель раскрыта, `false` — свёрнута.
-        private func handleFolderExpansion(_ folder: TileFolder, expanded: Bool) {
+        private func handleFolderExpansion(_ folder: TesseraTileFolder, expanded: Bool) {
             guard let screen = screenViewController else { return }
             let latest = latestFolder(for: folder)
             if expanded {
@@ -685,7 +685,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         }
 
         /// Ярлык с тем же `id` из последнего снимка (в том числе внутри папки).
-        private func latestShortcut(for shortcut: TileDescriptor) -> TileDescriptor {
+        private func latestShortcut(for shortcut: TesseraTileDescriptor) -> TesseraTileDescriptor {
             for item in parent.snapshot.items {
                 switch item {
                 case .tile(let candidate) where candidate.id == shortcut.id:
@@ -702,7 +702,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
         }
 
         /// Папка с тем же `id` из последнего снимка.
-        private func latestFolder(for folder: TileFolder) -> TileFolder {
+        private func latestFolder(for folder: TesseraTileFolder) -> TesseraTileFolder {
             for item in parent.snapshot.items {
                 if case .folder(let candidate) = item, candidate.id == folder.id {
                     return candidate
@@ -711,7 +711,7 @@ public struct StartScreenView: UIViewControllerRepresentable {
             return folder
         }
 
-        // MARK: StartScreenDelegate (мост UIKit → хост)
+        // MARK: TesseraStartScreenDelegate (мост UIKit → хост)
 
         /// Смена страницы — пересылается делегату хоста как есть.
         ///

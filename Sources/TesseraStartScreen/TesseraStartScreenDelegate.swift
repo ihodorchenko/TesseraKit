@@ -1,7 +1,7 @@
 // Делегат рабочего стола (Start Screen).
 //
 // Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  - §2 «Архитектура»: `StartScreenDelegate` — события рабочего стола
+//  - §2 «Архитектура»: `TesseraStartScreenDelegate` — события рабочего стола
 //    (тап, переходы страниц, хук); модель и раскладка живут отдельно;
 //  - §6 «Страница справа: список приложений + настройки» и §7 «Страница
 //    слева: хук»: действия ярлыков и навигация — забота хоста, компонент
@@ -26,24 +26,24 @@ import UIKit
 /// Наблюдатель событий рабочего стола (docs/STARTSCREEN-IOS-DESIGN.md §2).
 ///
 /// Делегат только читает состояние и реагирует на действия пользователя:
-/// модель (`TileStore`) и раскладку (`TileGridView`) он не меняет — это правило
+/// модель (`TesseraTileStore`) и раскладку (`TileGridView`) он не меняет — это правило
 /// «один писатель» из §6 и `docs/CORE-IOS-DESIGN.md` §2. Если нужно изменить
-/// состав ярлыков (pin/unpin, resize, папки), хост делает это через `TileStore` и
+/// состав ярлыков (pin/unpin, resize, папки), хост делает это через `TesseraTileStore` и
 /// передаёт фасаду новый снимок сетки.
 ///
 /// ## Что фасад НЕ делает сам (D12)
 ///
 /// Тап по ярлыку — это событие ``startScreen(_:didTapShortcut:)``, а **не**
-/// вызов `TileDescriptor.action`. Действие ярлыка выполняет хост: так D12
+/// вызов `TesseraTileDescriptor.action`. Действие ярлыка выполняет хост: так D12
 /// («ярлык — просто действие») остаётся в одном месте, а хост может добавить
 /// аналитику, защиту от повторного тапа или навигацию до запуска действия.
 /// Если вызывать `action` ещё и в фасаде, действие выполнилось бы дважды.
 ///
 /// ```swift
-/// final class Host: StartScreenDelegate {
+/// final class Host: TesseraStartScreenDelegate {
 ///     func startScreen(
 ///         _ screen: TesseraStartScreenViewController,
-///         didTapShortcut shortcut: TileDescriptor
+///         didTapShortcut shortcut: TesseraTileDescriptor
 ///     ) {
 ///         shortcut.action()
 ///     }
@@ -71,13 +71,13 @@ import UIKit
 /// - Note: Делегат удерживается фасадом сильной ссылкой (SwiftUI-структура не
 ///   умеет хранить `weak`). Если делегат держит SwiftUI-состояние, используйте
 ///   промежуточный объект, чтобы не создать цикл.
-public protocol StartScreenDelegate: AnyObject {
+public protocol TesseraStartScreenDelegate: AnyObject {
 
     /// Пользователь выбрал ярлык (тап пальцем или активация VoiceOver).
     ///
     /// Ярлык приходит из снимка сетки — с идентификатором, заголовком, иконкой,
     /// бейджем, размером и действием (D12). Фасад **не** вызывает
-    /// `TileDescriptor.action`: это решение хоста (см. документацию протокола).
+    /// `TesseraTileDescriptor.action`: это решение хоста (см. документацию протокола).
     /// Папки приходят отдельным событием ``startScreen(_:didTapFolder:)``.
     ///
     /// - Parameters:
@@ -85,7 +85,7 @@ public protocol StartScreenDelegate: AnyObject {
     ///   - shortcut: Выбранный ярлык.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didTapShortcut shortcut: TileDescriptor
+        didTapShortcut shortcut: TesseraTileDescriptor
     )
 
     /// Пользователь выбрал папку на сетке.
@@ -98,14 +98,14 @@ public protocol StartScreenDelegate: AnyObject {
     /// - Note: С D17 (E7.3) по умолчанию папка дополнительно раскрывается
     ///   нативной панелью сетки, поэтому событие — «палец коснулся папки», а не
     ///   команда показа экрана. Чтобы сохранить прежнее поведение (свой экран
-    ///   без встроенной панели), задайте перехватчик в `StartScreenView`.
+    ///   без встроенной панели), задайте перехватчик в `TesseraStartScreenView`.
     ///
     /// - Parameters:
     ///   - screen: Контроллер-источник события.
     ///   - folder: Выбранная папка вместе с ярлыками.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didTapFolder folder: TileFolder
+        didTapFolder folder: TesseraTileFolder
     )
 
     /// Сетка раскрыла папку нативной панелью (D17, E7.3).
@@ -120,7 +120,7 @@ public protocol StartScreenDelegate: AnyObject {
     ///   - folder: Раскрытая папка.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didExpandFolder folder: TileFolder
+        didExpandFolder folder: TesseraTileFolder
     )
 
     /// Сетка свернула нативную панель папки (D17, E7.3).
@@ -134,7 +134,7 @@ public protocol StartScreenDelegate: AnyObject {
     ///   - folder: Свёрнутая папка.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didCollapseFolder folder: TileFolder
+        didCollapseFolder folder: TesseraTileFolder
     )
 
     /// Пейджер завершил переход и показывает новую страницу.
@@ -163,7 +163,7 @@ public protocol StartScreenDelegate: AnyObject {
     /// `true` — хук сейчас на экране (пользователь листает пейджер или хост
     /// показал его программно), `false` — ушёл с экрана. Событие нужно для
     /// ленивой загрузки контента хука на уровне экрана; сам
-    /// ``QuickPanelProviding`` дополнительно получает `quickPanelWillAppear` /
+    /// ``TesseraQuickPanelProviding`` дополнительно получает `quickPanelWillAppear` /
     /// `quickPanelDidDisappear` от контроллера, поэтому обычно достаточно их.
     ///
     /// Событие приходит только при смене значения — при первом переходе на
@@ -178,31 +178,31 @@ public protocol StartScreenDelegate: AnyObject {
     )
 }
 
-public extension StartScreenDelegate {
+public extension TesseraStartScreenDelegate {
 
     /// По умолчанию тап по ярлыку игнорируется: хост подписывается на нужные
     /// события выборочно (docs/STARTSCREEN-IOS-DESIGN.md §2).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didTapShortcut shortcut: TileDescriptor
+        didTapShortcut shortcut: TesseraTileDescriptor
     ) {}
 
     /// По умолчанию папка не открывается: навигация — за хостом (D14).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didTapFolder folder: TileFolder
+        didTapFolder folder: TesseraTileFolder
     ) {}
 
     /// По умолчанию раскрытие папки не интересует делегата (D17).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didExpandFolder folder: TileFolder
+        didExpandFolder folder: TesseraTileFolder
     ) {}
 
     /// По умолчанию закрытие папки не интересует делегата (D17).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
-        didCollapseFolder folder: TileFolder
+        didCollapseFolder folder: TesseraTileFolder
     ) {}
 
     /// По умолчанию смена страницы не интересует делегата.

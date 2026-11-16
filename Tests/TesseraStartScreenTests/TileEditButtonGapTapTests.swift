@@ -60,7 +60,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didResize tileID: AnyHashable,
-            to size: TileSize
+            to size: TesseraTileSize
         ) {
             events.append("resize:\(tileID)")
         }

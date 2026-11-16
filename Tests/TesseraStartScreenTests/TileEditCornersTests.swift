@@ -364,7 +364,7 @@ final class TileEditCornersTests: XCTestCase {
     /// открепление; бэйдж остаётся видимым (кроме «99+» на 1×1 — плитка уже 58 pt, D48:
     /// скрыт только на время правки). Измеренные зазоры выводятся в лог.
     func testBadgeDoesNotOverlapButtonsInRealEditSession() throws {
-        let badges: [(String, TileBadge)] = [("count 3", .count(3)), ("99+", .count(150)), ("dot", .dot)]
+        let badges: [(String, TesseraTileBadge)] = [("count 3", .count(3)), ("99+", .count(150)), ("dot", .dot)]
         for width in [CGFloat(375), 390, 402, 414] {
             for (badgeName, badge) in badges {
                 let host = TesseraTestDragHost(

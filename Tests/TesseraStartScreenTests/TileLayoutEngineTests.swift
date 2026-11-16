@@ -11,7 +11,7 @@
 //  запасной путь, миграция v1 → v2 и первый запуск; раскладка по явным ячейкам
 //  с дырами проверяется в `TileLayoutEnginePlacement*Tests`.
 //
-//  Тесты работают только с чистыми функциями `TileLayoutEngine`: без UIKit-цикла,
+//  Тесты работают только с чистыми функциями `TesseraTileLayoutEngine`: без UIKit-цикла,
 //  без окна и без коллекции. Случайные конфигурации seeded — прогон
 //  воспроизводим. Для каждой упаковки проверяется свойство «первая свободная
 //  позиция по обходу сверху вниз, слева направо» и строгая компактность готовой
@@ -49,8 +49,8 @@ final class TileLayoutEngineTests: XCTestCase {
     ///   - slots: Результат упаковки.
     ///   - columns: Число колонок сетки.
     private func assertCompactPacking(
-        items: [(id: AnyHashable, size: TileSize)],
-        slots: [TileLayoutSlot],
+        items: [(id: AnyHashable, size: TesseraTileSize)],
+        slots: [TesseraTileLayoutSlot],
         columns: Int,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -191,14 +191,14 @@ final class TileLayoutEngineTests: XCTestCase {
 
     /// Пустой вход — пустая раскладка.
     func testEmptyItemsProduceEmptyLayout() {
-        let slots = TileLayoutEngine.pack(items: [], columns: 4, unit: 64)
+        let slots = TesseraTileLayoutEngine.pack(items: [], columns: 4, unit: 64)
         XCTAssertTrue(slots.isEmpty)
     }
 
     /// Одна small-плитка встаёт в левый верхний угол и занимает один юнит.
     func testSingleSmallTileOccupiesOrigin() throws {
-        let slots = TileLayoutEngine.pack(
-            items: [(id: AnyHashable("a"), size: TileSize.small)],
+        let slots = TesseraTileLayoutEngine.pack(
+            items: [(id: AnyHashable("a"), size: TesseraTileSize.small)],
             columns: 4,
             unit: 64
         )
@@ -218,8 +218,8 @@ final class TileLayoutEngineTests: XCTestCase {
 
     /// Одна large-плитка занимает всю ширину и четыре строки (D15: 4×4).
     func testSingleLargeTileOccupiesWholeWidth() throws {
-        let slots = TileLayoutEngine.pack(
-            items: [(id: AnyHashable("a"), size: TileSize.large)],
+        let slots = TesseraTileLayoutEngine.pack(
+            items: [(id: AnyHashable("a"), size: TesseraTileSize.large)],
             columns: 4,
             unit: 50
         )
@@ -234,10 +234,10 @@ final class TileLayoutEngineTests: XCTestCase {
 
     /// Плитка шире сетки пропускается: сетка не искажает размер (D15).
     func testTileWiderThanGridIsSkipped() throws {
-        let slots = TileLayoutEngine.pack(
+        let slots = TesseraTileLayoutEngine.pack(
             items: [
-                (id: AnyHashable("wide"), size: TileSize.wide),
-                (id: AnyHashable("small"), size: TileSize.small),
+                (id: AnyHashable("wide"), size: TesseraTileSize.wide),
+                (id: AnyHashable("small"), size: TesseraTileSize.small),
             ],
             columns: 3,
             unit: 40
@@ -252,16 +252,16 @@ final class TileLayoutEngineTests: XCTestCase {
 
     /// Вырожденная геометрия не запускает упаковку.
     func testDegenerateGeometryProducesEmptyLayout() {
-        let items: [(id: AnyHashable, size: TileSize)] = [
-            (id: AnyHashable("a"), size: TileSize.small),
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
+            (id: AnyHashable("a"), size: TesseraTileSize.small),
         ]
 
-        XCTAssertTrue(TileLayoutEngine.pack(items: items, columns: 0, unit: 64).isEmpty)
-        XCTAssertTrue(TileLayoutEngine.pack(items: items, columns: -2, unit: 64).isEmpty)
-        XCTAssertTrue(TileLayoutEngine.pack(items: items, columns: 4, unit: 0).isEmpty)
-        XCTAssertTrue(TileLayoutEngine.pack(items: items, columns: 4, unit: -10).isEmpty)
-        XCTAssertTrue(TileLayoutEngine.pack(items: items, columns: 4, unit: .nan).isEmpty)
-        XCTAssertTrue(TileLayoutEngine.pack(items: items, columns: 4, unit: .infinity).isEmpty)
+        XCTAssertTrue(TesseraTileLayoutEngine.pack(items: items, columns: 0, unit: 64).isEmpty)
+        XCTAssertTrue(TesseraTileLayoutEngine.pack(items: items, columns: -2, unit: 64).isEmpty)
+        XCTAssertTrue(TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 0).isEmpty)
+        XCTAssertTrue(TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: -10).isEmpty)
+        XCTAssertTrue(TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: .nan).isEmpty)
+        XCTAssertTrue(TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: .infinity).isEmpty)
     }
 
     // MARK: - Строгая компактность (E8.5)
@@ -273,12 +273,12 @@ final class TileLayoutEngineTests: XCTestCase {
     /// каждый раз начинается с нулевой строки. После упаковки ни одну плитку
     /// нельзя сдвинуть вверх/влево (E8.5).
     func testLaterTileFillsFreeSlotAboveWideTile() throws {
-        let items: [(id: AnyHashable, size: TileSize)] = [
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             (id: AnyHashable("medium"), size: .medium),
             (id: AnyHashable("wide"), size: .wide),
             (id: AnyHashable("small"), size: .small),
         ]
-        let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 10)
+        let slots = TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 10)
 
         XCTAssertEqual(slots.map { $0.column }, [0, 0, 2])
         XCTAssertEqual(slots.map { $0.row }, [0, 2, 0])
@@ -293,14 +293,14 @@ final class TileLayoutEngineTests: XCTestCase {
     /// сдвигать нечего, это не «честная дыра» §3, а след размеров. Следующая
     /// small в новой упаковке занимает именно (3,1), а не остаётся ниже.
     func testOnlyUnfillableHoleRemainsAndNextSmallFillsIt() {
-        let items: [(id: AnyHashable, size: TileSize)] = [
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             (id: AnyHashable("medium"), size: .medium),
             (id: AnyHashable("wide"), size: .wide),
             (id: AnyHashable("small-1"), size: .small),
             (id: AnyHashable("small-2"), size: .small),
             (id: AnyHashable("small-3"), size: .small),
         ]
-        let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 10)
+        let slots = TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 10)
 
         assertCompactPacking(items: items, slots: slots, columns: 4)
 
@@ -317,9 +317,9 @@ final class TileLayoutEngineTests: XCTestCase {
 
         // Строгая компактность: появившаяся small занимает свободный юнит выше,
         // а не встаёт в новую строку.
-        let extra = (id: AnyHashable("small-4"), size: TileSize.small)
+        let extra = (id: AnyHashable("small-4"), size: TesseraTileSize.small)
         let extendedItems = items + [extra]
-        let extendedSlots = TileLayoutEngine.pack(
+        let extendedSlots = TesseraTileLayoutEngine.pack(
             items: extendedItems,
             columns: 4,
             unit: 10
@@ -338,15 +338,15 @@ final class TileLayoutEngineTests: XCTestCase {
             let unit = CGFloat(20 + generator.int(upperBound: 61))
             let count = generator.int(upperBound: 14)
 
-            let fittingSizes = TileSize.allCases.filter { $0.unitColumns <= columns }
-            var items: [(id: AnyHashable, size: TileSize)] = []
+            let fittingSizes = TesseraTileSize.allCases.filter { $0.unitColumns <= columns }
+            var items: [(id: AnyHashable, size: TesseraTileSize)] = []
             items.reserveCapacity(count)
             for index in 0..<count {
                 let size = fittingSizes[generator.int(upperBound: fittingSizes.count)]
                 items.append((id: AnyHashable("tile-\(index)"), size: size))
             }
 
-            let slots = TileLayoutEngine.pack(items: items, columns: columns, unit: unit)
+            let slots = TesseraTileLayoutEngine.pack(items: items, columns: columns, unit: unit)
 
             XCTAssertEqual(
                 slots.map { $0.id },
@@ -364,10 +364,10 @@ final class TileLayoutEngineTests: XCTestCase {
     /// Переполнение строк: 101 small-плитка в 4 колонки — 26 строк без
     /// пересечений; последняя плитка в (0,25).
     func testRowOverflowGrowsGridWithoutOverlaps() {
-        let items: [(id: AnyHashable, size: TileSize)] = (0..<101).map {
-            (id: AnyHashable("tile-\($0)"), size: TileSize.small)
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = (0..<101).map {
+            (id: AnyHashable("tile-\($0)"), size: TesseraTileSize.small)
         }
-        let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 8)
+        let slots = TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 8)
 
         XCTAssertEqual(slots.count, 101)
         assertCompactPacking(items: items, slots: slots, columns: 4)
@@ -379,14 +379,14 @@ final class TileLayoutEngineTests: XCTestCase {
 
     /// Широкие строки (6 колонок): wide/large укладываются без пересечений.
     func testSixColumnPackingHasNoOverlaps() {
-        let items: [(id: AnyHashable, size: TileSize)] = [
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             (id: AnyHashable("wide-1"), size: .wide),
             (id: AnyHashable("wide-2"), size: .wide),
             (id: AnyHashable("medium"), size: .medium),
             (id: AnyHashable("large"), size: .large),
             (id: AnyHashable("small"), size: .small),
         ]
-        let slots = TileLayoutEngine.pack(items: items, columns: 6, unit: 30)
+        let slots = TesseraTileLayoutEngine.pack(items: items, columns: 6, unit: 30)
 
         XCTAssertEqual(slots.count, items.count)
         assertCompactPacking(items: items, slots: slots, columns: 6)
@@ -401,14 +401,14 @@ final class TileLayoutEngineTests: XCTestCase {
     /// схлопывания small встаёт в (2,0) — в самую верхнюю-левую позицию.
     func testStabilizeLiftsFloatingTileIntoFreeSlot() throws {
         let slots = [
-            TileLayoutSlot(
+            TesseraTileLayoutSlot(
                 id: AnyHashable("medium"),
                 size: .medium,
                 column: 0,
                 row: 0,
                 unit: 10
             ),
-            TileLayoutSlot(
+            TesseraTileLayoutSlot(
                 id: AnyHashable("small"),
                 size: .small,
                 column: 0,
@@ -417,7 +417,7 @@ final class TileLayoutEngineTests: XCTestCase {
             ),
         ]
 
-        let compacted = TileLayoutEngine.stabilize(slots, columns: 4)
+        let compacted = TesseraTileLayoutEngine.stabilize(slots, columns: 4)
 
         XCTAssertEqual(compacted.count, 2)
         XCTAssertEqual(compacted.map { $0.id }, slots.map { $0.id })
@@ -432,7 +432,7 @@ final class TileLayoutEngineTests: XCTestCase {
 
         // Одна «подвешенная» плитка тоже схлопывается в (0,0).
         let single = [
-            TileLayoutSlot(
+            TesseraTileLayoutSlot(
                 id: AnyHashable("single"),
                 size: .small,
                 column: 2,
@@ -440,7 +440,7 @@ final class TileLayoutEngineTests: XCTestCase {
                 unit: 10
             ),
         ]
-        let compactedSingle = TileLayoutEngine.stabilize(single, columns: 4)
+        let compactedSingle = TesseraTileLayoutEngine.stabilize(single, columns: 4)
         XCTAssertEqual(compactedSingle.first?.column, 0)
         XCTAssertEqual(compactedSingle.first?.row, 0)
     }
@@ -448,14 +448,14 @@ final class TileLayoutEngineTests: XCTestCase {
     /// Схлопывание сдвигает плитку влево в той же строке, если слева есть место.
     func testStabilizeMovesTileLeftInsideRow() throws {
         let slots = [
-            TileLayoutSlot(
+            TesseraTileLayoutSlot(
                 id: AnyHashable("medium"),
                 size: .medium,
                 column: 0,
                 row: 0,
                 unit: 10
             ),
-            TileLayoutSlot(
+            TesseraTileLayoutSlot(
                 id: AnyHashable("small"),
                 size: .small,
                 column: 3,
@@ -464,7 +464,7 @@ final class TileLayoutEngineTests: XCTestCase {
             ),
         ]
 
-        let compacted = TileLayoutEngine.stabilize(slots, columns: 4)
+        let compacted = TesseraTileLayoutEngine.stabilize(slots, columns: 4)
         let small = try XCTUnwrap(compacted.last)
 
         XCTAssertEqual(small.column, 2)
@@ -474,7 +474,7 @@ final class TileLayoutEngineTests: XCTestCase {
     /// Схлопывание не двигает уже компактную раскладку: упаковка — его
     /// неподвижная точка.
     func testStabilizeKeepsCompactPackingUnchanged() {
-        let configurations: [[TileSize]] = [
+        let configurations: [[TesseraTileSize]] = [
             [.medium, .wide, .small],
             [.small, .medium, .small, .medium, .wide],
             [.large, .medium, .small, .small, .wide],
@@ -485,10 +485,10 @@ final class TileLayoutEngineTests: XCTestCase {
             let items = sizes.enumerated().map { offset, size in
                 (id: AnyHashable("tile-\(offset)"), size: size)
             }
-            let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 8)
+            let slots = TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 8)
 
             XCTAssertEqual(
-                TileLayoutEngine.stabilize(slots, columns: 4),
+                TesseraTileLayoutEngine.stabilize(slots, columns: 4),
                 slots,
                 "Упаковка №\(index) должна быть неподвижной точкой схлопывания"
             )
@@ -498,7 +498,7 @@ final class TileLayoutEngineTests: XCTestCase {
     /// Публичный `pack` — это строго компактная упаковка: раскладка и
     /// edit/drag ходят через него, поэтому визуал режимов не различается.
     func testPublicPackMatchesCompactImplementation() {
-        let items: [(id: AnyHashable, size: TileSize)] = [
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             (id: AnyHashable("a"), size: .medium),
             (id: AnyHashable("b"), size: .small),
             (id: AnyHashable("c"), size: .wide),
@@ -506,22 +506,22 @@ final class TileLayoutEngineTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            TileLayoutEngine.pack(items: items, columns: 4, unit: 12),
-            TileLayoutEngine.packCompact(items: items, columns: 4, unit: 12)
+            TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 12),
+            TesseraTileLayoutEngine.packCompact(items: items, columns: 4, unit: 12)
         )
     }
 
     /// Reflow после «утаскивания» плитки: нижняя плитка поднимается в
     /// освободившееся место, пустых строк не остаётся (E8.5).
     func testRemovingTileLiftsLowerTileIntoVacatedSpace() {
-        let medium = (id: AnyHashable("medium"), size: TileSize.medium)
-        let wide = (id: AnyHashable("wide"), size: TileSize.wide)
+        let medium = (id: AnyHashable("medium"), size: TesseraTileSize.medium)
+        let wide = (id: AnyHashable("wide"), size: TesseraTileSize.wide)
 
-        let before = TileLayoutEngine.pack(items: [medium, wide], columns: 4, unit: 10)
+        let before = TesseraTileLayoutEngine.pack(items: [medium, wide], columns: 4, unit: 10)
         XCTAssertEqual(before.map { $0.row }, [0, 2])
 
         // Утащили medium: wide поднимается в строку 0.
-        let after = TileLayoutEngine.pack(items: [wide], columns: 4, unit: 10)
+        let after = TesseraTileLayoutEngine.pack(items: [wide], columns: 4, unit: 10)
         XCTAssertEqual(after.first?.row, 0)
         XCTAssertEqual(after.first?.column, 0)
         assertCompactPacking(items: [wide], slots: after, columns: 4)
@@ -533,13 +533,13 @@ final class TileLayoutEngineTests: XCTestCase {
     /// пикселей (§3, «Модель раскладки»). После E14.6 пересборка — это просто
     /// `pack` тех же элементов с другим юнитом (`repack` удалён).
     func testPackWithOtherUnitKeepsUnitCoordinatesAndUpdatesUnit() throws {
-        let items: [(id: AnyHashable, size: TileSize)] = [
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             (id: AnyHashable("a"), size: .small),
             (id: AnyHashable("b"), size: .medium),
             (id: AnyHashable("c"), size: .wide),
         ]
-        let original = TileLayoutEngine.pack(items: items, columns: 4, unit: 64)
-        let repacked = TileLayoutEngine.pack(items: items, columns: 4, unit: 32)
+        let original = TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 64)
+        let repacked = TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 32)
 
         XCTAssertEqual(repacked.map { $0.id }, original.map { $0.id })
         XCTAssertEqual(repacked.map { $0.column }, original.map { $0.column })
@@ -554,12 +554,12 @@ final class TileLayoutEngineTests: XCTestCase {
 
     /// Смена числа колонок упаковывает те же элементы с новой геометрией.
     func testPackWithColumnsChangeProducesValidLayout() {
-        let items: [(id: AnyHashable, size: TileSize)] = [
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             (id: AnyHashable("wide"), size: .wide),
             (id: AnyHashable("medium"), size: .medium),
             (id: AnyHashable("small"), size: .small),
         ]
-        let repacked = TileLayoutEngine.pack(items: items, columns: 6, unit: 40)
+        let repacked = TesseraTileLayoutEngine.pack(items: items, columns: 6, unit: 40)
 
         XCTAssertEqual(repacked.count, items.count)
         XCTAssertEqual(repacked.map { $0.id }, items.map { $0.id })
@@ -571,12 +571,12 @@ final class TileLayoutEngineTests: XCTestCase {
     /// `unit = (screenWidth − gaps × (N − 1)) / N` (§3).
     func testUnitFormula() {
         XCTAssertEqual(
-            TileLayoutEngine.unit(screenWidth: 320, columns: 4, gaps: 8),
+            TesseraTileLayoutEngine.unit(screenWidth: 320, columns: 4, gaps: 8),
             74,
             accuracy: 1e-9
         )
         XCTAssertEqual(
-            TileLayoutEngine.unit(screenWidth: 320, columns: 6, gaps: 8),
+            TesseraTileLayoutEngine.unit(screenWidth: 320, columns: 6, gaps: 8),
             (320 - 40) / 6,
             accuracy: 1e-9
         )
@@ -586,23 +586,23 @@ final class TileLayoutEngineTests: XCTestCase {
     /// ширина — 0, нечисловые значения — 0.
     func testUnitClampsDegenerateInput() {
         XCTAssertEqual(
-            TileLayoutEngine.unit(screenWidth: 320, columns: 4, gaps: -8),
+            TesseraTileLayoutEngine.unit(screenWidth: 320, columns: 4, gaps: -8),
             80,
             accuracy: 1e-9
         )
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 320, columns: 0, gaps: 8), 0)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: -320, columns: 4, gaps: 8), 0)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 20, columns: 4, gaps: 10), 0)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: .nan, columns: 4, gaps: 0), 0)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 320, columns: 4, gaps: .nan), 0)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: .infinity, columns: 4, gaps: 0), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 320, columns: 0, gaps: 8), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: -320, columns: 4, gaps: 8), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 20, columns: 4, gaps: 10), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: .nan, columns: 4, gaps: 0), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 320, columns: 4, gaps: .nan), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: .infinity, columns: 4, gaps: 0), 0)
     }
 
     // MARK: - Геометрия в точках
 
     /// Внутренние зазоры входят в рамку плитки, внешние — нет (§3).
     func testRectAppliesGapAndOrigin() {
-        let slot = TileLayoutSlot(
+        let slot = TesseraTileLayoutSlot(
             id: AnyHashable("a"),
             size: .medium,
             column: 2,
@@ -610,7 +610,7 @@ final class TileLayoutEngineTests: XCTestCase {
             unit: 50
         )
 
-        let rect = TileLayoutEngine.rect(
+        let rect = TesseraTileLayoutEngine.rect(
             for: slot,
             unit: nil,
             gap: 10,
@@ -622,7 +622,7 @@ final class TileLayoutEngineTests: XCTestCase {
 
     /// `unit: nil` берёт юнит из слота, отрицательный зазор обнуляется.
     func testRectUsesSlotUnitAndClampsNegativeGap() {
-        let slot = TileLayoutSlot(
+        let slot = TesseraTileLayoutSlot(
             id: AnyHashable("a"),
             size: .small,
             column: 1,
@@ -631,18 +631,18 @@ final class TileLayoutEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            TileLayoutEngine.rect(for: slot, gap: 0),
+            TesseraTileLayoutEngine.rect(for: slot, gap: 0),
             CGRect(x: 40, y: 80, width: 40, height: 40)
         )
         XCTAssertEqual(
-            TileLayoutEngine.rect(for: slot, gap: -12),
+            TesseraTileLayoutEngine.rect(for: slot, gap: -12),
             CGRect(x: 40, y: 80, width: 40, height: 40)
         )
     }
 
     /// Нечисловой/неположительный юнит и пустой след дают `.zero`.
     func testRectFallsBackToZeroForDegenerateUnit() {
-        let slot = TileLayoutSlot(
+        let slot = TesseraTileLayoutSlot(
             id: AnyHashable("a"),
             size: .wide,
             column: 0,
@@ -650,14 +650,14 @@ final class TileLayoutEngineTests: XCTestCase {
             unit: 25
         )
 
-        XCTAssertEqual(TileLayoutEngine.rect(for: slot, unit: 0), .zero)
-        XCTAssertEqual(TileLayoutEngine.rect(for: slot, unit: -10), .zero)
-        XCTAssertEqual(TileLayoutEngine.rect(for: slot, unit: .nan), .zero)
+        XCTAssertEqual(TesseraTileLayoutEngine.rect(for: slot, unit: 0), .zero)
+        XCTAssertEqual(TesseraTileLayoutEngine.rect(for: slot, unit: -10), .zero)
+        XCTAssertEqual(TesseraTileLayoutEngine.rect(for: slot, unit: .nan), .zero)
     }
 
     /// «Сырая» рамка слота тоже защищена от вырожденного юнита.
     func testSlotFrameFallsBackToZeroForDegenerateUnit() {
-        let zeroUnit = TileLayoutSlot(
+        let zeroUnit = TesseraTileLayoutSlot(
             id: AnyHashable("a"),
             size: .medium,
             column: 2,
@@ -666,7 +666,7 @@ final class TileLayoutEngineTests: XCTestCase {
         )
         XCTAssertEqual(zeroUnit.frame, .zero)
 
-        let nanUnit = TileLayoutSlot(
+        let nanUnit = TesseraTileLayoutSlot(
             id: AnyHashable("a"),
             size: .medium,
             column: 2,
@@ -681,12 +681,12 @@ final class TileLayoutEngineTests: XCTestCase {
     /// 393 pt без полей 16 pt: «сырой» юнит 84.25, выровненный вниз — 84 на
     /// 2× и 3×; 390 pt: 83.5 остаётся на 2× и становится 83⅓ на 3×.
     func testUnitWithScaleFloorsToPixelGrid() {
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8), 84.25, accuracy: 1e-9)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: 3), 84, accuracy: 1e-9)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: 2), 84, accuracy: 1e-9)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 358, columns: 4, gaps: 8, scale: 2), 83.5, accuracy: 1e-9)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8), 84.25, accuracy: 1e-9)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: 3), 84, accuracy: 1e-9)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: 2), 84, accuracy: 1e-9)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 358, columns: 4, gaps: 8, scale: 2), 83.5, accuracy: 1e-9)
         XCTAssertEqual(
-            TileLayoutEngine.unit(screenWidth: 358, columns: 4, gaps: 8, scale: 3),
+            TesseraTileLayoutEngine.unit(screenWidth: 358, columns: 4, gaps: 8, scale: 3),
             250.0 / 3.0,
             accuracy: 1e-9
         )
@@ -697,21 +697,21 @@ final class TileLayoutEngineTests: XCTestCase {
     func testUnitWithScaleIgnoresInvalidScale() {
         for scale in [CGFloat(0), -2, .nan, .infinity] {
             XCTAssertEqual(
-                TileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: scale),
+                TesseraTileLayoutEngine.unit(screenWidth: 361, columns: 4, gaps: 8, scale: scale),
                 84.25,
                 accuracy: 1e-9,
                 "Масштаб \(scale)"
             )
         }
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 20, columns: 4, gaps: 10, scale: 3), 0)
-        XCTAssertEqual(TileLayoutEngine.unit(screenWidth: 361, columns: 0, gaps: 8, scale: 3), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 20, columns: 4, gaps: 10, scale: 3), 0)
+        XCTAssertEqual(TesseraTileLayoutEngine.unit(screenWidth: 361, columns: 0, gaps: 8, scale: 3), 0)
     }
 
     /// Геометрия сетки: юнит вниз до пикселя, зазор — к ближайшему пикселю,
     /// остаток — поровну на поля (левое — вниз до пикселя).
     func testGridMetricsCentersRemainder() throws {
         let metrics = try XCTUnwrap(
-            TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8, scale: 3)
+            TesseraTileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8, scale: 3)
         )
         XCTAssertEqual(metrics.unit, 84, accuracy: 1e-9)
         XCTAssertEqual(metrics.spacing, 8, accuracy: 1e-9)
@@ -721,19 +721,19 @@ final class TileLayoutEngineTests: XCTestCase {
 
         // Дробный зазор встаёт на пиксель: 8.2 на 2× — 8.0.
         let fractional = try XCTUnwrap(
-            TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8.2, scale: 2)
+            TesseraTileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8.2, scale: 2)
         )
         XCTAssertEqual(fractional.spacing, 8, accuracy: 1e-9)
 
         // Без масштаба — точная формула §3, без остатка.
         let exact = try XCTUnwrap(
-            TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8, scale: 0)
+            TesseraTileLayoutEngine.gridMetrics(contentWidth: 361, columns: 4, spacing: 8, scale: 0)
         )
         XCTAssertEqual(exact.unit, 84.25, accuracy: 1e-9)
         XCTAssertEqual(exact.leading, 0)
 
-        XCTAssertNil(TileLayoutEngine.gridMetrics(contentWidth: 0, columns: 4, spacing: 8, scale: 3))
-        XCTAssertNil(TileLayoutEngine.gridMetrics(contentWidth: 361, columns: 0, spacing: 8, scale: 3))
+        XCTAssertNil(TesseraTileLayoutEngine.gridMetrics(contentWidth: 0, columns: 4, spacing: 8, scale: 3))
+        XCTAssertNil(TesseraTileLayoutEngine.gridMetrics(contentWidth: 361, columns: 0, spacing: 8, scale: 3))
     }
 
     // MARK: - Полоса папки (E10.1)
@@ -746,13 +746,13 @@ final class TileLayoutEngineTests: XCTestCase {
     ///   - columns: Число колонок.
     /// - Returns: Первая строка после полосы.
     private func bandEnd(
-        _ items: [(id: AnyHashable, size: TileSize)],
+        _ items: [(id: AnyHashable, size: TesseraTileSize)],
         folderID: AnyHashable,
         columns: Int = 4
     ) throws -> Int {
-        let slots = TileLayoutEngine.pack(items: items, columns: columns, unit: 1)
+        let slots = TesseraTileLayoutEngine.pack(items: items, columns: columns, unit: 1)
         let folderSlot = try XCTUnwrap(slots.first { $0.id == folderID })
-        return TileLayoutEngine.folderBandEndRow(for: folderSlot, in: slots)
+        return TesseraTileLayoutEngine.folderBandEndRow(for: folderSlot, in: slots)
     }
 
     /// `[папка 2×2, small, small, 2×2]`: 2×2 в строках 1–2 расширяет полосу
@@ -784,14 +784,14 @@ final class TileLayoutEngineTests: XCTestCase {
     /// 4 колонки: папка small (0,0), s (1,0), m1 2×2 (2,0)–(3,1), m2 2×2
     /// (0,1)–(1,2), m3 2×2 (2,2)–(3,3): полоса 0 → 2 (m1, m2) → 3 (m2) → 4 (m3).
     func testFolderBandExpandsToFixedPoint() throws {
-        let items: [(id: AnyHashable, size: TileSize)] = [
+        let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             (id: AnyHashable("f"), size: .small),
             (id: AnyHashable("s"), size: .small),
             (id: AnyHashable("m1"), size: .medium),
             (id: AnyHashable("m2"), size: .medium),
             (id: AnyHashable("m3"), size: .medium),
         ]
-        let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 1)
+        let slots = TesseraTileLayoutEngine.pack(items: items, columns: 4, unit: 1)
         let byID = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
         XCTAssertEqual(byID["m1"].map { [$0.column, $0.row] }, [2, 0])
         XCTAssertEqual(byID["m2"].map { [$0.column, $0.row] }, [0, 1])

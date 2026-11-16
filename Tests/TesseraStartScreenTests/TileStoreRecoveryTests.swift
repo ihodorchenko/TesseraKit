@@ -2,7 +2,7 @@
 //  TileStoreRecoveryTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты восстановления состояния `TileStore` (W2: E10.3c, E10.3d).
+//  Тесты восстановления состояния `TesseraTileStore` (W2: E10.3c, E10.3d).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим
 //  редактирования» (персистентность), §6 (один источник истины, pin/unpin) и
 //  «Отступления реализации»; план — docs/PLAN.md, раздел «E9–E10».
@@ -27,22 +27,22 @@ final class TileStoreRecoveryTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    private func catalog(_ ids: [String]) -> [TileDescriptor] {
+    private func catalog(_ ids: [String]) -> [TesseraTileDescriptor] {
         ids.map { tesseraTestTile($0, size: .small) }
     }
 
     private func makeStore(
-        _ descriptors: [TileDescriptor],
+        _ descriptors: [TesseraTileDescriptor],
         in directory: TesseraTestDirectory,
         autosaves: Bool = false
-    ) -> TileStore {
-        let store = TileStore(directoryURL: directory.url)
+    ) -> TesseraTileStore {
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(descriptors)
         return store
     }
 
-    private func ids(_ store: TileStore) -> [AnyHashable] {
+    private func ids(_ store: TesseraTileStore) -> [AnyHashable] {
         store.snapshot().items.map { $0.id }
     }
 
@@ -59,7 +59,7 @@ final class TileStoreRecoveryTests: XCTestCase {
     /// откреплённых); `isPinned` согласован с `unpinned`; ни одна папка в
     /// снимке не пуста.
     private func assertInvariants(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         catalogIDs: [AnyHashable],
         file: StaticString = #filePath,
         line: UInt = #line
@@ -133,7 +133,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         let directory = TesseraTestDirectory()
         _ = try saveLayoutWithFolder(in: directory)
 
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         try store.load()
         store.setCatalog(catalog(["a", "d"]))
@@ -161,7 +161,7 @@ final class TileStoreRecoveryTests: XCTestCase {
           ]
         }
         """
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         try Data(json.utf8).write(to: store.fileURL)
         store.setCatalog(catalog(["a", "b", "c", "d"]))
@@ -196,7 +196,7 @@ final class TileStoreRecoveryTests: XCTestCase {
           ]
         }
         """
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         try Data(json.utf8).write(to: store.fileURL)
         store.setCatalog(catalog(["a", "b", "c", "d", "e"]))
@@ -242,13 +242,13 @@ final class TileStoreRecoveryTests: XCTestCase {
     func testNewerSchemaFileIsBackedUpBeforeAutosave() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        // Текущая схема — 2 (`TileStore.schemaVersion`, E14.1), файл записан версией 3.
+        // Текущая схема — 2 (`TesseraTileStore.schemaVersion`, E14.1), файл записан версией 3.
         let original = Data(#"{"version":3,"items":[],"sizes":{},"folders":[],"future":true}"#.utf8)
         let store = makeStore(catalog(["a", "b"]), in: directory, autosaves: true)
         try original.write(to: store.fileURL)
 
         XCTAssertThrowsError(try store.load()) { error in
-            guard case TileStoreError.unsupportedSchemaVersion(let version)? = error as? TileStoreError else {
+            guard case TesseraTileStoreError.unsupportedSchemaVersion(let version)? = error as? TesseraTileStoreError else {
                 return XCTFail("Ожидалась unsupportedSchemaVersion, пришло: \(error)")
             }
             XCTAssertEqual(version, 3)

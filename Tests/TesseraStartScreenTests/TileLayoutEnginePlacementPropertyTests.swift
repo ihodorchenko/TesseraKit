@@ -38,8 +38,8 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         }
     }
 
-    private func footprint(_ item: TilePlacedItem, columns: Int) -> Footprint {
-        let fitted = TileLayoutEngine.fittingSize(item.size, columns: columns)
+    private func footprint(_ item: TesseraTilePlacedItem, columns: Int) -> Footprint {
+        let fitted = TesseraTileLayoutEngine.fittingSize(item.size, columns: columns)
         return Footprint(
             row: item.cell.row,
             column: item.cell.column,
@@ -50,15 +50,15 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
 
     /// Общие инварианты корректного набора.
     private func assertValid(
-        _ placements: [TilePlacedItem],
+        _ placements: [TesseraTilePlacedItem],
         columns: Int,
         _ context: @autoclosure () -> String,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         XCTAssertTrue(
-            TileLayoutEngine.validate(placements, columns: columns).isEmpty,
-            "нарушители \(TileLayoutEngine.validate(placements, columns: columns)); \(context())",
+            TesseraTileLayoutEngine.validate(placements, columns: columns).isEmpty,
+            "нарушители \(TesseraTileLayoutEngine.validate(placements, columns: columns)); \(context())",
             file: file,
             line: line
         )
@@ -79,8 +79,8 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
     ///   - id: Идентификатор вставленного элемента.
     ///   - columns: Число колонок.
     private func assertPushDownProperties(
-        before: [TilePlacedItem],
-        after: [TilePlacedItem],
+        before: [TesseraTilePlacedItem],
+        after: [TesseraTilePlacedItem],
         id: AnyHashable,
         columns: Int,
         _ context: @autoclosure () -> String,
@@ -126,14 +126,14 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         for seed in 1...40 {
             var generator = TesseraTestSeededGenerator(seed: UInt64(seed))
             let columns = columnChoices[generator.int(upperBound: columnChoices.count)]
-            var placements: [TilePlacedItem] = []
+            var placements: [TesseraTilePlacedItem] = []
             var nextID = 0
 
             for step in 0..<60 {
                 let context = "seed \(seed), columns \(columns), шаг \(step)"
-                let sizes = TileSize.allCases
+                let sizes = TesseraTileSize.allCases
                 let size = sizes[generator.int(upperBound: sizes.count)]
-                let cell = TileGridPlacement(
+                let cell = TesseraTileGridPlacement(
                     row: generator.int(upperBound: 14),
                     column: generator.int(upperBound: columns + 2)
                 )
@@ -142,7 +142,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
                 case 0...3 where placements.count < 24:
                     let id = AnyHashable("n\(nextID)")
                     nextID += 1
-                    let after = TileLayoutEngine.inserting(
+                    let after = TesseraTileLayoutEngine.inserting(
                         id: id, size: size, at: cell, into: placements, columns: columns
                     )
                     assertPushDownProperties(
@@ -151,14 +151,14 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
                     // Детерминизм.
                     XCTAssertEqual(
                         after,
-                        TileLayoutEngine.inserting(id: id, size: size, at: cell, into: placements, columns: columns),
+                        TesseraTileLayoutEngine.inserting(id: id, size: size, at: cell, into: placements, columns: columns),
                         context
                     )
                     placements = after
 
                 case 4...5 where !placements.isEmpty:
                     let target = placements[generator.int(upperBound: placements.count)]
-                    let after = TileLayoutEngine.inserting(
+                    let after = TesseraTileLayoutEngine.inserting(
                         id: target.id, size: target.size, at: cell, into: placements, columns: columns
                     )
                     assertPushDownProperties(
@@ -168,7 +168,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
 
                 case 6...7 where !placements.isEmpty:
                     let target = placements[generator.int(upperBound: placements.count)]
-                    let after = TileLayoutEngine.resizing(
+                    let after = TesseraTileLayoutEngine.resizing(
                         id: target.id, to: size, in: placements, columns: columns
                     )
                     assertPushDownProperties(
@@ -182,12 +182,12 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
 
                 case 8 where !placements.isEmpty:
                     let target = placements[generator.int(upperBound: placements.count)]
-                    let after = TileLayoutEngine.removing(id: target.id, from: placements)
+                    let after = TesseraTileLayoutEngine.removing(id: target.id, from: placements)
                     XCTAssertEqual(after, placements.filter { $0.id != target.id }, context)
                     placements = after
 
                 default:
-                    let after = TileLayoutEngine.collapsingEmptyRows(in: placements, columns: columns)
+                    let after = TesseraTileLayoutEngine.collapsingEmptyRows(in: placements, columns: columns)
                     assertCollapseProperties(before: placements, after: after, columns: columns, context)
                     placements = after
                 }
@@ -200,8 +200,8 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
     /// Свойства схлопывания: порядок/колонки/размеры, строки только вверх,
     /// относительный порядок строк, идемпотентность и отсутствие пустых строк.
     private func assertCollapseProperties(
-        before: [TilePlacedItem],
-        after: [TilePlacedItem],
+        before: [TesseraTilePlacedItem],
+        after: [TesseraTilePlacedItem],
         columns: Int,
         _ context: @autoclosure () -> String,
         file: StaticString = #filePath,
@@ -219,7 +219,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
             }
         }
         XCTAssertEqual(
-            TileLayoutEngine.collapsingEmptyRows(in: after, columns: columns),
+            TesseraTileLayoutEngine.collapsingEmptyRows(in: after, columns: columns),
             after,
             "схлопывание неидемпотентно; \(context())",
             file: file,
@@ -243,12 +243,12 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         for seed in 100..<130 {
             var generator = TesseraTestSeededGenerator(seed: UInt64(seed))
             let columns = 6
-            var placements: [TilePlacedItem] = []
+            var placements: [TesseraTilePlacedItem] = []
 
             for index in 0..<12 {
-                let size = TileSize.allCases[generator.int(upperBound: 4)]
-                let cell = TileLayoutEngine.firstFreeCell(size: size, columns: columns, placements: placements)
-                let after = TileLayoutEngine.inserting(
+                let size = TesseraTileSize.allCases[generator.int(upperBound: 4)]
+                let cell = TesseraTileLayoutEngine.firstFreeCell(size: size, columns: columns, placements: placements)
+                let after = TesseraTileLayoutEngine.inserting(
                     id: AnyHashable("i\(index)"), size: size, at: cell, into: placements, columns: columns
                 )
                 XCTAssertEqual(Array(after.prefix(placements.count)), placements, "seed \(seed), шаг \(index)")
@@ -256,10 +256,10 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
 
                 // Периодически создаём дыры.
                 if index % 3 == 2, let victim = placements.first {
-                    placements = TileLayoutEngine.removing(id: victim.id, from: placements)
+                    placements = TesseraTileLayoutEngine.removing(id: victim.id, from: placements)
                 }
             }
-            XCTAssertFalse(TileLayoutEngine.hasOverlaps(placements, columns: columns), "seed \(seed)")
+            XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(placements, columns: columns), "seed \(seed)")
         }
     }
 
@@ -269,19 +269,19 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         for seed in 200..<220 {
             var generator = TesseraTestSeededGenerator(seed: UInt64(seed))
             let columns = 6
-            var placements: [TilePlacedItem] = []
+            var placements: [TesseraTilePlacedItem] = []
 
             for index in 0..<10 {
-                let size = TileSize.allCases[generator.int(upperBound: 4)]
-                let cell = TileGridPlacement(row: generator.int(upperBound: 10), column: generator.int(upperBound: 6))
-                placements = TileLayoutEngine.inserting(
+                let size = TesseraTileSize.allCases[generator.int(upperBound: 4)]
+                let cell = TesseraTileGridPlacement(row: generator.int(upperBound: 10), column: generator.int(upperBound: 6))
+                placements = TesseraTileLayoutEngine.inserting(
                     id: AnyHashable("s\(index)"), size: size, at: cell, into: placements, columns: columns
                 )
             }
 
             for item in placements {
                 XCTAssertEqual(
-                    TileLayoutEngine.inserting(
+                    TesseraTileLayoutEngine.inserting(
                         id: item.id, size: item.size, at: item.cell, into: placements, columns: columns
                     ),
                     placements,

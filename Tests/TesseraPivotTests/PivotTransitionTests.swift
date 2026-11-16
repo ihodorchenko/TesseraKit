@@ -26,20 +26,20 @@ import TesseraCore
 @testable import TesseraPivot
 
 /// Шпион делегата пивота для тестов переходов.
-final class PivotTransitionSpy: PivotDelegate {
+final class PivotTransitionSpy: TesseraPivotDelegate {
     var selectedIndexes: [Int] = []
     var progressValues: [CGFloat] = []
     var shownIndexes: [Int] = []
 
-    func pivot(_ pivot: PivotViewController, didSelectSectionAt index: Int) {
+    func pivot(_ pivot: TesseraPivotViewController, didSelectSectionAt index: Int) {
         selectedIndexes.append(index)
     }
 
-    func pivot(_ pivot: PivotViewController, didChangeProgress t: CGFloat) {
+    func pivot(_ pivot: TesseraPivotViewController, didChangeProgress t: CGFloat) {
         progressValues.append(t)
     }
 
-    func pivot(_ pivot: PivotViewController, didShowSectionAt index: Int) {
+    func pivot(_ pivot: TesseraPivotViewController, didShowSectionAt index: Int) {
         shownIndexes.append(index)
     }
 }
@@ -61,9 +61,9 @@ final class PivotTransitionTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    private func makeSections(count: Int, longTitles: Bool = false) -> [PivotSection] {
+    private func makeSections(count: Int, longTitles: Bool = false) -> [TesseraPivotSection] {
         (0..<count).map { index in
-            PivotSection(
+            TesseraPivotSection(
                 id: index,
                 title: longTitles ? "Длинный заголовок \(index)" : "S\(index)"
             ) {
@@ -77,8 +77,8 @@ final class PivotTransitionTests: XCTestCase {
         sectionCount: Int = 6,
         longTitles: Bool = false,
         size: CGSize = CGSize(width: 320, height: 640)
-    ) throws -> (pivot: PivotViewController, scrollView: UIScrollView, spy: PivotTransitionSpy) {
-        let pivot = PivotViewController(
+    ) throws -> (pivot: TesseraPivotViewController, scrollView: UIScrollView, spy: PivotTransitionSpy) {
+        let pivot = TesseraPivotViewController(
             sections: makeSections(count: sectionCount, longTitles: longTitles)
         )
         let window = UIWindow(frame: CGRect(origin: .zero, size: size))
@@ -95,7 +95,7 @@ final class PivotTransitionTests: XCTestCase {
         return (pivot, scrollView, spy)
     }
 
-    private func collectionView(of strip: PivotHeaderStripView) throws -> UICollectionView {
+    private func collectionView(of strip: TesseraPivotHeaderStripView) throws -> UICollectionView {
         try XCTUnwrap(strip.subviews.compactMap { $0 as? UICollectionView }.first)
     }
 
@@ -199,7 +199,7 @@ final class PivotTransitionTests: XCTestCase {
     /// Видимый заголовок не двигает переполненную ленту; заголовок за краем
     /// доцентровывается.
     func testScrollToCenterMovesStripOnlyForHeaderBeyondEdge() throws {
-        let strip = PivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
+        let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
         strip.titles = (0..<8).map { "Заголовок \($0)" }
         strip.layoutIfNeeded()
         let collectionView = try collectionView(of: strip)
@@ -228,7 +228,7 @@ final class PivotTransitionTests: XCTestCase {
 
     /// После сужения ленты (поворот) выделенный заголовок снова виден.
     func testStripKeepsSelectedHeaderVisibleAfterWidthChange() throws {
-        let strip = PivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 800, height: 48))
+        let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 800, height: 48))
         strip.titles = (0..<8).map { "Длинный заголовок \($0)" }
         strip.layoutIfNeeded()
         let collectionView = try collectionView(of: strip)
@@ -249,7 +249,7 @@ final class PivotTransitionTests: XCTestCase {
     /// Лента перестала быть переполненной (поворот в ширину) — остаточный
     /// offset сбрасывается, все заголовки на месте.
     func testStripResetsOffsetWhenNoLongerOverflowing() throws {
-        let strip = PivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
+        let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
         strip.titles = (0..<4).map { "Заголовок \($0)" }
         strip.layoutIfNeeded()
         let collectionView = try collectionView(of: strip)
@@ -270,7 +270,7 @@ final class PivotTransitionTests: XCTestCase {
     /// индикатор пересчитывается под фактический заголовок (до E9.6 центры
     /// оставались от прежнего направления — размер-то не менялся).
     func testStripRebuildsGeometryWhenSemanticDirectionChanges() throws {
-        let strip = PivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
+        let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
         strip.titles = ["Один", "Два", "Три"]
         strip.layoutIfNeeded()
         strip.apply(progress: 0)
@@ -314,7 +314,7 @@ final class PivotTransitionTests: XCTestCase {
         self.window = window
 
         child.view.frame = parent.view.bounds
-        let strip = PivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
+        let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
         strip.titles = ["Один", "Два", "Три"]
         child.view.addSubview(strip)
         strip.layoutIfNeeded()
@@ -431,14 +431,14 @@ final class PivotTransitionTests: XCTestCase {
     /// документация `registerVerticalOwner(_:)` рекомендует `viewDidLoad`.
     func testOnlyCurrentSectionReceivesAppearanceCallbacks() throws {
         var pages: [Int: AppearanceCountingPage] = [:]
-        let sections = (0..<3).map { (index: Int) -> PivotSection in
-            PivotSection(id: index, title: "S\(index)") { () -> UIViewController in
+        let sections = (0..<3).map { (index: Int) -> TesseraPivotSection in
+            TesseraPivotSection(id: index, title: "S\(index)") { () -> UIViewController in
                 let page = AppearanceCountingPage()
                 pages[index] = page
                 return page
             }
         }
-        let pivot = PivotViewController(sections: sections)
+        let pivot = TesseraPivotViewController(sections: sections)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
         window.rootViewController = pivot
         window.isHidden = false
@@ -460,7 +460,7 @@ final class PivotTransitionTests: XCTestCase {
 
     /// Перенос прогресса ленты: края отрезка и зажим за его пределами.
     func testStripProgressRemapMath() {
-        let remap = PivotViewController.StripProgressRemap(from: 0, neighbour: 3, target: 4)
+        let remap = TesseraPivotViewController.StripProgressRemap(from: 0, neighbour: 3, target: 4)
 
         XCTAssertEqual(remap.stripProgress(forPagerProgress: 3), 0, accuracy: 0.0001)
         XCTAssertEqual(remap.stripProgress(forPagerProgress: 3.25), 1, accuracy: 0.0001)

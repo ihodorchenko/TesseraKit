@@ -30,9 +30,9 @@ final class PivotRTLTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    private func makeSections(count: Int) -> [PivotSection] {
+    private func makeSections(count: Int) -> [TesseraPivotSection] {
         (0..<count).map { index in
-            PivotSection(id: index, title: "Секция \(index)") {
+            TesseraPivotSection(id: index, title: "Секция \(index)") {
                 UIViewController()
             }
         }
@@ -42,8 +42,8 @@ final class PivotRTLTests: XCTestCase {
     /// потому что физические слоты страниц рассчитываются в нём (§8).
     private func makeLoadedRTLPivot(
         sectionCount: Int = 4
-    ) throws -> (pivot: PivotViewController, scrollView: UIScrollView) {
-        let pivot = PivotViewController(sections: makeSections(count: sectionCount))
+    ) throws -> (pivot: TesseraPivotViewController, scrollView: UIScrollView) {
+        let pivot = TesseraPivotViewController(sections: makeSections(count: sectionCount))
         pivot.loadViewIfNeeded()
 
         pivot.view.semanticContentAttribute = .forceRightToLeft
@@ -181,7 +181,7 @@ final class PivotRTLTests: XCTestCase {
 
         for entry in cases {
             XCTAssertEqual(
-                PivotHeaderIndicator.indicatorCenter(centers: centers, progress: entry.t),
+                TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: entry.t),
                 entry.expected,
                 accuracy: 0.000_001,
                 "t=\(entry.t) в RTL-геометрии"
@@ -195,7 +195,7 @@ final class PivotRTLTests: XCTestCase {
     /// раскладку, а не модель данных (§8).
     func testStripKeepsTitlesInReadingOrderInBothDirections() {
         for attribute: UISemanticContentAttribute in [.forceLeftToRight, .forceRightToLeft] {
-            let strip = PivotHeaderStripView(
+            let strip = TesseraPivotHeaderStripView(
                 frame: CGRect(x: 0, y: 0, width: 320, height: 48)
             )
             strip.semanticContentAttribute = attribute
@@ -212,7 +212,7 @@ final class PivotRTLTests: XCTestCase {
     /// Выделение ленты — в порядке чтения: прогресс `t` в RTL-режиме уже
     /// нормализован Core, поэтому `selectedIndex` не зависит от направления.
     func testStripSelectionUsesReadingOrderInRTL() {
-        let strip = PivotHeaderStripView(
+        let strip = TesseraPivotHeaderStripView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 48)
         )
         strip.semanticContentAttribute = .forceRightToLeft

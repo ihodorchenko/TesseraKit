@@ -16,10 +16,10 @@ import XCTest
 final class DefaultColumnsTests: XCTestCase {
 
     /// Умолчание одно: движок, раскладка, сетка и хранилище берут его из
-    /// ``TileLayoutEngine/defaultColumns``.
+    /// ``TesseraTileLayoutEngine/defaultColumns``.
     func testDefaultColumnsIsSixEverywhere() {
-        XCTAssertEqual(TileLayoutEngine.defaultColumns, 6)
-        XCTAssertEqual(TileStore.defaultGridColumns, 6)
+        XCTAssertEqual(TesseraTileLayoutEngine.defaultColumns, 6)
+        XCTAssertEqual(TesseraTileStore.defaultGridColumns, 6)
         XCTAssertEqual(TesseraTileCollectionViewLayout().columns, 6)
         XCTAssertEqual(TesseraTileGridView(frame: .zero).columns, 6)
     }
@@ -34,13 +34,13 @@ final class DefaultColumnsTests: XCTestCase {
     /// На сетке по умолчанию три средние плитки встают в один ряд, широкая —
     /// на 4 колонки из 6, а юнит равен `(ширина − поля − 5 × зазор) / 6`.
     func testGridWithDefaultColumnsPacksThreeMediumsPerRow() throws {
-        let items: [TileGridItem] = [
+        let items: [TesseraTileGridItem] = [
             .tile(tesseraTestTile("m0", size: .medium)),
             .tile(tesseraTestTile("m1", size: .medium)),
             .tile(tesseraTestTile("m2", size: .medium)),
             .tile(tesseraTestTile("w0", size: .wide)),
         ]
-        let host = TesseraTestWindowedGrid(items: items, columns: TileLayoutEngine.defaultColumns)
+        let host = TesseraTestWindowedGrid(items: items, columns: TesseraTileLayoutEngine.defaultColumns)
         let grid = host.grid
         XCTAssertEqual(grid.columns, 6)
 
@@ -48,7 +48,7 @@ final class DefaultColumnsTests: XCTestCase {
             try XCTUnwrap(grid.frame(forItemID: id), "Нет рамки \(id)")
         }
 
-        let unit = TileLayoutEngine.unit(
+        let unit = TesseraTileLayoutEngine.unit(
             screenWidth: grid.bounds.width - 32,
             columns: 6,
             gaps: grid.itemSpacing
@@ -70,7 +70,7 @@ final class DefaultColumnsTests: XCTestCase {
     /// `resize(_:to:)` без `columns` удалён в E14.6 — ширина передаётся явно.
     func testStoreEffectiveColumnsDefaultsToSix() {
         let directory = TesseraTestDirectory()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog([tesseraTestTile("a", size: .medium)])
 
