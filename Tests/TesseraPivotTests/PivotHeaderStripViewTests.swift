@@ -30,8 +30,8 @@ final class PivotHeaderStripViewTests: XCTestCase {
         width: CGFloat = 320,
         height: CGFloat = 48,
         titles: [String] = []
-    ) -> PivotHeaderStripView {
-        let strip = PivotHeaderStripView(
+    ) -> TesseraPivotHeaderStripView {
+        let strip = TesseraPivotHeaderStripView(
             frame: CGRect(x: 0, y: 0, width: width, height: height)
         )
         strip.titles = titles
@@ -39,7 +39,7 @@ final class PivotHeaderStripViewTests: XCTestCase {
     }
 
     private func collectionView(
-        of strip: PivotHeaderStripView
+        of strip: TesseraPivotHeaderStripView
     ) throws -> UICollectionView {
         try XCTUnwrap(
             strip.subviews.compactMap { $0 as? UICollectionView }.first,
@@ -49,7 +49,7 @@ final class PivotHeaderStripViewTests: XCTestCase {
 
     /// Ширина ячейки по публичному делегату раскладки (без окна и UI-цикла).
     private func itemWidth(
-        of strip: PivotHeaderStripView,
+        of strip: TesseraPivotHeaderStripView,
         at index: Int
     ) throws -> CGFloat {
         let collectionView = try collectionView(of: strip)
@@ -68,7 +68,7 @@ final class PivotHeaderStripViewTests: XCTestCase {
     /// Дефолты ленты: пустой набор, режим по ширине контента, скрытый до
     /// раскладки индикатор, отступы и минимальная ширина ячейки (§3, §8).
     func testDefaultConfiguration() {
-        let strip = PivotHeaderStripView(frame: .zero)
+        let strip = TesseraPivotHeaderStripView(frame: .zero)
 
         XCTAssertTrue(strip.titles.isEmpty)
         if case .content = strip.mode {

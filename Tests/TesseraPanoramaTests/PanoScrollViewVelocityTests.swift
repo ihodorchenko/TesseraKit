@@ -2,7 +2,7 @@
 //  PanoScrollViewVelocityTests.swift
 //  TesseraPanoramaTests
 //
-//  Место вызова снапа в панораме (E10.11, волна W1): `PanoScrollView` получает
+//  Место вызова снапа в панораме (E10.11, волна W1): `TesseraPanoScrollView` получает
 //  скорость от UIKit в points/ms, переводит её в pt/s (`× 1000`) для
 //  `TesseraSnapPolicy` и передаёт стартовый offset жеста из
 //  `scrollViewWillBeginDragging`, чтобы шаг ±1 считался от секции начала жеста.
@@ -34,8 +34,8 @@ final class PanoScrollViewVelocityTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    private func makeScrollView(sectionCount: Int = 4) -> PanoScrollView {
-        let scrollView = PanoScrollView(peek: peek)
+    private func makeScrollView(sectionCount: Int = 4) -> TesseraPanoScrollView {
+        let scrollView = TesseraPanoScrollView(peek: peek)
         scrollView.frame = CGRect(x: 0, y: 0, width: screenWidth, height: 700)
         scrollView.sectionCount = sectionCount
         scrollView.contentSize = scrollView.requiredContentSize
@@ -50,7 +50,7 @@ final class PanoScrollViewVelocityTests: XCTestCase {
     ///
     /// - Returns: цель снапа, записанная скролл-вью в `targetContentOffset`.
     private func simulateDrag(
-        _ scrollView: PanoScrollView,
+        _ scrollView: TesseraPanoScrollView,
         startX: CGFloat = 0,
         dragDistance: CGFloat,
         velocityPointsPerMs: CGFloat,

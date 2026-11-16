@@ -68,7 +68,7 @@ final class FolderBandLayoutTests: XCTestCase {
     ///   - items: Набор (с панелью или без).
     /// - Returns: Рамки в порядке набора; пустой массив, если раскладка не
     ///   отдала рамку хотя бы одному элементу.
-    private func frames(in harness: Harness, items: [TileGridItem]) -> [CGRect] {
+    private func frames(in harness: Harness, items: [TesseraTileGridItem]) -> [CGRect] {
         harness.layout.setItems(items, reason: .items)
         var result: [CGRect] = []
         for index in items.indices {
@@ -86,11 +86,11 @@ final class FolderBandLayoutTests: XCTestCase {
     ///   - columns: Число колонок.
     /// - Returns: Набор с панелью и её индекс.
     private func expanded(
-        _ items: [TileGridItem],
-        folder: TileFolder,
+        _ items: [TesseraTileGridItem],
+        folder: TesseraTileFolder,
         columns: Int = 4
-    ) -> (items: [TileGridItem], panelIndex: Int)? {
-        guard let index = TileLayoutEngine.folderPanelInsertionIndex(
+    ) -> (items: [TesseraTileGridItem], panelIndex: Int)? {
+        guard let index = TesseraTileLayoutEngine.folderPanelInsertionIndex(
             items: items,
             columns: columns,
             expandedFolderID: folder.id
@@ -109,8 +109,8 @@ final class FolderBandLayoutTests: XCTestCase {
     }
 
     /// Папка с заданным числом ярлыков.
-    private func makeFolder(_ id: String, size: TileSize = .medium, tileCount: Int = 3) -> TileFolder {
-        TileFolder(
+    private func makeFolder(_ id: String, size: TesseraTileSize = .medium, tileCount: Int = 3) -> TesseraTileFolder {
+        TesseraTileFolder(
             id: id,
             title: id,
             tiles: (0..<tileCount).map { tesseraTestTile("\(id)-t\($0)", size: .small) },
@@ -126,7 +126,7 @@ final class FolderBandLayoutTests: XCTestCase {
     func testStepTileStartingInFolderRowsStaysAbovePanel() throws {
         let folder = makeFolder("f")
         let shortcut = tesseraTestTile("m", size: .medium)
-        let base: [TileGridItem] = [
+        let base: [TesseraTileGridItem] = [
             .folder(folder),
             .tile(tesseraTestTile("s1", size: .small)),
             .tile(tesseraTestTile("s2", size: .small)),
@@ -159,7 +159,7 @@ final class FolderBandLayoutTests: XCTestCase {
     func testMediumNextToSmallFolderStaysAbovePanel() throws {
         let folder = makeFolder("f", size: .small)
         let shortcut = tesseraTestTile("m", size: .medium)
-        let base: [TileGridItem] = [.folder(folder), .tile(shortcut)]
+        let base: [TesseraTileGridItem] = [.folder(folder), .tile(shortcut)]
         let harness = makeHarness()
         let collapsed = frames(in: harness, items: base)
 
@@ -181,7 +181,7 @@ final class FolderBandLayoutTests: XCTestCase {
     func testItemBelowBandMovesUnderPanelByReportedOffset() throws {
         let folder = makeFolder("f")
         let wide = tesseraTestTile("w", size: .wide)
-        let base: [TileGridItem] = [
+        let base: [TesseraTileGridItem] = [
             .folder(folder),
             .tile(tesseraTestTile("s1", size: .small)),
             .tile(tesseraTestTile("s2", size: .small)),
@@ -197,7 +197,7 @@ final class FolderBandLayoutTests: XCTestCase {
         let panel = openFrames[open.panelIndex]
         let wideFrame = openFrames[5]
 
-        let offset = TileLayoutEngine.rowsBelowOffset(
+        let offset = TesseraTileLayoutEngine.rowsBelowOffset(
             items: base,
             columns: 4,
             expandedFolderID: folder.id,
@@ -216,8 +216,8 @@ final class FolderBandLayoutTests: XCTestCase {
     /// всей полосы папки) и не сдвигается относительно свёрнутой сетки.
     func testRandomConfigurationsNeverOverlapPanel() {
         var generator = TesseraTestSeededGenerator(seed: 0xE10_1)
-        let sizes: [TileSize] = [.small, .small, .small, .medium, .medium, .wide, .large]
-        let folderSizes: [TileSize] = [.small, .medium, .medium, .wide, .large]
+        let sizes: [TesseraTileSize] = [.small, .small, .small, .medium, .medium, .wide, .large]
+        let folderSizes: [TesseraTileSize] = [.small, .medium, .medium, .wide, .large]
         let columnChoices = [4, 4, 4, 3, 6]
         let harnesses = Dictionary(
             uniqueKeysWithValues: Set(columnChoices).map { ($0, makeHarness(columns: $0)) }
@@ -228,7 +228,7 @@ final class FolderBandLayoutTests: XCTestCase {
             guard let harness = harnesses[columns] else { return XCTFail("Нет раскладки") }
 
             let count = 1 + generator.int(upperBound: 14)
-            var base: [TileGridItem] = (0..<count).map { index in
+            var base: [TesseraTileGridItem] = (0..<count).map { index in
                 .tile(tesseraTestTile("c\(configuration)-\(index)", size: sizes[generator.int(upperBound: sizes.count)]))
             }
             let folder = makeFolder(
@@ -284,12 +284,12 @@ final class FolderBandLayoutTests: XCTestCase {
     func testPanelShortcutsAlignWithGridColumnsForCustomSpacing() throws {
         let folder = makeFolder("f", size: .medium, tileCount: 6)
         let smalls = (0..<4).map { tesseraTestTile("s\($0)", size: .small) }
-        let items: [TileGridItem] = smalls.map { .tile($0) } + [.folder(folder)]
+        let items: [TesseraTileGridItem] = smalls.map { .tile($0) } + [.folder(folder)]
 
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 393, height: 1200))
         grid.columns = 4
         grid.itemSpacing = 12
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: []))
         layoutGrid(grid)
         grid.openFolder(folder, animated: false)
         layoutGrid(grid)

@@ -4,7 +4,7 @@
 //
 //  Тесты модели с явными ячейками и схемы `tiles.json` версии 2 (E14.1).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»
-//  (персистентность TileStore) и «Отступления реализации»; решения D30–D33 в
+//  (персистентность TesseraTileStore) и «Отступления реализации»; решения D30–D33 в
 //  docs/STATE.md; план — docs/PLAN.md, эпик E14.
 //
 //  Проверяются:
@@ -32,7 +32,7 @@ final class TileStorePlacementTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    private func descriptors() -> [TileDescriptor] {
+    private func descriptors() -> [TesseraTileDescriptor] {
         [
             tesseraTestTile("a", size: .small),
             tesseraTestTile("b", size: .medium),
@@ -42,48 +42,48 @@ final class TileStorePlacementTests: XCTestCase {
     }
 
     private func makeStore(
-        _ catalog: [TileDescriptor],
+        _ catalog: [TesseraTileDescriptor],
         in directory: TesseraTestDirectory,
         autosaves: Bool = true
-    ) -> TileStore {
-        let store = TileStore(directoryURL: directory.url)
+    ) -> TesseraTileStore {
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(catalog)
         return store
     }
 
-    private func write(_ json: String, to store: TileStore, directory: TesseraTestDirectory) throws {
+    private func write(_ json: String, to store: TesseraTileStore, directory: TesseraTestDirectory) throws {
         try directory.create()
         try Data(json.utf8).write(to: store.fileURL)
     }
 
     /// Ожидаемые ячейки: прежний `packCompact` по порядку снимка.
     private func packedExpectation(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         columns: Int
-    ) -> [AnyHashable: TileGridPlacement] {
+    ) -> [AnyHashable: TesseraTileGridPlacement] {
         let items = store.snapshot().layoutItems.map {
-            (id: $0.id, size: TileLayoutEngine.fittingSize($0.size, columns: columns))
+            (id: $0.id, size: TesseraTileLayoutEngine.fittingSize($0.size, columns: columns))
         }
-        var result: [AnyHashable: TileGridPlacement] = [:]
-        for slot in TileLayoutEngine.packCompact(items: items, columns: columns, unit: 1) {
-            result[slot.id] = TileGridPlacement(row: slot.row, column: slot.column)
+        var result: [AnyHashable: TesseraTileGridPlacement] = [:]
+        for slot in TesseraTileLayoutEngine.packCompact(items: items, columns: columns, unit: 1) {
+            result[slot.id] = TesseraTileGridPlacement(row: slot.row, column: slot.column)
         }
         return result
     }
 
-    private func jsonObject(_ store: TileStore) throws -> [String: Any] {
+    private func jsonObject(_ store: TesseraTileStore) throws -> [String: Any] {
         let data = try Data(contentsOf: store.fileURL)
         return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    private func fileItems(_ store: TileStore) throws -> [[String: Any]] {
+    private func fileItems(_ store: TesseraTileStore) throws -> [[String: Any]] {
         try XCTUnwrap(try jsonObject(store)["items"] as? [[String: Any]])
     }
 
     /// Нет пересечений видимых элементов и все прямоугольники внутри холста.
     private func assertNoOverlapsAndInBounds(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         columns: Int,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -92,7 +92,7 @@ final class TileStorePlacementTests: XCTestCase {
         let sizes = Dictionary(uniqueKeysWithValues: store.snapshot().items.map { ($0.id, $0.size) })
         var rects: [(id: AnyHashable, rect: CGRect)] = []
         for (id, cell) in cells {
-            let size = TileLayoutEngine.fittingSize(sizes[id] ?? .medium, columns: columns)
+            let size = TesseraTileLayoutEngine.fittingSize(sizes[id] ?? .medium, columns: columns)
             let rect = CGRect(x: cell.column, y: cell.row, width: size.unitColumns, height: size.unitRows)
             XCTAssertGreaterThanOrEqual(cell.row, 0, file: file, line: line)
             XCTAssertGreaterThanOrEqual(cell.column, 0, file: file, line: line)
@@ -145,7 +145,7 @@ final class TileStorePlacementTests: XCTestCase {
         XCTAssertTrue(store.placeItems(columns: 6))
         XCTAssertEqual(store.canvasColumns, 6)
         XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-        XCTAssertEqual(store.placement(of: "a"), TileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(store.placement(of: "a"), TesseraTileGridPlacement(row: 0, column: 0))
 
         // Записано сразу: версия 2, ширина холста, ячейки у каждого элемента.
         let object = try jsonObject(store)
@@ -189,7 +189,7 @@ final class TileStorePlacementTests: XCTestCase {
     /// Миграция ждёт каталог: невидимые ярлыки не должны занять холст.
     func testMigrationWaitsForCatalog() throws {
         let directory = TesseraTestDirectory()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         try write(v1Json, to: store, directory: directory)
         try store.load()
 
@@ -233,15 +233,15 @@ final class TileStorePlacementTests: XCTestCase {
 
         XCTAssertTrue(store.placeItems(columns: 6))
         XCTAssertEqual(store.placements, packedExpectation(store, columns: 6))
-        XCTAssertEqual(store.placement(of: "a"), TileGridPlacement(row: 0, column: 0))
-        XCTAssertEqual(store.placement(of: "b"), TileGridPlacement(row: 0, column: 1))
-        XCTAssertEqual(store.placement(of: "d"), TileGridPlacement(row: 0, column: 5))
+        XCTAssertEqual(store.placement(of: "a"), TesseraTileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(store.placement(of: "b"), TesseraTileGridPlacement(row: 0, column: 1))
+        XCTAssertEqual(store.placement(of: "d"), TesseraTileGridPlacement(row: 0, column: 5))
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL.path))
     }
 
     func testPlaceItemsOnEmptyStoreWritesNothing() {
         let directory = TesseraTestDirectory()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         XCTAssertFalse(store.placeItems(columns: 6))
         XCTAssertFalse(store.placeItems(columns: 0))
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path))
@@ -279,7 +279,7 @@ final class TileStorePlacementTests: XCTestCase {
 
         store.setCatalog(descriptors() + [tesseraTestTile("e", size: .wide)])
         // Занято строками 0–1 (две средние): новая строка — 2.
-        XCTAssertEqual(store.placement(of: "e"), TileGridPlacement(row: 2, column: 0))
+        XCTAssertEqual(store.placement(of: "e"), TesseraTileGridPlacement(row: 2, column: 0))
         for (id, cell) in before {
             XCTAssertEqual(store.placement(of: id), cell, "прежние ячейки не двигаются")
         }
@@ -288,13 +288,13 @@ final class TileStorePlacementTests: XCTestCase {
             tesseraTestTile("e", size: .wide),
             tesseraTestTile("f", size: .small),
         ])
-        XCTAssertEqual(store.placement(of: "f"), TileGridPlacement(row: 4, column: 0))
+        XCTAssertEqual(store.placement(of: "f"), TesseraTileGridPlacement(row: 4, column: 0))
         assertNoOverlapsAndInBounds(store, columns: 6)
     }
 
     // MARK: - Невидимые ключи
 
-    private func storeWithInvisibleD(_ directory: TesseraTestDirectory) throws -> TileStore {
+    private func storeWithInvisibleD(_ directory: TesseraTestDirectory) throws -> TesseraTileStore {
         let first = makeStore(descriptors(), in: directory)
         first.placeItems(columns: 6)
         try first.save()
@@ -316,7 +316,7 @@ final class TileStorePlacementTests: XCTestCase {
                       "ячейка невидимого сохранена в файле")
 
         store.setCatalog(descriptors())
-        XCTAssertEqual(store.placement(of: "d"), TileGridPlacement(row: 0, column: 5))
+        XCTAssertEqual(store.placement(of: "d"), TesseraTileGridPlacement(row: 0, column: 5))
         assertNoOverlapsAndInBounds(store, columns: 6)
     }
 
@@ -327,12 +327,12 @@ final class TileStorePlacementTests: XCTestCase {
 
         // «c» (2×2) переносится на колонку 5 и ограничивается холстом до колонки 4:
         // занимает колонки 4–5 строк 0–1, то есть ячейку (0, 5) невидимого «d».
-        XCTAssertTrue(store.moveItem("c", toCell: TileGridPlacement(row: 0, column: 5), columns: 6))
-        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 0, column: 4))
+        XCTAssertTrue(store.moveItem("c", toCell: TesseraTileGridPlacement(row: 0, column: 5), columns: 6))
+        XCTAssertEqual(store.placement(of: "c"), TesseraTileGridPlacement(row: 0, column: 4))
 
         store.setCatalog(descriptors())
         let d = try XCTUnwrap(store.placement(of: "d"))
-        XCTAssertEqual(d, TileGridPlacement(row: 2, column: 0), "строка после последней занятой")
+        XCTAssertEqual(d, TesseraTileGridPlacement(row: 2, column: 0), "строка после последней занятой")
         assertNoOverlapsAndInBounds(store, columns: 6)
     }
 
@@ -353,7 +353,7 @@ final class TileStorePlacementTests: XCTestCase {
     }
     """
 
-    private func holesStore(_ directory: TesseraTestDirectory) throws -> TileStore {
+    private func holesStore(_ directory: TesseraTestDirectory) throws -> TesseraTileStore {
         let store = makeStore(
             [
                 tesseraTestTile("a", size: .small),
@@ -374,15 +374,15 @@ final class TileStorePlacementTests: XCTestCase {
 
         // Дыры сохранены для ширины холста.
         let stored = store.placements(forColumns: 6)
-        XCTAssertEqual(stored["b"], TileGridPlacement(row: 2, column: 3))
-        XCTAssertEqual(stored["c"], TileGridPlacement(row: 4, column: 1))
+        XCTAssertEqual(stored["b"], TesseraTileGridPlacement(row: 2, column: 3))
+        XCTAssertEqual(stored["c"], TesseraTileGridPlacement(row: 4, column: 1))
         XCTAssertEqual(stored, store.placements)
 
         // Ширина 4: репак по порядку чтения без дыр.
         let projected = store.placements(forColumns: 4)
-        XCTAssertEqual(projected["a"], TileGridPlacement(row: 0, column: 0))
-        XCTAssertEqual(projected["b"], TileGridPlacement(row: 0, column: 1))
-        XCTAssertEqual(projected["c"], TileGridPlacement(row: 0, column: 2))
+        XCTAssertEqual(projected["a"], TesseraTileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(projected["b"], TesseraTileGridPlacement(row: 0, column: 1))
+        XCTAssertEqual(projected["c"], TesseraTileGridPlacement(row: 0, column: 2))
         XCTAssertEqual(store.placementReadingOrder(forColumns: 4), ["a", "b", "c"])
 
         // Хост сообщил ширину 4 — файл не тронут, холст прежний.
@@ -407,13 +407,13 @@ final class TileStorePlacementTests: XCTestCase {
         XCTAssertEqual(try jsonObject(store)["columns"] as? Int, 4)
         // Проекция: a (0,0), b (0,1), c (0,2); рост «b» до 2×2 на месте накрывает
         // «c», и она выталкивается вниз (D31).
-        XCTAssertEqual(store.placement(of: "a"), TileGridPlacement(row: 0, column: 0))
-        XCTAssertEqual(store.placement(of: "b"), TileGridPlacement(row: 0, column: 1))
-        XCTAssertEqual(store.placement(of: "c"), TileGridPlacement(row: 2, column: 2))
+        XCTAssertEqual(store.placement(of: "a"), TesseraTileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(store.placement(of: "b"), TesseraTileGridPlacement(row: 0, column: 1))
+        XCTAssertEqual(store.placement(of: "c"), TesseraTileGridPlacement(row: 2, column: 2))
         assertNoOverlapsAndInBounds(store, columns: 4)
 
         // Теперь проекция нужна для 6, а прежние дыры потеряны.
-        XCTAssertNotEqual(store.placements(forColumns: 6)["c"], TileGridPlacement(row: 4, column: 1))
+        XCTAssertNotEqual(store.placements(forColumns: 6)["c"], TesseraTileGridPlacement(row: 4, column: 1))
     }
 
     /// Без ячеек проекция — упаковка текущего порядка.
@@ -451,13 +451,13 @@ final class TileStorePlacementTests: XCTestCase {
         try store.load()
 
         XCTAssertEqual(store.canvasColumns, 6)
-        XCTAssertEqual(store.placement(of: "a"), TileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(store.placement(of: "a"), TesseraTileGridPlacement(row: 0, column: 0))
         assertNoOverlapsAndInBounds(store, columns: 6)
         // Нарушители — ниже занятого a (одна строка), в порядке сетки.
         for id in ["b", "c", "d"] {
             XCTAssertGreaterThanOrEqual(try XCTUnwrap(store.placement(of: id)).row, 1)
         }
-        XCTAssertEqual(store.placement(of: "b"), TileGridPlacement(row: 1, column: 0))
+        XCTAssertEqual(store.placement(of: "b"), TesseraTileGridPlacement(row: 1, column: 0))
     }
 
     /// Нет ширины холста либо частичный набор ячеек — файл читается как
@@ -501,7 +501,7 @@ final class TileStorePlacementTests: XCTestCase {
         try future.write(to: store.fileURL)
 
         XCTAssertThrowsError(try store.load()) { error in
-            guard case TileStoreError.unsupportedSchemaVersion(let version)? = error as? TileStoreError else {
+            guard case TesseraTileStoreError.unsupportedSchemaVersion(let version)? = error as? TesseraTileStoreError else {
                 return XCTFail("Ожидалась unsupportedSchemaVersion: \(error)")
             }
             XCTAssertEqual(version, 3)
@@ -526,8 +526,8 @@ final class TileStorePlacementTests: XCTestCase {
         XCTAssertNil(store.placement(of: "c"))
         XCTAssertEqual(store.placements.count, 3)
         // Папка встала на ячейку «b»; ячейка «c» осталась дырой (без репака).
-        XCTAssertEqual(store.placement(of: folder.id), TileGridPlacement(row: 0, column: 1))
-        XCTAssertEqual(store.placement(of: "d"), TileGridPlacement(row: 0, column: 5))
+        XCTAssertEqual(store.placement(of: folder.id), TesseraTileGridPlacement(row: 0, column: 1))
+        XCTAssertEqual(store.placement(of: "d"), TesseraTileGridPlacement(row: 0, column: 5))
 
         let items = try fileItems(store)
         let folderItem = try XCTUnwrap(items.first { ($0["kind"] as? String) == "folder" })

@@ -4,7 +4,7 @@
 //
 //  Тесты хранилища рабочего стола (задача E4.7).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим редактирования»
-//  (TileStore сохраняет порядок/размеры/закрепления и выживает между
+//  (TesseraTileStore сохраняет порядок/размеры/закрепления и выживает между
 //  запусками), §6 «Страница справа» (единственный источник истины,
 //  двусторонний pin/unpin) и §14 «Уточнения MVP» п. 3 (D14: создание папки,
 //  добавление ярлыка и перемещение между папками — только через функцию
@@ -13,7 +13,7 @@
 //  Проверяются: консистентность pin/unpin, move/resize, папки и функция
 //  одобрения, round-trip персистентности во временную директорию, испорченный
 //  файл и неподдерживаемая версия схемы. Тесты не поднимают UI и работают
-//  на главном потоке, как и сам TileStore.
+//  на главном потоке, как и сам TesseraTileStore.
 //
 
 #if canImport(UIKit)
@@ -28,7 +28,7 @@ final class TileStoreTests: XCTestCase {
     /// Ширина сетки хоста во всех операциях по ячейкам (E14.6).
     private let columns = 6
 
-    private func makeDescriptors() -> [TileDescriptor] {
+    private func makeDescriptors() -> [TesseraTileDescriptor] {
         [
             tesseraTestTile("a", size: .small),
             tesseraTestTile("b", size: .medium),
@@ -48,11 +48,11 @@ final class TileStoreTests: XCTestCase {
     ///   - autosaves: Включить автосохранение.
     /// - Returns: Настроенное хранилище.
     private func makeStore(
-        _ descriptors: [TileDescriptor],
+        _ descriptors: [TesseraTileDescriptor],
         in directory: TesseraTestDirectory,
         autosaves: Bool = false
-    ) -> TileStore {
-        let store = TileStore(directoryURL: directory.url)
+    ) -> TesseraTileStore {
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(descriptors)
         // Раскладка первого запуска: a(0,0) b(0,1) c(0,3) d(0,5) на 6 колонках.
@@ -60,7 +60,7 @@ final class TileStoreTests: XCTestCase {
         return store
     }
 
-    private func ids(_ snapshot: TileGridSnapshot) -> [AnyHashable] {
+    private func ids(_ snapshot: TesseraTileGridSnapshot) -> [AnyHashable] {
         snapshot.items.map { $0.id }
     }
 
@@ -252,7 +252,7 @@ final class TileStoreTests: XCTestCase {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
 
-        for size in [TileSize.medium, .wide, .large, .small] {
+        for size in [TesseraTileSize.medium, .wide, .large, .small] {
             XCTAssertTrue(store.resize("a", to: size, columns: columns))
             XCTAssertEqual(store.descriptor(withID: "a")?.size, size)
             XCTAssertEqual(
@@ -327,7 +327,7 @@ final class TileStoreTests: XCTestCase {
     func testAutosaveWritesStateFile() {
         let directory = TesseraTestDirectory()
         // Без `placeItems`: ширина сетки хранилищу ещё неизвестна, файла нет.
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = true
         store.setCatalog(makeDescriptors())
 
@@ -344,7 +344,7 @@ final class TileStoreTests: XCTestCase {
         // На месте каталога лежит файл — создать директорию невозможно.
         try Data("not a directory".utf8).write(to: directory.url)
 
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = true
         store.setCatalog(makeDescriptors())
 
@@ -378,8 +378,8 @@ final class TileStoreTests: XCTestCase {
         try Data(json.utf8).write(to: store.fileURL)
 
         XCTAssertThrowsError(try store.load()) { error in
-            guard let storeError = error as? TileStoreError else {
-                return XCTFail("Ожидалась TileStoreError, пришло: \(error)")
+            guard let storeError = error as? TesseraTileStoreError else {
+                return XCTFail("Ожидалась TesseraTileStoreError, пришло: \(error)")
             }
             switch storeError {
             case .unsupportedSchemaVersion(let version):
@@ -396,7 +396,7 @@ final class TileStoreTests: XCTestCase {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
 
-        var calls: [(folder: AnyHashable?, tile: AnyHashable, action: TileGroupingAction)] = []
+        var calls: [(folder: AnyHashable?, tile: AnyHashable, action: TesseraTileGroupingAction)] = []
         store.approval = { folder, tile, action in
             calls.append((folder?.id, tile.id, action))
             return true

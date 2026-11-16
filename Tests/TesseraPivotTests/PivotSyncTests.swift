@@ -24,20 +24,20 @@ import TesseraCore
 @testable import TesseraPivot
 
 /// Шпион делегата пивота: фиксирует порядок и значения всех трёх колбэков.
-private final class PivotDelegateSpy: PivotDelegate {
+private final class PivotDelegateSpy: TesseraPivotDelegate {
     private(set) var selectedIndexes: [Int] = []
     private(set) var progressValues: [CGFloat] = []
     private(set) var shownIndexes: [Int] = []
 
-    func pivot(_ pivot: PivotViewController, didSelectSectionAt index: Int) {
+    func pivot(_ pivot: TesseraPivotViewController, didSelectSectionAt index: Int) {
         selectedIndexes.append(index)
     }
 
-    func pivot(_ pivot: PivotViewController, didChangeProgress t: CGFloat) {
+    func pivot(_ pivot: TesseraPivotViewController, didChangeProgress t: CGFloat) {
         progressValues.append(t)
     }
 
-    func pivot(_ pivot: PivotViewController, didShowSectionAt index: Int) {
+    func pivot(_ pivot: TesseraPivotViewController, didShowSectionAt index: Int) {
         shownIndexes.append(index)
     }
 }
@@ -48,9 +48,9 @@ final class PivotSyncTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
-    private func makeSections(count: Int) -> [PivotSection] {
+    private func makeSections(count: Int) -> [TesseraPivotSection] {
         (0..<count).map { index in
-            PivotSection(id: index, title: "Секция \(index)") {
+            TesseraPivotSection(id: index, title: "Секция \(index)") {
                 UIViewController()
             }
         }
@@ -60,8 +60,8 @@ final class PivotSyncTests: XCTestCase {
     /// скролл-вью пейджера: он — единственный писатель `contentOffset` (§5).
     private func makeLoadedPivot(
         sectionCount: Int = 4
-    ) throws -> (pivot: PivotViewController, scrollView: UIScrollView) {
-        let pivot = PivotViewController(sections: makeSections(count: sectionCount))
+    ) throws -> (pivot: TesseraPivotViewController, scrollView: UIScrollView) {
+        let pivot = TesseraPivotViewController(sections: makeSections(count: sectionCount))
         pivot.loadViewIfNeeded()
         pivot.view.frame = CGRect(origin: .zero, size: pivotSize)
         pivot.view.layoutIfNeeded()

@@ -38,8 +38,8 @@ final class TileGridReduceMotionTests: XCTestCase {
     }
 
     /// Снимок с добавленным ярлыком `c` (смена состава).
-    private func snapshotWithExtraTile() -> TileGridSnapshot {
-        TileGridSnapshot(
+    private func snapshotWithExtraTile() -> TesseraTileGridSnapshot {
+        TesseraTileGridSnapshot(
             items: [
                 .tile(tesseraTestTile("a", size: .small)),
                 .tile(tesseraTestTile("b", size: .small)),

@@ -35,7 +35,7 @@ final class TileFolderBadgeTests: XCTestCase {
 
     private let screenWidths: [CGFloat] = [375, 414]
 
-    private let badges: [(String, TileBadge)] = [
+    private let badges: [(String, TesseraTileBadge)] = [
         ("count 3", .count(3)),
         ("count 99+", .count(150)),
         ("dot", .dot),
@@ -46,7 +46,7 @@ final class TileFolderBadgeTests: XCTestCase {
     }
 
     /// Размеры папки для ширины экрана при 6 колонках, полях 16 и зазоре 8.
-    private func folderSizes(screenWidth: CGFloat) -> [(TileSize, CGSize)] {
+    private func folderSizes(screenWidth: CGFloat) -> [(TesseraTileSize, CGSize)] {
         let unit = unit(screenWidth)
         return [
             (.small, CGSize(width: unit, height: unit)),
@@ -64,11 +64,11 @@ final class TileFolderBadgeTests: XCTestCase {
     private func folder(
         id: String = "F",
         title: String = "Работа",
-        size: TileSize = .medium,
-        members: [TileDescriptor]? = nil,
-        badge: TileBadge = .count(3)
-    ) -> TileFolder {
-        TileFolder(
+        size: TesseraTileSize = .medium,
+        members: [TesseraTileDescriptor]? = nil,
+        badge: TesseraTileBadge = .count(3)
+    ) -> TesseraTileFolder {
+        TesseraTileFolder(
             id: id,
             title: title,
             tiles: members ?? [
@@ -82,7 +82,7 @@ final class TileFolderBadgeTests: XCTestCase {
     /// Ячейка с папкой в окне с заданными Dynamic Type и направлением.
     private func makeCell(
         size: CGSize,
-        folder: TileFolder,
+        folder: TesseraTileFolder,
         rightToLeft: Bool = false,
         category: UIContentSizeCategory = .large,
         editClearance: CGFloat = 0,
@@ -135,15 +135,15 @@ final class TileFolderBadgeTests: XCTestCase {
 
     // MARK: - Помощник агрегата (D44)
 
-    private func aggregate(_ badges: [TileBadge]) -> TileBadge {
-        TileFolder.aggregateBadge(of: badges.enumerated().map {
+    private func aggregate(_ badges: [TesseraTileBadge]) -> TesseraTileBadge {
+        TesseraTileFolder.aggregateBadge(of: badges.enumerated().map {
             tesseraTestTile("t\($0.offset)", size: .small, badge: $0.element)
         })
     }
 
     /// Пустая папка и папка без бэйджей — `.none`.
     func testAggregateIsNoneForEmptyAndBadgeless() {
-        XCTAssertEqual(TileFolder.aggregateBadge(of: []), .none)
+        XCTAssertEqual(TesseraTileFolder.aggregateBadge(of: []), .none)
         XCTAssertEqual(aggregate([.none, .none, .none]), .none)
         XCTAssertEqual(folder(members: []).aggregateBadge, .none)
     }
@@ -189,8 +189,8 @@ final class TileFolderBadgeTests: XCTestCase {
     /// четыре, видимые в превью.
     func testAggregateCountsAllMembersNotJustPreviewFour() {
         let members = (0..<6).map { tesseraTestTile("m\($0)", size: .small, badge: .count(10)) }
-        XCTAssertEqual(TileFolder.aggregateBadge(of: members), .count(60))
-        XCTAssertEqual(TileFolder.aggregateBadge(of: members.reversed()), .count(60))
+        XCTAssertEqual(TesseraTileFolder.aggregateBadge(of: members), .count(60))
+        XCTAssertEqual(TesseraTileFolder.aggregateBadge(of: members.reversed()), .count(60))
     }
 
     // MARK: - Бэйдж на ячейке сетки
@@ -473,8 +473,8 @@ final class TileFolderBadgeTests: XCTestCase {
     /// Смена бэйджа члена папки доходит до плитки папки через снимок сетки: сумма,
     /// точка и скрытие обновляются на той же ячейке, без перезагрузки.
     func testMemberBadgeChangeUpdatesFolderBadgeThroughSnapshot() throws {
-        func snapshot(mail: TileBadge, other: TileBadge = .none) -> TileGridSnapshot {
-            TileGridSnapshot(items: [
+        func snapshot(mail: TesseraTileBadge, other: TesseraTileBadge = .none) -> TesseraTileGridSnapshot {
+            TesseraTileGridSnapshot(items: [
                 .folder(folder(members: [
                     tesseraTestTile("mail", size: .small, badge: mail),
                     tesseraTestTile("notes", size: .small, badge: other),
@@ -511,8 +511,8 @@ final class TileFolderBadgeTests: XCTestCase {
 
     /// Бэйдж меняется и при анимированном применении снимка.
     func testMemberBadgeChangeUpdatesFolderBadgeWithAnimatedSnapshot() throws {
-        func snapshot(_ mail: TileBadge) -> TileGridSnapshot {
-            TileGridSnapshot(items: [
+        func snapshot(_ mail: TesseraTileBadge) -> TesseraTileGridSnapshot {
+            TesseraTileGridSnapshot(items: [
                 .folder(folder(members: [
                     tesseraTestTile("mail", size: .small, badge: mail),
                     tesseraTestTile("notes", size: .small),
@@ -532,13 +532,13 @@ final class TileFolderBadgeTests: XCTestCase {
     func testStoreDissolveAndCatalogPruneRecomputeAggregate() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         let columns = 6
-        func catalog(_ entries: [(String, TileBadge)]) -> [TileDescriptor] {
+        func catalog(_ entries: [(String, TesseraTileBadge)]) -> [TesseraTileDescriptor] {
             entries.map { tesseraTestTile($0.0, size: .small, badge: $0.1) }
         }
-        let all: [(String, TileBadge)] = [("a", .count(3)), ("b", .count(4)), ("c", .dot), ("solo", .none)]
+        let all: [(String, TesseraTileBadge)] = [("a", .count(3)), ("b", .count(4)), ("c", .dot), ("solo", .none)]
         store.setCatalog(catalog(all))
         store.placeItems(columns: columns)
         let created = try XCTUnwrap(store.createFolder(withTile: "a", title: "Работа", columns: columns))
@@ -572,7 +572,7 @@ final class TileFolderBadgeTests: XCTestCase {
     func testUnpinOneOfThreeRecomputesAggregate() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         let columns = 6
         store.setCatalog([

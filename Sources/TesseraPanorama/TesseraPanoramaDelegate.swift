@@ -1,6 +1,6 @@
 // Делегат панорамы.
 // Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная архитектура»
-// (PanoramaDelegate — didShowSection, didChangeProgress) и §4 «Геометрия и
+// (TesseraPanoramaDelegate — didShowSection, didChangeProgress) и §4 «Геометрия и
 // математика ядра» (единый прогресс t, никакого layout в scrollViewDidScroll).
 
 #if canImport(UIKit)
@@ -18,7 +18,7 @@ import UIKit
 /// Все методы вызываются на главном потоке. Оба метода — опциональные события:
 /// в расширении ниже есть пустые реализации по умолчанию, поэтому делегат
 /// вправе реализовать только нужные ему события.
-public protocol PanoramaDelegate: AnyObject {
+public protocol TesseraPanoramaDelegate: AnyObject {
 
     /// Панорама показала секцию `index`.
     ///
@@ -31,7 +31,7 @@ public protocol PanoramaDelegate: AnyObject {
     /// - Parameters:
     ///   - panorama: Панорама-источник события.
     ///   - index: Индекс показанной секции в порядке чтения.
-    func panorama(_ panorama: PanoramaViewController, didShowSectionAt index: Int)
+    func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int)
 
     /// Непрерывный прогресс прокрутки изменился.
     ///
@@ -49,14 +49,14 @@ public protocol PanoramaDelegate: AnyObject {
     /// - Parameters:
     ///   - panorama: Панорама-источник события.
     ///   - t: Нормализованный прогресс `t = contentOffset.x / itemWidth`.
-    func panorama(_ panorama: PanoramaViewController, didChangeProgress t: CGFloat)
+    func panorama(_ panorama: TesseraPanoramaViewController, didChangeProgress t: CGFloat)
 }
 
-public extension PanoramaDelegate {
+public extension TesseraPanoramaDelegate {
     /// Реализация по умолчанию: показ секции не интересует делегата.
-    func panorama(_ panorama: PanoramaViewController, didShowSectionAt index: Int) {}
+    func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int) {}
 
     /// Реализация по умолчанию: прогресс не интересует делегата.
-    func panorama(_ panorama: PanoramaViewController, didChangeProgress t: CGFloat) {}
+    func panorama(_ panorama: TesseraPanoramaViewController, didChangeProgress t: CGFloat) {}
 }
 #endif

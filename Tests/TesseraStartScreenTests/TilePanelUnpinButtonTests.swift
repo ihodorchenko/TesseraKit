@@ -7,7 +7,7 @@
 //  реализации (E14)», п. 57; решение D46 в docs/STATE.md; эталон —
 //  docs/W10M-STARTSCREEN.md §6.5, §6.6, §6.9.
 //
-//  Проверяется на настоящем `TileStore` и сетке в окне (`TesseraTestDragHost`):
+//  Проверяется на настоящем `TesseraTileStore` и сетке в окне (`TesseraTestDragHost`):
 //  - кнопка есть у каждого ярлыка панели только в правке и только когда панель
 //    устоялась; нет у плитки-папки (D38); стрелки размера у ярлыка панели нет;
 //  - размер и угол те же, что у кнопки на плитке сетки (общий помощник угла);
@@ -63,7 +63,7 @@ final class TilePanelUnpinButtonTests: XCTestCase {
     /// Стенд: папка F (medium, (0,0)) из `contents`, плитка `a` под ней и ряд
     /// плиток ниже (для прокрутки).
     private func makeHost(
-        contents: [(String, TileSize)] = [("x", .small), ("y", .small), ("z", .small)],
+        contents: [(String, TesseraTileSize)] = [("x", .small), ("y", .small), ("z", .small)],
         rowsBelow: Int = 1
     ) throws -> TesseraTestDragHost {
         let tiles = (0..<rowsBelow).map { CellFixtureTile("a\($0)", .small, 3 + $0, 0) }

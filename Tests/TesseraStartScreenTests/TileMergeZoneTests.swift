@@ -37,15 +37,15 @@ final class TileMergeZoneTests: XCTestCase {
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
         /// Созданные папки.
-        var createdFolders: [TileFolder] = []
+        var createdFolders: [TesseraTileFolder] = []
 
         /// Добавления в папку.
         var additions: [(id: AnyHashable, folder: AnyHashable)] = []
 
         /// Перестановки по сетке.
-        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
+        var moves: [(id: AnyHashable, cell: TesseraTileGridPlacement)] = []
 
-        func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TileFolder) {
+        func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TesseraTileFolder) {
             createdFolders.append(folder)
         }
 
@@ -60,15 +60,15 @@ final class TileMergeZoneTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toCell cell: TileGridPlacement
+            toCell cell: TesseraTileGridPlacement
         ) {
             moves.append((tileID, cell))
         }
     }
 
     /// Ячейка в короткой записи.
-    private func at(_ row: Int, _ column: Int) -> TileGridPlacement {
-        TileGridPlacement(row: row, column: column)
+    private func at(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
+        TesseraTileGridPlacement(row: row, column: column)
     }
 
     /// Конфигурация: удержание 0,3 с (D22 не менялось — значение сокращено только

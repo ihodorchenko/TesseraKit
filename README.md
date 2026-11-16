@@ -46,9 +46,9 @@ Example-хост — [`Example/TesseraKitExample`](Example/TesseraKitExample) (�
 ```swift
 import TesseraPivot
 
-PivotView(
-    sections: [PivotSection(id: "home", title: "Главная") { HomeViewController() }],
-    style: PivotStyle(appTitle: "Приложение")
+TesseraPivotView(
+    sections: [TesseraPivotSection(id: "home", title: "Главная") { HomeViewController() }],
+    style: TesseraPivotStyle(appTitle: "Приложение")
 )
 ```
 

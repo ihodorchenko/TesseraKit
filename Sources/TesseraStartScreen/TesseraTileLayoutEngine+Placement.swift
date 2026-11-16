@@ -2,20 +2,20 @@
 // Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и
 // «Отступления реализации (E14)»; решения D30–D33 в docs/STATE.md.
 //
-// Раньше раскладка была функцией порядка: ``TileLayoutEngine/pack(items:columns:unit:)``
+// Раньше раскладка была функцией порядка: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
 // строго компактно укладывал плитки по массиву. Вариант Б (D30) делает моделью
 // явные координаты: у каждого верхнеуровневого элемента есть ячейка
-// (``TileGridPlacement``), плитка якорится на ней, а дыры сохраняются. Этот файл —
+// (``TesseraTileGridPlacement``), плитка якорится на ней, а дыры сохраняются. Этот файл —
 // чистые операции над таким набором: размещение, вставка с выталкиванием вниз
 // каскадом (D31), resize на месте, удаление без репака, схлопывание пустых строк,
 // поиск свободной ячейки и проверка корректности.
 //
-// Слой ничего не знает о UIKit, хранилище и сетке: только `TileSize`, ячейки и
+// Слой ничего не знает о UIKit, хранилище и сетке: только `TesseraTileSize`, ячейки и
 // число колонок. Все функции — `static`, детерминированы и не хранят состояния.
 // Ячейки — **логические** (колонка 0 — начало чтения); зеркалирование RTL делает
-// вью-слой (документ §9). Слой используют операции `TileStore` по ячейкам (E14.4)
+// вью-слой (документ §9). Слой используют операции `TesseraTileStore` по ячейкам (E14.4)
 // и drag-превью координатора (E14.5); упаковка по порядку (`pack`, `packCompact`)
-// осталась в `TileLayoutEngine.swift` для отката раскладки, миграции v1 → v2 и
+// осталась в `TesseraTileLayoutEngine.swift` для отката раскладки, миграции v1 → v2 и
 // проекции при другой ширине холста.
 
 import CoreGraphics
@@ -25,19 +25,19 @@ import CoreGraphics
 ///
 /// Набор размещений — массив таких элементов. Порядок массива **не модель**: он
 /// нужен только затем, чтобы сопоставлять результат со входом (как у
-/// ``TileLayoutEngine/pack(items:columns:unit:)``) и делать вывод детерминированным.
-/// Размер здесь — запрошенный (D15, как в `TileStore`); след на сетке движок
-/// считает по ``TileLayoutEngine/fittingSize(_:columns:)``.
-public struct TilePlacedItem: Equatable {
+/// ``TesseraTileLayoutEngine/pack(items:columns:unit:)``) и делать вывод детерминированным.
+/// Размер здесь — запрошенный (D15, как в `TesseraTileStore`); след на сетке движок
+/// считает по ``TesseraTileLayoutEngine/fittingSize(_:columns:)``.
+public struct TesseraTilePlacedItem: Equatable {
 
     /// Идентификатор верхнеуровневого элемента (ярлыка или папки).
     public var id: AnyHashable
 
     /// Запрошенный размер плитки (D15).
-    public var size: TileSize
+    public var size: TesseraTileSize
 
     /// Ячейка левого верхнего угла (логические координаты, в юнитах).
-    public var cell: TileGridPlacement
+    public var cell: TesseraTileGridPlacement
 
     /// Создаёт элемент набора размещений.
     ///
@@ -45,7 +45,7 @@ public struct TilePlacedItem: Equatable {
     ///   - id: Идентификатор элемента.
     ///   - size: Запрошенный размер плитки.
     ///   - cell: Ячейка левого верхнего угла.
-    public init(id: AnyHashable, size: TileSize, cell: TileGridPlacement) {
+    public init(id: AnyHashable, size: TesseraTileSize, cell: TesseraTileGridPlacement) {
         self.id = id
         self.size = size
         self.cell = cell
@@ -75,7 +75,7 @@ fileprivate struct PlacementRect: Equatable {
 
 // MARK: - Размещение по координатам (E14.2)
 
-extension TileLayoutEngine {
+extension TesseraTileLayoutEngine {
 
     // MARK: Слоты и проверка
 
@@ -97,14 +97,14 @@ extension TileLayoutEngine {
     /// - Returns: Слоты в порядке `placements`; пустой массив для вырожденной
     ///   геометрии.
     public static func slots(
-        placements: [TilePlacedItem],
+        placements: [TesseraTilePlacedItem],
         columns: Int,
         unit: CGFloat,
         fitting: Bool = false
-    ) -> [TileLayoutSlot] {
+    ) -> [TesseraTileLayoutSlot] {
         guard columns > 0, unit.isFinite, unit > 0 else { return [] }
 
-        var result: [TileLayoutSlot] = []
+        var result: [TesseraTileLayoutSlot] = []
         result.reserveCapacity(placements.count)
 
         for item in placements {
@@ -112,7 +112,7 @@ extension TileLayoutEngine {
             guard size.unitColumns > 0, size.unitRows > 0, size.unitColumns <= columns else { continue }
 
             result.append(
-                TileLayoutSlot(
+                TesseraTileLayoutSlot(
                     id: item.id,
                     size: size,
                     column: item.cell.column,
@@ -136,7 +136,7 @@ extension TileLayoutEngine {
     ///   - placements: Набор размещений.
     ///   - columns: Число колонок.
     /// - Returns: Идентификаторы нарушителей.
-    public static func validate(_ placements: [TilePlacedItem], columns: Int) -> [AnyHashable] {
+    public static func validate(_ placements: [TesseraTilePlacedItem], columns: Int) -> [AnyHashable] {
         guard columns > 0 else { return placements.map(\.id) }
 
         let rects = placements.map { placementRect($0, columns: columns) }
@@ -163,7 +163,7 @@ extension TileLayoutEngine {
     ///   - placements: Набор размещений.
     ///   - columns: Число колонок (нужно для ужатия размеров под узкую сетку).
     /// - Returns: `true`, если хотя бы два следа пересекаются.
-    public static func hasOverlaps(_ placements: [TilePlacedItem], columns: Int) -> Bool {
+    public static func hasOverlaps(_ placements: [TesseraTilePlacedItem], columns: Int) -> Bool {
         guard columns > 0 else { return false }
 
         let rects = placements.map { placementRect($0, columns: columns) }
@@ -189,10 +189,10 @@ extension TileLayoutEngine {
     ///   - size: Размер плитки.
     ///   - columns: Число колонок.
     /// - Returns: Допустимая ячейка.
-    public static func clamped(cell: TileGridPlacement, size: TileSize, columns: Int) -> TileGridPlacement {
+    public static func clamped(cell: TesseraTileGridPlacement, size: TesseraTileSize, columns: Int) -> TesseraTileGridPlacement {
         let width = fittingSize(size, columns: columns).unitColumns
         let maxColumn = max(0, columns - width)
-        return TileGridPlacement(
+        return TesseraTileGridPlacement(
             row: max(0, cell.row),
             column: min(max(0, cell.column), maxColumn)
         )
@@ -237,14 +237,14 @@ extension TileLayoutEngine {
     /// - Returns: Новый набор размещений.
     public static func inserting(
         id: AnyHashable,
-        size: TileSize,
-        at cell: TileGridPlacement,
-        into placements: [TilePlacedItem],
+        size: TesseraTileSize,
+        at cell: TesseraTileGridPlacement,
+        into placements: [TesseraTilePlacedItem],
         columns: Int
-    ) -> [TilePlacedItem] {
+    ) -> [TesseraTilePlacedItem] {
         guard columns > 0 else { return placements }
 
-        let moved = TilePlacedItem(
+        let moved = TesseraTilePlacedItem(
             id: id,
             size: size,
             cell: clamped(cell: cell, size: size, columns: columns)
@@ -280,7 +280,7 @@ extension TileLayoutEngine {
 
         // Сборка в порядке входа: существующий элемент остаётся на индексе,
         // новый — в конец.
-        var result: [TilePlacedItem] = []
+        var result: [TesseraTilePlacedItem] = []
         result.reserveCapacity(placements.count + 1)
         var didPlaceMoved = false
 
@@ -316,10 +316,10 @@ extension TileLayoutEngine {
     /// - Returns: Новый набор размещений.
     public static func resizing(
         id: AnyHashable,
-        to newSize: TileSize,
-        in placements: [TilePlacedItem],
+        to newSize: TesseraTileSize,
+        in placements: [TesseraTilePlacedItem],
         columns: Int
-    ) -> [TilePlacedItem] {
+    ) -> [TesseraTilePlacedItem] {
         guard columns > 0, let item = placements.first(where: { $0.id == id }) else {
             return placements
         }
@@ -332,7 +332,7 @@ extension TileLayoutEngine {
     ///   - id: Идентификатор удаляемого элемента.
     ///   - placements: Текущий набор размещений.
     /// - Returns: Набор без элемента; остальные элементы не двигаются.
-    public static func removing(id: AnyHashable, from placements: [TilePlacedItem]) -> [TilePlacedItem] {
+    public static func removing(id: AnyHashable, from placements: [TesseraTilePlacedItem]) -> [TesseraTilePlacedItem] {
         placements.filter { $0.id != id }
     }
 
@@ -353,9 +353,9 @@ extension TileLayoutEngine {
     ///     высота большой плитки на узкой сетке — по ``fittingSize(_:columns:)``).
     /// - Returns: Набор без пустых строк; порядок массива сохранён.
     public static func collapsingEmptyRows(
-        in placements: [TilePlacedItem],
+        in placements: [TesseraTilePlacedItem],
         columns: Int
-    ) -> [TilePlacedItem] {
+    ) -> [TesseraTilePlacedItem] {
         guard columns > 0, !placements.isEmpty else { return placements }
 
         var covered = Set<Int>()
@@ -400,18 +400,18 @@ extension TileLayoutEngine {
     ///     элемент освобождает своё место).
     /// - Returns: Ячейка `(row: нижняя граница, column: 0)`.
     public static func newRowCell(
-        size: TileSize,
+        size: TesseraTileSize,
         columns: Int,
-        placements: [TilePlacedItem],
+        placements: [TesseraTilePlacedItem],
         excluding id: AnyHashable? = nil
-    ) -> TileGridPlacement {
-        guard columns > 0 else { return TileGridPlacement(row: 0, column: 0) }
+    ) -> TesseraTileGridPlacement {
+        guard columns > 0 else { return TesseraTileGridPlacement(row: 0, column: 0) }
 
         var bottom = 0
         for item in placements where item.id != id {
             bottom = max(bottom, placementRect(item, columns: columns).bottom)
         }
-        return clamped(cell: TileGridPlacement(row: bottom, column: 0), size: size, columns: columns)
+        return clamped(cell: TesseraTileGridPlacement(row: bottom, column: 0), size: size, columns: columns)
     }
 
     /// Первая свободная ячейка «сверху-слева» под размер (first-fit) (E14.2).
@@ -429,12 +429,12 @@ extension TileLayoutEngine {
     ///     элемент освобождает своё место).
     /// - Returns: Ячейка левого верхнего угла.
     public static func firstFreeCell(
-        size: TileSize,
+        size: TesseraTileSize,
         columns: Int,
-        placements: [TilePlacedItem],
+        placements: [TesseraTilePlacedItem],
         excluding id: AnyHashable? = nil
-    ) -> TileGridPlacement {
-        guard columns > 0 else { return TileGridPlacement(row: 0, column: 0) }
+    ) -> TesseraTileGridPlacement {
+        guard columns > 0 else { return TesseraTileGridPlacement(row: 0, column: 0) }
 
         let fitted = fittingSize(size, columns: columns)
         let obstacles = placements
@@ -451,17 +451,17 @@ extension TileLayoutEngine {
                     height: fitted.unitRows
                 )
                 if !obstacles.contains(where: { $0.overlaps(candidate) }) {
-                    return TileGridPlacement(row: row, column: column)
+                    return TesseraTileGridPlacement(row: row, column: column)
                 }
             }
         }
-        return TileGridPlacement(row: max(0, lastRow), column: 0)
+        return TesseraTileGridPlacement(row: max(0, lastRow), column: 0)
     }
 
     // MARK: Внутреннее
 
     /// След элемента: ячейка плюс размер, ужатый под узкую сетку.
-    fileprivate static func placementRect(_ item: TilePlacedItem, columns: Int) -> PlacementRect {
+    fileprivate static func placementRect(_ item: TesseraTilePlacedItem, columns: Int) -> PlacementRect {
         let fitted = fittingSize(item.size, columns: columns)
         return PlacementRect(
             row: item.cell.row,

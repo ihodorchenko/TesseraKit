@@ -43,12 +43,12 @@ final class FolderPanelAnimationTests: XCTestCase {
     ///
     /// - Parameter items: Элементы снимка в порядке отображения.
     /// - Returns: Разложенная сетка.
-    private func makeGrid(_ items: [TileGridItem]) -> TesseraTileGridView {
+    private func makeGrid(_ items: [TesseraTileGridItem]) -> TesseraTileGridView {
         let grid = TesseraTileGridView(
             frame: CGRect(x: 0, y: 0, width: 390, height: 844)
         )
         grid.columns = 4
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: []))
         layout(grid)
         return grid
     }
@@ -126,7 +126,7 @@ final class FolderPanelAnimationTests: XCTestCase {
 
         // Снимок приходит посреди 280 мс: набор занят batch-вставкой панели.
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [.tile(tile), .folder(folder), .tile(extra)],
                 unpinned: []
             ),
@@ -168,7 +168,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertTrue(host.grid.isFolderChangeAnimating, "Анимация закрытия идёт")
 
         host.grid.update(
-            snapshot: TileGridSnapshot(items: [.tile(tile), .folder(folder)], unpinned: []),
+            snapshot: TesseraTileGridSnapshot(items: [.tile(tile), .folder(folder)], unpinned: []),
             animated: false
         )
 
@@ -202,7 +202,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         // reloadData.
         host.grid.openFolder(second)
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [.tile(tileB), .tile(tileA), .folder(second)],
                 unpinned: []
             ),
@@ -392,7 +392,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertEqual(cell.accessibilityValue, "3")
 
         // Пустая папка: числа нет, состояние озвучивается отдельно.
-        let empty = TileFolder(id: "empty", title: "empty")
+        let empty = TesseraTileFolder(id: "empty", title: "empty")
         cell.configure(with: .folder(empty), liveTileEngine: nil, isVisible: false)
         XCTAssertNil(cell.accessibilityValue)
         cell.setFolderExpanded(true)
@@ -435,12 +435,12 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertLessThanOrEqual(accessibilityFont.pointSize, 28)
         XCTAssertLessThanOrEqual(
             accessibilityFont.lineHeight,
-            TileLayoutEngine.panelHeaderHeight + 0.001,
+            TesseraTileLayoutEngine.panelHeaderHeight + 0.001,
             "Строка заголовка обязана уместиться в высоту панели"
         )
         XCTAssertLessThanOrEqual(
             defaultFont.lineHeight,
-            TileLayoutEngine.panelHeaderHeight + 0.001
+            TesseraTileLayoutEngine.panelHeaderHeight + 0.001
         )
     }
 }

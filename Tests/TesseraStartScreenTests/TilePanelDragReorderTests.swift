@@ -12,14 +12,14 @@
 //  - слот под пальцем — по рамкам слотов раскладки панели (строки/колонки, RTL);
 //    пустое место и заголовок дают ближайший слот;
 //  - соседи сдвигаются от базового порядка (без накопления), модель не меняется;
-//  - drop фиксирует `TileStore.moveWithinFolder` (один раз, делегат
+//  - drop фиксирует `TesseraTileStore.moveWithinFolder` (один раз, делегат
 //    `didReorderTile`), drop на свой слот и отмена возвращают порядок;
 //  - выход пальца за панель плюс запас переводит drag в вынос (панель
 //    закрывается мгновенно, цели E14, D45, отказ хоста), назад к перестановке
 //    в этом drag возврата нет;
 //  - Reduce Motion — мгновенный сдвиг; автопрокрутка у края работает.
 //
-//  Стенд — настоящие `TileStore` и сетка в окне; раскладки точные.
+//  Стенд — настоящие `TesseraTileStore` и сетка в окне; раскладки точные.
 //
 
 #if canImport(UIKit)
@@ -36,8 +36,8 @@ final class TilePanelDragReorderTests: XCTestCase {
 
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
         var reorders: [(tile: AnyHashable, folder: AnyHashable, index: Int)] = []
-        var moves: [(tile: AnyHashable, folder: AnyHashable?, cell: TileGridPlacement?)] = []
-        var failures: [TileGroupingAction] = []
+        var moves: [(tile: AnyHashable, folder: AnyHashable?, cell: TesseraTileGridPlacement?)] = []
+        var failures: [TesseraTileGroupingAction] = []
         var dissolutions: [AnyHashable] = []
 
         func tileEditCoordinator(
@@ -53,14 +53,14 @@ final class TilePanelDragReorderTests: XCTestCase {
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
             toFolder folderID: AnyHashable?,
-            atCell cell: TileGridPlacement?
+            atCell cell: TesseraTileGridPlacement?
         ) {
             moves.append((tileID, folderID, cell))
         }
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
-            didFailGrouping action: TileGroupingAction,
+            didFailGrouping action: TesseraTileGroupingAction,
             tileID: AnyHashable,
             folderID: AnyHashable?
         ) {
@@ -85,7 +85,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 0, 3)],
             folders: [
-                CellFixtureFolder("F", .medium, 0, 0, contents: (0..<count).map { ("t\($0)", TileSize.small) }),
+                CellFixtureFolder("F", .medium, 0, 0, contents: (0..<count).map { ("t\($0)", TesseraTileSize.small) }),
             ],
             configuration: TesseraTileEditConfiguration(mergeHoverDuration: 0.05, magnetSnapRadius: 0)
         )
@@ -443,7 +443,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         settle(host)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: host.store.fileURL.path), "Drop записал файл")
-        let fresh = TileStore(directoryURL: host.directory.url)
+        let fresh = TesseraTileStore(directoryURL: host.directory.url)
         fresh.setCatalog((0..<6).map { tesseraTestTile("t\($0)", size: .small) } + [tesseraTestTile("a", size: .small)])
         try fresh.load()
         XCTAssertEqual(

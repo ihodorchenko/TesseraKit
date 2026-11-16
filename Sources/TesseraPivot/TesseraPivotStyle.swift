@@ -1,6 +1,6 @@
 // Конфигурация внешнего вида пивота.
 // Проектный документ: docs/PIVOT-IOS-DESIGN.md — §3 «Архитектура»
-// (PivotStyle — шрифты/цвета заголовков, вид индикатора, режим ленты),
+// (TesseraPivotStyle — шрифты/цвета заголовков, вид индикатора, режим ленты),
 // §4 «Математика ядра» (непрерывная окраска по расстоянию от t) и
 // §8 «Accessibility и системная интеграция» (Dynamic Type, Reduce Motion, RTL).
 
@@ -12,7 +12,7 @@ import UIKit
 /// (docs/PIVOT-IOS-DESIGN.md §3).
 ///
 /// Тип — конфиг-структура с дефолтами у всех полей: достаточно создать
-/// `PivotStyle()`, чтобы получить системный вид. Стиль не хранит состояние и
+/// `TesseraPivotStyle()`, чтобы получить системный вид. Стиль не хранит состояние и
 /// не зависит от иерархии представлений — это чистый снимок настроек; компонент
 /// читает его при применении и при смене Dynamic Type (§8).
 ///
@@ -20,7 +20,7 @@ import UIKit
 /// - Note: Reduce Motion не входит в стиль: это системная настройка, а не
 ///   предпочтение оформления. Компонент запрашивает её через
 ///   ``TesseraAccessibility/isReduceMotionEnabled`` в момент решения (§8).
-public struct PivotStyle {
+public struct TesseraPivotStyle {
 
     /// Вид выделения активного заголовка (docs/PIVOT-IOS-DESIGN.md §3).
     ///
@@ -31,8 +31,8 @@ public struct PivotStyle {
         case underline
 
         /// Только акцентный цвет текста: активный заголовок окрашивается в
-        /// ``PivotStyle/activeColor``, соседние — интерполируются к
-        /// ``PivotStyle/inactiveColor`` по расстоянию от `t` (§4, «Окраска
+        /// ``TesseraPivotStyle/activeColor``, соседние — интерполируются к
+        /// ``TesseraPivotStyle/inactiveColor`` по расстоянию от `t` (§4, «Окраска
         /// текста»). Отдельного подчёркивания нет.
         case accentText
 

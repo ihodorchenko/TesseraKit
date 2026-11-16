@@ -5,25 +5,25 @@
 //    список приложений; свайп справа налево уводит на него;
 //  - §6 «Страница справа: список приложений + настройки»: UITableView с
 //    секциями по буквам и `sectionIndexTitles` (jump-list), настройки —
-//    секция списка, двусторонняя связь с ярлыками через TileStore;
+//    секция списка, двусторонняя связь с ярлыками через TesseraTileStore;
 //  - §9 «Accessibility»: строки — стандартные элементы, jump-list доступен,
 //    Dynamic Type, RTL;
 //  - §14 «Уточнения MVP» п. 1–2 и D12/D13 в docs/STATE.md: ярлык — просто
 //    действие (без поля `type`), а сама страница опциональна — её создаёт хост,
 //    если хочет третью страницу пейджера;
 //  - D14: страница ничего не делает с папками сама — все операции с папками
-//    идут через TileStore и функцию одобрения хоста (в списке таких операций
+//    идут через TesseraTileStore и функцию одобрения хоста (в списке таких операций
 //    нет: pin/unpin — это раскладка, а не группировка).
 //
-// Источник истины — TileStore (§6, правило «один писатель»). Страница не
+// Источник истины — TesseraTileStore (§6, правило «один писатель»). Страница не
 // держит собственного состояния рабочего стола: она читает `snapshot()` и
 // перестраивает секции после каждого изменения хранилища, а pin/unpin
-// выполняет методами TileStore. Поэтому сетка и список не расходятся:
+// выполняет методами TesseraTileStore. Поэтому сетка и список не расходятся:
 // pin из списка появляется в сетке через `onChange` хоста, unpin на сетке
 // меняет состояние строк здесь — по подписке на изменение того же хранилища.
 //
-// E14.5: pin идёт через `TileStore.pinTile(_:columns:)` (новая строка в
-// конце холста, D33), unpin — через `TileStore.unpin(_:columns:)` с последующим
+// E14.5: pin идёт через `TesseraTileStore.pinTile(_:columns:)` (новая строка в
+// конце холста, D33), unpin — через `TesseraTileStore.unpin(_:columns:)` с последующим
 // `collapseEmptyRows(columns:)` (дыра остаётся, пустая строка схлопывается, D31).
 // Число колонок реальной сетки хост сообщает фабрике (`columns`); если его нет,
 // берётся ширина, известная хранилищу. Число колонок фиксируется при создании
@@ -54,7 +54,7 @@ import UIKit
 /// ``action``. Так отдельный экран настроек остаётся за приложением (§6), а
 /// страница не превращается в ещё один источник состояния.
 ///
-/// Строки настроек не связаны с `TileStore`: это обычные действия хоста.
+/// Строки настроек не связаны с `TesseraTileStore`: это обычные действия хоста.
 public struct TesseraAppsListSettingsItem {
 
     /// Стабильный идентификатор строки; уникален в пределах секции настроек.
@@ -72,7 +72,7 @@ public struct TesseraAppsListSettingsItem {
     /// Иконка строки; `nil` — без иконки (текст прижмётся к краю).
     public var icon: UIImage?
 
-    /// Действие по тапу. Вызывается на главном потоке, как и `TileDescriptor.action`.
+    /// Действие по тапу. Вызывается на главном потоке, как и `TesseraTileDescriptor.action`.
     public let action: () -> Void
 
     /// Создаёт строку секции настроек.
@@ -158,9 +158,9 @@ public struct TesseraAppsListTexts: Equatable {
 /// Страница показывает **весь каталог** ярлыков, сгруппированный по буквам
 /// алфавитного указателя локали (`UILocalizedIndexedCollation`), и отдельную
 /// секцию настроек. Строка ярлыка — стандартный
-/// элемент списка: тап запускает `TileDescriptor.action` (D12: ярлык — просто
+/// элемент списка: тап запускает `TesseraTileDescriptor.action` (D12: ярлык — просто
 /// действие), кнопка-«канцелярская кнопка» в аксессуаре закрепляет или
-/// открепляет ярлык, а состояние строки всегда отражает `TileStore`.
+/// открепляет ярлык, а состояние строки всегда отражает `TesseraTileStore`.
 ///
 /// ## Использование
 ///
@@ -179,7 +179,7 @@ public struct TesseraAppsListTexts: Equatable {
 /// // Хост подключает страницу замыканием: ссылок на тип пейджера страница не знает.
 /// ```
 ///
-/// Страница не подписывается на `TileStore.onChange` и не меняет каталог
+/// Страница не подписывается на `TesseraTileStore.onChange` и не меняет каталог
 /// ярлыков: `setCatalog(_:)`, `load()` и раскладка остаются делом хоста.
 /// Всё, что она делает с хранилищем, — `snapshot()`,
 /// `pinTile(_:columns:)`, `unpin(_:columns:)` и
@@ -267,7 +267,7 @@ public final class TesseraAppsListPageViewController: UIViewController {
     ///     актуальное число колонок.
     /// - Returns: Готовая страница.
     public static func make(
-        store: TileStore,
+        store: TesseraTileStore,
         settings: [TesseraAppsListSettingsItem] = [],
         texts: TesseraAppsListTexts = TesseraAppsListTexts(),
         columns: Int? = nil
@@ -283,11 +283,11 @@ public final class TesseraAppsListPageViewController: UIViewController {
     // MARK: - Данные
 
     /// Хранилище рабочего стола (§6: источник истины).
-    private let store: TileStore
+    private let store: TesseraTileStore
 
     /// Число колонок реальной сетки для операций по ячейкам (E14.5).
     ///
-    /// `nil` — хост раскладку не сообщил: берётся ``TileStore/effectiveColumns``
+    /// `nil` — хост раскладку не сообщил: берётся ``TesseraTileStore/effectiveColumns``
     /// (``make(store:settings:texts:columns:)``). Фиксируется при создании
     /// страницы: при смене числа колонок сетки хост пересоздаёт страницу, иначе
     /// ячейки посчитаются для устаревшей ширины.
@@ -340,7 +340,7 @@ public final class TesseraAppsListPageViewController: UIViewController {
     /// Ярлык в списке вместе с его состоянием на рабочем столе.
     private struct AppEntry {
         /// Ярлык из снимка хранилища (действие, иконка, бейдж, размер).
-        let descriptor: TileDescriptor
+        let descriptor: TesseraTileDescriptor
 
         /// Закреплён ли ярлык на сетке или в папке.
         let isPinned: Bool
@@ -415,7 +415,7 @@ public final class TesseraAppsListPageViewController: UIViewController {
     ///   - texts: Локализуемые строки.
     ///   - columns: Число колонок реальной сетки; `nil` — неизвестно.
     private init(
-        store: TileStore,
+        store: TesseraTileStore,
         settings: [TesseraAppsListSettingsItem],
         texts: TesseraAppsListTexts,
         columns: Int?
@@ -529,7 +529,7 @@ public final class TesseraAppsListPageViewController: UIViewController {
         let snapshot = store.snapshot()
 
         var pinnedIDs = Set<AnyHashable>()
-        var catalog: [AnyHashable: TileDescriptor] = [:]
+        var catalog: [AnyHashable: TesseraTileDescriptor] = [:]
 
         for item in snapshot.items {
             switch item {
@@ -539,7 +539,7 @@ public final class TesseraAppsListPageViewController: UIViewController {
             case .folder(let folder):
                 // Ярлыки папки тоже закреплены: сетка показывает их через папку,
                 // поэтому в списке они отмечены как закреплённые. Unpin такого
-                // ярлыка TileStore выполняет сам (убирает из папки, D14 — это
+                // ярлыка TesseraTileStore выполняет сам (убирает из папки, D14 — это
                 // следствие открепления, а не операция группировки).
                 for tile in folder.tiles {
                     pinnedIDs.insert(tile.id)
@@ -675,13 +675,13 @@ public final class TesseraAppsListPageViewController: UIViewController {
 
     /// Закрепляет или открепляет ярлык через хранилище (§6).
     ///
-    /// E14.5: pin идёт через ``TileStore/pinTile(_:columns:)`` — ярлык
+    /// E14.5: pin идёт через ``TesseraTileStore/pinTile(_:columns:)`` — ярлык
     /// встаёт в новую строку в конце холста (D33), дыры выше не заполняются.
     /// Секции списка строятся по каталогу и от позиции на сетке не зависят —
     /// сетка узнаёт новую раскладку через `onChange` хоста.
     ///
-    /// Unpin идёт через ``TileStore/unpin(_:columns:)``: ячейка ярлыка остаётся
-    /// дырой, а затем ``TileStore/collapseEmptyRows(columns:)`` убирает только
+    /// Unpin идёт через ``TesseraTileStore/unpin(_:columns:)``: ячейка ярлыка остаётся
+    /// дырой, а затем ``TesseraTileStore/collapseEmptyRows(columns:)`` убирает только
     /// полностью пустую строку (D31). Это два изменения модели (второе — no-op
     /// без уведомления, если пустых строк нет).
     ///

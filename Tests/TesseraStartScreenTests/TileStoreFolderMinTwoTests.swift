@@ -2,13 +2,13 @@
 //  TileStoreFolderMinTwoTests.swift
 //  TesseraStartScreenTests
 //
-//  Папка не бывает из 0–1 ярлыков: модель `TileStore` (E14.8, D45, 13.11.2026).
+//  Папка не бывает из 0–1 ярлыков: модель `TesseraTileStore` (E14.8, D45, 13.11.2026).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации
 //  (E14)», п. 56; решения D30–D33 и D45 в docs/STATE.md.
 //
 //  Правило: когда операция убирает ярлык из папки и там остаётся один, папка
 //  распускается — оставшийся ярлык встаёт на ячейку папки со **своим** размером
-//  через `TileLayoutEngine.inserting` (бо́льший выталкивает соседей вниз, D31,
+//  через `TesseraTileLayoutEngine.inserting` (бо́льший выталкивает соседей вниз, D31,
 //  слишком правая колонка сдвигается влево, меньший оставляет дыру). Правило
 //  действует во всех операциях, убирающих ярлык из папки (вынос, вынос в новую
 //  строку, открепление, перенос в другую папку), в чистке по каталогу и при
@@ -32,10 +32,10 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
     private func makeStore(
         _ tiles: [CellFixtureTile],
         folders: [CellFixtureFolder] = [],
-        unpinned: [(String, TileSize)] = [],
+        unpinned: [(String, TesseraTileSize)] = [],
         in directory: TesseraTestDirectory,
         autosaves: Bool = true
-    ) throws -> TileStore {
+    ) throws -> TesseraTileStore {
         try TileStoreCellFixture.makeStore(
             columns: columns, tiles: tiles, folders: folders, unpinned: unpinned, in: directory, autosaves: autosaves
         )
@@ -44,13 +44,13 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
     private func catalogIDs(
         _ tiles: [CellFixtureTile],
         folders: [CellFixtureFolder] = [],
-        unpinned: [(String, TileSize)] = []
+        unpinned: [(String, TesseraTileSize)] = []
     ) -> [String] {
         tiles.map { $0.id } + folders.flatMap { $0.contents.map { $0.id } } + unpinned.map { $0.0 }
     }
 
     /// Считает уведомления `onChange`.
-    private func countNotifications(_ store: TileStore) -> () -> Int {
+    private func countNotifications(_ store: TesseraTileStore) -> () -> Int {
         var count = 0
         store.onChange = { _ in count += 1 }
         return { count }
@@ -58,14 +58,14 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
     /// Файл содержит ровно ячейки модели: перечитанное хранилище совпадает.
     private func assertRoundTrip(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         catalog: [String],
         in directory: TesseraTestDirectory,
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
         try store.save()
-        let fresh = TileStore(directoryURL: directory.url)
+        let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(catalog.map { tesseraTestTile($0, size: store.descriptor(withID: $0)?.size ?? .small) })
         try fresh.load()
         XCTAssertEqual(fresh.placements, store.placements, "ячейки переживают круг записи", file: file, line: line)
@@ -414,7 +414,7 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
               "folders": [{"key": "s:f", "title": "F", "size": "medium", "tileKeys": ["s:x"]}]
             }
             """
-            let store = TileStore(directoryURL: directory.url)
+            let store = TesseraTileStore(directoryURL: directory.url)
             store.autosaves = false
             try Data(json.utf8).write(to: store.fileURL)
             try store.load()
@@ -450,7 +450,7 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
           "folders": [{"key": "s:f", "title": "F", "size": "medium", "tileKeys": ["s:x"]}]
         }
         """
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         try Data(json.utf8).write(to: store.fileURL)
         store.setCatalog(["a", "b", "x"].map { tesseraTestTile($0, size: .small) })
@@ -523,7 +523,7 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         for seed in 1...24 {
             var rng = TesseraTestSeededGenerator(seed: UInt64(seed))
             let directory = TesseraTestDirectory()
-            let sizes: [TileSize] = [.small, .medium, .wide, .large]
+            let sizes: [TesseraTileSize] = [.small, .medium, .wide, .large]
 
             var folders: [CellFixtureFolder] = []
             var all: [String] = []
@@ -540,7 +540,7 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
             let store = try makeStore([], folders: folders, in: directory)
 
             let kept = all.filter { _ in rng.int(upperBound: 3) != 0 }
-            var sizeByID: [String: TileSize] = [:]
+            var sizeByID: [String: TesseraTileSize] = [:]
             for folder in folders { for content in folder.contents { sizeByID[content.id] = content.size } }
             store.setCatalog(kept.map { tesseraTestTile($0, size: sizeByID[$0] ?? .small) })
 

@@ -25,8 +25,8 @@ final class TileGridItemTests: XCTestCase {
     /// Папка с двумя ярлыками для проверок идентичности и содержимого.
     ///
     /// - Returns: Модель папки «f» с ярлыками «a» и «b».
-    private func makeFolder() -> TileFolder {
-        TileFolder(
+    private func makeFolder() -> TesseraTileFolder {
+        TesseraTileFolder(
             id: "f",
             title: "Папка",
             tiles: [tesseraTestTile("a"), tesseraTestTile("b")]
@@ -35,12 +35,12 @@ final class TileGridItemTests: XCTestCase {
 
     /// Человекочитаемое имя случая — ровно то, что делает хост в switch.
     ///
-    /// Если у `TileGridItem` появится четвёртый case, этот switch перестанет
+    /// Если у `TesseraTileGridItem` появится четвёртый case, этот switch перестанет
     /// компилироваться: тест ловит несовместимость на этапе сборки.
     ///
     /// - Parameter item: Элемент сетки.
     /// - Returns: Имя случая.
-    private func describe(_ item: TileGridItem) -> String {
+    private func describe(_ item: TesseraTileGridItem) -> String {
         switch item {
         case .tile:
             return "tile"
@@ -57,7 +57,7 @@ final class TileGridItemTests: XCTestCase {
     /// папки, после которой встаёт панель (D17: панель вставляется под плитку).
     func testFolderContentSharesIdentityWithFolder() {
         let folder = makeFolder()
-        let panel = TileGridItem.folderContent(folder)
+        let panel = TesseraTileGridItem.folderContent(folder)
 
         XCTAssertEqual(panel.id, folder.id)
         XCTAssertEqual(panel.panelFolder?.id, folder.id)
@@ -70,7 +70,7 @@ final class TileGridItemTests: XCTestCase {
     /// Панель — не ярлык и не плитка-папка: только `panelFolder`.
     func testFolderContentIsNeitherTileNorFolder() {
         let folder = makeFolder()
-        let panel = TileGridItem.folderContent(folder)
+        let panel = TesseraTileGridItem.folderContent(folder)
 
         XCTAssertNil(panel.tile)
         XCTAssertNil(panel.folder)
@@ -81,7 +81,7 @@ final class TileGridItemTests: XCTestCase {
     /// Раскладка не упаковывает панель по этой метке: панель — отдельная
     /// полноширинная строка под папкой, а не плитка.
     func testFolderContentUsesWideSizeAsFullWidthMarker() {
-        let panel = TileGridItem.folderContent(makeFolder())
+        let panel = TesseraTileGridItem.folderContent(makeFolder())
 
         XCTAssertEqual(panel.size, .wide)
         XCTAssertEqual(panel.size.unitColumns, 4)
@@ -91,7 +91,7 @@ final class TileGridItemTests: XCTestCase {
     /// `folderTiles` панели пуст: содержимое доступно через `panelFolder`,
     /// чтобы одна папка не считалась дважды при обходе снимка.
     func testFolderContentExposesNoTilesOfItsOwn() {
-        let panel = TileGridItem.folderContent(makeFolder())
+        let panel = TesseraTileGridItem.folderContent(makeFolder())
 
         XCTAssertTrue(panel.folderTiles.isEmpty)
         XCTAssertEqual(panel.panelFolder?.tiles.count, 2)
@@ -101,9 +101,9 @@ final class TileGridItemTests: XCTestCase {
     func testIsFolderPanelDistinguishesPanelFromFolder() {
         let folder = makeFolder()
 
-        XCTAssertTrue(TileGridItem.folderContent(folder).isFolderPanel)
-        XCTAssertFalse(TileGridItem.folder(folder).isFolderPanel)
-        XCTAssertFalse(TileGridItem.tile(tesseraTestTile("a")).isFolderPanel)
+        XCTAssertTrue(TesseraTileGridItem.folderContent(folder).isFolderPanel)
+        XCTAssertFalse(TesseraTileGridItem.folder(folder).isFolderPanel)
+        XCTAssertFalse(TesseraTileGridItem.tile(tesseraTestTile("a")).isFolderPanel)
     }
 
     /// Папка и панель делят идентификатор, но остаются разными случаями: в
@@ -111,8 +111,8 @@ final class TileGridItemTests: XCTestCase {
     /// путает данные с UI-состоянием.
     func testFolderAndPanelShareIDButRemainDistinctCases() {
         let folder = makeFolder()
-        let panel = TileGridItem.folderContent(folder)
-        let item = TileGridItem.folder(folder)
+        let panel = TesseraTileGridItem.folderContent(folder)
+        let item = TesseraTileGridItem.folder(folder)
 
         XCTAssertEqual(panel.id, item.id)
 
@@ -126,9 +126,9 @@ final class TileGridItemTests: XCTestCase {
     /// Существующие случаи сохраняют прежнюю семантику (совместимость API).
     func testFolderAndTileCasesKeepTheirPayload() {
         let folder = makeFolder()
-        let item = TileGridItem.folder(folder)
+        let item = TesseraTileGridItem.folder(folder)
         let tile = tesseraTestTile("x", size: .large, badge: .dot)
-        let tileItem = TileGridItem.tile(tile)
+        let tileItem = TesseraTileGridItem.tile(tile)
 
         XCTAssertEqual(item.id, folder.id)
         XCTAssertEqual(item.size, folder.size)
@@ -145,7 +145,7 @@ final class TileGridItemTests: XCTestCase {
     /// Switch по трём случаям исчерпывающий и различает все три вида.
     func testSwitchCoversAllCases() {
         let folder = makeFolder()
-        let items: [TileGridItem] = [
+        let items: [TesseraTileGridItem] = [
             .tile(tesseraTestTile("a")),
             .folder(folder),
             .folderContent(folder),
@@ -158,11 +158,11 @@ final class TileGridItemTests: XCTestCase {
 
     /// Снимок не считает панель данными: `layoutItems` и `folders` её
     /// пропускают, а `item(withID:)` возвращает первую запись с этим
-    /// идентификатором. На практике снимок `TileStore` панель не содержит —
+    /// идентификатором. На практике снимок `TesseraTileStore` панель не содержит —
     /// тест страхует хосты, которые всё же положат её в набор.
     func testSnapshotExcludesPanelFromLayoutAndFolders() {
         let folder = makeFolder()
-        let snapshot = TileGridSnapshot(
+        let snapshot = TesseraTileGridSnapshot(
             items: [
                 .folder(folder),
                 .folderContent(folder),

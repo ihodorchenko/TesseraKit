@@ -7,7 +7,7 @@
 //  docs/CORE-IOS-DESIGN.md §2 («Параллакс: backgroundOffset = offset × factor;
 //  слой заведомо больше contentSize»).
 //
-//  Слой фона — сосед скролла (лежит в `view`, а не в `PanoScrollView`), и Core
+//  Слой фона — сосед скролла (лежит в `view`, а не в `TesseraPanoScrollView`), и Core
 //  проецирует смещение фона на экран со знаком минус: `transform = −offset ×
 //  factor`. Проверяются направление (фон уезжает туда же, куда секции, но
 //  медленнее) и покрытие: картинка закрывает весь экран в начале и в конце
@@ -32,16 +32,16 @@ final class PanoParallaxBackgroundTests: XCTestCase {
     private let factor: CGFloat = 0.6
 
     /// Загруженная и разложенная панорама из четырёх секций с картинкой фона.
-    private func makePanorama(factor: CGFloat? = nil) -> PanoramaViewController {
+    private func makePanorama(factor: CGFloat? = nil) -> TesseraPanoramaViewController {
         let factor = factor ?? self.factor
         let sections = (0..<4).map { index in
-            PanoramaSection(id: index, title: "Section \(index)") { UIViewController() }
+            TesseraPanoramaSection(id: index, title: "Section \(index)") { UIViewController() }
         }
-        let style = PanoramaStyle(
+        let style = TesseraPanoramaStyle(
             parallaxFactor: factor,
             backgroundBehavior: .image(UIImage())
         )
-        let panorama = PanoramaViewController(sections: sections, style: style)
+        let panorama = TesseraPanoramaViewController(sections: sections, style: style)
         panorama.loadViewIfNeeded()
         panorama.view.frame = CGRect(origin: .zero, size: screenSize)
         panorama.view.layoutIfNeeded()
@@ -52,7 +52,7 @@ final class PanoParallaxBackgroundTests: XCTestCase {
 
     /// Картинка фона внутри слоя.
     private func backgroundImageView(
-        of panorama: PanoramaViewController
+        of panorama: TesseraPanoramaViewController
     ) throws -> UIImageView {
         try XCTUnwrap(
             panorama.parallaxLayer.subviews.compactMap { $0 as? UIImageView }.first,
@@ -63,7 +63,7 @@ final class PanoParallaxBackgroundTests: XCTestCase {
     /// Экранный (в координатах `view`) прямоугольник картинки фона с учётом
     /// `transform` слоя.
     private func screenRectOfBackground(
-        in panorama: PanoramaViewController
+        in panorama: TesseraPanoramaViewController
     ) throws -> CGRect {
         let imageView = try backgroundImageView(of: panorama)
         return imageView.convert(imageView.bounds, to: panorama.view)
@@ -71,13 +71,13 @@ final class PanoParallaxBackgroundTests: XCTestCase {
 
     /// Пишет offset в скролл панорамы; трансляцию в слой делает сама панорама
     /// из `scrollViewDidScroll`.
-    private func scroll(_ panorama: PanoramaViewController, toX x: CGFloat) {
+    private func scroll(_ panorama: TesseraPanoramaViewController, toX x: CGFloat) {
         panorama.scrollView.contentOffset = CGPoint(x: x, y: 0)
     }
 
     /// Проверяет, что картинка фона закрывает весь экран.
     private func assertBackgroundCoversScreen(
-        _ panorama: PanoramaViewController,
+        _ panorama: TesseraPanoramaViewController,
         _ message: String,
         file: StaticString = #filePath,
         line: UInt = #line

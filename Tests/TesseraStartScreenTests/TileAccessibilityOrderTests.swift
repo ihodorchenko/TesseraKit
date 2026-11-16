@@ -15,7 +15,7 @@
 //
 //  Покрыто: дыры в строке, высокие и широкие плитки, файл не в порядке чтения,
 //  миграция v1 → v2, проекция под другую ширину, `setCatalog`, сетка без
-//  `TileStore` (только таблица ячеек), откат на упаковку, смена колонок, RTL,
+//  `TesseraTileStore` (только таблица ячеек), откат на упаковку, смена колонок, RTL,
 //  панель раскрытой папки; фокус после unpin (следующий/предыдущий/сетка),
 //  resize, drop в дыру, слияния в папку, вынос из папки; custom actions.
 //
@@ -30,22 +30,22 @@ final class TileAccessibilityOrderTests: XCTestCase {
 
     // MARK: - Помощники
 
-    private func small(_ id: String) -> TileGridItem { .tile(tesseraTestTile(id, size: .small)) }
-    private func medium(_ id: String) -> TileGridItem { .tile(tesseraTestTile(id, size: .medium)) }
-    private func wide(_ id: String) -> TileGridItem { .tile(tesseraTestTile(id, size: .wide)) }
+    private func small(_ id: String) -> TesseraTileGridItem { .tile(tesseraTestTile(id, size: .small)) }
+    private func medium(_ id: String) -> TesseraTileGridItem { .tile(tesseraTestTile(id, size: .medium)) }
+    private func wide(_ id: String) -> TesseraTileGridItem { .tile(tesseraTestTile(id, size: .wide)) }
 
-    private func ids(_ items: [TileGridItem]) -> [AnyHashable] { items.map { $0.id } }
+    private func ids(_ items: [TesseraTileGridItem]) -> [AnyHashable] { items.map { $0.id } }
 
     /// Снимок с таблицей ячеек для сетки заданной ширины.
     private func snapshot(
-        _ items: [TileGridItem],
-        cells: [AnyHashable: TileGridPlacement],
+        _ items: [TesseraTileGridItem],
+        cells: [AnyHashable: TesseraTileGridPlacement],
         columns: Int? = 4
-    ) -> TileGridSnapshot {
-        TileGridSnapshot(
+    ) -> TesseraTileGridSnapshot {
+        TesseraTileGridSnapshot(
             items: items,
             unpinned: [],
-            placementTable: TileGridPlacementTable(cells: cells, columns: columns)
+            placementTable: TesseraTileGridPlacementTable(cells: cells, columns: columns)
         )
     }
 
@@ -91,12 +91,12 @@ final class TileAccessibilityOrderTests: XCTestCase {
         }
     }
 
-    // MARK: - Сетка: порядок по таблице ячеек (без TileStore)
+    // MARK: - Сетка: порядок по таблице ячеек (без TesseraTileStore)
 
     /// Дыра в строке: элементы, поданные хостом вперемешку, идут в порядке
     /// чтения ячеек — в снимке сетки и в наборе коллекции.
     func testGridOrdersItemsByCellsWithHoleInRow() throws {
-        let cells: [AnyHashable: TileGridPlacement] = [
+        let cells: [AnyHashable: TesseraTileGridPlacement] = [
             "a": tesseraCell(0, 0), "b": tesseraCell(0, 3), "c": tesseraCell(3, 1),
         ]
         let host = TesseraTestWindowedGrid(
@@ -112,7 +112,7 @@ final class TileAccessibilityOrderTests: XCTestCase {
     /// Высокие и широкие плитки: порядок — строка, затем колонка левого верхнего
     /// угла, а не «снизу вверх по высоте».
     func testGridOrdersTallAndWideTilesByTopLeftCell() throws {
-        let cells: [AnyHashable: TileGridPlacement] = [
+        let cells: [AnyHashable: TesseraTileGridPlacement] = [
             "m": tesseraCell(0, 0), "s1": tesseraCell(0, 2), "s3": tesseraCell(0, 3),
             "s2": tesseraCell(1, 2), "w": tesseraCell(2, 0), "t": tesseraCell(4, 3),
         ]
@@ -132,7 +132,7 @@ final class TileAccessibilityOrderTests: XCTestCase {
 
     /// Порядок снимка уже верный — снимок сетки тот же, без перестановок.
     func testGridKeepsOrderedSnapshotAsIs() {
-        let cells: [AnyHashable: TileGridPlacement] = ["a": tesseraCell(0, 0), "b": tesseraCell(1, 0)]
+        let cells: [AnyHashable: TesseraTileGridPlacement] = ["a": tesseraCell(0, 0), "b": tesseraCell(1, 0)]
         let ordered = snapshot([small("a"), small("b")], cells: cells)
         let result = ordered.readingOrdered(columns: 4)
         XCTAssertEqual(result.items.map { $0.id }, ["a", "b"] as [AnyHashable])
@@ -178,7 +178,7 @@ final class TileAccessibilityOrderTests: XCTestCase {
     /// `update(snapshot:animated:)` приводит порядок так же, как `reload`.
     func testUpdateAlsoOrdersByCells() {
         let host = TesseraTestWindowedGrid(items: [small("a")])
-        let cells: [AnyHashable: TileGridPlacement] = [
+        let cells: [AnyHashable: TesseraTileGridPlacement] = [
             "a": tesseraCell(2, 0), "b": tesseraCell(0, 2), "c": tesseraCell(1, 1),
         ]
         host.grid.update(
@@ -193,7 +193,7 @@ final class TileAccessibilityOrderTests: XCTestCase {
     /// Смена числа колонок делает таблицу применимой: порядок перестраивается по
     /// ней (а до этого шла упаковка по порядку хоста).
     func testColumnsChangeReordersWhenTableBecomesApplicable() throws {
-        let cells: [AnyHashable: TileGridPlacement] = [
+        let cells: [AnyHashable: TesseraTileGridPlacement] = [
             "a": tesseraCell(0, 0), "b": tesseraCell(0, 1), "c": tesseraCell(1, 0),
         ]
         let host = TesseraTestWindowedGrid(
@@ -214,7 +214,7 @@ final class TileAccessibilityOrderTests: XCTestCase {
     /// RTL: колонки логические, порядок тот же (колонка 0 — справа), кадры идут
     /// справа налево.
     func testRightToLeftOrderUsesLogicalColumns() throws {
-        let cells: [AnyHashable: TileGridPlacement] = [
+        let cells: [AnyHashable: TesseraTileGridPlacement] = [
             "a": tesseraCell(0, 0), "b": tesseraCell(0, 3), "c": tesseraCell(1, 2), "d": tesseraCell(2, 0),
         ]
         let host = TesseraTestWindowedGrid(
@@ -238,13 +238,13 @@ final class TileAccessibilityOrderTests: XCTestCase {
     /// чтения), плитки ниже читаются после неё; ярлыки папки читаются внутри
     /// панели, то есть после плитки папки.
     func testFolderPanelFollowsBandAndKeepsOrder() throws {
-        let folder = TileFolder(
+        let folder = TesseraTileFolder(
             id: "f",
             title: "Work",
             tiles: ["x1", "x2", "x3"].map { tesseraTestTile($0, size: .small) },
             size: .medium
         )
-        let cells: [AnyHashable: TileGridPlacement] = [
+        let cells: [AnyHashable: TesseraTileGridPlacement] = [
             "f": tesseraCell(0, 0), "s1": tesseraCell(0, 2), "s3": tesseraCell(0, 3),
             "s2": tesseraCell(1, 2), "x": tesseraCell(2, 0), "y": tesseraCell(2, 1),
         ]
@@ -274,19 +274,19 @@ final class TileAccessibilityOrderTests: XCTestCase {
         )
     }
 
-    // MARK: - TileStore: порядок снимка по ячейкам
+    // MARK: - TesseraTileStore: порядок снимка по ячейкам
 
     private func makeStore(
-        catalog: [TileDescriptor],
+        catalog: [TesseraTileDescriptor],
         in directory: TesseraTestDirectory
-    ) -> TileStore {
-        let store = TileStore(directoryURL: directory.url)
+    ) -> TesseraTileStore {
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog(catalog)
         return store
     }
 
-    private func write(_ document: [String: Any], to store: TileStore, in directory: TesseraTestDirectory) throws {
+    private func write(_ document: [String: Any], to store: TesseraTileStore, in directory: TesseraTestDirectory) throws {
         try directory.create()
         let data = try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys])
         try data.write(to: store.fileURL)
@@ -294,14 +294,14 @@ final class TileAccessibilityOrderTests: XCTestCase {
 
     /// Порядок снимка совпадает с порядком чтения ячеек для заданной ширины.
     private func assertSnapshotIsReadingOrdered(
-        _ store: TileStore,
+        _ store: TesseraTileStore,
         columns: Int,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let cells = store.placements(forColumns: columns)
         let expected = cells
-            .sorted { TileGridPlacement.isReadingOrdered($0.value, before: $1.value) }
+            .sorted { TesseraTileGridPlacement.isReadingOrdered($0.value, before: $1.value) }
             .map { $0.key }
         XCTAssertEqual(
             store.snapshot(columns: columns).items.map { $0.id }, expected,

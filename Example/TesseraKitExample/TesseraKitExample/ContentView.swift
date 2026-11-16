@@ -9,10 +9,10 @@
 //  foregroundStyle, классические модификаторы .overlay/.background и т. п.
 //
 //  Вкладки:
-//  1. «Стол»      — TileStore + TesseraTileGridView + TesseraTileEditCoordinator
+//  1. «Стол»      — TesseraTileStore + TesseraTileGridView + TesseraTileEditCoordinator
 //                   в UIViewControllerRepresentable (режим редактирования).
-//  2. «Пивот»     — PivotView с четырьмя секциями и крупным заголовком.
-//  3. «Панорама»  — PanoramaView с тремя секциями и сгенерированным фоном.
+//  2. «Пивот»     — TesseraPivotView с четырьмя секциями и крупным заголовком.
+//  3. «Панорама»  — TesseraPanoramaView с тремя секциями и сгенерированным фоном.
 //  4. «Ядро»      — два TesseraPagerViewController (.paged и .snapping) и
 //                   программные переходы go(toPage:animated:).
 //
@@ -88,7 +88,7 @@ enum DemoVisuals {
 
     /// Фон панорамы: градиент с полупрозрачными кругами.
     ///
-    /// Создаётся один раз и передаётся в `PanoramaStyle` стабильным
+    /// Создаётся один раз и передаётся в `TesseraPanoramaStyle` стабильным
     /// экземпляром: фасад сравнивает обои по ссылке и не переназначает их на
     /// каждой перерисовке SwiftUI.
     static let panoramaBackground: UIImage = makePanoramaBackground()
@@ -224,7 +224,7 @@ private struct DemoDeskOverlayHeightKey: PreferenceKey {
 
 /// Мост SwiftUI → UIKit-слой рабочего стола.
 ///
-/// Фасад `StartScreenView` в этой вкладке не используется: он не отдаёт
+/// Фасад `TesseraStartScreenView` в этой вкладке не используется: он не отдаёт
 /// `TesseraTileEditCoordinator`, а ручная проверка должна показать edit-режим.
 /// Поэтому собираем разрешённый публичный UIKit-слой напрямую: сетка + стор +
 /// координатор редактирования.
@@ -246,7 +246,7 @@ struct DemoDeskRepresentable: UIViewControllerRepresentable {
 
 /// Модель вкладки «Стол»: каталог ярлыков, папка и live-плитка.
 final class DemoDeskModel: ObservableObject {
-    let store: TileStore
+    let store: TesseraTileStore
 
     @Published var isEditing = false
     @Published var alert: DemoAlert?
@@ -256,12 +256,12 @@ final class DemoDeskModel: ObservableObject {
     init() {
         // Отдельный временный каталог на запуск: демо всегда стартует в
         // одинаковом состоянии и не зависит от правок прошлой проверки.
-        // Для проверки персистентности TileStore каталог можно заменить на
-        // TileStore.defaultDirectoryURL().
+        // Для проверки персистентности TesseraTileStore каталог можно заменить на
+        // TesseraTileStore.defaultDirectoryURL().
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TesseraKitExample", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        store = TileStore(directoryURL: directory)
+        store = TesseraTileStore(directoryURL: directory)
 
         // Каталог регистрируется до load(): действия и иконки — runtime-часть
         // ярлыка, в JSON они не сериализуются.
@@ -275,9 +275,9 @@ final class DemoDeskModel: ObservableObject {
     }
 
     /// Четыре размера D15, бейджи D12, одна папка и одна live-плитка.
-    private func makeCatalog() -> [TileDescriptor] {
+    private func makeCatalog() -> [TesseraTileDescriptor] {
         [
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "mail",
                 title: "Почта",
                 icon: DemoVisuals.symbol("envelope.fill", tint: .systemBlue),
@@ -285,7 +285,7 @@ final class DemoDeskModel: ObservableObject {
                 badge: .count(3),
                 size: .small
             ),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "calendar",
                 title: "Календарь",
                 icon: DemoVisuals.symbol("calendar", tint: .systemRed),
@@ -293,7 +293,7 @@ final class DemoDeskModel: ObservableObject {
                 badge: .dot,
                 size: .medium
             ),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "weather",
                 title: "Погода",
                 icon: DemoVisuals.symbol("cloud.sun.fill", tint: .systemTeal),
@@ -301,21 +301,21 @@ final class DemoDeskModel: ObservableObject {
                 size: .wide,
                 liveContent: liveTileProvider
             ),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "notes",
                 title: "Заметки",
                 icon: DemoVisuals.symbol("note.text", tint: .systemYellow),
                 action: makeAction(for: "Заметки"),
                 size: .small
             ),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "photos",
                 title: "Фото",
                 icon: DemoVisuals.symbol("photo.fill", tint: .systemGreen),
                 action: makeAction(for: "Фото"),
                 size: .small
             ),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "music",
                 title: "Музыка",
                 icon: DemoVisuals.symbol("music.note", tint: .systemPink),
@@ -323,7 +323,7 @@ final class DemoDeskModel: ObservableObject {
                 badge: .count(5),
                 size: .large
             ),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "settings",
                 title: "Настройки",
                 icon: DemoVisuals.symbol("gearshape.fill", tint: .systemGray),
@@ -336,13 +336,13 @@ final class DemoDeskModel: ObservableObject {
 
     /// Каталог регистрируется целиком, поэтому при первом запуске ярлыки
     /// автоматически попадают на сетку. Папка создаётся через публичное
-    /// одобрение D14 (по умолчанию `TileStore.approval` разрешает всё).
+    /// одобрение D14 (по умолчанию `TesseraTileStore.approval` разрешает всё).
     /// Операции хранилища — по ячейкам (E14); ширина сетки известна только
     /// после создания вью, поэтому сид использует умолчание D26 (6 колонок),
     /// как и сетка Example.
     private func seedFolderIfNeeded() {
         guard store.snapshot().folders.isEmpty else { return }
-        let columns = TileLayoutEngine.defaultColumns
+        let columns = TesseraTileLayoutEngine.defaultColumns
 
         if !store.isPinned("notes") {
             store.pinTile("notes", columns: columns)
@@ -422,7 +422,7 @@ final class DemoLiveTileProvider: NSObject, TesseraLiveTileContentProvider {
 /// проброс действий ярлыков в демо-модель.
 final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinatorDelegate {
     private let model: DemoDeskModel
-    private let store: TileStore
+    private let store: TesseraTileStore
     private let gridView = TesseraTileGridView()
     private var editCoordinator: TesseraTileEditCoordinator?
 
@@ -465,7 +465,7 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
             self?.handleTap(item)
         }
 
-        // Хост — типичный подписчик TileStore: применяет снимок после каждой
+        // Хост — типичный подписчик TesseraTileStore: применяет снимок после каждой
         // правки (правило «один писатель»: пишет только хранилище).
         store.onChange = { [weak self] snapshot in
             self?.gridView.update(snapshot: snapshot, animated: true)
@@ -526,7 +526,7 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
         }
     }
 
-    private func handleTap(_ item: TileGridItem) {
+    private func handleTap(_ item: TesseraTileGridItem) {
         switch item {
         case .tile(let tile):
             // В режиме редактирования тап не запускает действие: у плитки
@@ -566,7 +566,7 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didResize tileID: AnyHashable,
-        to size: TileSize
+        to size: TesseraTileSize
     ) {
         print("[TesseraKitExample] Resize tile: \(tileID) → \(size.rawValue)")
     }
@@ -574,7 +574,7 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didMove tileID: AnyHashable,
-        toCell cell: TileGridPlacement
+        toCell cell: TesseraTileGridPlacement
     ) {
         print("[TesseraKitExample] Move tile: \(tileID) → (\(cell.row), \(cell.column))")
     }
@@ -644,7 +644,7 @@ struct StartDemoRepresentable: UIViewControllerRepresentable {
 /// Модель вкладки «Старт»: каталог из 7 демо-плиток и 18 дополнительных
 /// приложений (в списке они откреплены), папка и live-плитка.
 final class StartDemoModel: ObservableObject {
-    let store: TileStore
+    let store: TesseraTileStore
 
     @Published var isEditing = false
     @Published var alert: DemoAlert?
@@ -679,7 +679,7 @@ final class StartDemoModel: ObservableObject {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TesseraKitExampleStart", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        store = TileStore(directoryURL: directory)
+        store = TesseraTileStore(directoryURL: directory)
 
         store.setCatalog(makeCatalog())
         try? store.load()
@@ -690,41 +690,41 @@ final class StartDemoModel: ObservableObject {
         store.onChange = nil
     }
 
-    private func makeCatalog() -> [TileDescriptor] {
-        var catalog: [TileDescriptor] = [
-            TileDescriptor(
+    private func makeCatalog() -> [TesseraTileDescriptor] {
+        var catalog: [TesseraTileDescriptor] = [
+            TesseraTileDescriptor(
                 id: "mail", title: "Почта",
                 icon: DemoVisuals.symbol("envelope.fill", tint: .systemBlue),
                 action: makeAction(for: "Почта"), badge: .count(3), size: .small),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "calendar", title: "Календарь",
                 icon: DemoVisuals.symbol("calendar", tint: .systemRed),
                 action: makeAction(for: "Календарь"), badge: .dot, size: .medium),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "weather", title: "Погода",
                 icon: DemoVisuals.symbol("cloud.sun.fill", tint: .systemTeal),
                 action: makeAction(for: "Погода"), size: .wide,
                 liveContent: liveTileProvider),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "notes", title: "Заметки",
                 icon: DemoVisuals.symbol("note.text", tint: .systemYellow),
                 action: makeAction(for: "Заметки"), size: .small),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "photos", title: "Фото",
                 icon: DemoVisuals.symbol("photo.fill", tint: .systemGreen),
                 action: makeAction(for: "Фото"), size: .small),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "music", title: "Музыка",
                 icon: DemoVisuals.symbol("music.note", tint: .systemPink),
                 action: makeAction(for: "Музыка"), badge: .count(5), size: .large),
-            TileDescriptor(
+            TesseraTileDescriptor(
                 id: "settings", title: "Настройки",
                 icon: DemoVisuals.symbol("gearshape.fill", tint: .systemGray),
                 action: makeAction(for: "Настройки"), badge: .dot, size: .small),
         ]
         for app in Self.extraApps {
             catalog.append(
-                TileDescriptor(
+                TesseraTileDescriptor(
                     id: app.id, title: app.title,
                     icon: DemoVisuals.symbol(app.symbol, tint: app.tint),
                     action: makeAction(for: app.title), size: .small)
@@ -738,7 +738,7 @@ final class StartDemoModel: ObservableObject {
     private func seedIfNeeded() {
         guard store.snapshot().folders.isEmpty else { return }
 
-        let columns = TileLayoutEngine.defaultColumns
+        let columns = TesseraTileLayoutEngine.defaultColumns
         for app in Self.extraApps where store.isPinned(app.id) {
             _ = store.unpin(app.id, columns: columns)
         }
@@ -777,7 +777,7 @@ final class StartDemoHookController: UIViewController {
         title.adjustsFontForContentSizeCategory = true
 
         let detail = UILabel()
-        detail.text = "Страница-хук (QuickPanelProviding): сюда хост кладёт поиск, быстрые настройки, профиль."
+        detail.text = "Страница-хук (TesseraQuickPanelProviding): сюда хост кладёт поиск, быстрые настройки, профиль."
         detail.font = .preferredFont(forTextStyle: .body)
         detail.textColor = .white
         detail.numberOfLines = 0
@@ -799,10 +799,10 @@ final class StartDemoHookController: UIViewController {
 /// UIKit-контейнер полного рабочего стола: пейджер, сетка, координатор
 /// редактирования; всё через публичный API.
 final class StartDemoHostController: UIViewController,
-    StartScreenDelegate, TesseraTileEditCoordinatorDelegate
+    TesseraStartScreenDelegate, TesseraTileEditCoordinatorDelegate
 {
     private let model: StartDemoModel
-    private let store: TileStore
+    private let store: TesseraTileStore
     private let screen = TesseraStartScreenViewController()
     private var editCoordinator: TesseraTileEditCoordinator?
 
@@ -839,7 +839,7 @@ final class StartDemoHostController: UIViewController,
         let store = self.store
         let model = self.model
         screen.configure(
-            leftPanel: QuickPanelProvider(makeViewController: { StartDemoHookController() }),
+            leftPanel: TesseraQuickPanelProvider(makeViewController: { StartDemoHookController() }),
             rightPage: { [model] in
                 TesseraAppsListPageViewController.make(
                     store: store,
@@ -887,7 +887,7 @@ final class StartDemoHostController: UIViewController,
         }
     }
 
-    // MARK: StartScreenDelegate
+    // MARK: TesseraStartScreenDelegate
 
     func startScreen(
         _ screen: TesseraStartScreenViewController,
@@ -912,9 +912,9 @@ final class StartDemoHostController: UIViewController,
 
 struct PivotDemoView: View {
     var body: some View {
-        PivotView(
+        TesseraPivotView(
             sections: makeSections(),
-            style: PivotStyle(
+            style: TesseraPivotStyle(
                 activeColor: .systemOrange,
                 inactiveColor: .secondaryLabel,
                 indicatorStyle: .underlineAndText,
@@ -925,20 +925,20 @@ struct PivotDemoView: View {
     }
 
     /// SwiftUI-контент секций через реальную фабрику TesseraCore.
-    private func makeSections() -> [PivotSection] {
+    private func makeSections() -> [TesseraPivotSection] {
         [
-            PivotSection(
+            TesseraPivotSection(
                 id: "pivot-home",
                 title: "Главная",
                 content: TesseraSwiftUIContentProvider {
                     DemoPivotPage(
                         index: 0,
                         title: "Главная",
-                        subtitle: "Первая секция пивота. Лента заголовков синхронизирована с пейджером, крупный заголовок задан через PivotStyle.appTitle."
+                        subtitle: "Первая секция пивота. Лента заголовков синхронизирована с пейджером, крупный заголовок задан через TesseraPivotStyle.appTitle."
                     )
                 }
             ),
-            PivotSection(
+            TesseraPivotSection(
                 id: "pivot-feed",
                 title: "Лента",
                 content: TesseraSwiftUIContentProvider {
@@ -949,7 +949,7 @@ struct PivotDemoView: View {
                     )
                 }
             ),
-            PivotSection(
+            TesseraPivotSection(
                 id: "pivot-overview",
                 title: "Обзор",
                 content: TesseraSwiftUIContentProvider {
@@ -960,7 +960,7 @@ struct PivotDemoView: View {
                     )
                 }
             ),
-            PivotSection(
+            TesseraPivotSection(
                 id: "pivot-profile",
                 title: "Профиль",
                 content: TesseraSwiftUIContentProvider {
@@ -1059,9 +1059,9 @@ struct DemoPivotPage: View {
 
 struct PanoramaDemoView: View {
     var body: some View {
-        PanoramaView(
+        TesseraPanoramaView(
             sections: makeSections(),
-            style: PanoramaStyle(
+            style: TesseraPanoramaStyle(
                 peek: 56,
                 parallaxFactor: 0.5,
                 headerFont: .systemFont(ofSize: 34, weight: .bold),
@@ -1074,9 +1074,9 @@ struct PanoramaDemoView: View {
     }
 
     /// Три секции поверх одной сгенерированной картинки: внешних ресурсов нет.
-    private func makeSections() -> [PanoramaSection] {
+    private func makeSections() -> [TesseraPanoramaSection] {
         [
-            PanoramaSection(
+            TesseraPanoramaSection(
                 id: "pano-start",
                 title: "Начало",
                 content: TesseraSwiftUIContentProvider {
@@ -1087,7 +1087,7 @@ struct PanoramaDemoView: View {
                     )
                 }
             ),
-            PanoramaSection(
+            TesseraPanoramaSection(
                 id: "pano-news",
                 title: "Новости",
                 content: TesseraSwiftUIContentProvider {
@@ -1098,7 +1098,7 @@ struct PanoramaDemoView: View {
                     )
                 }
             ),
-            PanoramaSection(
+            TesseraPanoramaSection(
                 id: "pano-about",
                 title: "О панораме",
                 content: TesseraSwiftUIContentProvider {

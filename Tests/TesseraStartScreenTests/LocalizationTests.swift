@@ -42,18 +42,18 @@ final class LocalizationTests: XCTestCase {
     /// компилятору или DEBUG-only assertion. Всё, что видит пользователь,
     /// должно идти через `TesseraStartScreenStrings` (ключи таблиц en/ru).
     private static let developerFacingAllowlist: Set<String> = [
-        // TileStore: описание ошибки для логов/диагностики хоста
+        // TesseraTileStore: описание ошибки для логов/диагностики хоста
         // (`CustomStringConvertible`), в UI не показывается.
-        "TileStore: неподдерживаемая версия схемы \\(version)",
+        "TesseraTileStore: неподдерживаемая версия схемы \\(version)",
         // LiveTileEngine: precondition программиста, сообщение для отладки.
         "upperBound должен быть положительным",
-        // StartScreenView: `@available(*, deprecated, message:)` — сообщение
+        // TesseraStartScreenView: `@available(*, deprecated, message:)` — сообщение
         // компилятору и интегратору, а не пользователю.
         "Переходы страниц приходят через TesseraStartScreenViewController.delegate",
         // TileEditCoordinator: DEBUG-assertion контракта хоста (E10.5-B1);
         // собирается из трёх литералов, ни один не показывается пользователю.
         "TesseraTileEditCoordinator.startDrag: снимок сетки не совпадает ",
-        "с моделью TileStore на захвате — drag не начнётся. ",
+        "с моделью TesseraTileStore на захвате — drag не начнётся. ",
         "Хост обязан применять снимки store к сетке (E10.5-B1).",
         // AppsListPage: fatalError для неверного способа создания
         // контроллера/кнопки — programmer error, не UI.

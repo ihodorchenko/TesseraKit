@@ -57,7 +57,7 @@ final class TileGridAccessibilityTests: XCTestCase {
             "D34/E15.4: точка без числа озвучивается строкой «есть уведомление»"
         )
 
-        let emptyFront = TileDescriptor(
+        let emptyFront = TesseraTileDescriptor(
             id: "empty-front",
             title: "Заголовок ярлыка",
             action: {},
@@ -91,7 +91,7 @@ final class TileGridAccessibilityTests: XCTestCase {
             badge: .count(2),
             size: .small
         )
-        let folder = TileFolder(id: "folder", title: "Folder", tiles: [live])
+        let folder = TesseraTileFolder(id: "folder", title: "Folder", tiles: [live])
         let panel = TesseraFolderPanelCell(
             frame: CGRect(x: 0, y: 0, width: 350, height: 160)
         )
@@ -106,7 +106,7 @@ final class TileGridAccessibilityTests: XCTestCase {
     /// Ярлык панели без live-контента озвучивается заголовком ярлыка, как и
     /// плитка сетки.
     func testPanelShortcutLabelWithoutLiveContent() throws {
-        let folder = TileFolder(
+        let folder = TesseraTileFolder(
             id: "folder",
             title: "Folder",
             tiles: [tesseraTestTile("plain-in-folder", size: .small)]
@@ -175,7 +175,7 @@ final class TileGridAccessibilityTests: XCTestCase {
     func testValueUpdatesWhenBadgeChanges() {
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
-        let sequence: [(TileBadge, String?)] = [
+        let sequence: [(TesseraTileBadge, String?)] = [
             (.dot, dotValue),
             (.count(12), "12"),
             (.dot, dotValue),
@@ -212,7 +212,7 @@ final class TileGridAccessibilityTests: XCTestCase {
     func testPanelShortcutAndStandaloneLiveTileAnnounceDot() throws {
         let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
 
-        let folder = TileFolder(
+        let folder = TesseraTileFolder(
             id: "folder",
             title: "Folder",
             tiles: [tesseraTestTile("in-folder", size: .small, badge: .dot)]
@@ -395,7 +395,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         )
         let workCell = try XCTUnwrap(host.store.placement(of: work))
         let cCell = try XCTUnwrap(host.store.placement(of: "c"))
-        XCTAssertTrue(TileGridPlacement.isReadingOrdered(workCell, before: cCell), "Ячейка — после ячейки папки")
+        XCTAssertTrue(TesseraTileGridPlacement.isReadingOrdered(workCell, before: cCell), "Ячейка — после ячейки папки")
     }
 
     /// «Переместить в папку <другая>» переносит ярлык панели в другую папку.

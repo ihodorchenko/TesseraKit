@@ -8,7 +8,7 @@
 //  в docs/STATE.md.
 //
 //  Проверяется `TesseraTileCollectionViewLayout` на коллекции без окна и
-//  руками собранных таблицах ячеек (`TileGridPlacementTable`):
+//  руками собранных таблицах ячеек (`TesseraTileGridPlacementTable`):
 //  - снимок с дырами: плитки не «проваливаются» в дыру, высота контента — по
 //    нижней занятой строке, пустые хвостовые строки не считаются;
 //  - откат на упаковку по порядку: таблицы нет, неполная, некорректная
@@ -64,22 +64,22 @@ final class TilePlacementLayoutTests: XCTestCase {
 
     /// Ожидаемая геометрия сетки: те же формулы, что у раскладки (E10.1).
     private struct Geometry {
-        let metrics: TileLayoutEngine.GridMetrics
+        let metrics: TesseraTileLayoutEngine.GridMetrics
         let left: CGFloat
         let top: CGFloat
         let rightToLeft: Bool
 
         init(width: CGFloat = 390, columns: Int = 4, spacing: CGFloat = 8, scale: CGFloat, rightToLeft: Bool = false) {
-            let contentLeft = TileLayoutEngine.pixelRound(16, scale: scale)
-            let contentRight = TileLayoutEngine.pixelRound(width - 16, scale: scale)
-            metrics = TileLayoutEngine.gridMetrics(
+            let contentLeft = TesseraTileLayoutEngine.pixelRound(16, scale: scale)
+            let contentRight = TesseraTileLayoutEngine.pixelRound(width - 16, scale: scale)
+            metrics = TesseraTileLayoutEngine.gridMetrics(
                 contentWidth: contentRight - contentLeft,
                 columns: columns,
                 spacing: spacing,
                 scale: scale
             )!
             left = contentLeft + metrics.leading
-            top = TileLayoutEngine.pixelRound(16, scale: scale)
+            top = TesseraTileLayoutEngine.pixelRound(16, scale: scale)
             self.rightToLeft = rightToLeft
         }
 
@@ -87,9 +87,9 @@ final class TilePlacementLayoutTests: XCTestCase {
         var pitch: CGFloat { metrics.unit + metrics.spacing }
 
         /// Рамка плитки на ячейке (логические координаты).
-        func frame(_ cell: TileGridPlacement, size: TileSize) -> CGRect {
-            let slot = TileLayoutSlot(id: "x", size: size, column: cell.column, row: cell.row, unit: metrics.unit)
-            var rect = TileLayoutEngine.rect(
+        func frame(_ cell: TesseraTileGridPlacement, size: TesseraTileSize) -> CGRect {
+            let slot = TesseraTileLayoutSlot(id: "x", size: size, column: cell.column, row: cell.row, unit: metrics.unit)
+            var rect = TesseraTileLayoutEngine.rect(
                 for: slot,
                 unit: metrics.unit,
                 gap: metrics.spacing,
@@ -103,28 +103,28 @@ final class TilePlacementLayoutTests: XCTestCase {
         }
     }
 
-    private func small(_ id: String) -> TileGridItem { .tile(tesseraTestTile(id, size: .small)) }
-    private func medium(_ id: String) -> TileGridItem { .tile(tesseraTestTile(id, size: .medium)) }
+    private func small(_ id: String) -> TesseraTileGridItem { .tile(tesseraTestTile(id, size: .small)) }
+    private func medium(_ id: String) -> TesseraTileGridItem { .tile(tesseraTestTile(id, size: .medium)) }
 
-    private func cell(_ row: Int, _ column: Int) -> TileGridPlacement {
-        TileGridPlacement(row: row, column: column)
+    private func cell(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
+        TesseraTileGridPlacement(row: row, column: column)
     }
 
     /// Рамки набора по индексу (раскладка получает набор и таблицу, как от сетки).
     private func frames(
         _ harness: Harness,
-        _ items: [TileGridItem],
-        table: TileGridPlacementTable?
+        _ items: [TesseraTileGridItem],
+        table: TesseraTileGridPlacementTable?
     ) throws -> [CGRect] {
         harness.layout.setItems(items, placements: table, reason: .items)
         return try items.indices.map { try XCTUnwrap(harness.layout.frame(forItemAt: $0), "кадр \($0)") }
     }
 
     /// Размещения набора в порядке `items` — для индекса вставки панели.
-    private func placed(_ items: [TileGridItem], table: TileGridPlacementTable) -> [TilePlacedItem] {
+    private func placed(_ items: [TesseraTileGridItem], table: TesseraTileGridPlacementTable) -> [TesseraTilePlacedItem] {
         items.compactMap { item in
             guard !item.isFolderPanel, let cell = table.cells[item.id] else { return nil }
-            return TilePlacedItem(id: item.id, size: item.size, cell: cell)
+            return TesseraTilePlacedItem(id: item.id, size: item.size, cell: cell)
         }
     }
 
@@ -154,7 +154,7 @@ final class TilePlacementLayoutTests: XCTestCase {
     /// Плитки встают на свои ячейки; дыра остаётся, ничто не поднимается в неё.
     func testHolesStayAndTilesDoNotBackfill() throws {
         let items = [small("a"), small("b"), small("c")]
-        let table = TileGridPlacementTable(
+        let table = TesseraTileGridPlacementTable(
             cells: ["a": cell(0, 0), "b": cell(0, 3), "c": cell(2, 1)],
             columns: 4
         )
@@ -186,7 +186,7 @@ final class TilePlacementLayoutTests: XCTestCase {
     func testContentHeightIsBottomOfLowestOccupiedRow() throws {
         let harness = makeHarness()
         let items = [small("a"), medium("b")]
-        let table = TileGridPlacementTable(
+        let table = TesseraTileGridPlacementTable(
             cells: ["a": cell(0, 0), "b": cell(3, 2), "ghost": cell(50, 0)],
             columns: 4
         )
@@ -207,7 +207,7 @@ final class TilePlacementLayoutTests: XCTestCase {
         let result = try frames(
             harness,
             [small("a")],
-            table: TileGridPlacementTable(cells: ["a": cell(5, 0)], columns: 4)
+            table: TesseraTileGridPlacementTable(cells: ["a": cell(5, 0)], columns: 4)
         )
         let g = Geometry(scale: scale)
         XCTAssertEqual(result[0].minY, g.top + 5 * g.pitch, accuracy: 0.001)
@@ -218,15 +218,15 @@ final class TilePlacementLayoutTests: XCTestCase {
     /// `fittingSize`, дыра под ней остаётся.
     func testWideTileOnNarrowGridIsFittedNotSkipped() throws {
         let harness = makeHarness(columns: 2)
-        let items: [TileGridItem] = [.tile(tesseraTestTile("w", size: .wide)), small("s")]
-        let table = TileGridPlacementTable(cells: ["w": cell(0, 0), "s": cell(3, 1)], columns: 2)
+        let items: [TesseraTileGridItem] = [.tile(tesseraTestTile("w", size: .wide)), small("s")]
+        let table = TesseraTileGridPlacementTable(cells: ["w": cell(0, 0), "s": cell(3, 1)], columns: 2)
         let result = try frames(harness, items, table: table)
         let g = Geometry(columns: 2, scale: scale)
 
         XCTAssertTrue(harness.layout.usesExplicitPlacements)
         assertFrames(
             result,
-            [g.frame(cell(0, 0), size: TileLayoutEngine.fittingSize(.wide, columns: 2)), g.frame(cell(3, 1), size: .small)],
+            [g.frame(cell(0, 0), size: TesseraTileLayoutEngine.fittingSize(.wide, columns: 2)), g.frame(cell(3, 1), size: .small)],
             "ужатая плитка и малая плитка после дыры"
         )
     }
@@ -238,7 +238,7 @@ final class TilePlacementLayoutTests: XCTestCase {
         let items = [small("a"), small("b"), medium("c"), small("d")]
         let reference = try frames(makeHarness(), items, table: nil)
 
-        let good: [AnyHashable: TileGridPlacement] = [
+        let good: [AnyHashable: TesseraTileGridPlacement] = [
             "a": cell(0, 0), "b": cell(0, 3), "c": cell(3, 0), "d": cell(5, 3),
         ]
         var incomplete = good
@@ -252,15 +252,15 @@ final class TilePlacementLayoutTests: XCTestCase {
         var negative = good
         negative["a"] = cell(-1, 0)
 
-        let cases: [(String, TileGridPlacementTable?)] = [
+        let cases: [(String, TesseraTileGridPlacementTable?)] = [
             ("таблицы нет", nil),
-            ("пустая таблица", TileGridPlacementTable(cells: [:], columns: 4)),
-            ("неполная", TileGridPlacementTable(cells: incomplete, columns: 4)),
-            ("пересечение", TileGridPlacementTable(cells: overlapping, columns: 4)),
-            ("плитка вне холста", TileGridPlacementTable(cells: outside, columns: 4)),
-            ("широкая плитка выходит за холст", TileGridPlacementTable(cells: tooWide, columns: 4)),
-            ("отрицательная строка", TileGridPlacementTable(cells: negative, columns: 4)),
-            ("другая ширина холста", TileGridPlacementTable(cells: good, columns: 6)),
+            ("пустая таблица", TesseraTileGridPlacementTable(cells: [:], columns: 4)),
+            ("неполная", TesseraTileGridPlacementTable(cells: incomplete, columns: 4)),
+            ("пересечение", TesseraTileGridPlacementTable(cells: overlapping, columns: 4)),
+            ("плитка вне холста", TesseraTileGridPlacementTable(cells: outside, columns: 4)),
+            ("широкая плитка выходит за холст", TesseraTileGridPlacementTable(cells: tooWide, columns: 4)),
+            ("отрицательная строка", TesseraTileGridPlacementTable(cells: negative, columns: 4)),
+            ("другая ширина холста", TesseraTileGridPlacementTable(cells: good, columns: 6)),
         ]
         for (name, table) in cases {
             let harness = makeHarness()
@@ -271,7 +271,7 @@ final class TilePlacementLayoutTests: XCTestCase {
 
         // Контроль: корректная полная таблица — другая картинка.
         let harness = makeHarness()
-        let explicit = try frames(harness, items, table: TileGridPlacementTable(cells: good, columns: 4))
+        let explicit = try frames(harness, items, table: TesseraTileGridPlacementTable(cells: good, columns: 4))
         XCTAssertTrue(harness.layout.usesExplicitPlacements)
         XCTAssertNotEqual(explicit[3].minY, reference[3].minY)
     }
@@ -283,14 +283,14 @@ final class TilePlacementLayoutTests: XCTestCase {
         _ = try frames(
             harness,
             items,
-            table: TileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(4, 1)], columns: nil)
+            table: TesseraTileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(4, 1)], columns: nil)
         )
         XCTAssertTrue(harness.layout.usesExplicitPlacements)
 
         _ = try frames(
             harness,
             items,
-            table: TileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(0, 4)], columns: nil)
+            table: TesseraTileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(0, 4)], columns: nil)
         )
         XCTAssertFalse(harness.layout.usesExplicitPlacements, "колонка 4 вне холста из 4 колонок")
     }
@@ -302,8 +302,8 @@ final class TilePlacementLayoutTests: XCTestCase {
     func testCellOnlyChangeInvalidatesGeometry() throws {
         let harness = makeHarness()
         let items = [small("a"), small("b")]
-        let first = TileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(1, 1)], columns: 4)
-        let second = TileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(4, 1)], columns: 4)
+        let first = TesseraTileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(1, 1)], columns: 4)
+        let second = TesseraTileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(4, 1)], columns: 4)
 
         let before = try frames(harness, items, table: first)
         let again = try frames(harness, items, table: first)
@@ -320,11 +320,11 @@ final class TilePlacementLayoutTests: XCTestCase {
     func testDeclaredWidthChangeInvalidatesGeometry() throws {
         let harness = makeHarness()
         let items = [small("a"), small("b")]
-        let cells: [AnyHashable: TileGridPlacement] = ["a": cell(0, 0), "b": cell(3, 2)]
+        let cells: [AnyHashable: TesseraTileGridPlacement] = ["a": cell(0, 0), "b": cell(3, 2)]
 
-        let explicit = try frames(harness, items, table: TileGridPlacementTable(cells: cells, columns: 4))
+        let explicit = try frames(harness, items, table: TesseraTileGridPlacementTable(cells: cells, columns: 4))
         XCTAssertTrue(harness.layout.usesExplicitPlacements)
-        let fallback = try frames(harness, items, table: TileGridPlacementTable(cells: cells, columns: 6))
+        let fallback = try frames(harness, items, table: TesseraTileGridPlacementTable(cells: cells, columns: 6))
         XCTAssertFalse(harness.layout.usesExplicitPlacements)
         XCTAssertNotEqual(explicit[1].minY, fallback[1].minY)
     }
@@ -334,7 +334,7 @@ final class TilePlacementLayoutTests: XCTestCase {
     func testGridColumnsChangeMakesTableForeign() throws {
         let harness = makeHarness(columns: 4)
         let items = [small("a"), small("b")]
-        let table = TileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(3, 2)], columns: 4)
+        let table = TesseraTileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(3, 2)], columns: 4)
         _ = try frames(harness, items, table: table)
         XCTAssertTrue(harness.layout.usesExplicitPlacements)
 
@@ -346,12 +346,12 @@ final class TilePlacementLayoutTests: XCTestCase {
     // MARK: - Панель раскрытой папки
 
     /// Набор: папка 2×2 с соседями в полосе и три плитки ниже с дырами.
-    private func panelScenario() -> (folder: TileFolder, items: [TileGridItem], table: TileGridPlacementTable) {
+    private func panelScenario() -> (folder: TesseraTileFolder, items: [TesseraTileGridItem], table: TesseraTileGridPlacementTable) {
         let folder = tesseraTestFolder("f", tileCount: 6)
-        let items: [TileGridItem] = [
+        let items: [TesseraTileGridItem] = [
             .folder(folder), small("s1"), small("s2"), small("x"), small("y"), medium("m"),
         ]
-        let table = TileGridPlacementTable(
+        let table = TesseraTileGridPlacementTable(
             cells: [
                 "f": cell(0, 0), "s1": cell(0, 2), "s2": cell(1, 3),
                 "x": cell(4, 0), "y": cell(7, 3), "m": cell(4, 2),
@@ -372,7 +372,7 @@ final class TilePlacementLayoutTests: XCTestCase {
         let collapsed = try frames(harness, scenario.items, table: scenario.table)
 
         let panelIndex = try XCTUnwrap(
-            TileLayoutEngine.folderPanelInsertionIndex(
+            TesseraTileLayoutEngine.folderPanelInsertionIndex(
                 placements: placed(scenario.items, table: scenario.table),
                 columns: 4,
                 expandedFolderID: scenario.folder.id
@@ -428,7 +428,7 @@ final class TilePlacementLayoutTests: XCTestCase {
         let harness = makeHarness()
 
         let panelIndex = try XCTUnwrap(
-            TileLayoutEngine.folderPanelInsertionIndex(
+            TesseraTileLayoutEngine.folderPanelInsertionIndex(
                 items: scenario.items,
                 columns: 4,
                 expandedFolderID: scenario.folder.id
@@ -446,7 +446,7 @@ final class TilePlacementLayoutTests: XCTestCase {
         XCTAssertEqual(open[mIndex].minY, panel.maxY + 8, accuracy: 0.001)
 
         // Негодная таблица ведёт себя так же.
-        let broken = TileGridPlacementTable(cells: ["f": cell(0, 0)], columns: 4)
+        let broken = TesseraTileGridPlacementTable(cells: ["f": cell(0, 0)], columns: 4)
         let fallback = try frames(harness, expandedItems, table: broken)
         XCTAssertFalse(harness.layout.usesExplicitPlacements)
         assertFrames(fallback, open, "неполная таблица — прежние кадры")
@@ -458,7 +458,7 @@ final class TilePlacementLayoutTests: XCTestCase {
     /// раскладка, а не таблица.
     func testExplicitCellsAreMirroredInRightToLeft() throws {
         let items = [small("a"), small("b"), medium("c")]
-        let table = TileGridPlacementTable(
+        let table = TesseraTileGridPlacementTable(
             cells: ["a": cell(0, 0), "b": cell(0, 3), "c": cell(2, 1)],
             columns: 4
         )

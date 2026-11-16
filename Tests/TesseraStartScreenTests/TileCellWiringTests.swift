@@ -2,7 +2,7 @@
 //  TileCellWiringTests.swift
 //  TesseraStartScreenTests
 //
-//  Живое подключение ячеек и кнопки правки по операциям `TileStore` по ячейкам
+//  Живое подключение ячеек и кнопки правки по операциям `TesseraTileStore` по ячейкам
 //  (E14.5, 13.11.2026). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
 //  «Отступления реализации (E14)», п. 53; решения D30–D33 в docs/STATE.md.
 //
@@ -35,10 +35,10 @@ final class TileCellWiringTests: XCTestCase {
         var unpins: [AnyHashable] = []
 
         /// События `didResize`.
-        var resizes: [(id: AnyHashable, size: TileSize)] = []
+        var resizes: [(id: AnyHashable, size: TesseraTileSize)] = []
 
         /// События `didMove(toCell:)`.
-        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
+        var moves: [(id: AnyHashable, cell: TesseraTileGridPlacement)] = []
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didUnpin tileID: AnyHashable) {
             unpins.append(tileID)
@@ -47,7 +47,7 @@ final class TileCellWiringTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didResize tileID: AnyHashable,
-            to size: TileSize
+            to size: TesseraTileSize
         ) {
             resizes.append((tileID, size))
         }
@@ -55,15 +55,15 @@ final class TileCellWiringTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toCell cell: TileGridPlacement
+            toCell cell: TesseraTileGridPlacement
         ) {
             moves.append((tileID, cell))
         }
     }
 
     /// Ячейка в короткой записи.
-    private func at(_ row: Int, _ column: Int) -> TileGridPlacement {
-        TileGridPlacement(row: row, column: column)
+    private func at(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
+        TesseraTileGridPlacement(row: row, column: column)
     }
 
     /// Сравнивает рамки с точностью до долей точки.
@@ -97,11 +97,11 @@ final class TileCellWiringTests: XCTestCase {
 
     // MARK: - Живое подключение
 
-    /// Сетка из `TileStore.snapshot(columns:)` показывает плитки ровно на
+    /// Сетка из `TesseraTileStore.snapshot(columns:)` показывает плитки ровно на
     /// сохранённых ячейках модели — с дырами, без обратного заполнения.
     func testGridFramesEqualStoredPlacementsWithHoles() throws {
         let host = try makeHoleyHost()
-        let sizes: [String: TileSize] = ["a": .small, "b": .small, "c": .small, "w": .wide]
+        let sizes: [String: TesseraTileSize] = ["a": .small, "b": .small, "c": .small, "w": .wide]
 
         for (id, cell) in host.store.placements(forColumns: 4) {
             let key = try XCTUnwrap(id.base as? String)
@@ -158,17 +158,17 @@ final class TileCellWiringTests: XCTestCase {
             in: directory,
             autosaves: false
         )
-        var snapshots: [TileGridSnapshot] = []
+        var snapshots: [TesseraTileGridSnapshot] = []
         store.onChange = { snapshots.append($0) }
 
         XCTAssertTrue(store.resize("a", to: .medium, columns: 4))
         XCTAssertEqual(snapshots.last?.placementTable?.columns, 4)
         XCTAssertEqual(snapshots.last?.placementTable?.cells["b"], at(0, 2))
 
-        let bare = TileStore(directoryURL: TesseraTestDirectory().url)
+        let bare = TesseraTileStore(directoryURL: TesseraTestDirectory().url)
         bare.autosaves = false
         bare.setCatalog([tesseraTestTile("a", size: .small)])
-        var bareSnapshot: TileGridSnapshot?
+        var bareSnapshot: TesseraTileGridSnapshot?
         bare.onChange = { bareSnapshot = $0 }
         // Уведомление без операции с `columns`: ширина сетки хранилищу неизвестна.
         bare.setCatalog([tesseraTestTile("a", size: .small), tesseraTestTile("b", size: .small)])

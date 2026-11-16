@@ -2,7 +2,7 @@
 //
 // Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §1 «Ключевая
 // архитектурная идея: три страницы» (левая страница — хук вызова чего угодно),
-// §7 «Страница слева: хук» (контейнер с протоколом `QuickPanelProviding`,
+// §7 «Страница слева: хук» (контейнер с протоколом `TesseraQuickPanelProviding`,
 // по умолчанию пустая заглушка, колбэки появления/скрытия для ленивой загрузки)
 // и §14 «Уточнения MVP», п. 2 (D13 в docs/STATE.md: обе боковые страницы
 // опциональны, пейджер — от 1 до 3 страниц).
@@ -32,7 +32,7 @@ import UIKit
 /// вызывается лениво — при первом показе страницы (пейджер грузит страницы ±1,
 /// docs/CORE-IOS-DESIGN.md §3), поэтому контроллер не должен создаваться на
 /// старте приложения.
-public protocol QuickPanelProviding {
+public protocol TesseraQuickPanelProviding {
 
     /// Создаёт контроллер левой страницы.
     ///
@@ -56,7 +56,7 @@ public protocol QuickPanelProviding {
     func quickPanelDidDisappear()
 }
 
-public extension QuickPanelProviding {
+public extension TesseraQuickPanelProviding {
 
     /// По умолчанию хук не реагирует на появление: контент грузится сразу.
     func quickPanelWillAppear() {}
@@ -70,7 +70,7 @@ public extension QuickPanelProviding {
 /// Нужен, когда заводить отдельный тип ради одной страницы не хочется:
 ///
 /// ```swift
-/// let panel = QuickPanelProvider {
+/// let panel = TesseraQuickPanelProvider {
 ///     QuickSettingsViewController()
 /// }
 /// ```
@@ -78,7 +78,7 @@ public extension QuickPanelProviding {
 /// - Note: Если контроллер должен переиспользоваться между показами,
 ///   кэшируйте его в замыкании — пейджер имеет право пересоздать страницу
 ///   после выгрузки.
-public final class QuickPanelProvider: QuickPanelProviding {
+public final class TesseraQuickPanelProvider: TesseraQuickPanelProviding {
 
     /// Фабрика контроллера страницы.
     private let makeViewController: () -> UIViewController

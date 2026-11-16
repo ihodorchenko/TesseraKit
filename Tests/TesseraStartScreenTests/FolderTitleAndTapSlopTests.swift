@@ -71,7 +71,7 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
     func testStoreStillAcceptsEmptyFolderTitle() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog([tesseraTestTile("a")])
         XCTAssertEqual(try XCTUnwrap(store.createFolder(withTile: "a", columns: 4)).title, "")
@@ -92,8 +92,8 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
     /// Заголовок панели — как набрано, без приведения к нижнему регистру;
     /// пустое название заменяется названием по умолчанию.
     func testPanelHeadingShowsTitleAsTypedAndFallsBackWhenEmpty() throws {
-        let typed = TileFolder(id: "f1", title: "Работа", tiles: [tesseraTestTile("a")])
-        let empty = TileFolder(id: "f2", title: "", tiles: [tesseraTestTile("b")])
+        let typed = TesseraTileFolder(id: "f1", title: "Работа", tiles: [tesseraTestTile("a")])
+        let empty = TesseraTileFolder(id: "f2", title: "", tiles: [tesseraTestTile("b")])
 
         for (folder, expected) in [
             (typed, "Работа"),
@@ -101,7 +101,7 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         ] {
             let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
             grid.columns = 4
-            grid.reload(snapshot: TileGridSnapshot(items: [.folder(folder)], unpinned: []))
+            grid.reload(snapshot: TesseraTileGridSnapshot(items: [.folder(folder)], unpinned: []))
             grid.layoutIfNeeded()
             grid.openFolder(folder, animated: false)
             grid.layoutIfNeeded()
@@ -119,10 +119,10 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
 
     /// Плитка папки без названия подписывается названием по умолчанию.
     func testFolderTileWithoutTitleShowsDefaultTitle() throws {
-        let empty = TileFolder(id: "f", title: "", tiles: [tesseraTestTile("a")])
+        let empty = TesseraTileFolder(id: "f", title: "", tiles: [tesseraTestTile("a")])
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         grid.columns = 4
-        grid.reload(snapshot: TileGridSnapshot(items: [.folder(empty)], unpinned: []))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: [.folder(empty)], unpinned: []))
         grid.layoutIfNeeded()
         let collectionView = try XCTUnwrap(grid.subviews.compactMap { $0 as? UICollectionView }.first)
         collectionView.layoutIfNeeded()
@@ -139,11 +139,11 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
     // MARK: - Допуск смещения тапа
 
     /// Сетка с одной плиткой и счётчиком `onTap`.
-    private func makeGrid(taps: @escaping (TileGridItem) -> Void) throws -> (TesseraTileGridView, UICollectionView) {
+    private func makeGrid(taps: @escaping (TesseraTileGridItem) -> Void) throws -> (TesseraTileGridView, UICollectionView) {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         grid.columns = 4
         grid.onTap = taps
-        grid.reload(snapshot: TileGridSnapshot(items: [.tile(tesseraTestTile("a"))], unpinned: []))
+        grid.reload(snapshot: TesseraTileGridSnapshot(items: [.tile(tesseraTestTile("a"))], unpinned: []))
         grid.layoutIfNeeded()
         let collectionView = try XCTUnwrap(grid.subviews.compactMap { $0 as? UICollectionView }.first)
         collectionView.layoutIfNeeded()

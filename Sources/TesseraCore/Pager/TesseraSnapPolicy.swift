@@ -28,7 +28,7 @@ public enum TesseraSnapAlignment {
 ///
 /// Тип — чистая конфиг-структура без зависимостей от UIKit: расчёт
 /// `targetContentOffset` детерминирован и полностью тестируем без scroll view.
-/// Потребитель (пейджер в режиме `snapping` / `PanoScrollView`) вызывает
+/// Потребитель (пейджер в режиме `snapping` / `TesseraPanoScrollView`) вызывает
 /// `targetContentOffset(...)` из
 /// `UIScrollViewDelegate.scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)`,
 /// подставляя `proposedOffset` из параметра `inout`-указателя, скорость

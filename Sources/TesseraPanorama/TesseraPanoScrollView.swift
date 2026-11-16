@@ -1,11 +1,11 @@
 //
-//  PanoScrollView.swift
+//  TesseraPanoScrollView.swift
 //  TesseraPanorama
 //
 //  Горизонтальный скролл панорамы: секции уже экрана (peek), кастомный снап и
 //  единственный источник прогресса `t`.
 //  Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная
-//  архитектура» (слой PanoScrollView под PanoramaViewController), §4 «Геометрия
+//  архитектура» (слой TesseraPanoScrollView под TesseraPanoramaViewController), §4 «Геометрия
 //  и математика ядра» (`itemWidth = screenWidth − peek`; `t = offset.x / itemWidth`;
 //  снап через `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)`;
 //  `decelerationRate = .fast`; на границах — стандартный bounce), §6
@@ -17,9 +17,9 @@
 import TesseraCore
 import UIKit
 
-/// Наблюдатель событий ``PanoScrollView``.
+/// Наблюдатель событий ``TesseraPanoScrollView``.
 ///
-/// Протокол внутримодульный: наружу панорама отдаёт только ``PanoramaDelegate``,
+/// Протокол внутримодульный: наружу панорама отдаёт только ``TesseraPanoramaDelegate``,
 /// а жизненный цикл скролла — деталь ядра (§3 `docs/PANORAMA-IOS-DESIGN.md`).
 /// Ссылка наблюдателя слабая: скролл-вью удерживает контроллер, обратной сильной
 /// связи нет.
@@ -31,7 +31,7 @@ protocol PanoScrollViewObserving: AnyObject {
     /// вызове запрещён.
     ///
     /// - Parameter scrollView: Источник события.
-    func panoScrollViewDidScroll(_ scrollView: PanoScrollView)
+    func panoScrollViewDidScroll(_ scrollView: TesseraPanoScrollView)
 
     /// Жест закончился, система готовится начать инерцию.
     ///
@@ -45,7 +45,7 @@ protocol PanoScrollViewObserving: AnyObject {
     ///   - targetReadingIndex: Индекс секции, к которой прилипнет скролл, в порядке
     ///     чтения (в RTL зеркалирован через ``TesseraRTL``).
     func panoScrollViewWillEndDragging(
-        _ scrollView: PanoScrollView,
+        _ scrollView: TesseraPanoScrollView,
         velocityX: CGFloat,
         targetReadingIndex: Int
     )
@@ -55,17 +55,17 @@ protocol PanoScrollViewObserving: AnyObject {
     /// - Parameters:
     ///   - scrollView: Источник события.
     ///   - decelerate: Начнётся ли инерция после жеста.
-    func panoScrollViewDidEndDragging(_ scrollView: PanoScrollView, willDecelerate decelerate: Bool)
+    func panoScrollViewDidEndDragging(_ scrollView: TesseraPanoScrollView, willDecelerate decelerate: Bool)
 
     /// Инерция закончилась — снап встал на секцию.
     ///
     /// - Parameter scrollView: Источник события.
-    func panoScrollViewDidEndDecelerating(_ scrollView: PanoScrollView)
+    func panoScrollViewDidEndDecelerating(_ scrollView: TesseraPanoScrollView)
 
     /// Завершилась программная анимация `setContentOffset(_:animated:)`.
     ///
     /// - Parameter scrollView: Источник события.
-    func panoScrollViewDidEndScrollingAnimation(_ scrollView: PanoScrollView)
+    func panoScrollViewDidEndScrollingAnimation(_ scrollView: TesseraPanoScrollView)
 
     /// Жест VoiceOver «три пальца»: шаг по секциям в порядке чтения.
     ///
@@ -73,7 +73,7 @@ protocol PanoScrollViewObserving: AnyObject {
     ///   - scrollView: Источник события.
     ///   - step: `+1` — следующая секция, `-1` — предыдущая (уже с учётом RTL).
     /// - Returns: `true`, если переход выполнен.
-    func panoScrollView(_ scrollView: PanoScrollView, accessibilityStep step: Int) -> Bool
+    func panoScrollView(_ scrollView: TesseraPanoScrollView, accessibilityStep step: Int) -> Bool
 }
 
 /// Горизонтальный скролл панорамы с неполностраничными секциями и кастомным
@@ -82,13 +82,13 @@ protocol PanoScrollViewObserving: AnyObject {
 /// ## Роль в архитектуре (§3)
 ///
 /// ```
-/// PanoramaViewController  ← оркестрация, child-VC, фон, заголовки
-///     └─ PanoScrollView    ← только горизонталь, геометрия и снап
+/// TesseraPanoramaViewController  ← оркестрация, child-VC, фон, заголовки
+///     └─ TesseraPanoScrollView    ← только горизонталь, геометрия и снап
 /// ```
 ///
 /// Скролл-вью владеет **только** геометрией секций, снапом и жизненным циклом
 /// прокрутки. Иерархией child-контроллеров, фоном, заголовками, делегатом и
-/// accessibility-анонсами владеет ``PanoramaViewController``: он получает события
+/// accessibility-анонсами владеет ``TesseraPanoramaViewController``: он получает события
 /// через внутримодульный ``PanoScrollViewObserving``. `contentOffset` пишут
 /// исключительно жест этого скролл-вью и программный переход контроллера — правило
 /// одного писателя из `docs/CORE-IOS-DESIGN.md` §2 соблюдается.
@@ -133,7 +133,7 @@ protocol PanoScrollViewObserving: AnyObject {
 ///   наблюдателя. Публичная настройка — ``snapPolicy`` и ``peek``.
 /// - Important: Только главный поток: UIKit-состояние не размазывается по модулям
 ///   (`docs/CORE-IOS-DESIGN.md` §3).
-public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
+public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
 
     // MARK: - Константы геометрии
 
@@ -147,7 +147,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
 
     /// Запас «подсматривания» следующей секции, в точках.
     ///
-    /// §4: `itemWidth = bounds.width − peek`. Как и ``PanoramaStyle/peek``,
+    /// §4: `itemWidth = bounds.width − peek`. Как и ``TesseraPanoramaStyle/peek``,
     /// значение удерживается в диапазоне `16...64`; `NaN` и бесконечности
     /// трактуются как дефолт `48`. Запись не меняет геометрию сама по себе:
     /// `contentSize` пересчитывает контроллер в своём layout-проходе (§6).
@@ -198,7 +198,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     weak var observer: PanoScrollViewObserving?
 
     /// Хранилище ``peek`` — валидируется на записи.
-    private var storedPeek: CGFloat = PanoScrollView.defaultPeek
+    private var storedPeek: CGFloat = TesseraPanoScrollView.defaultPeek
 
     /// Хранилище ``sectionCount`` — валидируется на записи.
     private var storedSectionCount: Int = 0
@@ -244,7 +244,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     ///   - snapPolicy: Политика снапа; по умолчанию — параметры Core
     ///     (порог 600 pt/s, выравнивание по центру).
     public init(peek: CGFloat = 48, snapPolicy: TesseraSnapPolicy = TesseraSnapPolicy()) {
-        self.storedPeek = PanoScrollView.sanitizedPeek(peek)
+        self.storedPeek = TesseraPanoScrollView.sanitizedPeek(peek)
         self.snapPolicy = snapPolicy
         super.init(frame: .zero)
         commonInit()
@@ -254,7 +254,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     ///
     /// - Parameter frame: Начальный кадр.
     public override init(frame: CGRect) {
-        self.storedPeek = PanoScrollView.defaultPeek
+        self.storedPeek = TesseraPanoScrollView.defaultPeek
         self.snapPolicy = TesseraSnapPolicy()
         super.init(frame: frame)
         commonInit()
@@ -263,7 +263,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     /// Не поддерживается: скролл-вью создаётся только из кода.
     @available(*, unavailable, message: "Используйте init(peek:snapPolicy:)")
     public required init?(coder: NSCoder) {
-        fatalError("PanoScrollView не поддерживает загрузку из Interface Builder")
+        fatalError("TesseraPanoScrollView не поддерживает загрузку из Interface Builder")
     }
 
     /// Общая настройка скролл-вью (§4, «Снап»).
@@ -272,7 +272,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     /// страницы, а панорама показывает peek. `contentInsetAdjustmentBehavior =
     /// .never` — исходное значение: кадр скролл-вью задаёт контроллер, а нижнюю
     /// safe area получают child-контроллеры секций. Контроллер панорамы
-    /// переопределяет его из `PanoramaStyle.contentInsetAdjustmentBehavior` (§8).
+    /// переопределяет его из `TesseraPanoramaStyle.contentInsetAdjustmentBehavior` (§8).
     private func commonInit() {
         isPagingEnabled = false
         decelerationRate = .fast
@@ -300,7 +300,7 @@ public final class PanoScrollView: UIScrollView, UIScrollViewDelegate {
     /// может выходить за `0...(sectionCount − 1)` — потребитель сам решает, как
     /// его ограничить. Для прогресса в порядке чтения (в RTL он зеркалируется)
     /// есть ``readingProgress(forRawOffset:)``; наружу панорама отдаёт именно
-    /// его (см. ``PanoramaDelegate``).
+    /// его (см. ``TesseraPanoramaDelegate``).
     ///
     /// Метод чистый: только читает `contentOffset` и `bounds`, ничего не пишет и
     /// не запускает layout.

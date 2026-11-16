@@ -45,8 +45,8 @@ final class PanoRTLTests: XCTestCase {
     private func makeScrollView(
         sectionCount: Int? = nil,
         direction: UIUserInterfaceLayoutDirection = .leftToRight
-    ) -> PanoScrollView {
-        let scrollView = PanoScrollView(peek: peek)
+    ) -> TesseraPanoScrollView {
+        let scrollView = TesseraPanoScrollView(peek: peek)
         scrollView.frame = CGRect(
             x: 0,
             y: 0,

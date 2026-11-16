@@ -39,7 +39,7 @@ import TesseraCore
 public enum TesseraStartScreenPage: Hashable {
 
     /// Левая страница-хук (§7). Существует, только если хост передал
-    /// ``QuickPanelProviding`` (D13).
+    /// ``TesseraQuickPanelProviding`` (D13).
     case quickPanel
 
     /// Центральная страница с сеткой ярлыков и обоями (§2, §8).
@@ -56,7 +56,7 @@ public enum TesseraStartScreenPage: Hashable {
 /// ```
 /// StartScreenViewController
 ///     └─ TesseraPagerViewController (режим .paged)
-///          ├─ QuickPanelPage   ← только если задан QuickPanelProviding
+///          ├─ QuickPanelPage   ← только если задан TesseraQuickPanelProviding
 ///          ├─ StartPage        ← TesseraTileGridView + TesseraParallaxLayer
 ///          └─ ApplicationsPage ← только если задана фабрика правой страницы
 /// ```
@@ -240,19 +240,19 @@ public final class TesseraStartScreenViewController: UIViewController {
 
     /// Наблюдатель смены страницы и видимости хука (UIKit-канал событий).
     ///
-    /// Контроллер сообщает ``StartScreenDelegate/startScreen(_:didChangePage:index:)``
+    /// Контроллер сообщает ``TesseraStartScreenDelegate/startScreen(_:didChangePage:index:)``
     /// по подтверждённому пейджером переходу (жест, программный показ,
     /// уход с исчезнувшей после ``configure(leftPanel:rightPage:)`` страницы) и
-    /// ``StartScreenDelegate/startScreen(_:didChangeHookVisibility:)`` — при
+    /// ``TesseraStartScreenDelegate/startScreen(_:didChangeHookVisibility:)`` — при
     /// смене видимости страницы-хука, включая появление и уход самого экрана.
     /// Показ стартовой страницы событием не является.
     ///
     /// Тапы по сетке контроллер делегату не пересылает: в UIKit их отдаёт
     /// `gridView.onTap`, который остаётся за хостом (тот же делегат получает
-    /// тапы в `StartScreenView` — фасад подписывается на `onTap` сам).
+    /// тапы в `TesseraStartScreenView` — фасад подписывается на `onTap` сам).
     ///
     /// Ссылка слабая: делегата удерживает хост (в SwiftUI — координатор фасада).
-    public weak var delegate: StartScreenDelegate?
+    public weak var delegate: TesseraStartScreenDelegate?
 
     /// Название START-страницы для VoiceOver (§9).
     public var startPageTitle: String = "Start"
@@ -327,7 +327,7 @@ public final class TesseraStartScreenViewController: UIViewController {
     // MARK: - Состояние страницы-хука
 
     /// Поставщик левой страницы (§7). `nil` — страницы нет (D13).
-    private var leftPanel: QuickPanelProviding?
+    private var leftPanel: TesseraQuickPanelProviding?
 
     /// Фабрика правой страницы (§6). `nil` — страницы нет (D13).
     private var rightPageFactory: (() -> UIViewController)?
@@ -341,7 +341,7 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// `didDisappear` уходит именно ему: при замене или удалении поставщика,
     /// пока хук на экране, колбэки остаются симметричными (прежний получает
     /// `didDisappear`, новый — `willAppear`).
-    private var appearedQuickPanel: QuickPanelProviding?
+    private var appearedQuickPanel: TesseraQuickPanelProviding?
 
     /// Открыта ли страница-хук программно при политике ``yieldsLeftEdgeToSystemGesture``.
     ///
@@ -506,12 +506,12 @@ public final class TesseraStartScreenViewController: UIViewController {
 
     /// Применяет снимок сетки START-страницы.
     ///
-    /// Данные приходят из `TileStore` (или от хоста) и не меняются контроллером:
+    /// Данные приходят из `TesseraTileStore` (или от хоста) и не меняются контроллером:
     /// сетка только отображает снимок (§6, правило «один писатель»). Метод
     /// можно вызывать до показа экрана — сетка применит снимок без окна.
     ///
     /// - Parameter snapshot: Снимок ярлыков и папок.
-    public func reload(grid snapshot: TileGridSnapshot) {
+    public func reload(grid snapshot: TesseraTileGridSnapshot) {
         startPageController.apply(snapshot: snapshot)
     }
 
@@ -546,7 +546,7 @@ public final class TesseraStartScreenViewController: UIViewController {
     ///   через ``registerVerticalOwner(_:)`` из `viewDidLoad` контроллера
     ///   страницы (§1).
     public func configure(
-        leftPanel: QuickPanelProviding?,
+        leftPanel: TesseraQuickPanelProviding?,
         rightPage: (() -> UIViewController)?
     ) {
         if !Self.isSameProvider(self.leftPanel, leftPanel) {
@@ -585,7 +585,7 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// - Precondition: Наличие хука и правой страницы не меняется; иначе нужен
     ///   ``configure(leftPanel:rightPage:)``.
     func updateSidePageSources(
-        leftPanel: QuickPanelProviding?,
+        leftPanel: TesseraQuickPanelProviding?,
         rightPage: (() -> UIViewController)?
     ) {
         guard (leftPanel != nil) == (self.leftPanel != nil),
@@ -971,8 +971,8 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// Классовые поставщики сравниваются по ссылке; значимые типы сравнить
     /// нельзя (бокс каждый раз новый) — они считаются новым поставщиком.
     private static func isSameProvider(
-        _ lhs: QuickPanelProviding?,
-        _ rhs: QuickPanelProviding?
+        _ lhs: TesseraQuickPanelProviding?,
+        _ rhs: TesseraQuickPanelProviding?
     ) -> Bool {
         switch (lhs, rhs) {
         case (nil, nil):
@@ -1290,7 +1290,7 @@ extension TesseraStartScreenViewController: TesseraPagerDelegate {
 /// Страница START: обои с вертикальным параллаксом и сетка ярлыков.
 ///
 /// Приватная деталь композиции: снаружи доступна только через
-/// ``TesseraStartScreenViewController``. Страница не ходит в `TileStore` —
+/// ``TesseraStartScreenViewController``. Страница не ходит в `TesseraTileStore` —
 /// снимок приходит от контроллера (``apply(snapshot:)``), правило «один
 /// писатель» §6.
 ///
@@ -1457,7 +1457,7 @@ private final class TesseraStartPageViewController: UIViewController {
     ///
     /// Работает и до загрузки вида: снимок применяется к сетке, а фон
     /// пересчитается на ближайшем layout'е.
-    func apply(snapshot: TileGridSnapshot) {
+    func apply(snapshot: TesseraTileGridSnapshot) {
         gridView.reload(snapshot: snapshot)
 
         if isViewLoaded {

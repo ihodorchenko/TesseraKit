@@ -16,9 +16,9 @@
 //  Границы ответственности: раскладка не хранит состояние рабочего стола и не
 //  знает про ярлыки/папки. Она получает от TesseraTileGridView список пар
 //  «идентификатор — размер», переводит их в юнитные координаты через
-//  TileLayoutEngine (чистые функции из E4.2) и раскладывает в рамки в точках.
+//  TesseraTileLayoutEngine (чистые функции из E4.2) и раскладывает в рамки в точках.
 //  Пиксельная геометрия — ширина, поля, зазоры — единственное, чем владеет
-//  этот файл; порядок, размеры и папки приходят из модели (TileStore → снимок).
+//  этот файл; порядок, размеры и папки приходят из модели (TesseraTileStore → снимок).
 //
 //  Дисциплина производительности (§3, и CORE-IOS-DESIGN.md §2): пересчёт
 //  геометрии возможен только в layout-проходе (prepare/collectionViewContentSize)
@@ -98,7 +98,7 @@ final class TesseraTileLayoutAttributes: UICollectionViewLayoutAttributes {
 
     /// Размер плитки из модели (D15): запрошенный, до возможного ужатия под
     /// узкую сетку. Нужен ячейке для выбора шрифта и координатору для resize.
-    var tileSize: TileSize = .medium
+    var tileSize: TesseraTileSize = .medium
 
     /// Копирование обязательно: UICollectionView копирует атрибуты при
     /// анимациях и переиспользовании, и без переопределения кастомные поля
@@ -113,28 +113,28 @@ final class TesseraTileLayoutAttributes: UICollectionViewLayoutAttributes {
 
 // MARK: - Раскладка
 
-/// Раскладка плиточной сетки на ``TileLayoutEngine``
+/// Раскладка плиточной сетки на ``TesseraTileLayoutEngine``
 /// (docs/STARTSCREEN-IOS-DESIGN.md §3; D15 в docs/STATE.md).
 ///
 /// ## Как считается геометрия (§3)
 ///
 /// 1. Доступная ширина = `bounds.width − contentInsets.left − contentInsets.right`;
 ///    края контента и верхнее поле округляются до пикселя (E10.1).
-/// 2. Юнит = ``TileLayoutEngine/unit(screenWidth:columns:gaps:scale:)``: формула
+/// 2. Юнит = ``TesseraTileLayoutEngine/unit(screenWidth:columns:gaps:scale:)``: формула
 ///    §3, округлённая вниз до пикселя (`displayScale` коллекции, запасной —
 ///    `UIScreen.main.scale`); зазор между колонками — ``itemSpacing`` (в
 ///    формуле §3 это `gaps`), тоже на пиксельной сетке. Остаток ширины
 ///    делится поровну на поля: сетка центрируется
-///    (``TileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
-/// 3. ``TileLayoutEngine/pack(items:columns:unit:)`` строго компактно
+///    (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
+/// 3. ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` строго компактно
 ///    упаковывает плитки в юнитные координаты (E8.5). Если сетка передала
-///    таблицу явных ячеек (``TileGridPlacementTable``, E14.3) и она полна и
+///    таблицу явных ячеек (``TesseraTileGridPlacementTable``, E14.3) и она полна и
 ///    корректна для текущих колонок, вместо упаковки слоты берутся из
-///    ``TileLayoutEngine/slots(placements:columns:unit:fitting:)``: плитки встают
+///    ``TesseraTileLayoutEngine/slots(placements:columns:unit:fitting:)``: плитки встают
 ///    на свои ячейки, дыры сохраняются, обратного заполнения нет. Неполная,
 ///    некорректная или рассчитанная на другую ширину таблица игнорируется целиком —
 ///    раскладка идёт упаковкой, как до E14.3.
-/// 4. ``TileLayoutEngine/rect(for:unit:gap:origin:)`` переводит слот в рамку в
+/// 4. ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)`` переводит слот в рамку в
 ///    точках; внутренние зазоры входят в рамку широкой/большой плитки. Все
 ///    рамки кратны `1 / scale`.
 ///
@@ -159,24 +159,24 @@ final class TesseraTileLayoutAttributes: UICollectionViewLayoutAttributes {
 ///
 /// ## Панель раскрытой папки (D17, E7)
 ///
-/// Раскрытие вставляет панель ``TileGridItem/folderContent(_:)`` **после
+/// Раскрытие вставляет панель ``TesseraTileGridItem/folderContent(_:)`` **после
 /// полосы папки** — строк плитки-папки, расширенных вниз на плитки, которые
 /// начинаются в этих строках и заканчиваются ниже
-/// (``TileLayoutEngine/folderBandEndRow(for:in:)``, E10.1); сама плитка
+/// (``TesseraTileLayoutEngine/folderBandEndRow(for:in:)``, E10.1); сама плитка
 /// остаётся в наборе и на экране (число элементов растёт на один). Поэтому:
 ///
 /// - панель растягивается на всю ширину контента (все ``columns`` колонок) и
 ///   занимает полноширинную строку сразу под полосой папки;
 /// - высоту в точках считает
-///   ``TileLayoutEngine/panelHeight(tileCount:width:columns:spacing:scale:)`` —
+///   ``TesseraTileLayoutEngine/panelHeight(tileCount:width:columns:spacing:scale:)`` —
 ///   юнит и зазор ярлыков панели те же, что у сетки (``itemSpacing``, пиксельное
-///   выравнивание); раскладка не хранит `TileFolder`, только число ярлыков;
+///   выравнивание); раскладка не хранит `TesseraTileFolder`, только число ярлыков;
 /// - базовая упаковка не меняется: плитка папки и её соседи получают те же
 ///   слоты, что и в свёрнутой сетке, а всё, что начинается ниже полосы,
 ///   упаковывается заново и встаёт под панелью. С явными ячейками (E14.3)
 ///   репака нет: строки ниже полосы остаются на своих ячейках, дыры между ними
 ///   сохраняются, и вся нижняя часть сдвигается вниз на высоту панели и зазор
-///   (``TileLayoutEngine/rowsBelowOffset(placedSlots:expandedFolderID:panelHeight:spacing:)``);
+///   (``TesseraTileLayoutEngine/rowsBelowOffset(placedSlots:expandedFolderID:panelHeight:spacing:)``);
 /// - элементы полосы (например, small справа от 2×2-папки или 2×2-ярлык,
 ///   начинающийся в строках папки и заканчивающийся ниже) остаются на месте:
 ///   панель начинается ниже них и ни с кем не пересекается;
@@ -211,12 +211,12 @@ final class TesseraTileLayoutAttributes: UICollectionViewLayoutAttributes {
 /// задал меньше колонок, чем ширина плитки, раскладка не выбрасывает плитку
 /// (иначе разъехалось бы соответствие «индекс → элемент»), а ужимает её след:
 /// 2×2 при 2–3 колонках и 1×1 при одной. Это деградация геометрии, а не смена
-/// модели: `TileStore` и ячейка по-прежнему видят исходный ``TileSize``.
+/// модели: `TesseraTileStore` и ячейка по-прежнему видят исходный ``TesseraTileSize``.
 final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
     // MARK: - Конфигурация
 
-    /// Число колонок сетки (по умолчанию 6 — D26, ``TileLayoutEngine/defaultColumns``). Значения меньше 1
+    /// Число колонок сетки (по умолчанию 6 — D26, ``TesseraTileLayoutEngine/defaultColumns``). Значения меньше 1
     /// зажимаются к 1; см. «Узкая сетка» в документации класса.
     var columns: Int {
         get { columnCount }
@@ -288,13 +288,13 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
     /// Текущее число колонок; хранится отдельно, чтобы `columns` мог быть
     /// вычисляемым свойством с зажимом к 1.
-    private var columnCount: Int = TileLayoutEngine.defaultColumns
+    private var columnCount: Int = TesseraTileLayoutEngine.defaultColumns
 
     /// Идентификаторы элементов в порядке сетки (индекс совпадает с
     /// `IndexPath.item`). Обновляется в layout-проходе.
     ///
     /// При раскрытой папке в наборе есть и плитка папки, и панель
-    /// (``TileGridItem/folderContent(_:)``), поэтому идентификатор папки
+    /// (``TesseraTileGridItem/folderContent(_:)``), поэтому идентификатор папки
     /// встречается дважды: у плитки и у панели.
     private(set) var itemIdentifiers: [AnyHashable] = []
 
@@ -342,7 +342,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     /// Элементы в порядке сетки: идентификатор, модель размера и признак
     /// панели раскрытой папки.
     ///
-    /// Хранится копией: раскладка не удерживает `TileDescriptor` и `TileFolder`
+    /// Хранится копией: раскладка не удерживает `TesseraTileDescriptor` и `TesseraTileFolder`
     /// (в них есть замыкания и `UIImage`), ей для геометрии достаточно
     /// идентичности, размера D15, явной ячейки (E14.3) и числа ярлыков панели
     /// (от него зависит высота панели в точках).
@@ -436,8 +436,8 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
             /// Идентификатор элемента.
             var id: AnyHashable
 
-            /// Размер плитки из модели (D15). У панели — метка ``TileSize/wide``.
-            var size: TileSize
+            /// Размер плитки из модели (D15). У панели — метка ``TesseraTileSize/wide``.
+            var size: TesseraTileSize
 
             /// Элемент — полноширинная панель раскрытой папки (D17).
             ///
@@ -448,7 +448,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
             /// Число ярлыков панели: от него зависит высота панели в точках.
             ///
             /// Только число, а не сами ярлыки: раскладка не удерживает
-            /// `TileDescriptor` и `TileFolder` (в них замыкания и `UIImage`).
+            /// `TesseraTileDescriptor` и `TesseraTileFolder` (в них замыкания и `UIImage`).
             var folderTileCount: Int
 
             /// Явная ячейка элемента из таблицы снимка (E14.3, логические
@@ -458,7 +458,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
             ///
             /// Входит в ключ, поэтому смена одних ячеек (состав и размеры те
             /// же) инвалидирует раскладку и анимируется как перестановка.
-            var cell: TileGridPlacement?
+            var cell: TesseraTileGridPlacement?
         }
     }
 
@@ -507,8 +507,8 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     ///   - placements: Таблица явных ячеек из снимка; `nil` — упаковка по порядку.
     ///   - reason: Причина пересчёта (состав или только геометрия).
     func setItems(
-        _ items: [TileGridItem],
-        placements: TileGridPlacementTable? = nil,
+        _ items: [TesseraTileGridItem],
+        placements: TesseraTileGridPlacementTable? = nil,
         reason: TesseraTileLayoutInvalidationReason
     ) {
         // Атрибуты исчезающей панели запоминаем до смены набора: в новом наборе
@@ -547,7 +547,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     /// раскрытии никуда не девается.
     ///
     /// - Parameter items: Новый набор элементов сетки.
-    private func capturePanelTransition(replacingWith items: [TileGridItem]) {
+    private func capturePanelTransition(replacingWith items: [TesseraTileGridItem]) {
         disappearingPanel = nil
 
         let oldPanelIndex = layoutItems.firstIndex { $0.isPanel }
@@ -755,7 +755,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     ///
     /// Горизонталь (E10.1): края контента и верхнее поле округляются до
     /// пикселя, юнит — вниз до пикселя
-    /// (``TileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``),
+    /// (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``),
     /// остаток ширины делится поровну на поля — сетка центрируется. Поэтому все
     /// рамки кратны `1 / scale`.
     ///
@@ -765,7 +765,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     ///    слоты, что и в свёрнутой сетке — панель в упаковке не участвует.
     /// 2. Полоса папки (E10.1): строки папки, расширенные вниз на плитки,
     ///    которые начинаются в этих строках и заканчиваются ниже
-    ///    (``TileLayoutEngine/folderBandEndRow(for:in:)``). Панель занимает
+    ///    (``TesseraTileLayoutEngine/folderBandEndRow(for:in:)``). Панель занимает
     ///    полноширинную строку сразу после полосы и растягивается на всю
     ///    ширину контента.
     /// 3. Элементы, которые начинаются ниже полосы, упаковываются заново и
@@ -786,16 +786,16 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
         // E10.1: края контента — на пиксельной сетке; ширина между ними —
         // доступная ширина формулы юнита.
-        let contentLeft = TileLayoutEngine.pixelRound(key.insets.left, scale: key.scale)
-        let contentRight = TileLayoutEngine.pixelRound(
+        let contentLeft = TesseraTileLayoutEngine.pixelRound(key.insets.left, scale: key.scale)
+        let contentRight = TesseraTileLayoutEngine.pixelRound(
             key.boundsSize.width - key.insets.right,
             scale: key.scale
         )
         let contentWidth = contentRight - contentLeft
-        let contentTop = TileLayoutEngine.pixelRound(key.insets.top, scale: key.scale)
+        let contentTop = TesseraTileLayoutEngine.pixelRound(key.insets.top, scale: key.scale)
         guard contentWidth.isFinite, contentWidth > 0 else { return }
 
-        guard let metrics = TileLayoutEngine.gridMetrics(
+        guard let metrics = TesseraTileLayoutEngine.gridMetrics(
             contentWidth: contentWidth,
             columns: key.columns,
             spacing: key.spacing,
@@ -810,12 +810,12 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
         // Панель в базовой упаковке не участвует: она отдельная полноширинная
         // строка под папкой, а не плитка. Ужимаем только след плиток для узкой
-        // сетки; модель (TileSize) не меняется — её видят ячейка и TileStore.
+        // сетки; модель (TesseraTileSize) не меняется — её видят ячейка и TesseraTileStore.
         let panelIndices = key.items.indices.filter { key.items[$0].isPanel }
         let mainPanelIndex = panelIndices.first
         var baseIndices: [Int] = []
         baseIndices.reserveCapacity(key.items.count)
-        var packItems: [(id: AnyHashable, size: TileSize)] = []
+        var packItems: [(id: AnyHashable, size: TesseraTileSize)] = []
         packItems.reserveCapacity(key.items.count - panelIndices.count)
         for index in key.items.indices where !key.items[index].isPanel {
             baseIndices.append(index)
@@ -828,28 +828,28 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
         // для этих колонок, плитки встают на свои ячейки — без упаковки, дыры
         // остаются. Иначе (таблицы нет, неполная, вне холста, с пересечениями,
         // другой ширины) раскладка идёт прежней упаковкой по порядку.
-        var explicitCells: [AnyHashable: TileGridPlacement] = [:]
+        var explicitCells: [AnyHashable: TesseraTileGridPlacement] = [:]
         for index in baseIndices {
             if let cell = key.items[index].cell {
                 explicitCells[key.items[index].id] = cell
             }
         }
-        let explicitPlacements = TileGridPlacementTable.resolve(
+        let explicitPlacements = TesseraTileGridPlacementTable.resolve(
             items: baseIndices.map { (id: key.items[$0].id, size: key.items[$0].size) },
             cells: explicitCells.isEmpty ? nil : explicitCells,
             placementColumns: key.placementColumns,
             columns: key.columns
         )
-        let slots: [TileLayoutSlot]
+        let slots: [TesseraTileLayoutSlot]
         if let explicitPlacements {
-            slots = TileLayoutEngine.slots(
+            slots = TesseraTileLayoutEngine.slots(
                 placements: explicitPlacements,
                 columns: key.columns,
                 unit: unit,
                 fitting: true
             )
         } else {
-            slots = TileLayoutEngine.pack(
+            slots = TesseraTileLayoutEngine.pack(
                 items: packItems,
                 columns: key.columns,
                 unit: unit
@@ -863,7 +863,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
         usesExplicitPlacements = explicitPlacements != nil
 
         /// Слоты базовых элементов по индексу в наборе.
-        var slotByIndex: [Int: TileLayoutSlot] = [:]
+        var slotByIndex: [Int: TesseraTileLayoutSlot] = [:]
         slotByIndex.reserveCapacity(baseIndices.count)
         for (position, index) in baseIndices.enumerated() {
             slotByIndex[index] = slots[position]
@@ -875,8 +875,8 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
         /// так сетка занимает одни и те же пиксельные колонки в LTR и RTL, и
         /// ярлыки панели (ячейка зеркалит колонки тем же правилом) совпадают
         /// с плитками.
-        func elementFrame(for slot: TileLayoutSlot, top: CGFloat) -> CGRect {
-            var rect = TileLayoutEngine.rect(
+        func elementFrame(for slot: TesseraTileLayoutSlot, top: CGFloat) -> CGRect {
+            var rect = TesseraTileLayoutEngine.rect(
                 for: slot,
                 unit: unit,
                 gap: spacing,
@@ -893,7 +893,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
 
         if let panelIndex = mainPanelIndex {
             panelAttributeIndex = panelIndex
-            let panelHeight = TileLayoutEngine.panelHeight(
+            let panelHeight = TesseraTileLayoutEngine.panelHeight(
                 tileCount: key.items[panelIndex].folderTileCount,
                 width: contentWidth,
                 columns: key.columns,
@@ -910,12 +910,12 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
                 // полосой — иначе плитка, начинающаяся в строках папки и
                 // заканчивающаяся ниже, осталась бы на месте под панелью.
                 let bandEndRow = explicitPlacements.flatMap {
-                    TileLayoutEngine.folderBandEndRow(
+                    TesseraTileLayoutEngine.folderBandEndRow(
                         forFolder: panelID,
                         in: $0,
                         columns: key.columns
                     )
-                } ?? TileLayoutEngine.folderBandEndRow(for: folderSlot, in: slots)
+                } ?? TesseraTileLayoutEngine.folderBandEndRow(for: folderSlot, in: slots)
 
                 // D17: панель — полноширинная строка сразу после полосы папки;
                 // верхний край — начало следующей строки сетки.
@@ -946,7 +946,7 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
                     // ниже полосы остаются на своих ячейках (дыры между ними и
                     // над ними сохраняются) и целиком сдвигаются вниз на высоту
                     // панели и зазор.
-                    let shift = TileLayoutEngine.rowsBelowOffset(
+                    let shift = TesseraTileLayoutEngine.rowsBelowOffset(
                         placedSlots: slots,
                         expandedFolderID: panelID,
                         panelHeight: panelHeight,
@@ -960,13 +960,13 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
                     // Всё, что начинается ниже полосы, упаковывается заново от
                     // левого края и встаёт сразу под панелью. Юнитная сетка
                     // сохраняется, начало координат — нижняя граница панели и зазор.
-                    let belowItems: [(id: AnyHashable, size: TileSize)] = belowIndices.map { index in
+                    let belowItems: [(id: AnyHashable, size: TesseraTileSize)] = belowIndices.map { index in
                         (
                             id: key.items[index].id,
                             size: normalizedSize(key.items[index].size, columns: key.columns)
                         )
                     }
-                    let belowSlots = TileLayoutEngine.pack(
+                    let belowSlots = TesseraTileLayoutEngine.pack(
                         items: belowItems,
                         columns: key.columns,
                         unit: unit
@@ -1048,10 +1048,10 @@ final class TesseraTileCollectionViewLayout: UICollectionViewLayout {
     /// D15 рассчитан минимум на 4 колонки; при меньшем числе колонок широкая плитка
     /// не помещается. Вместо пропуска (который сдвинул бы соответствие индексов)
     /// берём ближайший меньший размер: 2×2 при двух-трёх колонках и 1×1 при
-    /// одной. Правило живёт в `TileLayoutEngine.fittingSize(_:columns:)`, чтобы
+    /// одной. Правило живёт в `TesseraTileLayoutEngine.fittingSize(_:columns:)`, чтобы
     /// раскладка и чистые функции панели (E7.1) считали одинаково.
-    private func normalizedSize(_ size: TileSize, columns: Int) -> TileSize {
-        TileLayoutEngine.fittingSize(size, columns: columns)
+    private func normalizedSize(_ size: TesseraTileSize, columns: Int) -> TesseraTileSize {
+        TesseraTileLayoutEngine.fittingSize(size, columns: columns)
     }
 
     /// Санитизирует внешние поля: отрицательные и нечисловые — 0.

@@ -32,17 +32,17 @@ import TesseraCore
 @testable import TesseraPanorama
 
 /// Шпион делегата: показы секций и прогресс (с состоянием окна секций).
-private final class PanoramaSpy: PanoramaDelegate {
+private final class PanoramaSpy: TesseraPanoramaDelegate {
     var shown: [Int] = []
     var progress: [CGFloat] = []
     /// Загруженные секции в момент каждого `didChangeProgress`.
     var loadedAtProgress: [Set<Int>] = []
 
-    func panorama(_ panorama: PanoramaViewController, didShowSectionAt index: Int) {
+    func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int) {
         shown.append(index)
     }
 
-    func panorama(_ panorama: PanoramaViewController, didChangeProgress t: CGFloat) {
+    func panorama(_ panorama: TesseraPanoramaViewController, didChangeProgress t: CGFloat) {
         progress.append(t)
         loadedAtProgress.append(Set(panorama.loadedSections.keys))
     }
@@ -70,18 +70,18 @@ final class PanoramaControllerReviewTests: XCTestCase {
         count: Int,
         ids: [Int]? = nil,
         onMake: ((Int) -> Void)? = nil
-    ) -> [PanoramaSection] {
+    ) -> [TesseraPanoramaSection] {
         (ids ?? Array(0..<count)).map { id in
-            PanoramaSection(id: id, title: "Section \(id)") {
+            TesseraPanoramaSection(id: id, title: "Section \(id)") {
                 onMake?(id)
                 return UIViewController()
             }
         }
     }
 
-    private func makeSwiftUISections(count: Int, value: Int) -> [PanoramaSection] {
+    private func makeSwiftUISections(count: Int, value: Int) -> [TesseraPanoramaSection] {
         (0..<count).map { id in
-            PanoramaSection(
+            TesseraPanoramaSection(
                 id: id,
                 title: "Section \(id)",
                 content: TesseraSwiftUIContentProvider { ProbeView(value: value) }
@@ -90,25 +90,25 @@ final class PanoramaControllerReviewTests: XCTestCase {
     }
 
     private func makePanorama(
-        sections: [PanoramaSection],
-        style: PanoramaStyle = PanoramaStyle(),
+        sections: [TesseraPanoramaSection],
+        style: TesseraPanoramaStyle = TesseraPanoramaStyle(),
         size: CGSize? = nil
-    ) -> PanoramaViewController {
-        let panorama = PanoramaViewController(sections: sections, style: style)
+    ) -> TesseraPanoramaViewController {
+        let panorama = TesseraPanoramaViewController(sections: sections, style: style)
         panorama.loadViewIfNeeded()
         panorama.view.frame = CGRect(origin: .zero, size: size ?? screen)
         panorama.view.layoutIfNeeded()
         return panorama
     }
 
-    private func makePanorama(count: Int = 4) -> PanoramaViewController {
+    private func makePanorama(count: Int = 4) -> TesseraPanoramaViewController {
         makePanorama(sections: makeSections(count: count))
     }
 
     /// Доводит программную анимацию offset'а до конца, если UIKit не завершил
     /// её синхронно.
     private func finishAnimationIfNeeded(
-        _ panorama: PanoramaViewController,
+        _ panorama: TesseraPanoramaViewController,
         to targetX: CGFloat,
         spy: PanoramaSpy,
         expectedShown: Int
@@ -217,14 +217,14 @@ final class PanoramaControllerReviewTests: XCTestCase {
         let panorama = makePanorama()
         XCTAssertEqual(panorama.scrollView.contentInsetAdjustmentBehavior, .never)
 
-        var style = PanoramaStyle()
+        var style = TesseraPanoramaStyle()
         style.contentInsetAdjustmentBehavior = .always
         panorama.style = style
         XCTAssertEqual(panorama.scrollView.contentInsetAdjustmentBehavior, .always)
 
         let configured = makePanorama(
             sections: makeSections(count: 2),
-            style: PanoramaStyle(contentInsetAdjustmentBehavior: .scrollableAxes)
+            style: TesseraPanoramaStyle(contentInsetAdjustmentBehavior: .scrollableAxes)
         )
         XCTAssertEqual(configured.scrollView.contentInsetAdjustmentBehavior, .scrollableAxes)
     }
@@ -289,7 +289,7 @@ final class PanoramaControllerReviewTests: XCTestCase {
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
         parent.view.frame = CGRect(origin: .zero, size: screen)
-        let panorama = PanoramaViewController(sections: makeSections(count: 4))
+        let panorama = TesseraPanoramaViewController(sections: makeSections(count: 4))
         parent.addChild(panorama)
         parent.view.addSubview(panorama.view)
         panorama.didMove(toParent: parent)
@@ -319,7 +319,7 @@ final class PanoramaControllerReviewTests: XCTestCase {
         let scrollView = panorama.scrollView
         XCTAssertEqual(scrollView.contentOffset.x, 2 * itemWidth, accuracy: 0.001)
 
-        panorama.style = PanoramaStyle(peek: 16)
+        panorama.style = TesseraPanoramaStyle(peek: 16)
         panorama.view.layoutIfNeeded()
 
         XCTAssertEqual(scrollView.itemWidth, 374, accuracy: 0.001)
@@ -404,21 +404,21 @@ final class PanoramaControllerReviewTests: XCTestCase {
         let image = UIImage()
         let panorama = makePanorama(
             sections: makeSections(count: 3),
-            style: PanoramaStyle(backgroundBehavior: .image(image))
+            style: TesseraPanoramaStyle(backgroundBehavior: .image(image))
         )
         XCTAssertFalse(panorama.view.layer.needsLayout())
 
-        panorama.style = PanoramaStyle(backgroundBehavior: .image(image))
+        panorama.style = TesseraPanoramaStyle(backgroundBehavior: .image(image))
         XCTAssertFalse(panorama.view.layer.needsLayout(), "тот же стиль переприменён")
 
-        panorama.style = PanoramaStyle(peek: 20, backgroundBehavior: .image(image))
+        panorama.style = TesseraPanoramaStyle(peek: 20, backgroundBehavior: .image(image))
         XCTAssertTrue(panorama.view.layer.needsLayout(), "новый стиль обязан примениться")
     }
 
     /// Сравнение стиля учитывает каждое поле.
     func testStyleEquivalenceCoversAllFields() {
-        let base = PanoramaStyle()
-        XCTAssertTrue(base.isEquivalent(to: PanoramaStyle()))
+        let base = TesseraPanoramaStyle()
+        XCTAssertTrue(base.isEquivalent(to: TesseraPanoramaStyle()))
 
         var changed = base
         changed.parallaxFactor = 0.42
@@ -439,8 +439,8 @@ final class PanoramaControllerReviewTests: XCTestCase {
         changed.backgroundBehavior = .image(nil)
         XCTAssertFalse(base.isEquivalent(to: changed))
         XCTAssertFalse(
-            PanoramaStyle(backgroundBehavior: .image(UIImage()))
-                .isEquivalent(to: PanoramaStyle(backgroundBehavior: .image(UIImage()))),
+            TesseraPanoramaStyle(backgroundBehavior: .image(UIImage()))
+                .isEquivalent(to: TesseraPanoramaStyle(backgroundBehavior: .image(UIImage()))),
             "картинки сравниваются по идентичности"
         )
     }
@@ -497,22 +497,22 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertEqual((panorama.loadedSections[3] as? UIHostingController<ProbeView>)?.rootView.value, 2)
     }
 
-    /// Сквозной сценарий фасада: перерисовка `PanoramaView` с теми же
+    /// Сквозной сценарий фасада: перерисовка `TesseraPanoramaView` с теми же
     /// `id`/заголовками доносит новый контент до секции.
     func testPanoramaViewPropagatesContentForSameIdentifiers() throws {
         let window = UIWindow(frame: CGRect(origin: .zero, size: screen))
-        let host = UIHostingController(rootView: PanoramaView(sections: makeSwiftUISections(count: 3, value: 1)))
+        let host = UIHostingController(rootView: TesseraPanoramaView(sections: makeSwiftUISections(count: 3, value: 1)))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
         host.view.layoutIfNeeded()
 
-        let panorama = try XCTUnwrap(Self.findPanorama(in: host), "PanoramaViewController не найден")
+        let panorama = try XCTUnwrap(Self.findPanorama(in: host), "TesseraPanoramaViewController не найден")
         panorama.view.layoutIfNeeded()
         let before = try XCTUnwrap(panorama.loadedSections[0] as? UIHostingController<ProbeView>)
         XCTAssertEqual(before.rootView.value, 1)
 
-        host.rootView = PanoramaView(sections: makeSwiftUISections(count: 3, value: 7))
+        host.rootView = TesseraPanoramaView(sections: makeSwiftUISections(count: 3, value: 7))
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
 
@@ -521,8 +521,8 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertEqual(after.rootView.value, 7, "SwiftUI-контент секции с тем же id не обновился")
     }
 
-    private static func findPanorama(in controller: UIViewController) -> PanoramaViewController? {
-        if let panorama = controller as? PanoramaViewController { return panorama }
+    private static func findPanorama(in controller: UIViewController) -> TesseraPanoramaViewController? {
+        if let panorama = controller as? TesseraPanoramaViewController { return panorama }
         for child in controller.children {
             if let found = findPanorama(in: child) { return found }
         }

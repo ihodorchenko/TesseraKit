@@ -16,7 +16,7 @@
 //  элементы на других ячейках), а drop кладёт элемент туда, где его показало
 //  превью.
 //
-//  Проверяется на реальных ячейках и настоящем `TileStore` в окне
+//  Проверяется на реальных ячейках и настоящем `TesseraTileStore` в окне
 //  (`TesseraTestDragHost`), без `sleep`.
 //
 
@@ -34,16 +34,16 @@ final class DropSlotTests: XCTestCase {
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
         /// Вынос/перенос: ярлык, папка-цель и фактическая ячейка.
-        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, cell: TileGridPlacement?)] = []
+        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, cell: TesseraTileGridPlacement?)] = []
 
         /// Перестановка по сетке: ярлык и фактическая ячейка.
-        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
+        var moves: [(id: AnyHashable, cell: TesseraTileGridPlacement)] = []
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
             toFolder folderID: AnyHashable?,
-            atCell cell: TileGridPlacement?
+            atCell cell: TesseraTileGridPlacement?
         ) {
             folderMoves.append((tileID, folderID, cell))
         }
@@ -51,7 +51,7 @@ final class DropSlotTests: XCTestCase {
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toCell cell: TileGridPlacement
+            toCell cell: TesseraTileGridPlacement
         ) {
             moves.append((tileID, cell))
         }
@@ -63,13 +63,13 @@ final class DropSlotTests: XCTestCase {
     /// Раскладка — компактная, как её давали операции по порядку до E14
     /// (`TesseraTestDragHost(packed:)`, E14.6); папка — small.
     private func makeHost(
-        plain: [(String, TileSize)],
+        plain: [(String, TesseraTileSize)],
         folderTiles: [String],
         folderAt: Int,
         columns: Int = 4
     ) throws -> TesseraTestDragHost {
         var entries: [TesseraTestPackedEntry] = plain.map { .tile($0.0, $0.1) }
-        entries.insert(.folder("F", .small, folderTiles.map { ($0, TileSize.small) }), at: min(folderAt, entries.count))
+        entries.insert(.folder("F", .small, folderTiles.map { ($0, TesseraTileSize.small) }), at: min(folderAt, entries.count))
         return try TesseraTestDragHost(packed: entries, columns: columns)
     }
 
@@ -144,7 +144,7 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1))
         XCTAssertEqual(
             host.coordinator.dragSession?.hover,
-            .cell(TileGridPlacement(row: 1, column: 3)),
+            .cell(TesseraTileGridPlacement(row: 1, column: 3)),
             "Цель — клетка под пальцем"
         )
         XCTAssertEqual(
@@ -161,10 +161,10 @@ final class DropSlotTests: XCTestCase {
         settle(host, "f3")
 
         XCTAssertEqual(host.storeIDs, ["a", folderID, "b", "c", "d", "f3"] as [AnyHashable])
-        XCTAssertEqual(host.store.placement(of: "f3"), TileGridPlacement(row: 1, column: 3))
+        XCTAssertEqual(host.store.placement(of: "f3"), TesseraTileGridPlacement(row: 1, column: 3))
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["f1", "f2"] as [AnyHashable])
         XCTAssertEqual(recorder.folderMoves.count, 1)
-        XCTAssertEqual(recorder.folderMoves.first?.cell, TileGridPlacement(row: 1, column: 3))
+        XCTAssertEqual(recorder.folderMoves.first?.cell, TesseraTileGridPlacement(row: 1, column: 3))
         let landed = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
         XCTAssertEqual(landed, previewFrame, "Ярлык лёг ровно туда, где показало превью")
     }
@@ -190,15 +190,15 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.updateDrag(to: gap)
         XCTAssertEqual(
             host.coordinator.dragSession?.hover,
-            .cell(TileGridPlacement(row: 1, column: 0)),
+            .cell(TesseraTileGridPlacement(row: 1, column: 0)),
             "Зазор — край клетки «d»: ячейка «d»"
         )
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f3")
         XCTAssertEqual(host.storeIDs, ["a", folderID, "b", "c", "f3", "d"] as [AnyHashable])
-        XCTAssertEqual(host.store.placement(of: "f3"), TileGridPlacement(row: 1, column: 0))
-        XCTAssertEqual(host.store.placement(of: "d"), TileGridPlacement(row: 2, column: 0), "«d» вытолкнут вниз")
+        XCTAssertEqual(host.store.placement(of: "f3"), TesseraTileGridPlacement(row: 1, column: 0))
+        XCTAssertEqual(host.store.placement(of: "d"), TesseraTileGridPlacement(row: 2, column: 0), "«d» вытолкнут вниз")
     }
 
     /// Палец левее/выше первой клетки (зона полей сверху): ярлык встаёт на первую
@@ -217,14 +217,14 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.updateDrag(to: CGPoint(x: grid.origin.x + 4, y: grid.origin.y - 30))
         XCTAssertEqual(
             host.coordinator.dragSession?.hover,
-            .cell(TileGridPlacement(row: 0, column: 0)),
+            .cell(TesseraTileGridPlacement(row: 0, column: 0)),
             "Над полями строка зажимается до 0: край клетки «a»"
         )
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f3")
-        XCTAssertEqual(host.store.placement(of: "f3"), TileGridPlacement(row: 0, column: 0))
-        XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 0), "«a» вытолкнут вниз")
+        XCTAssertEqual(host.store.placement(of: "f3"), TesseraTileGridPlacement(row: 0, column: 0))
+        XCTAssertEqual(host.store.placement(of: "a"), TesseraTileGridPlacement(row: 1, column: 0), "«a» вытолкнут вниз")
         XCTAssertEqual(
             host.storeIDs,
             ["f3", folderID, "b", "c", "a", "d"] as [AnyHashable],
@@ -250,7 +250,7 @@ final class DropSlotTests: XCTestCase {
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f1")
-        XCTAssertEqual(host.store.placement(of: "f1"), TileGridPlacement(row: 2, column: 0), "Новая строка после ряда «d»")
+        XCTAssertEqual(host.store.placement(of: "f1"), TesseraTileGridPlacement(row: 2, column: 0), "Новая строка после ряда «d»")
         XCTAssertEqual(host.storeIDs.last, AnyHashable("f1"))
         XCTAssertEqual(host.storeIDs.first, AnyHashable("a"))
         XCTAssertTrue(host.storeIDs.contains(folderID))
@@ -280,7 +280,7 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.updateDrag(to: cell.point(column: 3, row: 1, fx: 0.1))
         XCTAssertEqual(
             host.coordinator.dragSession?.hover,
-            .cell(TileGridPlacement(row: 1, column: 3)),
+            .cell(TesseraTileGridPlacement(row: 1, column: 3)),
             "Клетка под пальцем"
         )
         let preview = try XCTUnwrap(host.host.grid.frame(forItemID: "f2"))
@@ -292,7 +292,7 @@ final class DropSlotTests: XCTestCase {
         // D45: в папке F из двух ярлыков остался «f1» — папка распущена, он на её месте.
         XCTAssertEqual(host.storeIDs, ["m", "f1", "s", "f2", "w"] as [AnyHashable])
         XCTAssertEqual(host.store.placement(of: "f1"), folderCell, "f1 заняла ячейку папки")
-        XCTAssertEqual(host.store.placement(of: "f2"), TileGridPlacement(row: 1, column: 3))
+        XCTAssertEqual(host.store.placement(of: "f2"), TesseraTileGridPlacement(row: 1, column: 3))
         XCTAssertEqual(host.host.grid.frame(forItemID: "f2"), preview)
     }
 
@@ -317,8 +317,8 @@ final class DropSlotTests: XCTestCase {
 
         XCTAssertEqual(host.storeIDs, ["a", "f2", "b", "c", "d", "f1"] as [AnyHashable], "Папка распалась")
         XCTAssertEqual(host.store.placement(of: "f2"), folderCell, "f2 — на месте папки")
-        XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 2), "Остальные без репака")
-        XCTAssertEqual(recorder.folderMoves.first?.cell, TileGridPlacement(row: 1, column: 3))
+        XCTAssertEqual(host.store.placement(of: "b"), TesseraTileGridPlacement(row: 0, column: 2), "Остальные без репака")
+        XCTAssertEqual(recorder.folderMoves.first?.cell, TesseraTileGridPlacement(row: 1, column: 3))
     }
 
     // MARK: - Drag по сетке (та же ветка)
@@ -336,7 +336,7 @@ final class DropSlotTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 1, column: 3)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TesseraTileGridPlacement(row: 1, column: 3)))
         let previewFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "a"))
         XCTAssertEqual(previewFrame.minX, grid.point(column: 3, row: 1, fx: 0).x, accuracy: 0.5)
         XCTAssertEqual(previewFrame.minY, grid.point(column: 3, row: 1, fy: 0).y, accuracy: 0.5)
@@ -344,9 +344,9 @@ final class DropSlotTests: XCTestCase {
         host.coordinator.finishDrag(commit: true)
         settle(host, "a")
         XCTAssertEqual(host.storeIDs, ["b", "c", "d", "e", "f", "a"] as [AnyHashable])
-        XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 3))
-        XCTAssertEqual(host.store.placement(of: "b"), TileGridPlacement(row: 0, column: 1), "Дыра на месте «a» осталась")
-        XCTAssertEqual(recorder.moves.first?.cell, TileGridPlacement(row: 1, column: 3))
+        XCTAssertEqual(host.store.placement(of: "a"), TesseraTileGridPlacement(row: 1, column: 3))
+        XCTAssertEqual(host.store.placement(of: "b"), TesseraTileGridPlacement(row: 0, column: 1), "Дыра на месте «a» осталась")
+        XCTAssertEqual(recorder.moves.first?.cell, TesseraTileGridPlacement(row: 1, column: 3))
     }
 
     /// Над собственной базовой ячейкой цели нет (`.none`): превью — база, а drop
@@ -378,7 +378,7 @@ final class DropSlotTests: XCTestCase {
         )
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: try XCTUnwrap(host.point("c", fx: 0.1, fy: 0.5)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 0, column: 2)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TesseraTileGridPlacement(row: 0, column: 2)))
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitForDragCleanup("a"))
     }
@@ -412,7 +412,7 @@ final class DropSlotTests: XCTestCase {
         )
 
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 1, column: 3)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TesseraTileGridPlacement(row: 1, column: 3)))
         let moved = try XCTUnwrap(host.host.grid.frame(forItemID: "f3"))
         XCTAssertNotEqual(moved, liftFrame, "Пустышка поехала за пальцем")
         host.coordinator.updateDrag(to: grid.point(column: 3, row: 1, fx: 0.3, fy: 0.7))
@@ -441,11 +441,11 @@ final class DropSlotTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: CGPoint(x: f.midX - pitch, y: f.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TileGridPlacement(row: 1, column: 2)))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(TesseraTileGridPlacement(row: 1, column: 2)))
         host.coordinator.finishDrag(commit: true)
         settle(host, "a")
         XCTAssertEqual(host.storeIDs, ["b", "c", "d", "e", "f", "a"] as [AnyHashable])
-        XCTAssertEqual(host.store.placement(of: "a"), TileGridPlacement(row: 1, column: 2))
+        XCTAssertEqual(host.store.placement(of: "a"), TesseraTileGridPlacement(row: 1, column: 2))
     }
 }
 

@@ -57,8 +57,8 @@ final class StartWallpaperParallaxTests: XCTestCase {
         let screen = TesseraStartScreenViewController()
         screen.wallpaperParallaxFactor = factor
         screen.wallpaperImage = UIImage()
-        let tiles = (0..<40).map { TileGridItem.tile(tesseraTestTile("t\($0)")) }
-        screen.reload(grid: TileGridSnapshot(items: tiles, unpinned: []))
+        let tiles = (0..<40).map { TesseraTileGridItem.tile(tesseraTestTile("t\($0)")) }
+        screen.reload(grid: TesseraTileGridSnapshot(items: tiles, unpinned: []))
 
         screen.loadViewIfNeeded()
         screen.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)

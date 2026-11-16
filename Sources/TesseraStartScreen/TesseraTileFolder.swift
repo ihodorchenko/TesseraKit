@@ -3,7 +3,7 @@
 // (папка — элемент сетки) и §14 «Уточнения MVP» п. 1 и 3
 // (D12: ярлыки-действия; D14: операции с папками — только через функцию
 // одобрения хоста, в docs/STATE.md). Мутации папок (создание, добавление
-// ярлыка, перемещение между папками) выполняет `TileStore`, а не эта модель.
+// ярлыка, перемещение между папками) выполняет `TesseraTileStore`, а не эта модель.
 
 #if canImport(UIKit)
 import UIKit
@@ -16,22 +16,22 @@ import UIKit
 /// `action` и нет поля `type` — только идентичность, подпись, иконка-превью,
 /// состав и размер плитки на сетке.
 ///
-/// Размер по умолчанию — ``TileSize/medium`` (2×2 юнита): папка занимает
+/// Размер по умолчанию — ``TesseraTileSize/medium`` (2×2 юнита): папка занимает
 /// стандартную среднюю плитку. Модель допускает и другие размеры из D15;
-/// правило, какие размеры разрешены папке, задаёт `TileStore`/хост.
+/// правило, какие размеры разрешены папке, задаёт `TesseraTileStore`/хост.
 ///
 /// - Note: Папка не бывает из 0 или 1 ярлыка (D45): когда в ней остаётся один
-///   ярлык, `TileStore` распускает её, и ярлык встаёт на ячейку папки со своим
-///   размером. Исключение — переходная папка `TileStore.createFolder(withTile:title:columns:)`
+///   ярлык, `TesseraTileStore` распускает её, и ярлык встаёт на ячейку папки со своим
+///   размером. Исключение — переходная папка `TesseraTileStore.createFolder(withTile:title:columns:)`
 ///   до `addToFolder`.
 ///
 /// - Note: Вложенные папки не поддерживаются: `tiles` содержит только ярлыки
-///   (``TileDescriptor``). Создание папки, добавление ярлыка и перемещение
+///   (``TesseraTileDescriptor``). Создание папки, добавление ярлыка и перемещение
 ///   между папками проходят через функцию одобрения хоста (D14).
-public struct TileFolder {
+public struct TesseraTileFolder {
     /// Стабильный идентификатор папки; уникален в пределах рабочего стола.
     ///
-    /// По нему `TileStore` адресует папку при добавлении ярлыка и перемещении
+    /// По нему `TesseraTileStore` адресует папку при добавлении ярлыка и перемещении
     /// между папками (D14).
     public let id: AnyHashable
 
@@ -43,10 +43,10 @@ public struct TileFolder {
     public var icon: UIImage?
 
     /// Ярлыки внутри папки в порядке отображения.
-    public var tiles: [TileDescriptor]
+    public var tiles: [TesseraTileDescriptor]
 
     /// Размер папки как элемента сетки. По умолчанию `.medium` (2×2 юнита).
-    public var size: TileSize
+    public var size: TesseraTileSize
 
     /// Создаёт папку рабочего стола.
     ///
@@ -60,8 +60,8 @@ public struct TileFolder {
         id: AnyHashable,
         title: String,
         icon: UIImage? = nil,
-        tiles: [TileDescriptor] = [],
-        size: TileSize = .medium
+        tiles: [TesseraTileDescriptor] = [],
+        size: TesseraTileSize = .medium
     ) {
         self.id = id
         self.title = title
@@ -73,7 +73,7 @@ public struct TileFolder {
 
 // MARK: - Бэйдж папки (D44, E15.7)
 
-extension TileFolder {
+extension TesseraTileFolder {
 
     /// Бэйдж плитки папки — сумма числовых бэйджей вложенных ярлыков (D44,
     /// E15.7).
@@ -89,12 +89,12 @@ extension TileFolder {
     ///
     /// Считается один раз при применении снимка к ячейке, а не по кадрам
     /// (контракт 5 AGENTS). Сумма насыщается на `Int.max`, а не переполняется.
-    /// Невидимых членов (вне каталога) в ``tiles`` нет: `TileStore` чистит папку
+    /// Невидимых членов (вне каталога) в ``tiles`` нет: `TesseraTileStore` чистит папку
     /// по каталогу (D45), поэтому на них хелпер не смотрит.
     ///
     /// - Parameter members: Ярлыки папки.
     /// - Returns: Бэйдж плитки папки.
-    static func aggregateBadge(of members: [TileDescriptor]) -> TileBadge {
+    static func aggregateBadge(of members: [TesseraTileDescriptor]) -> TesseraTileBadge {
         var sum = 0
         var hasDot = false
         for member in members {
@@ -113,14 +113,14 @@ extension TileFolder {
     }
 
     /// Бэйдж плитки этой папки (``aggregateBadge(of:)`` по ``tiles``).
-    var aggregateBadge: TileBadge {
-        TileFolder.aggregateBadge(of: tiles)
+    var aggregateBadge: TesseraTileBadge {
+        TesseraTileFolder.aggregateBadge(of: tiles)
     }
 }
 
 // MARK: - Правила названия (D35, E15.5)
 
-extension TileFolder {
+extension TesseraTileFolder {
 
     /// Предельная длина названия папки в символах (E15.5, D35).
     ///
@@ -131,14 +131,14 @@ extension TileFolder {
     /// многоточием. Считаются символы (`Character`), а не байты и не UTF-16.
     public static let maximumTitleLength = 64
 
-    /// Приводит введённое название к виду, в котором его хранит `TileStore`
+    /// Приводит введённое название к виду, в котором его хранит `TesseraTileStore`
     /// (E15.5).
     ///
     /// Переводы строк внутри названия заменяются пробелами (название — одна
     /// строка), пробелы и переводы строк по краям отбрасываются, строка
     /// обрезается до ``maximumTitleLength`` символов, после обрезки края
     /// чистятся ещё раз. Пустой результат означает «вернуть название по
-    /// умолчанию» — подстановку делает вызывающий (`TileStore` и редактор: у
+    /// умолчанию» — подстановку делает вызывающий (`TesseraTileStore` и редактор: у
     /// них разные источники умолчания).
     ///
     /// - Parameter raw: Введённая пользователем строка.

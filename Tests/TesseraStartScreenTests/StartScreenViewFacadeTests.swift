@@ -5,7 +5,7 @@
 //  Регрессионные тесты SwiftUI-фасада рабочего стола по ревью (E10.8, E9.8б;
 //  трек T1 в docs/PLAN.md).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §2 «Архитектура»
-//  (StartScreenView → StartScreenViewController, StartScreenDelegate), §4
+//  (TesseraStartScreenView → StartScreenViewController, TesseraStartScreenDelegate), §4
 //  «Live-плитки», §7 «Страница слева: хук» и §14 (D12: тап — событие, действие
 //  выполняет хост).
 //
@@ -26,14 +26,14 @@ final class StartScreenViewFacadeTests: XCTestCase {
 
     // MARK: - Шпионы
 
-    private final class DelegateSpy: StartScreenDelegate {
-        private(set) var tappedShortcuts: [TileDescriptor] = []
+    private final class DelegateSpy: TesseraStartScreenDelegate {
+        private(set) var tappedShortcuts: [TesseraTileDescriptor] = []
         private(set) var hookVisibility: [Bool] = []
         private(set) var pages: [TesseraStartScreenPage] = []
 
         func startScreen(
             _ screen: TesseraStartScreenViewController,
-            didTapShortcut shortcut: TileDescriptor
+            didTapShortcut shortcut: TesseraTileDescriptor
         ) {
             tappedShortcuts.append(shortcut)
         }
@@ -71,7 +71,7 @@ final class StartScreenViewFacadeTests: XCTestCase {
         super.tearDown()
     }
 
-    private func host(_ view: StartScreenView) -> UIHostingController<StartScreenView> {
+    private func host(_ view: TesseraStartScreenView) -> UIHostingController<TesseraStartScreenView> {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let hosting = UIHostingController(rootView: view)
         window.rootViewController = hosting
@@ -81,7 +81,7 @@ final class StartScreenViewFacadeTests: XCTestCase {
         return hosting
     }
 
-    private func render(_ hosting: UIHostingController<StartScreenView>) {
+    private func render(_ hosting: UIHostingController<TesseraStartScreenView>) {
         hosting.view.setNeedsLayout()
         hosting.view.layoutIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
@@ -104,20 +104,20 @@ final class StartScreenViewFacadeTests: XCTestCase {
         return try XCTUnwrap(pager.view.subviews.compactMap { $0 as? UIScrollView }.first)
     }
 
-    private func folderSnapshot(innerBadge: TileBadge, innerTitle: String) -> TileGridSnapshot {
-        let inner = TileDescriptor(id: "inner", title: innerTitle, action: {}, badge: innerBadge)
-        let folder = TileFolder(id: "folder", title: "Folder", tiles: [inner])
-        return TileGridSnapshot(items: [.folder(folder)], unpinned: [])
+    private func folderSnapshot(innerBadge: TesseraTileBadge, innerTitle: String) -> TesseraTileGridSnapshot {
+        let inner = TesseraTileDescriptor(id: "inner", title: innerTitle, action: {}, badge: innerBadge)
+        let folder = TesseraTileFolder(id: "folder", title: "Folder", tiles: [inner])
+        return TesseraTileGridSnapshot(items: [.folder(folder)], unpinned: [])
     }
 
     // MARK: - Сигнатура снимка: содержимое папок (E9.8б)
 
     /// Бейдж и подпись ярлыка внутри папки доходят до сетки.
     func testFolderContentBadgeAndTitleChangesReachGrid() throws {
-        let hosting = host(StartScreenView(snapshot: folderSnapshot(innerBadge: .none, innerTitle: "Mail")))
+        let hosting = host(TesseraStartScreenView(snapshot: folderSnapshot(innerBadge: .none, innerTitle: "Mail")))
         let screen = try screen(in: hosting)
 
-        hosting.rootView = StartScreenView(snapshot: folderSnapshot(innerBadge: .count(3), innerTitle: "Inbox"))
+        hosting.rootView = TesseraStartScreenView(snapshot: folderSnapshot(innerBadge: .count(3), innerTitle: "Inbox"))
         render(hosting)
 
         guard case .folder(let folder)? = screen.gridView.items.first else {
@@ -133,38 +133,38 @@ final class StartScreenViewFacadeTests: XCTestCase {
     /// осталась дыра) доходит до сетки; снимок без таблицы показанную таблицу не
     /// затирает (хост, который не знает про ячейки).
     func testPlacementTableChangeReachesGridAndTablelessSnapshotKeepsIt() throws {
-        func snapshot(secondColumn: Int?) -> TileGridSnapshot {
-            let items: [TileGridItem] = ["a", "b"].map {
-                .tile(TileDescriptor(id: $0, title: $0, action: {}, size: .small))
+        func snapshot(secondColumn: Int?) -> TesseraTileGridSnapshot {
+            let items: [TesseraTileGridItem] = ["a", "b"].map {
+                .tile(TesseraTileDescriptor(id: $0, title: $0, action: {}, size: .small))
             }
-            guard let secondColumn else { return TileGridSnapshot(items: items, unpinned: []) }
-            let table = TileGridPlacementTable(
+            guard let secondColumn else { return TesseraTileGridSnapshot(items: items, unpinned: []) }
+            let table = TesseraTileGridPlacementTable(
                 cells: [
-                    "a": TileGridPlacement(row: 0, column: 0),
-                    "b": TileGridPlacement(row: 0, column: secondColumn),
+                    "a": TesseraTileGridPlacement(row: 0, column: 0),
+                    "b": TesseraTileGridPlacement(row: 0, column: secondColumn),
                 ],
-                columns: TileLayoutEngine.defaultColumns
+                columns: TesseraTileLayoutEngine.defaultColumns
             )
-            return TileGridSnapshot(items: items, unpinned: [], placementTable: table)
+            return TesseraTileGridSnapshot(items: items, unpinned: [], placementTable: table)
         }
 
-        let hosting = host(StartScreenView(snapshot: snapshot(secondColumn: 1)))
+        let hosting = host(TesseraStartScreenView(snapshot: snapshot(secondColumn: 1)))
         let screen = try screen(in: hosting)
-        XCTAssertEqual(screen.gridView.snapshot?.placementTable?.cells["b"], TileGridPlacement(row: 0, column: 1))
+        XCTAssertEqual(screen.gridView.snapshot?.placementTable?.cells["b"], TesseraTileGridPlacement(row: 0, column: 1))
 
-        hosting.rootView = StartScreenView(snapshot: snapshot(secondColumn: 3))
+        hosting.rootView = TesseraStartScreenView(snapshot: snapshot(secondColumn: 3))
         render(hosting)
         XCTAssertEqual(
             screen.gridView.snapshot?.placementTable?.cells["b"],
-            TileGridPlacement(row: 0, column: 3),
+            TesseraTileGridPlacement(row: 0, column: 3),
             "Другие ячейки при тех же элементах применены"
         )
 
-        hosting.rootView = StartScreenView(snapshot: snapshot(secondColumn: nil))
+        hosting.rootView = TesseraStartScreenView(snapshot: snapshot(secondColumn: nil))
         render(hosting)
         XCTAssertEqual(
             screen.gridView.snapshot?.placementTable?.cells["b"],
-            TileGridPlacement(row: 0, column: 3),
+            TesseraTileGridPlacement(row: 0, column: 3),
             "Снимок без таблицы показанные ячейки не затирает"
         )
     }
@@ -174,13 +174,13 @@ final class StartScreenViewFacadeTests: XCTestCase {
     /// Появление `liveContent` у ярлыка с тем же `id` доходит до сетки —
     /// плитка становится живой.
     func testLiveContentChangeReachesGrid() throws {
-        let plain = TileDescriptor(id: "t", title: "T", action: {})
-        let hosting = host(StartScreenView(snapshot: TileGridSnapshot(items: [.tile(plain)], unpinned: [])))
+        let plain = TesseraTileDescriptor(id: "t", title: "T", action: {})
+        let hosting = host(TesseraStartScreenView(snapshot: TesseraTileGridSnapshot(items: [.tile(plain)], unpinned: [])))
         let screen = try screen(in: hosting)
 
         let provider = StaticProvider()
-        let live = TileDescriptor(id: "t", title: "T", action: {}, liveContent: provider)
-        hosting.rootView = StartScreenView(snapshot: TileGridSnapshot(items: [.tile(live)], unpinned: []))
+        let live = TesseraTileDescriptor(id: "t", title: "T", action: {}, liveContent: provider)
+        hosting.rootView = TesseraStartScreenView(snapshot: TesseraTileGridSnapshot(items: [.tile(live)], unpinned: []))
         render(hosting)
 
         guard case .tile(let shortcut)? = screen.gridView.items.first else {
@@ -194,16 +194,16 @@ final class StartScreenViewFacadeTests: XCTestCase {
     func testTapDeliversShortcutWithLatestAction() throws {
         let delegate = DelegateSpy()
         var calls: [String] = []
-        let old = TileDescriptor(id: "t", title: "T", action: { calls.append("old") })
-        let hosting = host(StartScreenView(
-            snapshot: TileGridSnapshot(items: [.tile(old)], unpinned: []),
+        let old = TesseraTileDescriptor(id: "t", title: "T", action: { calls.append("old") })
+        let hosting = host(TesseraStartScreenView(
+            snapshot: TesseraTileGridSnapshot(items: [.tile(old)], unpinned: []),
             delegate: delegate
         ))
         let screen = try screen(in: hosting)
 
-        let fresh = TileDescriptor(id: "t", title: "T", action: { calls.append("new") })
-        hosting.rootView = StartScreenView(
-            snapshot: TileGridSnapshot(items: [.tile(fresh)], unpinned: []),
+        let fresh = TesseraTileDescriptor(id: "t", title: "T", action: { calls.append("new") })
+        hosting.rootView = TesseraStartScreenView(
+            snapshot: TesseraTileGridSnapshot(items: [.tile(fresh)], unpinned: []),
             delegate: delegate
         )
         render(hosting)
@@ -222,10 +222,10 @@ final class StartScreenViewFacadeTests: XCTestCase {
     /// пересобирает пейджер: идущий свайп (offset между страницами) не
     /// сбрасывается.
     func testQuickPanelProviderRecreatedPerRenderDoesNotRebuildPager() throws {
-        let snapshot = TileGridSnapshot(items: [], unpinned: [])
-        let hosting = host(StartScreenView(
+        let snapshot = TesseraTileGridSnapshot(items: [], unpinned: [])
+        let hosting = host(TesseraStartScreenView(
             snapshot: snapshot,
-            leftPanel: QuickPanelProvider { UIViewController() },
+            leftPanel: TesseraQuickPanelProvider { UIViewController() },
             rightPage: { UIViewController() }
         ))
         let screen = try screen(in: hosting)
@@ -233,9 +233,9 @@ final class StartScreenViewFacadeTests: XCTestCase {
         let midOffset = scrollView.bounds.width * 1.5
         scrollView.contentOffset = CGPoint(x: midOffset, y: 0)
 
-        hosting.rootView = StartScreenView(
+        hosting.rootView = TesseraStartScreenView(
             snapshot: snapshot,
-            leftPanel: QuickPanelProvider { UIViewController() },
+            leftPanel: TesseraQuickPanelProvider { UIViewController() },
             rightPage: { UIViewController() }
         )
         render(hosting)
@@ -250,9 +250,9 @@ final class StartScreenViewFacadeTests: XCTestCase {
     /// уходит и возвращается (viewDidDisappear/viewWillAppear).
     func testHookVisibilityFollowsScreenAppearance() throws {
         let delegate = DelegateSpy()
-        let hosting = host(StartScreenView(
-            snapshot: TileGridSnapshot(items: [], unpinned: []),
-            leftPanel: QuickPanelProvider { UIViewController() },
+        let hosting = host(TesseraStartScreenView(
+            snapshot: TesseraTileGridSnapshot(items: [], unpinned: []),
+            leftPanel: TesseraQuickPanelProvider { UIViewController() },
             delegate: delegate
         ))
         let screen = try screen(in: hosting)

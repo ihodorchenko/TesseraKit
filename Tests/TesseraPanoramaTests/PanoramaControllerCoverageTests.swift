@@ -2,7 +2,7 @@
 //  PanoramaControllerCoverageTests.swift
 //  TesseraPanoramaTests
 //
-//  Покрытие E9.10 (W5-B): поведение `PanoramaViewController` на живых
+//  Покрытие E9.10 (W5-B): поведение `TesseraPanoramaViewController` на живых
 //  UIView/UIWindow.
 //  Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §5 «Вертикальный скролл
 //  внутри секции» (вариант B: горизонталь — панораме, вертикаль — ребёнку),
@@ -44,7 +44,7 @@ import TesseraCore
 // MARK: - Шпион делегата
 
 /// Шпион делегата панорамы: показы, прогресс и снимки загруженного окна.
-private final class PanoramaCoverageSpy: PanoramaDelegate {
+private final class PanoramaCoverageSpy: TesseraPanoramaDelegate {
     /// Индексы `didShowSectionAt` в порядке поступления.
     private(set) var shown: [Int] = []
     /// Значения `didChangeProgress`.
@@ -54,12 +54,12 @@ private final class PanoramaCoverageSpy: PanoramaDelegate {
     /// Загруженные секции в момент каждого `didShowSectionAt`.
     private(set) var loadedAtShow: [Set<Int>] = []
 
-    func panorama(_ panorama: PanoramaViewController, didShowSectionAt index: Int) {
+    func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int) {
         shown.append(index)
         loadedAtShow.append(Set(panorama.loadedSections.keys))
     }
 
-    func panorama(_ panorama: PanoramaViewController, didChangeProgress t: CGFloat) {
+    func panorama(_ panorama: TesseraPanoramaViewController, didChangeProgress t: CGFloat) {
         progress.append(t)
         progressRawOffsets.append(panorama.scrollView.contentOffset.x)
     }
@@ -111,10 +111,10 @@ final class PanoramaControllerCoverageTests: XCTestCase {
         count: Int,
         ids: [Int]? = nil,
         onMake: ((Int) -> Void)? = nil
-    ) -> [PanoramaSection] {
+    ) -> [TesseraPanoramaSection] {
         let identifiers = ids ?? Array(0..<count)
         return identifiers.map { id in
-            PanoramaSection(id: id, title: "Section \(id)") {
+            TesseraPanoramaSection(id: id, title: "Section \(id)") {
                 onMake?(id)
                 return UIViewController()
             }
@@ -122,9 +122,9 @@ final class PanoramaControllerCoverageTests: XCTestCase {
     }
 
     /// Секции, чей контент содержит реальный вертикальный скролл.
-    private func makeVerticalSections(count: Int) -> [PanoramaSection] {
+    private func makeVerticalSections(count: Int) -> [TesseraPanoramaSection] {
         (0..<count).map { index in
-            PanoramaSection(id: index, title: "Section \(index)") {
+            TesseraPanoramaSection(id: index, title: "Section \(index)") {
                 VerticalSectionContentController()
             }
         }
@@ -132,10 +132,10 @@ final class PanoramaControllerCoverageTests: XCTestCase {
 
     /// Панорама в настоящем окне: appearance и layout — как в приложении.
     private func makeWindowedPanorama(
-        sections: [PanoramaSection],
+        sections: [TesseraPanoramaSection],
         size: CGSize? = nil
-    ) -> PanoramaViewController {
-        let panorama = PanoramaViewController(sections: sections)
+    ) -> TesseraPanoramaViewController {
+        let panorama = TesseraPanoramaViewController(sections: sections)
         let window = UIWindow(frame: CGRect(origin: .zero, size: size ?? screen))
         window.rootViewController = panorama
         window.isHidden = false
@@ -145,7 +145,7 @@ final class PanoramaControllerCoverageTests: XCTestCase {
         return panorama
     }
 
-    private func loadedIndices(_ panorama: PanoramaViewController) -> Set<Int> {
+    private func loadedIndices(_ panorama: TesseraPanoramaViewController) -> Set<Int> {
         Set(panorama.loadedSections.keys)
     }
 
@@ -154,7 +154,7 @@ final class PanoramaControllerCoverageTests: XCTestCase {
     /// повторный `didShowSectionAt` подавлен контроллером (lastShown), поэтому
     /// вызов идемпотентен.
     private func completeTransitionIfNeeded(
-        _ panorama: PanoramaViewController,
+        _ panorama: TesseraPanoramaViewController,
         to targetX: CGFloat
     ) {
         let scrollView = panorama.scrollView
@@ -168,7 +168,7 @@ final class PanoramaControllerCoverageTests: XCTestCase {
     /// снятого в момент колбэка (инвариант «один скаляр t»).
     private func assertProgressMatchesOffsets(
         _ spy: PanoramaCoverageSpy,
-        _ panorama: PanoramaViewController,
+        _ panorama: TesseraPanoramaViewController,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {

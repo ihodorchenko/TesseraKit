@@ -33,7 +33,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
 
     private let screenWidths: [CGFloat] = [375, 390, 402, 414]
 
-    private let badges: [(String, TileBadge)] = [
+    private let badges: [(String, TesseraTileBadge)] = [
         ("count 3", .count(3)),
         ("count 99+", .count(150)),
         ("dot", .dot),
@@ -52,7 +52,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
     /// Ячейка в окне с переопределёнными категорией Dynamic Type и направлением.
     private func makeCell(
         size: CGSize,
-        descriptor: TileDescriptor,
+        descriptor: TesseraTileDescriptor,
         rightToLeft: Bool = false,
         category: UIContentSizeCategory = .large,
         editClearance: CGFloat = 0
@@ -86,10 +86,10 @@ final class TileSmallBadgeIconTests: XCTestCase {
 
     private func descriptor(
         title: String = "Почта",
-        badge: TileBadge,
-        size: TileSize = .small,
+        badge: TesseraTileBadge,
+        size: TesseraTileSize = .small,
         withIcon: Bool = true
-    ) -> TileDescriptor {
+    ) -> TesseraTileDescriptor {
         var descriptor = tesseraTestTile(title, size: size, badge: badge)
         if withIcon { descriptor.icon = envelope }
         return descriptor
@@ -211,7 +211,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
     func testMediumWideAndLargeTilesKeepTheirTitleLayout() {
         for width in screenWidths {
             let side = unit(width)
-            let shapes: [(TileSize, CGSize)] = [
+            let shapes: [(TesseraTileSize, CGSize)] = [
                 (.medium, CGSize(width: 2 * side + 8, height: 2 * side + 8)),
                 (.wide, CGSize(width: 4 * side + 24, height: 2 * side + 8)),
                 (.large, CGSize(width: 4 * side + 24, height: 4 * side + 24)),
@@ -296,7 +296,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
         XCTAssertFalse(cell.isSmallTile)
 
         // Папка в такой ячейке снова показывает подпись.
-        let folder = TileFolder(id: "F", title: "Папка", tiles: [descriptor(badge: .none, size: .small)], size: .small)
+        let folder = TesseraTileFolder(id: "F", title: "Папка", tiles: [descriptor(badge: .none, size: .small)], size: .small)
         cell.configure(with: .folder(folder), liveTileEngine: nil, isVisible: false)
         cell.layoutIfNeeded()
         XCTAssertFalse(titleLabel(of: cell).isHidden)
@@ -313,7 +313,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
             let clearance = TesseraTileEditControlView.badgeClearance(forTileSize: size, maxDiameter: 28)
             XCTAssertEqual(clearance, 16, accuracy: 0.001, "стрелка 20 pt, выступ 4 pt")
             for rtl in [false, true] {
-                for badge in [TileBadge.count(3), .dot] {
+                for badge in [TesseraTileBadge.count(3), .dot] {
                     let label = "\(Int(width)) pt rtl=\(rtl) \(badge)"
                     let normal = makeCell(size: size, descriptor: descriptor(badge: badge), rightToLeft: rtl)
                     let editing = makeCell(
@@ -457,11 +457,11 @@ final class TileSmallBadgeIconTests: XCTestCase {
     // MARK: - Живая плитка
 
     private func liveDescriptor(
-        badge: TileBadge,
+        badge: TesseraTileBadge,
         front: TesseraLiveTileFace,
         back: TesseraLiveTileFace? = nil,
-        size: TileSize = .small
-    ) -> TileDescriptor {
+        size: TesseraTileSize = .small
+    ) -> TesseraTileDescriptor {
         tesseraTestLiveTile("L", front: front, back: back, badge: badge, size: size)
     }
 
@@ -568,7 +568,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
     /// с бэйджем; зазор бэйдж — стрелка 2 pt на ширинах 375/390/402/414.
     func testRealEditSessionKeepsIconBadgeAndButtonsApart() throws {
         for width in screenWidths {
-            for badge in [TileBadge.count(3), .dot] {
+            for badge in [TesseraTileBadge.count(3), .dot] {
                 var mail = tesseraTestTile("mail", size: .small, badge: badge)
                 mail.icon = envelope
                 let host = TesseraTestDragHost(

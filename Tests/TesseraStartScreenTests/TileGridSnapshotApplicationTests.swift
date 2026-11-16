@@ -18,7 +18,7 @@
 //  - ярлык панели раскрытой папки активируется общим маршрутом `onTap` и не
 //    активируется в режиме редактирования;
 //  - `magnetSlotCenters(for:)` совпадает с рамками раскладки до пикселя
-//    (`TileLayoutEngine.gridMetrics`);
+//    (`TesseraTileLayoutEngine.gridMetrics`);
 //  - публичная пауза live-контента не снимается `grid.update` в обход
 //    контроллера, пока START за кадром (остаток T1).
 //
@@ -70,7 +70,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         XCTAssertEqual(liveView.side, .back)
 
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [.tile(live), .tile(other), .tile(extra)],
                 unpinned: []
             ),
@@ -97,7 +97,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
     func testSnapshotDiffPreservesFolderPreviewFlip() throws {
         // B1 (фикс-раунд): idle-флип превью возможен только у ярлыка с видимым
         // бейджем — `TesseraFolderMiniTileView.showBadge` игнорирует `.none`.
-        let folder = TileFolder(
+        let folder = TesseraTileFolder(
             id: "folder",
             title: "folder",
             tiles: (0..<4).map {
@@ -117,7 +117,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         XCTAssertTrue(miniTile.showsBadgeSide, "Мини-плитка перевернулась к бейджу")
 
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [.folder(folder), .tile(other), .tile(extra)],
                 unpinned: []
             ),
@@ -151,7 +151,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         host.layout()
 
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [
                     .tile(tesseraTestTile("a", size: .small)),
                     .tile(tesseraTestTile("b", size: .small)),
@@ -171,7 +171,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
 
         // reload(snapshot:) — тоже без анимации.
         host.grid.reload(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [
                     .tile(tesseraTestTile("a", size: .small)),
                     .tile(tesseraTestTile("b", size: .small)),
@@ -185,7 +185,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
 
         // Анимированный путь — кроссфейд, а не «без анимации».
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [
                     .tile(tesseraTestTile("a", size: .small)),
                     .tile(tesseraTestTile("b", size: .small)),
@@ -227,9 +227,9 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
 
         // 1) Обновление снимка: меняется только содержимое (бейдж).
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [
-                    .tile(TileDescriptor(
+                    .tile(TesseraTileDescriptor(
                         id: first.id,
                         title: first.title,
                         action: {},
@@ -252,7 +252,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
 
         // 2) Resize: смена размера переупаковывает сетку.
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [.tile(first), .tile(tesseraTestTile("second", size: .medium))],
                 unpinned: []
             ),
@@ -290,7 +290,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
     func testCoordinatorDimmingSurvivesGridUpdate() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
 
         let first = tesseraTestTile("first", size: .small)
@@ -312,9 +312,9 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         defer { coordinator.endEditing() }
 
         host.grid.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [
-                    .tile(TileDescriptor(
+                    .tile(TesseraTileDescriptor(
                         id: first.id,
                         title: first.title,
                         action: {},
@@ -353,13 +353,13 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
     /// ярлыка выполняет хост, D12), а не вызовом `action` мимо события.
     func testPanelShortcutActivationGoesThroughOnTap() throws {
         var actionCalls = 0
-        let inFolder = TileDescriptor(
+        let inFolder = TesseraTileDescriptor(
             id: "in-folder",
             title: "Inside",
             action: { actionCalls += 1 },
             size: .small
         )
-        let folder = TileFolder(id: "folder", title: "Folder", tiles: [inFolder])
+        let folder = TesseraTileFolder(id: "folder", title: "Folder", tiles: [inFolder])
         let host = TesseraTestWindowedGrid(items: [.folder(folder)])
         host.grid.openFolder(folder, animated: false)
         host.layout()
@@ -367,7 +367,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         let panel = try XCTUnwrap(host.panelCell(folderID: folder.id))
         let shortcut = try XCTUnwrap(panel.shortcutCells.first)
 
-        var tapped: [TileGridItem] = []
+        var tapped: [TesseraTileGridItem] = []
         host.grid.onTap = { tapped.append($0) }
 
         XCTAssertTrue(shortcut.accessibilityActivate())
@@ -386,17 +386,17 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
     func testPanelShortcutDoesNotActivateInEditMode() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        let store = TileStore(directoryURL: directory.url)
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
 
         var actionCalls = 0
-        let inFolder = TileDescriptor(
+        let inFolder = TesseraTileDescriptor(
             id: "in-folder",
             title: "Inside",
             action: { actionCalls += 1 },
             size: .small
         )
-        let folder = TileFolder(id: "folder", title: "Folder", tiles: [inFolder])
+        let folder = TesseraTileFolder(id: "folder", title: "Folder", tiles: [inFolder])
         let host = TesseraTestWindowedGrid(items: [.folder(folder)])
         host.grid.openFolder(folder, animated: false)
         host.layout()
@@ -409,7 +409,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         let panel = try XCTUnwrap(host.panelCell(folderID: folder.id))
         let shortcut = try XCTUnwrap(panel.shortcutCells.first)
 
-        var tapped: [TileGridItem] = []
+        var tapped: [TesseraTileGridItem] = []
         host.grid.onTap = { tapped.append($0) }
 
         _ = shortcut.accessibilityActivate()
@@ -421,12 +421,12 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
     // MARK: - Магнитизм: центры слотов = рамки раскладки (E10.4, E10.1)
 
     /// `magnetSlotCenters(for:)` считает геометрию через
-    /// `TileLayoutEngine.gridMetrics`, поэтому центры слотов совпадают с
+    /// `TesseraTileLayoutEngine.gridMetrics`, поэтому центры слотов совпадают с
     /// центрами фактических рамок раскладки до пикселя (раньше невыровненный
     /// юнит расходился с раскладкой).
     func testMagnetSlotCentersMatchLayoutFrames() throws {
         let smallItems = (0..<5).map {
-            TileGridItem.tile(tesseraTestTile("s\($0)", size: .small))
+            TesseraTileGridItem.tile(tesseraTestTile("s\($0)", size: .small))
         }
         let host = TesseraTestWindowedGrid(items: smallItems)
         host.layout()
@@ -469,7 +469,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
     /// том числе при нестандартных полях: горизонталь повторяет раскладку.
     func testMagnetSlotCentersMatchLayoutFramesWithInsets() throws {
         let medium = tesseraTestTile("m", size: .medium)
-        let items: [TileGridItem] = [
+        let items: [TesseraTileGridItem] = [
             .tile(medium),
             .tile(tesseraTestTile("s0", size: .small)),
             .tile(tesseraTestTile("s1", size: .small)),
@@ -513,7 +513,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         // Medium live + small в той же строке: добавление второго small не
         // меняет высоту контента — сценарий из остатка T1 (layout не
         // перезапускается, паузу применяет только сетка).
-        screen.reload(grid: TileGridSnapshot(items: [.tile(live), .tile(first)], unpinned: []))
+        screen.reload(grid: TesseraTileGridSnapshot(items: [.tile(live), .tile(first)], unpinned: []))
         let window = host(screen)
         appear(screen)
 
@@ -534,7 +534,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         // Обновление в обход контроллера — остаток T1: раньше `willDisplay`
         // новой ячейки регистрировал её видимой и флип возобновлялся.
         screen.gridView.update(
-            snapshot: TileGridSnapshot(
+            snapshot: TesseraTileGridSnapshot(
                 items: [.tile(live), .tile(first), .tile(second)],
                 unpinned: []
             ),

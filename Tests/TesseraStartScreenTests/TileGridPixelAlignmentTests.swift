@@ -58,14 +58,14 @@ final class TileGridPixelAlignmentTests: XCTestCase {
     }
 
     /// Набор с раскрытой папкой и плитками всех размеров.
-    private func makeItems() -> [TileGridItem] {
-        let folder = TileFolder(
+    private func makeItems() -> [TesseraTileGridItem] {
+        let folder = TesseraTileFolder(
             id: "folder",
             title: "folder",
             tiles: (0..<7).map { tesseraTestTile("ft\($0)", size: .small) },
             size: .medium
         )
-        var items: [TileGridItem] = [
+        var items: [TesseraTileGridItem] = [
             .tile(tesseraTestTile("s0", size: .small)),
             .folder(folder),
             .tile(tesseraTestTile("s1", size: .small)),
@@ -75,7 +75,7 @@ final class TileGridPixelAlignmentTests: XCTestCase {
             .tile(tesseraTestTile("l0", size: .large)),
             .tile(tesseraTestTile("s3", size: .small)),
         ]
-        if let index = TileLayoutEngine.folderPanelInsertionIndex(
+        if let index = TesseraTileLayoutEngine.folderPanelInsertionIndex(
             items: items,
             columns: 4,
             expandedFolderID: folder.id

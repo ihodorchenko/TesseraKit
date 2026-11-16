@@ -6,7 +6,7 @@
 //  13.11.2026). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления
 //  реализации (E14)», п. 56; решения D45 в docs/STATE.md.
 //
-//  Проверяется на настоящем `TileStore` и сетке в окне (`TesseraTestDragHost`):
+//  Проверяется на настоящем `TesseraTileStore` и сетке в окне (`TesseraTestDragHost`):
 //  - unpin ярлыка раскрытой панели в папке из двух ярлыков: панель закрывается,
 //    оставшийся ярлык встаёт на место папки, фокус VoiceOver — на него;
 //  - unpin в папке из трёх: панель остаётся, фокус — на следующем ярлыке панели,
@@ -39,7 +39,7 @@ final class TileFolderDissolveUITests: XCTestCase {
         var events: [String] = []
 
         /// Отказы функции одобрения.
-        var failures: [TileGroupingAction] = []
+        var failures: [TesseraTileGroupingAction] = []
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didUnpin tileID: AnyHashable) {
             events.append("unpin:\(tileID)")
@@ -49,7 +49,7 @@ final class TileFolderDissolveUITests: XCTestCase {
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
             toFolder folderID: AnyHashable?,
-            atCell cell: TileGridPlacement?
+            atCell cell: TesseraTileGridPlacement?
         ) {
             let target = folderID.map { "\($0)" } ?? "nil"
             let at = cell.map { "(\($0.row),\($0.column))" } ?? "-"
@@ -66,7 +66,7 @@ final class TileFolderDissolveUITests: XCTestCase {
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
-            didFailGrouping action: TileGroupingAction,
+            didFailGrouping action: TesseraTileGroupingAction,
             tileID: AnyHashable,
             folderID: AnyHashable?
         ) {
@@ -86,8 +86,8 @@ final class TileFolderDissolveUITests: XCTestCase {
         return recorder
     }
 
-    private func at(_ row: Int, _ column: Int) -> TileGridPlacement {
-        TileGridPlacement(row: row, column: column)
+    private func at(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
+        TesseraTileGridPlacement(row: row, column: column)
     }
 
     /// Фокус последнего поста — на заданном виде.
@@ -168,7 +168,7 @@ final class TileFolderDissolveUITests: XCTestCase {
 
     /// Стенд: папка F (medium, (0,0)) из `contents`, плитки `a` (0,3) и `b` (2,3).
     private func makeHost(
-        contents: [(String, TileSize)] = [("x", .small), ("y", .medium)],
+        contents: [(String, TesseraTileSize)] = [("x", .small), ("y", .medium)],
         extraFolders: [CellFixtureFolder] = []
     ) throws -> TesseraTestDragHost {
         try TesseraTestDragHost(

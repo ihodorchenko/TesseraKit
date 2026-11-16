@@ -3,7 +3,7 @@
 //  TesseraStartScreenTests
 //
 //  Drag по ячейкам: цель — клетка под пальцем, превью от базовых размещений,
-//  фиксация drop'а операциями `TileStore` по ячейкам (E14.5, 13.11.2026).
+//  фиксация drop'а операциями `TesseraTileStore` по ячейкам (E14.5, 13.11.2026).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации
 //  (E14)», п. 53; решения D20, D21, D22, D30–D33 в docs/STATE.md.
 //
@@ -16,7 +16,7 @@
 //    вниз, а не отправляются далеко вниз со случайными дырами.
 //
 //  Раскладки точные: файл схемы версии 2 с дырами (`TileStoreCellFixture`) и сетка
-//  из `TileStore.snapshot(columns:)`, 4 колонки. Без `sleep`: завершение —
+//  из `TesseraTileStore.snapshot(columns:)`, 4 колонки. Без `sleep`: завершение —
 //  прокруткой run loop (`waitUntil`).
 //
 
@@ -34,24 +34,24 @@ final class TileCellDragTests: XCTestCase {
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
         /// Перестановки по сетке.
-        var moves: [(id: AnyHashable, cell: TileGridPlacement)] = []
+        var moves: [(id: AnyHashable, cell: TesseraTileGridPlacement)] = []
 
         /// Вынос/перенос между папками.
-        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, cell: TileGridPlacement?)] = []
+        var folderMoves: [(id: AnyHashable, folder: AnyHashable?, cell: TesseraTileGridPlacement?)] = []
 
         /// Созданные папки.
-        var createdFolders: [TileFolder] = []
+        var createdFolders: [TesseraTileFolder] = []
 
         /// Добавления в папку.
         var additions: [(id: AnyHashable, folder: AnyHashable)] = []
 
         /// Отказы функции одобрения.
-        var failures: [TileGroupingAction] = []
+        var failures: [TesseraTileGroupingAction] = []
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
-            toCell cell: TileGridPlacement
+            toCell cell: TesseraTileGridPlacement
         ) {
             moves.append((tileID, cell))
         }
@@ -60,12 +60,12 @@ final class TileCellDragTests: XCTestCase {
             _ coordinator: TesseraTileEditCoordinator,
             didMove tileID: AnyHashable,
             toFolder folderID: AnyHashable?,
-            atCell cell: TileGridPlacement?
+            atCell cell: TesseraTileGridPlacement?
         ) {
             folderMoves.append((tileID, folderID, cell))
         }
 
-        func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TileFolder) {
+        func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TesseraTileFolder) {
             createdFolders.append(folder)
         }
 
@@ -79,7 +79,7 @@ final class TileCellDragTests: XCTestCase {
 
         func tileEditCoordinator(
             _ coordinator: TesseraTileEditCoordinator,
-            didFailGrouping action: TileGroupingAction,
+            didFailGrouping action: TesseraTileGroupingAction,
             tileID: AnyHashable,
             folderID: AnyHashable?
         ) {
@@ -88,8 +88,8 @@ final class TileCellDragTests: XCTestCase {
     }
 
     /// Ячейка в короткой записи.
-    private func at(_ row: Int, _ column: Int) -> TileGridPlacement {
-        TileGridPlacement(row: row, column: column)
+    private func at(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
+        TesseraTileGridPlacement(row: row, column: column)
     }
 
     /// Шесть малых плиток: `a b c d` в строке 0, `e f` в строке 1.

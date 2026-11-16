@@ -65,11 +65,11 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// Пустой набор центров — ленты нет, индикатор скрыт и стоит в нуле.
     func testEmptyCentersReturnZero() {
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: [], progress: 0),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: [], progress: 0),
             0
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: [], progress: 3.5),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: [], progress: 3.5),
             0
         )
     }
@@ -81,7 +81,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
         for progress: CGFloat in [0, 0.25, 1, 10, -10, .nan, .infinity, -.infinity] {
             XCTAssertEqual(
-                PivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
+                TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
                 123.5,
                 "единственный центр должен возвращаться при t=\(progress)"
             )
@@ -93,11 +93,11 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         let centers = makeCenters(widths: [40, 120, 64])
 
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: 0),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 0),
             centers[0]
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: CGFloat(centers.count - 1)),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: CGFloat(centers.count - 1)),
             centers[2]
         )
     }
@@ -109,7 +109,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
         for progress: CGFloat in [-0.001, -1, -100, -CGFloat.greatestFiniteMagnitude] {
             XCTAssertEqual(
-                PivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
+                TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
                 centers[0],
                 "t=\(progress) должен зажиматься к первому центру"
             )
@@ -117,7 +117,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
         for progress: CGFloat in [4.001, 4.5, 100, CGFloat.greatestFiniteMagnitude] {
             XCTAssertEqual(
-                PivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
+                TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
                 centers[3],
                 "t=\(progress) должен зажиматься к последнему центру"
             )
@@ -128,7 +128,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     func testNaNProgressReturnsFirstCenter() {
         let centers = makeCenters(widths: [40, 120, 64])
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: .nan),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: .nan),
             centers[0]
         )
     }
@@ -137,11 +137,11 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     func testInfiniteProgressClampsToEdgeCenters() {
         let centers = makeCenters(widths: [40, 120, 64, 200])
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: .infinity),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: .infinity),
             centers[3]
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: -.infinity),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: -.infinity),
             centers[0]
         )
     }
@@ -155,7 +155,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
         for index in centers.indices {
             XCTAssertEqual(
-                PivotHeaderIndicator.indicatorCenter(
+                TesseraPivotHeaderIndicator.indicatorCenter(
                     centers: centers,
                     progress: CGFloat(index)
                 ),
@@ -172,7 +172,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         let widths: [CGFloat] = [40, 160, 60, 220]
         let centers = makeCenters(widths: widths)
 
-        let midpoint = PivotHeaderIndicator.indicatorCenter(centers: centers, progress: 0.5)
+        let midpoint = TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 0.5)
         XCTAssertEqual(midpoint, (centers[0] + centers[1]) / 2, accuracy: 0.000_001)
 
         // Ложная модель «равные шаги» дала бы на этих ширинах заметно другое
@@ -193,24 +193,24 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         let centers = makeCenters(widths: [40, 120, 64])
 
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: 0.25),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 0.25),
             centers[0] + (centers[1] - centers[0]) * 0.25,
             accuracy: 0.000_001
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: 1.25),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 1.25),
             centers[1] + (centers[2] - centers[1]) * 0.25,
             accuracy: 0.000_001
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: 1.75),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 1.75),
             centers[1] + (centers[2] - centers[1]) * 0.75,
             accuracy: 0.000_001
         )
         // t = count - 1 + 0.5 зажимается в последний центр, а не интерполирует
         // ещё раз от последней пары с дробной частью 1.5.
         XCTAssertEqual(
-            PivotHeaderIndicator.indicatorCenter(centers: centers, progress: 2.5),
+            TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 2.5),
             centers[2],
             accuracy: 0.000_001
         )
@@ -223,11 +223,11 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
         for index in 1..<centers.count {
             let epsilon: CGFloat = 0.000_001
-            let left = PivotHeaderIndicator.indicatorCenter(
+            let left = TesseraPivotHeaderIndicator.indicatorCenter(
                 centers: centers,
                 progress: CGFloat(index) - epsilon
             )
-            let right = PivotHeaderIndicator.indicatorCenter(
+            let right = TesseraPivotHeaderIndicator.indicatorCenter(
                 centers: centers,
                 progress: CGFloat(index) + epsilon
             )
@@ -262,7 +262,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
                 let expected = centers[lowerIndex] * (1 - fraction)
                     + centers[lowerIndex + 1] * fraction
-                let actual = PivotHeaderIndicator.indicatorCenter(
+                let actual = TesseraPivotHeaderIndicator.indicatorCenter(
                     centers: centers,
                     progress: progress
                 )
@@ -302,13 +302,13 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
             let below = -CGFloat.random(in: 0.001...100, using: &generator)
             XCTAssertEqual(
-                PivotHeaderIndicator.indicatorCenter(centers: centers, progress: below),
+                TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: below),
                 centers[0]
             )
 
             let above = CGFloat(count - 1) + CGFloat.random(in: 0.001...100, using: &generator)
             XCTAssertEqual(
-                PivotHeaderIndicator.indicatorCenter(centers: centers, progress: above),
+                TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: above),
                 centers[count - 1]
             )
         }
@@ -336,7 +336,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
 
             for step in 0...steps {
                 let progress = CGFloat(step) / CGFloat(steps) * CGFloat(count - 1)
-                let center = PivotHeaderIndicator.indicatorCenter(
+                let center = TesseraPivotHeaderIndicator.indicatorCenter(
                     centers: centers,
                     progress: progress
                 )
@@ -358,18 +358,18 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// относительно формулировки «0 на расстоянии 0»: в коде и документе
     /// `1` — акцент, `0` — неактивное состояние.
     func testBlendFactorIsFullAccentAtZeroDistance() {
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: 0), 1)
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: -0), 1)
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: 0, span: 3), 1)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0), 1)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -0), 1)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0, span: 3), 1)
     }
 
     /// На расстоянии `span` и дальше подсветки нет: коэффициент `0`.
     func testBlendFactorReachesZeroAtSpan() {
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: 1), 0)
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: -1), 0)
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: 5), 0)
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: -5), 0)
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: 2, span: 2), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 1), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -1), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 5), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -5), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 2, span: 2), 0)
     }
 
     /// Внутри `span` коэффициент линеен и симметричен по знаку расстояния.
@@ -377,12 +377,12 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         for distance: CGFloat in [0.1, 0.25, 0.5, 0.75, 0.9] {
             let expected = 1 - distance
             XCTAssertEqual(
-                PivotHeaderIndicator.blendFactor(distanceFromProgress: distance),
+                TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: distance),
                 expected,
                 accuracy: 0.000_001
             )
             XCTAssertEqual(
-                PivotHeaderIndicator.blendFactor(distanceFromProgress: -distance),
+                TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -distance),
                 expected,
                 accuracy: 0.000_001
             )
@@ -392,11 +392,11 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// Коэффициент монотонно убывает с расстоянием и остаётся в `0...1`:
     /// акцент плавно «передаётся» от уходящего заголовка приходящему.
     func testBlendFactorIsMonotonicallyDecreasing() {
-        var previous = PivotHeaderIndicator.blendFactor(distanceFromProgress: 0)
+        var previous = TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0)
 
         for step in 1...40 {
             let distance = CGFloat(step) * 0.05
-            let factor = PivotHeaderIndicator.blendFactor(distanceFromProgress: distance)
+            let factor = TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: distance)
 
             XCTAssertLessThanOrEqual(factor, previous + 0.000_001)
             XCTAssertGreaterThanOrEqual(factor, 0)
@@ -409,22 +409,22 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// акцента — на расстоянии `1`.
     func testBlendFactorHonoursCustomSpan() {
         XCTAssertEqual(
-            PivotHeaderIndicator.blendFactor(distanceFromProgress: 0.5, span: 2),
+            TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0.5, span: 2),
             0.75,
             accuracy: 0.000_001
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.blendFactor(distanceFromProgress: 1, span: 2),
+            TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 1, span: 2),
             0.5,
             accuracy: 0.000_001
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.blendFactor(distanceFromProgress: 1.5, span: 2),
+            TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 1.5, span: 2),
             0.25,
             accuracy: 0.000_001
         )
         XCTAssertEqual(
-            PivotHeaderIndicator.blendFactor(distanceFromProgress: 3, span: 2),
+            TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 3, span: 2),
             0,
             accuracy: 0.000_001
         )
@@ -435,15 +435,15 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     func testBlendFactorWithNonPositiveSpanDegradesToBinary() {
         for span: CGFloat in [0, -1, -0.5] {
             XCTAssertEqual(
-                PivotHeaderIndicator.blendFactor(distanceFromProgress: 0, span: span),
+                TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0, span: span),
                 1
             )
             XCTAssertEqual(
-                PivotHeaderIndicator.blendFactor(distanceFromProgress: 0.1, span: span),
+                TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0.1, span: span),
                 0
             )
             XCTAssertEqual(
-                PivotHeaderIndicator.blendFactor(distanceFromProgress: -2, span: span),
+                TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -2, span: span),
                 0
             )
         }
@@ -452,13 +452,13 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// `NaN` и бесконечное расстояние — неизвестный заголовок считается
     /// неактивным (`0`), без падения и без «отравления» цвета.
     func testBlendFactorRejectsNaNAndInfiniteDistance() {
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: .nan), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: .nan), 0)
         XCTAssertEqual(
-            PivotHeaderIndicator.blendFactor(distanceFromProgress: 0.5, span: .nan),
+            TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0.5, span: .nan),
             0
         )
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: .infinity), 0)
-        XCTAssertEqual(PivotHeaderIndicator.blendFactor(distanceFromProgress: -.infinity), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: .infinity), 0)
+        XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -.infinity), 0)
     }
 
     // MARK: - Вид индикатора (§3, §7, §8)
@@ -466,7 +466,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// Дефолты вида: подчёркивание 24×3 pt, акцентный цвет, декоративность —
     /// индикатор не ловит события и не попадает в accessibility-дерево (§8).
     func testViewDefaults() {
-        let indicator = PivotHeaderIndicator()
+        let indicator = TesseraPivotHeaderIndicator()
 
         XCTAssertEqual(indicator.barWidth, 24)
         XCTAssertEqual(indicator.barHeight, 3)
@@ -480,7 +480,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// `placeBar(inStripBounds:)` — единственное место, где задаются
     /// `bounds`/`center` индикатора; позиция прижата к нижней кромке ленты.
     func testPlaceBarSetsBaseGeometry() {
-        let indicator = PivotHeaderIndicator()
+        let indicator = TesseraPivotHeaderIndicator()
         indicator.placeBar(inStripBounds: CGRect(x: 10, y: 20, width: 320, height: 48))
 
         XCTAssertEqual(indicator.bounds.width, 24)
@@ -495,7 +495,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
     /// Горячий путь (§4, §7): `move(toCenterX:)` меняет только `transform`,
     /// не трогая `bounds`/`center` и не запуская layout.
     func testMoveChangesOnlyTransform() {
-        let indicator = PivotHeaderIndicator()
+        let indicator = TesseraPivotHeaderIndicator()
         indicator.placeBar(inStripBounds: CGRect(x: 0, y: 0, width: 320, height: 48))
 
         let boundsBefore = indicator.bounds

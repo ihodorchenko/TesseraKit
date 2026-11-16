@@ -13,12 +13,12 @@
 //  (small → medium → wide → large → small).
 //
 //  Проверяется:
-//  - интеграция в `TileStore.resize(_:to:columns:)` и в resize-цикл
+//  - интеграция в `TesseraTileStore.resize(_:to:columns:)` и в resize-цикл
 //    координатора (`TesseraTileEditCoordinator.cycleSize(of:)`);
 //  - инварианты: набор элементов не теряется и не дублируется, цикл четырёх
 //    размеров не сломан.
 //
-//  Чистая функция `TileLayoutEngine.resizePlacement` (порядок) удалена в E14.6
+//  Чистая функция `TesseraTileLayoutEngine.resizePlacement` (порядок) удалена в E14.6
 //  вместе с тестами на неё: выталкивание вниз при росте и дыра при уменьшении
 //  проверены на размещениях — `TileLayoutEnginePlacementTests`,
 //  `TileLayoutEnginePlacementPropertyTests` (движок), `TileStoreCellOperationsTests`
@@ -36,31 +36,31 @@ final class TileResizePushTests: XCTestCase {
     // MARK: - Вспомогательные средства
 
     /// Идентификаторы элементов в порядке массива.
-    private func ids(_ items: [TileGridItem]) -> [AnyHashable] {
+    private func ids(_ items: [TesseraTileGridItem]) -> [AnyHashable] {
         items.map { $0.id }
     }
 
     /// Слоты компактной упаковки по идентификатору: та же геометрия, что видит
     /// раскладка сетки.
     private func slots(
-        _ items: [TileGridItem],
+        _ items: [TesseraTileGridItem],
         columns: Int = 4
-    ) -> [AnyHashable: TileLayoutSlot] {
-        let pairs: [(id: AnyHashable, size: TileSize)] = items.map {
+    ) -> [AnyHashable: TesseraTileLayoutSlot] {
+        let pairs: [(id: AnyHashable, size: TesseraTileSize)] = items.map {
             (id: $0.id, size: $0.size)
         }
-        var result: [AnyHashable: TileLayoutSlot] = [:]
-        for slot in TileLayoutEngine.pack(items: pairs, columns: columns, unit: 1) {
+        var result: [AnyHashable: TesseraTileLayoutSlot] = [:]
+        for slot in TesseraTileLayoutEngine.pack(items: pairs, columns: columns, unit: 1) {
             result[slot.id] = slot
         }
         return result
     }
 
     private func makeStore(
-        _ descriptors: [TileDescriptor],
+        _ descriptors: [TesseraTileDescriptor],
         in directory: TesseraTestDirectory
-    ) -> TileStore {
-        let store = TileStore(directoryURL: directory.url)
+    ) -> TesseraTileStore {
+        let store = TesseraTileStore(directoryURL: directory.url)
         store.autosaves = false
         store.setCatalog(descriptors)
         store.placeItems(columns: 4)
@@ -68,7 +68,7 @@ final class TileResizePushTests: XCTestCase {
     }
 
     /// Сетка, разложенная без окна: коллекция получает bounds.
-    private func makeGrid(store: TileStore, columns: Int = 4) -> TesseraTileGridView {
+    private func makeGrid(store: TesseraTileStore, columns: Int = 4) -> TesseraTileGridView {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
         grid.columns = columns
         grid.reload(snapshot: store.snapshot())
@@ -82,14 +82,14 @@ final class TileResizePushTests: XCTestCase {
     /// Размер элемента с идентификатором в порядке.
     private func size(
         of id: AnyHashable,
-        in items: [TileGridItem]
-    ) -> TileSize? {
+        in items: [TesseraTileGridItem]
+    ) -> TesseraTileSize? {
         items.first { $0.id == id }?.size
     }
 
-    // MARK: - Интеграция в TileStore
+    // MARK: - Интеграция в TesseraTileStore
 
-    /// `TileStore.resize(_:to:columns:)` меняет размер и порядок одной
+    /// `TesseraTileStore.resize(_:to:columns:)` меняет размер и порядок одной
     /// операцией: конфликтующая плитка уходит вниз, снимок сразу даёт новый
     /// порядок, повтор — no-op.
     func testStoreResizeAppliesPushOrder() {
@@ -162,7 +162,7 @@ final class TileResizePushTests: XCTestCase {
 
         // E15.3 (D28): полный круг D15 в порядке W10M — medium → large → small →
         // wide → medium; набор элементов сохраняется на каждом шаге.
-        for expected in [TileSize.large, .small, .wide, .medium] {
+        for expected in [TesseraTileSize.large, .small, .wide, .medium] {
             XCTAssertEqual(editor.cycleSize(of: "a"), expected)
             XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs, "после \(expected)")
             XCTAssertEqual(Set(ids(grid.items)), allIDs, "сетка после \(expected)")

@@ -1,11 +1,11 @@
 //
-//  PanoramaViewController.swift
+//  TesseraPanoramaViewController.swift
 //  TesseraPanorama
 //
 //  Оркестратор панорамы: горизонталь, фон с параллаксом, заголовки секций и
 //  child-контроллеры с ленивой загрузкой.
 //  Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная
-//  архитектура» (компоновка: PanoramaViewController → PanoScrollView +
+//  архитектура» (компоновка: TesseraPanoramaViewController → TesseraPanoScrollView +
 //  PanoBackgroundView + PanoHeaderView + контейнер секций), §4 «Геометрия и
 //  математика ядра» (единый скаляр t, параллакс фона, снап, никакого layout в
 //  скролле), §5 «Вертикальный скролл внутри секции» (вариант B: горизонталь
@@ -17,7 +17,7 @@
 //  Инварианты (§1, §4):
 //  - единственный скаляр `t = contentOffset.x / itemWidth` — источник для фона,
 //    заголовков и делегата;
-//  - `contentOffset` пишут только жест `PanoScrollView` и программный переход
+//  - `contentOffset` пишут только жест `TesseraPanoScrollView` и программный переход
 //    (`selectSection(at:animated:)`) — правило одного писателя из
 //    docs/CORE-IOS-DESIGN.md §2;
 //  - в `scrollViewDidScroll` — только `frame`/`transform`/`alpha`, без layout.
@@ -33,9 +33,9 @@ import UIKit
 /// ## Компоновка (§3)
 ///
 /// ```
-/// PanoramaViewController
+/// TesseraPanoramaViewController
 ///     ├─ TesseraParallaxLayer + UIImageView  ← фон, параллакс по смещению
-///     ├─ PanoScrollView                       ← горизонталь, снап, t
+///     ├─ TesseraPanoScrollView                       ← горизонталь, снап, t
 ///     │     └─ child-VC секций (окно ±1)      ← вертикальный скролл секции
 ///     └─ PanoHeaderView                       ← заголовки по тому же t
 /// ```
@@ -62,7 +62,7 @@ import UIKit
 ///
 /// ## Вертикальный скролл (§5, вариант B)
 ///
-/// Горизонталь обрабатывает ``PanoScrollView``, вертикаль — собственный скролл
+/// Горизонталь обрабатывает ``TesseraPanoScrollView``, вертикаль — собственный скролл
 /// секции. Контроллеры контента регистрируют свои вертикальные скролл-вью через
 /// ``registerVerticalOwner(_:)``; на время горизонтального жеста их прокрутка
 /// блокируется и восстанавливается через ``TesseraGestureArbiter``. Точка
@@ -71,7 +71,7 @@ import UIKit
 ///
 /// ## Accessibility (§7)
 ///
-/// - **VoiceOver**: трёхпальцевый свайп обрабатывается ``PanoScrollView`` и
+/// - **VoiceOver**: трёхпальцевый свайп обрабатывается ``TesseraPanoScrollView`` и
 ///   контроллером как шаг по секциям
 ///   (``TesseraAccessibility/pageStep(for:layoutDirection:)``), а по завершении
 ///   перехода название секции озвучивается через
@@ -95,7 +95,7 @@ import UIKit
 /// пустой список — без секций и заголовков (placeholder не фабрикуется, см.
 /// примечание ниже).
 ///
-/// - Note: **Пустой список.** ``PanoramaDelegate`` (волна 1) не имеет хука
+/// - Note: **Пустой список.** ``TesseraPanoramaDelegate`` (волна 1) не имеет хука
 ///   placeholder-состояния, а менять протокол вне write-скоупа нельзя. Поэтому
 ///   при пустом наборе секций контроллер не показывает собственный placeholder:
 ///   остаётся только фон, заголовки скрыты. Хост узнаёт о пустом состоянии по
@@ -104,7 +104,7 @@ import UIKit
 ///
 /// - Important: Только главный поток: UI-состояние не размазывается по модулям
 ///   (docs/CORE-IOS-DESIGN.md §3). Делегат не удерживается.
-public final class PanoramaViewController: UIViewController {
+public final class TesseraPanoramaViewController: UIViewController {
 
     // MARK: - Метрики компоновки
 
@@ -138,7 +138,7 @@ public final class PanoramaViewController: UIViewController {
     /// источник истины и для заголовков, и для контента: по их `id` хостинг
     /// переиспользует child-контроллеры, а текущая секция сохраняется при
     /// перезагрузке.
-    public private(set) var sections: [PanoramaSection] = []
+    public private(set) var sections: [TesseraPanoramaSection] = []
 
     /// Внешний вид панорамы (§3).
     ///
@@ -150,7 +150,7 @@ public final class PanoramaViewController: UIViewController {
     /// Присваивание того же стиля (все поля совпадают, картинка фона — тот же
     /// экземпляр) ничего не делает: SwiftUI-фасад присваивает стиль на каждом
     /// обновлении (E10.13).
-    public var style: PanoramaStyle {
+    public var style: TesseraPanoramaStyle {
         didSet {
             guard !oldValue.isEquivalent(to: style) else { return }
             applyStyle()
@@ -159,7 +159,7 @@ public final class PanoramaViewController: UIViewController {
 
     /// Политика снапа (§4, «Снап»).
     ///
-    /// В ``PanoramaStyle`` поля снапа нет (волна 1), поэтому порог скорости и
+    /// В ``TesseraPanoramaStyle`` поля снапа нет (волна 1), поэтому порог скорости и
     /// выравнивание настраиваются здесь. Значение по умолчанию — параметры Core
     /// (`600` pt/s, выравнивание по центру). Смена политики не требует layout и
     /// вступает в силу со следующего жеста.
@@ -172,8 +172,8 @@ public final class PanoramaViewController: UIViewController {
     /// Наблюдатель показа секции и прогресса.
     ///
     /// Не удерживается (§3: делегат только читает состояние). Публичные колбэки —
-    /// ``PanoramaDelegate``.
-    public weak var delegate: PanoramaDelegate?
+    /// ``TesseraPanoramaDelegate``.
+    public weak var delegate: TesseraPanoramaDelegate?
 
     // MARK: - Слои (§3)
 
@@ -182,7 +182,7 @@ public final class PanoramaViewController: UIViewController {
     /// Доступен на уровне модуля (`@testable`) для контрактных тестов E3.7;
     /// в публичную поверхность не входит — программные переходы выполняются
     /// через ``selectSection(at:animated:)``.
-    let scrollView: PanoScrollView
+    let scrollView: TesseraPanoScrollView
 
     /// Слой заголовков секций, анимируемый по `t` (§4, «Заголовки»).
     let headerView: PanoHeaderView
@@ -274,14 +274,14 @@ public final class PanoramaViewController: UIViewController {
     ///   - sections: Секции в порядке чтения; пустой массив — допустимое начальное
     ///     состояние (секции можно передать позже через ``reload(sections:)``, §8).
     ///   - style: Внешний вид; по умолчанию системный.
-    public init(sections: [PanoramaSection] = [], style: PanoramaStyle = PanoramaStyle()) {
-        let scrollView = PanoScrollView(peek: style.peek)
+    public init(sections: [TesseraPanoramaSection] = [], style: TesseraPanoramaStyle = TesseraPanoramaStyle()) {
+        let scrollView = TesseraPanoScrollView(peek: style.peek)
         scrollView.sectionCount = sections.count
 
         self.scrollView = scrollView
         self.headerView = TesseraPanoHeaderView(
             titles: sections.map(\.title),
-            style: PanoramaViewController.makeHeaderStyle(from: style)
+            style: TesseraPanoramaViewController.makeHeaderStyle(from: style)
         )
         self.sections = sections
         self.style = style
@@ -366,7 +366,7 @@ public final class PanoramaViewController: UIViewController {
     ///
     /// - Parameter newSections: Новые секции в порядке чтения; пустой массив
     ///   допустим (§8).
-    public func reload(sections newSections: [PanoramaSection]) {
+    public func reload(sections newSections: [TesseraPanoramaSection]) {
         // Текущий id — из СТАРОГО набора: по нему секция ищется в новом.
         let oldSections = sections
         let previousIndex = clampedSectionIndex(currentSectionIndex)
@@ -439,7 +439,7 @@ public final class PanoramaViewController: UIViewController {
     /// Доносит новый контент до секций с тем же набором `id` и заголовков
     /// (E10.12б).
     ///
-    /// Путь SwiftUI-фасада: при перерисовке ``PanoramaView`` с теми же `id` и
+    /// Путь SwiftUI-фасада: при перерисовке ``TesseraPanoramaView`` с теми же `id` и
     /// заголовками полный ``reload(sections:)`` не нужен (он останавливает
     /// прокрутку и сбрасывает показ секции), но поставщики контента новые —
     /// их замыкания захватили свежее состояние. Здесь заменяется только модель,
@@ -454,7 +454,7 @@ public final class PanoramaViewController: UIViewController {
     /// ``reload(sections:)``.
     ///
     /// - Parameter newSections: Секции с тем же порядком `id` и заголовков.
-    func updateContent(of newSections: [PanoramaSection]) {
+    func updateContent(of newSections: [TesseraPanoramaSection]) {
         guard Self.haveSameIdentity(sections, newSections) else {
             reload(sections: newSections)
             return
@@ -471,14 +471,14 @@ public final class PanoramaViewController: UIViewController {
 
     /// Совпадают ли наборы секций по `id` и заголовкам (по порядку).
     ///
-    /// ``PanoramaSection`` не `Equatable`: у поставщика контента нет семантики
+    /// ``TesseraPanoramaSection`` не `Equatable`: у поставщика контента нет семантики
     /// равенства, поэтому идентичность набора — пары `id` + `title`.
     ///
     /// - Parameters:
     ///   - lhs: Первый набор.
     ///   - rhs: Второй набор.
     /// - Returns: `true`, если `id` и заголовки совпадают поэлементно.
-    static func haveSameIdentity(_ lhs: [PanoramaSection], _ rhs: [PanoramaSection]) -> Bool {
+    static func haveSameIdentity(_ lhs: [TesseraPanoramaSection], _ rhs: [TesseraPanoramaSection]) -> Bool {
         guard lhs.count == rhs.count else { return false }
         return zip(lhs, rhs).allSatisfy { $0.id == $1.id && $0.title == $1.title }
     }
@@ -565,7 +565,7 @@ public final class PanoramaViewController: UIViewController {
 
     /// Регистрирует вертикальный скролл-вью секции (§5, вариант B).
     ///
-    /// Горизонталь принадлежит ``PanoScrollView``, вертикаль — контенту секции.
+    /// Горизонталь принадлежит ``TesseraPanoScrollView``, вертикаль — контенту секции.
     /// Контроллер контента вызывает метод (например, из `viewDidAppear`) и
     /// передаёт свой вертикальный `UIScrollView`. На время горизонтального жеста
     /// контроллер собирает ``TesseraGestureArbiter`` из зарегистрированных детей:
@@ -588,7 +588,7 @@ public final class PanoramaViewController: UIViewController {
     ///   2. дети блокируются и разблокируются методами арбитра, то есть обе
     ///      половины контракта арбитража задействованы, но точка решения сдвинута
     ///      с `gestureRecognizerShouldBegin` на `.began`. Это тот же компромисс,
-    ///      что принят в `PivotViewController` (E2).
+    ///      что принят в `TesseraPivotViewController` (E2).
     public func registerVerticalOwner(_ scrollView: UIScrollView) {
         guard scrollView !== self.scrollView else { return }
 
@@ -619,7 +619,7 @@ public final class PanoramaViewController: UIViewController {
     /// ``TesseraAccessibility/pageStep(for:layoutDirection:)`` (с учётом RTL), а
     /// переход выполняет ``selectSection(at:animated:)`` — `contentOffset`
     /// по-прежнему пишет контроллер (§2). Метод дублирует обработку из
-    /// ``PanoScrollView``: у жеста бывает разный accessibility-фокус (слой
+    /// ``TesseraPanoScrollView``: у жеста бывает разный accessibility-фокус (слой
     /// заголовков, контент секции), а результат обязан быть одинаковым.
     ///
     /// - Parameter direction: Направление жеста VoiceOver.
@@ -707,13 +707,13 @@ public final class PanoramaViewController: UIViewController {
 
     /// Стиль заголовков из стиля панорамы (§3, §7).
     ///
-    /// `PanoramaStyle.headerFont` — базовый (немасштабированный) шрифт: слой
+    /// `TesseraPanoramaStyle.headerFont` — базовый (немасштабированный) шрифт: слой
     /// заголовков сам масштабирует его через `UIFontMetrics` под Dynamic Type.
     ///
-    /// `PanoramaStyle.headerActiveColor` уходит в слой как цвет активного
+    /// `TesseraPanoramaStyle.headerActiveColor` уходит в слой как цвет активного
     /// заголовка, интерполируемый по `t` (E9.7). Если он совпадает с
     /// `headerColor`, акцент не нужен — слой не создаёт акцентных копий меток.
-    private static func makeHeaderStyle(from style: PanoramaStyle) -> PanoHeaderView.Style {
+    private static func makeHeaderStyle(from style: TesseraPanoramaStyle) -> PanoHeaderView.Style {
         PanoHeaderView.Style(
             textStyle: .largeTitle,
             baseFont: style.headerFont,
@@ -1195,7 +1195,7 @@ public final class PanoramaViewController: UIViewController {
 
     /// Состояния пана панорамы: блокировка и разблокировка вертикальных детей.
     ///
-    /// - Parameter pan: Пан ``PanoScrollView``.
+    /// - Parameter pan: Пан ``TesseraPanoScrollView``.
     @objc private func scrollPanDidChange(_ pan: UIPanGestureRecognizer) {
         switch pan.state {
         case .began:
@@ -1275,12 +1275,12 @@ public final class PanoramaViewController: UIViewController {
 
 // MARK: - PanoScrollViewObserving (§4, §6, §7)
 
-extension PanoramaViewController: PanoScrollViewObserving {
+extension TesseraPanoramaViewController: PanoScrollViewObserving {
 
     /// Горячий путь прокрутки: только `transform`/`alpha` и колбэк делегата (§4).
     ///
     /// - Parameter scrollView: Источник события.
-    func panoScrollViewDidScroll(_ scrollView: PanoScrollView) {
+    func panoScrollViewDidScroll(_ scrollView: TesseraPanoScrollView) {
         // Запись геометрии в layout-проходе — не прогресс: итог применит сам
         // проход (E10.13).
         guard !isRestoringGeometry else { return }
@@ -1294,7 +1294,7 @@ extension PanoramaViewController: PanoScrollViewObserving {
     ///   - velocityX: Скорость жеста (не используется: решает политика снапа).
     ///   - targetReadingIndex: Целевая секция в порядке чтения.
     func panoScrollViewWillEndDragging(
-        _ scrollView: PanoScrollView,
+        _ scrollView: TesseraPanoScrollView,
         velocityX: CGFloat,
         targetReadingIndex: Int
     ) {
@@ -1314,7 +1314,7 @@ extension PanoramaViewController: PanoScrollViewObserving {
     ///   - scrollView: Источник события.
     ///   - decelerate: Начнётся ли инерция.
     func panoScrollViewDidEndDragging(
-        _ scrollView: PanoScrollView,
+        _ scrollView: TesseraPanoScrollView,
         willDecelerate decelerate: Bool
     ) {
         let snapTarget = scrollView.consumePendingSnapOffsetX()
@@ -1337,14 +1337,14 @@ extension PanoramaViewController: PanoScrollViewObserving {
     /// Инерция закончилась: фиксируем показанную секцию.
     ///
     /// - Parameter scrollView: Источник события.
-    func panoScrollViewDidEndDecelerating(_ scrollView: PanoScrollView) {
+    func panoScrollViewDidEndDecelerating(_ scrollView: TesseraPanoScrollView) {
         finishTransition()
     }
 
     /// Программная анимация завершилась: фиксируем показанную секцию.
     ///
     /// - Parameter scrollView: Источник события.
-    func panoScrollViewDidEndScrollingAnimation(_ scrollView: PanoScrollView) {
+    func panoScrollViewDidEndScrollingAnimation(_ scrollView: TesseraPanoScrollView) {
         finishTransition()
     }
 
@@ -1354,7 +1354,7 @@ extension PanoramaViewController: PanoScrollViewObserving {
     ///   - scrollView: Источник события.
     ///   - step: Шаг по секциям в порядке чтения (уже с учётом RTL).
     /// - Returns: `true`, если переход выполнен.
-    func panoScrollView(_ scrollView: PanoScrollView, accessibilityStep step: Int) -> Bool {
+    func panoScrollView(_ scrollView: TesseraPanoScrollView, accessibilityStep step: Int) -> Bool {
         // Индекс берём из фактического offset'а, а не из кеша: жест мог прийти
         // до завершения предыдущего перехода.
         applyProgress(notifyDelegate: false)

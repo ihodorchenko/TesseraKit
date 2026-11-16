@@ -28,7 +28,7 @@ final class FolderPreviewTests: XCTestCase {
     ///
     /// - Parameter badges: Бэйджи в порядке ярлыков.
     /// - Returns: Массив ярлыков «t0», «t1», …
-    private func makeTiles(_ badges: [TileBadge]) -> [TileDescriptor] {
+    private func makeTiles(_ badges: [TesseraTileBadge]) -> [TesseraTileDescriptor] {
         badges.enumerated().map { index, badge in
             tesseraTestTile("t\(index)", badge: badge)
         }
@@ -46,7 +46,7 @@ final class FolderPreviewTests: XCTestCase {
     /// - Parameters:
     ///   - preview: Превью.
     ///   - tiles: Ярлыки папки в порядке отображения.
-    private func configure(_ preview: TesseraFolderPreviewView, tiles: [TileDescriptor]) {
+    private func configure(_ preview: TesseraFolderPreviewView, tiles: [TesseraTileDescriptor]) {
         preview.configure(tiles: tiles, schedule: TesseraFolderFlipSchedule(seed: 7))
     }
 

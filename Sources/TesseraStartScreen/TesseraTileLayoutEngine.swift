@@ -3,8 +3,8 @@
 // (формула юнита, юнитные координаты, дыры допускаются) и §14 «Уточнения MVP»
 // п. 4 (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
 //
-// Упаковка по порядку (E8.5) строго компактна: ``TileLayoutEngine/pack(items:columns:unit:)``
-// (реализация — ``TileLayoutEngine/packCompact(items:columns:unit:)``) ставит
+// Упаковка по порядку (E8.5) строго компактна: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
+// (реализация — ``TesseraTileLayoutEngine/packCompact(items:columns:unit:)``) ставит
 // плитки в самую верхнюю-левую позицию и схлопывает раскладку вверх-влево. С E14
 // (D30) это **не** основная раскладка рабочего стола, а запасной путь (см. ниже):
 // штатно плитки стоят на явных ячейках, дыры сохраняются.
@@ -12,18 +12,18 @@
 // D17 (docs/STATE.md) — панель раскрытой папки: чистые функции индекса вставки
 // панели после полосы папки (E10.1), отступа строк под панелью и её высоты — в
 // конце файла. E10.1 — пиксельное выравнивание юнита и геометрия сетки
-// (``TileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
+// (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
 // Основная часть движка остаётся без UIKit и без состояния.
 //
-// E14 — размещение по координатам (`TileLayoutEngine+Placement.swift`): превью
+// E14 — размещение по координатам (`TesseraTileLayoutEngine+Placement.swift`): превью
 // drag, resize, вставка, схлопывание пустых строк работают над набором
-// `TilePlacedItem` (идентификатор, размер, ячейка). ``pack(items:columns:unit:)``
+// `TesseraTilePlacedItem` (идентификатор, размер, ячейка). ``pack(items:columns:unit:)``
 // остаётся упаковкой по порядку: откат раскладки сетки без таблицы ячеек (E14.3),
 // миграция v1 → v2, проекция при другой ширине холста (D32) и раскладка первого
 // запуска (`packCompact`).
 //
 // Модуль намеренно чистый: только CoreGraphics (`CGFloat`, `CGSize`, `CGRect`),
-// модель `TileSize` и элементы снимка сетки. Никакого UIKit, layout-контекста и
+// модель `TesseraTileSize` и элементы снимка сетки. Никакого UIKit, layout-контекста и
 // состояния — все функции детерминированы и тестируются без UI (E4.7).
 
 import CoreGraphics
@@ -38,13 +38,13 @@ import CoreGraphics
 ///
 /// ``frame`` — «сырая» рамка в точках без промежутков (unit × юнитные
 /// координаты). Итоговая геометрия с зазорами между юнитами и началом координат
-/// контента считается через ``TileLayoutEngine/rect(for:unit:gap:origin:)``.
-public struct TileLayoutSlot: Equatable {
+/// контента считается через ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``.
+public struct TesseraTileLayoutSlot: Equatable {
     /// Идентификатор ярлыка, к которому относится слот.
     public let id: AnyHashable
 
     /// Запрошенный размер плитки (D15).
-    public let size: TileSize
+    public let size: TesseraTileSize
 
     /// Колонка левого верхнего угла в юнитах (отсчёт от 0, слева направо).
     public let column: Int
@@ -55,15 +55,15 @@ public struct TileLayoutSlot: Equatable {
     /// Размер одного юнита в точках, с которым считалась эта раскладка.
     ///
     /// Хранится снимком, чтобы ``frame`` и
-    /// ``TileLayoutEngine/rect(for:unit:gap:origin:)`` могли работать без
+    /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)`` могли работать без
     /// повторной передачи геометрии. При повороте/смене ширины раскладку
-    /// пересобирают через ``TileLayoutEngine/pack(items:columns:unit:)`` с новым
+    /// пересобирают через ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` с новым
     /// юнитом — юнитные координаты при этом не меняются.
     public let unit: CGFloat
 
     /// Создаёт слот раскладки.
     ///
-    /// Обычно слоты создаёт ``TileLayoutEngine/pack(items:columns:unit:)``;
+    /// Обычно слоты создаёт ``TesseraTileLayoutEngine/pack(items:columns:unit:)``;
     /// инициализатор публичный, чтобы тесты и потребители могли собрать
     /// ожидаемое значение без запуска упаковки.
     ///
@@ -73,7 +73,7 @@ public struct TileLayoutSlot: Equatable {
     ///   - column: Колонка левого верхнего угла в юнитах.
     ///   - row: Строка левого верхнего угла в юнитах.
     ///   - unit: Размер юнита в точках.
-    public init(id: AnyHashable, size: TileSize, column: Int, row: Int, unit: CGFloat) {
+    public init(id: AnyHashable, size: TesseraTileSize, column: Int, row: Int, unit: CGFloat) {
         self.id = id
         self.size = size
         self.column = column
@@ -95,7 +95,7 @@ public struct TileLayoutSlot: Equatable {
     /// `width = unitColumns`, `height = unitRows`.
     ///
     /// Удобен для проверок и отладки; для точек используйте ``frame`` или
-    /// ``TileLayoutEngine/rect(for:unit:gap:origin:)``.
+    /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``.
     public var unitFrame: CGRect {
         CGRect(
             x: CGFloat(column),
@@ -109,7 +109,7 @@ public struct TileLayoutSlot: Equatable {
     ///
     /// Это `unit × unitFrame`. Реальная сетка добавляет зазоры между соседними
     /// юнитами, поэтому для отрисовки нужен
-    /// ``TileLayoutEngine/rect(for:unit:gap:origin:)``: он же учитывает
+    /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``: он же учитывает
     /// внутренние зазоры широких и больших плиток.
     ///
     /// При нечисловом или неположительном ``unit`` возвращается `.zero`.
@@ -134,7 +134,7 @@ public struct TileLayoutSlot: Equatable {
 /// раскладку можно «схлопнуть» вверх-влево до неподвижной точки. Это запасной
 /// путь (сетка без применимой таблицы ячеек), миграция файла v1 → v2, проекция
 /// под другую ширину холста (D32) и раскладка первого запуска. Основная
-/// раскладка — по явным ячейкам (`TileLayoutEngine+Placement.swift`, E14, D30):
+/// раскладка — по явным ячейкам (`TesseraTileLayoutEngine+Placement.swift`, E14, D30):
 /// дыры сохраняются, коллизии выталкивают плитки вниз (D31). История отказа от
 /// «честных дыр» и возврата к ним — «Отступления реализации» (п. 5 и E14)
 /// docs/STARTSCREEN-IOS-DESIGN.md.
@@ -143,14 +143,14 @@ public struct TileLayoutSlot: Equatable {
 /// аргументов. Направление чтения (RTL) здесь не учитывается — зеркалирование
 /// сетки выполняет вью-слой (документ §9, «RTL»), а движок работает в
 /// LTR-координатах.
-public enum TileLayoutEngine {
+public enum TesseraTileLayoutEngine {
 
     /// Число колонок сетки по умолчанию — 6 малых колонок (D26).
     ///
     /// Как в Windows 10 Mobile (docs/W10M-STARTSCREEN.md §2): три средние плитки
     /// в ряд, широкая занимает 4 колонки из 6, большая — 4×4. Единственный
     /// источник умолчания для ``TesseraTileGridView/columns`` и для методов
-    /// ``TileStore`` без сетки; хост может задать своё `columns`.
+    /// ``TesseraTileStore`` без сетки; хост может задать своё `columns`.
     public static let defaultColumns = 6
 
     /// Размер одного юнита сетки в точках
@@ -353,7 +353,7 @@ public enum TileLayoutEngine {
     ///   - folderSlot: Слот плитки раскрытой папки.
     ///   - slots: Слоты всех плиток раскладки (папка может входить).
     /// - Returns: Первая строка после полосы: с неё начинается панель.
-    static func folderBandEndRow(for folderSlot: TileLayoutSlot, in slots: [TileLayoutSlot]) -> Int {
+    static func folderBandEndRow(for folderSlot: TesseraTileLayoutSlot, in slots: [TesseraTileLayoutSlot]) -> Int {
         let start = folderSlot.row
         var end = folderSlot.row + folderSlot.unitRows
         var changed = true
@@ -399,10 +399,10 @@ public enum TileLayoutEngine {
     /// - Returns: Слоты в порядке `items`; пустой массив для вырожденной
     ///   геометрии или пустого входа.
     public static func pack(
-        items: [(id: AnyHashable, size: TileSize)],
+        items: [(id: AnyHashable, size: TesseraTileSize)],
         columns: Int,
         unit: CGFloat
-    ) -> [TileLayoutSlot] {
+    ) -> [TesseraTileLayoutSlot] {
         packCompact(items: items, columns: columns, unit: unit)
     }
 
@@ -436,16 +436,16 @@ public enum TileLayoutEngine {
     /// - Returns: Слоты в порядке `items`; пустой массив для вырожденной
     ///   геометрии или пустого входа.
     static func packCompact(
-        items: [(id: AnyHashable, size: TileSize)],
+        items: [(id: AnyHashable, size: TesseraTileSize)],
         columns: Int,
         unit: CGFloat
-    ) -> [TileLayoutSlot] {
+    ) -> [TesseraTileLayoutSlot] {
         guard columns > 0, unit.isFinite, unit > 0 else { return [] }
 
         // Фаза 1 «якорь»: занятость сетки — матрица, потому что перебор идёт
         // построчно и подряд; строки добавляются по мере роста упаковки.
         var occupied: [[Bool]] = []
-        var slots: [TileLayoutSlot] = []
+        var slots: [TesseraTileLayoutSlot] = []
         slots.reserveCapacity(items.count)
 
         for item in items {
@@ -474,7 +474,7 @@ public enum TileLayoutEngine {
                         height: height
                     )
                     slots.append(
-                        TileLayoutSlot(
+                        TesseraTileLayoutSlot(
                             id: item.id,
                             size: item.size,
                             column: column,
@@ -517,7 +517,7 @@ public enum TileLayoutEngine {
     /// - Returns: Слоты в прежнем порядке с компактными координатами; при
     ///   вырожденных аргументах (неположительные координаты, плитка шире сетки)
     ///   — входной массив без изменений.
-    static func stabilize(_ slots: [TileLayoutSlot], columns: Int) -> [TileLayoutSlot] {
+    static func stabilize(_ slots: [TesseraTileLayoutSlot], columns: Int) -> [TesseraTileLayoutSlot] {
         guard columns > 0, !slots.isEmpty else { return slots }
         guard slots.allSatisfy({
             $0.unitColumns > 0
@@ -585,7 +585,7 @@ public enum TileLayoutEngine {
                     height: slot.unitRows,
                     columns: columns
                 ) {
-                    working[index] = TileLayoutSlot(
+                    working[index] = TesseraTileLayoutSlot(
                         id: slot.id,
                         size: slot.size,
                         column: target.column,
@@ -630,14 +630,14 @@ public enum TileLayoutEngine {
     /// - Parameters:
     ///   - slot: Слот в юнитных координатах.
     ///   - unit: Размер юнита в точках; `nil` — использовать
-    ///     ``TileLayoutSlot/unit``, с которым считался слот.
+    ///     ``TesseraTileLayoutSlot/unit``, с которым считался слот.
     ///   - gap: Зазор между соседними юнитами в точках; отрицательный
     ///     трактуется как 0.
     ///   - origin: Начало координат контента сетки (например, `contentInset`).
     /// - Returns: Рамка в точках; `.zero` для нечислового/неположительного
     ///   юнита или пустого следа плитки.
     public static func rect(
-        for slot: TileLayoutSlot,
+        for slot: TesseraTileLayoutSlot,
         unit: CGFloat? = nil,
         gap: CGFloat = 0,
         origin: CGPoint = .zero
@@ -772,7 +772,7 @@ public enum TileLayoutEngine {
     /// числе колонок широкая плитка не помещается. Вместо пропуска плитки (он сдвинул бы соответствие
     /// «индекс → элемент») берётся ближайший меньший размер: 2×2 при двух-трёх
     /// колонках и 1×1 при одной. Это деградация геометрии, а не модели:
-    /// `TileSize` ярлыка в `TileStore` не меняется.
+    /// `TesseraTileSize` ярлыка в `TesseraTileStore` не меняется.
     ///
     /// Связь с ограничением колонки (E14.2): след плитки на сетке — всегда
     /// `fittingSize`, поэтому `column + ширина ≤ columns` достижимо для любой
@@ -785,7 +785,7 @@ public enum TileLayoutEngine {
     ///   - size: Запрошенный размер плитки.
     ///   - columns: Число колонок сетки.
     /// - Returns: Размер, который заведомо помещается в сетку.
-    static func fittingSize(_ size: TileSize, columns: Int) -> TileSize {
+    static func fittingSize(_ size: TesseraTileSize, columns: Int) -> TesseraTileSize {
         guard columns > 0 else { return size }
         guard size.unitColumns > columns else { return size }
         return columns >= 2 ? .medium : .small
@@ -930,8 +930,8 @@ public enum TileLayoutEngine {
 /// Панель раскрытой папки: чистые функции места и сдвига (D17, E7).
 ///
 /// Раскрытие папки в WP-стиле (D17) вставляет панель
-/// ``TileGridItem/folderContent(_:)`` **после полосы папки** — строк плитки
-/// ``TileGridItem/folder(_:)``, расширенных вниз на плитки, которые начинаются
+/// ``TesseraTileGridItem/folderContent(_:)`` **после полосы папки** — строк плитки
+/// ``TesseraTileGridItem/folder(_:)``, расширенных вниз на плитки, которые начинаются
 /// в этих строках и заканчиваются ниже (``folderBandEndRow(for:in:)``, E10.1).
 /// Сама плитка папки остаётся на своём месте и видна всё время, пока папка
 /// раскрыта: панель — отдельная полноширинная строка под полосой, а не замена
@@ -951,7 +951,7 @@ public enum TileLayoutEngine {
 /// Юнитные
 /// координаты не зависят от масштаба, поэтому единичный юнит даёт ровно те же
 /// строки и колонки, что и реальная геометрия в точках.
-extension TileLayoutEngine {
+extension TesseraTileLayoutEngine {
 
     /// Геометрия раскрытия в юнитных координатах.
     ///
@@ -962,7 +962,7 @@ extension TileLayoutEngine {
     private struct FolderPanelGeometry {
 
         /// Слоты элементов по идентификатору.
-        var slots: [AnyHashable: TileLayoutSlot]
+        var slots: [AnyHashable: TesseraTileLayoutSlot]
 
         /// Первая строка после полосы папки (E10.1): с неё начинается панель.
         /// Всё, что начинается выше, остаётся на месте; всё, что начинается с
@@ -981,7 +981,7 @@ extension TileLayoutEngine {
     ///   - expandedFolderID: Идентификатор раскрытой папки.
     /// - Returns: Геометрия либо `nil`, если папки в наборе нет.
     private static func folderPanelGeometry(
-        items: [TileGridItem],
+        items: [TesseraTileGridItem],
         columns: Int,
         expandedFolderID: AnyHashable
     ) -> FolderPanelGeometry? {
@@ -996,13 +996,13 @@ extension TileLayoutEngine {
 
         // Панель в упаковку не входит: она не плитка, а отдельная строка под
         // папкой, высота которой считается в точках, а не в юнитах.
-        let packItems: [(id: AnyHashable, size: TileSize)] = items.compactMap { item in
+        let packItems: [(id: AnyHashable, size: TesseraTileSize)] = items.compactMap { item in
             guard !item.isFolderPanel else { return nil }
             return (id: item.id, size: fittingSize(item.size, columns: columns))
         }
         let packedSlots = pack(items: packItems, columns: columns, unit: 1)
 
-        var slots: [AnyHashable: TileLayoutSlot] = [:]
+        var slots: [AnyHashable: TesseraTileLayoutSlot] = [:]
         slots.reserveCapacity(packedSlots.count)
         for slot in packedSlots {
             slots[slot.id] = slot
@@ -1026,12 +1026,12 @@ extension TileLayoutEngine {
     ///
     /// - Parameters:
     ///   - items: Базовые элементы сетки в порядке отображения (снимок
-    ///     `TileStore`, без панели).
+    ///     `TesseraTileStore`, без панели).
     ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
     /// - Returns: Индекс плитки-папки + 1 либо `nil`, если такой папки нет или
     ///   панель уже присутствует в наборе.
     public static func folderPanelInsertionIndex(
-        items: [TileGridItem],
+        items: [TesseraTileGridItem],
         expandedFolderID: AnyHashable?
     ) -> Int? {
         guard let expandedFolderID else { return nil }
@@ -1064,14 +1064,14 @@ extension TileLayoutEngine {
     ///
     /// - Parameters:
     ///   - items: Базовые элементы сетки в порядке отображения (снимок
-    ///     `TileStore`, без панели).
+    ///     `TesseraTileStore`, без панели).
     ///   - columns: Число колонок сетки. При `columns <= 0` геометрии нет, и
     ///     результат совпадает с ``folderPanelInsertionIndex(items:expandedFolderID:)``.
     ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
     /// - Returns: Индекс для вставки `.folderContent(folder)` либо `nil`, если
     ///   такой папки нет или панель уже присутствует в наборе.
     public static func folderPanelInsertionIndex(
-        items: [TileGridItem],
+        items: [TesseraTileGridItem],
         columns: Int,
         expandedFolderID: AnyHashable?
     ) -> Int? {
@@ -1126,7 +1126,7 @@ extension TileLayoutEngine {
     /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
     ///   иначе `0`.
     public static func rowsBelowOffset(
-        items: [TileGridItem],
+        items: [TesseraTileGridItem],
         columns: Int,
         expandedFolderID: AnyHashable?,
         panelHeight: CGFloat,
@@ -1171,14 +1171,14 @@ extension TileLayoutEngine {
     /// - Returns: Геометрия либо `nil`, если папки среди слотов нет;
     ///   `folderIndex` — индекс папки в `placedSlots`.
     private static func folderPanelGeometry(
-        placedSlots: [TileLayoutSlot],
+        placedSlots: [TesseraTileLayoutSlot],
         expandedFolderID: AnyHashable
     ) -> FolderPanelGeometry? {
         guard let folderIndex = placedSlots.firstIndex(where: { $0.id == expandedFolderID }) else {
             return nil
         }
 
-        var byID: [AnyHashable: TileLayoutSlot] = [:]
+        var byID: [AnyHashable: TesseraTileLayoutSlot] = [:]
         byID.reserveCapacity(placedSlots.count)
         for slot in placedSlots {
             byID[slot.id] = slot
@@ -1205,7 +1205,7 @@ extension TileLayoutEngine {
     ///   или она не помещается в сетку.
     public static func folderBandEndRow(
         forFolder folderID: AnyHashable,
-        in placements: [TilePlacedItem],
+        in placements: [TesseraTilePlacedItem],
         columns: Int
     ) -> Int? {
         let placed = slots(placements: placements, columns: columns, unit: 1, fitting: true)
@@ -1227,7 +1227,7 @@ extension TileLayoutEngine {
     /// - Returns: Индекс для вставки панели либо `nil`, если папки среди слотов
     ///   нет.
     public static func folderPanelInsertionIndex(
-        placedSlots: [TileLayoutSlot],
+        placedSlots: [TesseraTileLayoutSlot],
         expandedFolderID: AnyHashable?
     ) -> Int? {
         guard let expandedFolderID,
@@ -1257,7 +1257,7 @@ extension TileLayoutEngine {
     ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
     /// - Returns: Индекс для вставки панели либо `nil`.
     public static func folderPanelInsertionIndex(
-        placements: [TilePlacedItem],
+        placements: [TesseraTilePlacedItem],
         columns: Int,
         expandedFolderID: AnyHashable?
     ) -> Int? {
@@ -1282,7 +1282,7 @@ extension TileLayoutEngine {
     /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
     ///   иначе `0`.
     public static func rowsBelowOffset(
-        placedSlots: [TileLayoutSlot],
+        placedSlots: [TesseraTileLayoutSlot],
         expandedFolderID: AnyHashable?,
         panelHeight: CGFloat,
         spacing: CGFloat = 8
@@ -1315,7 +1315,7 @@ extension TileLayoutEngine {
     /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
     ///   иначе `0`.
     public static func rowsBelowOffset(
-        placements: [TilePlacedItem],
+        placements: [TesseraTilePlacedItem],
         columns: Int,
         expandedFolderID: AnyHashable?,
         panelHeight: CGFloat,
@@ -1343,7 +1343,7 @@ extension TileLayoutEngine {
     ///   - columns: Число колонок сетки содержимого, больше нуля.
     /// - Returns: Высота панели в точках; `0` для вырожденной геометрии.
     public static func panelHeight(
-        for folder: TileFolder,
+        for folder: TesseraTileFolder,
         width: CGFloat,
         columns: Int
     ) -> CGFloat {
@@ -1365,7 +1365,7 @@ extension TileLayoutEngine {
     ///   - scale: Масштаб экрана; `<= 0` — без пиксельного выравнивания.
     /// - Returns: Высота панели в точках; `0` для вырожденной геометрии.
     public static func panelHeight(
-        for folder: TileFolder,
+        for folder: TesseraTileFolder,
         width: CGFloat,
         columns: Int,
         spacing: CGFloat,
