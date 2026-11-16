@@ -68,15 +68,37 @@
 /* Причины отказа функции одобрения. */
 "a11y.grouping.reason.addDenied" = "adding to a folder is denied";
 "a11y.grouping.reason.createDenied" = "creating a folder is denied";
-"a11y.grouping.reason.tileAddDenied" = "the folder was created, but adding the shortcut is denied";
+"a11y.grouping.reason.tileAddDenied" = "adding the shortcut to the new folder is denied";
+"a11y.grouping.reason.moveDenied" = "moving the shortcut is denied";
 
 /* MARK: - Custom actions режима редактирования (§9) */
 
 /* Действие «открепить ярлык». */
 "a11y.action.unpin" = "Unpin";
 
-/* Действие «изменить размер плитки». */
+/* Change tile size. */
 "a11y.action.resize" = "Change size";
+
+/* Rename a folder (folder tile and open panel header; E15.5, D35). */
+"a11y.action.renameFolder" = "Rename";
+
+/* Add to a folder (%@ — folder title). */
+"a11y.action.addToFolderFormat" = "Add to folder %@";
+
+/* Move a shortcut out of its folder onto the start screen. */
+"a11y.action.removeFromFolder" = "Remove from folder";
+
+/* Move a shortcut to another folder (%@ — folder title). */
+"a11y.action.moveToFolderFormat" = "Move to folder %@";
+
+/* Move a shortcut one position earlier inside the open folder panel. */
+"a11y.action.moveEarlier" = "Move earlier";
+
+/* Move a shortcut one position later inside the open folder panel. */
+"a11y.action.moveLater" = "Move later";
+
+/* Spoken position of a shortcut after reordering inside a folder (%1$d — position, %2$d — count). */
+"a11y.folder.tilePositionFormat" = "Position %1$d of %2$d.";
 
 /* MARK: - Экран папки (TesseraFolderViewController) */
 
@@ -88,6 +110,9 @@
 
 /* Подпись папки без названия. */
 "folderScreen.defaultTitle" = "Folder";
+
+/* Accessibility label of the folder rename text field (E15.5, D35). */
+"folderName.fieldLabel" = "Folder name";
 
 /* VoiceOver-действие «переместить ярлык». */
 "folderScreen.moveAction" = "Move";
@@ -130,6 +155,9 @@
 
 /* Состояние раскрытой папки в accessibilityValue ячейки. */
 "panel.expanded" = "expanded";
+
+/* Значение VoiceOver для бэйджа-точки без числа (D34, E15.4). */
+"a11y.badge.dot" = "has a notification";
 
 /* MARK: - Общие строки */
 

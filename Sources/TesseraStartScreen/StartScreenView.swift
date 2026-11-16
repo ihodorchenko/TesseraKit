@@ -108,7 +108,7 @@ public struct StartScreenStyle {
 ///
 /// var body: some View {
 ///     StartScreenView(
-///         snapshot: store.snapshot(),
+///         snapshot: store.snapshot(columns: 6),   // ширина сетки; ячейки и дыры (E14.5)
 ///         style: StartScreenStyle(startPageTitle: "Начало"),
 ///         rightPage: { TesseraAppsListPageViewController.make(store: store) },
 ///         delegate: host
@@ -146,7 +146,7 @@ public struct StartScreenStyle {
 /// ## Раскрытие папок (D17, E7.3)
 ///
 /// По умолчанию тап по папке раскрывает её встроенной панелью сетки: заголовок
-/// (в нижнем регистре) и четырёхколоночная сетка ярлыков появляются под строкой
+/// (в нижнем регистре) и сетка ярлыков (то же число колонок, что у рабочего стола) появляются под строкой
 /// папки, строки ниже сдвигаются, иконки идут каскадом. Повторный тап, тап по
 /// пустому месту и `Back`/VoiceOver-escape закрывают панель; состояние также
 /// снимается, если папка исчезла из снимка.
@@ -387,8 +387,8 @@ public struct StartScreenView: UIViewControllerRepresentable {
                 isFolderPanel = false
             case .folder(let folder):
                 title = folder.title
-                // У папки бейджа нет (§4): счётчик внимания — свойство ярлыка.
-                badge = .none
+                // D44, E15.7: бейдж папки — агрегат бейджей её ярлыков.
+                badge = folder.aggregateBadge
                 iconIdentifier = folder.icon.map { ObjectIdentifier($0) }
                 liveContentIdentifier = nil
                 folderContents = folder.tiles.map { ShortcutSignature(shortcut: $0) }
@@ -574,7 +574,13 @@ public struct StartScreenView: UIViewControllerRepresentable {
             if !force {
                 let desired = StartScreenView.signatures(for: snapshot.items)
                 let current = StartScreenView.signatures(for: screen.gridView.items)
-                guard desired != current else { return }
+                // E14.5: снимок с таблицей явных ячеек (`TileStore.snapshot(columns:)`)
+                // меняет раскладку и тогда, когда состав и размеры те же — например,
+                // после открепления остаётся дыра. Снимок без таблицы раскладку не
+                // задаёт и показанную таблицу не затирает.
+                let placementsChanged = snapshot.placementTable != nil
+                    && snapshot.placementTable != screen.gridView.snapshot?.placementTable
+                guard desired != current || placementsChanged else { return }
             }
             screen.reload(grid: snapshot)
         }

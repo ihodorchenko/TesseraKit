@@ -36,6 +36,11 @@ struct ContentView: View {
                     Label("Стол", systemImage: "square.grid.2x2.fill")
                 }
 
+            StartDemoView()
+                .tabItem {
+                    Label("Старт", systemImage: "rectangle.grid.2x2")
+                }
+
             PivotDemoView()
                 .tabItem {
                     Label("Пивот", systemImage: "rectangle.split.3x1.fill")
@@ -144,24 +149,38 @@ enum DemoVisuals {
 
 struct DeskDemoView: View {
     @StateObject private var model = DemoDeskModel()
+    @Environment(\.sizeCategory) private var sizeCategory
+
+    /// Высота плавающего блока подсказки/кнопки (E12.6): сетка резервирует
+    /// под него нижнее поле, чтобы последний ряд плиток не оказывался под ним.
+    @State private var overlayHeight: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            DemoDeskRepresentable(model: model, isEditing: model.isEditing)
+            DemoDeskRepresentable(
+                model: model,
+                isEditing: model.isEditing,
+                bottomReserve: overlayHeight
+            )
 
             VStack(alignment: .trailing, spacing: 10) {
-                Text(
-                    model.isEditing
-                        ? "Перетащите плитку, измените размер или открепите её"
-                        : "Долгое нажатие по плитке — режим редактирования"
-                )
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.trailing)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(UIColor.secondarySystemBackground))
-                .clipShape(Capsule())
+                // E12.6: на accessibility-размерах подсказка не показывается —
+                // крупный текст превращал её в блок поверх сетки.
+                if !sizeCategory.isAccessibilityCategory {
+                    Text(
+                        model.isEditing
+                            ? "Перетащите плитку, измените размер или открепите её"
+                            : "Долгое нажатие по плитке — режим редактирования"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .clipShape(Capsule())
+                }
 
                 Button {
                     model.isEditing.toggle()
@@ -174,7 +193,16 @@ struct DeskDemoView: View {
                 .buttonStyle(DemoCapsuleButtonStyle(tint: model.isEditing ? .green : .blue))
             }
             .padding(16)
+            // E12.6: кнопка не растёт выше xxxLarge — иначе на accessibility-
+            // размерах она занимает пол-экрана поверх сетки.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: DemoDeskOverlayHeightKey.self, value: proxy.size.height)
+                }
+            )
         }
+        .onPreferenceChange(DemoDeskOverlayHeightKey.self) { overlayHeight = $0 }
         .alert(item: $model.alert) { alert in
             Alert(
                 title: Text(alert.title),
@@ -182,6 +210,15 @@ struct DeskDemoView: View {
                 dismissButton: .default(Text("OK"))
             )
         }
+    }
+}
+
+/// Высота плавающего блока подсказки/кнопки вкладки «Стол» (E12.6).
+private struct DemoDeskOverlayHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -194,12 +231,15 @@ struct DeskDemoView: View {
 struct DemoDeskRepresentable: UIViewControllerRepresentable {
     let model: DemoDeskModel
     let isEditing: Bool
+    /// Высота плавающего блока поверх сетки — нижнее поле (E12.6).
+    let bottomReserve: CGFloat
 
     func makeUIViewController(context: Context) -> DemoDeskHostController {
         DemoDeskHostController(model: model)
     }
 
     func updateUIViewController(_ uiViewController: DemoDeskHostController, context: Context) {
+        uiViewController.bottomReserve = bottomReserve
         uiViewController.applyEditingState(isEditing)
     }
 }
@@ -297,21 +337,26 @@ final class DemoDeskModel: ObservableObject {
     /// Каталог регистрируется целиком, поэтому при первом запуске ярлыки
     /// автоматически попадают на сетку. Папка создаётся через публичное
     /// одобрение D14 (по умолчанию `TileStore.approval` разрешает всё).
+    /// Операции хранилища — по ячейкам (E14); ширина сетки известна только
+    /// после создания вью, поэтому сид использует умолчание D26 (6 колонок),
+    /// как и сетка Example.
     private func seedFolderIfNeeded() {
         guard store.snapshot().folders.isEmpty else { return }
+        let columns = TileLayoutEngine.defaultColumns
 
         if !store.isPinned("notes") {
-            store.pin("notes")
+            store.pinTile("notes", columns: columns)
         }
 
-        guard let folder = store.createFolder(withTile: "notes", title: "Работа") else {
+        guard let folder = store.createFolder(withTile: "notes", title: "Работа", columns: columns) else {
             return
         }
 
         if !store.isPinned("photos") {
-            store.pin("photos")
+            store.pinTile("photos", columns: columns)
         }
-        store.addToFolder("photos", folderID: folder.id)
+        store.addToFolder("photos", folderID: folder.id, columns: columns)
+        store.collapseEmptyRows(columns: columns)
     }
 
     /// Действие ярлыка: печать в консоль и алерт. D12: действие вызывает хост,
@@ -381,6 +426,14 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     private let gridView = TesseraTileGridView()
     private var editCoordinator: TesseraTileEditCoordinator?
 
+    /// Высота плавающей подсказки/кнопки SwiftUI-слоя (E12.6).
+    var bottomReserve: CGFloat = 124 {
+        didSet {
+            guard bottomReserve != oldValue, isViewLoaded else { return }
+            updateGridInsets()
+        }
+    }
+
     init(model: DemoDeskModel) {
         self.model = model
         self.store = model.store
@@ -406,7 +459,8 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
             gridView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        gridView.reload(snapshot: store.snapshot())
+        // E14.5: снимок с таблицей явных ячеек — сетка показывает дыры модели.
+        gridView.reload(snapshot: store.snapshot(columns: gridView.columns))
         gridView.onTap = { [weak self] item in
             self?.handleTap(item)
         }
@@ -458,11 +512,12 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     private func updateGridInsets() {
         let safeArea = view.safeAreaInsets
         // Нижний запас — под плавающую подсказку и кнопку «Изменить»,
-        // которые лежат поверх представителя в SwiftUI-слое.
+        // которые лежат поверх представителя в SwiftUI-слое; высоту блока
+        // измеряет SwiftUI (на accessibility-размерах она другая, E12.6).
         let insets = UIEdgeInsets(
             top: max(safeArea.top, 0) + 8,
             left: 16,
-            bottom: max(safeArea.bottom, 0) + 124,
+            bottom: max(safeArea.bottom, 0) + bottomReserve + 8,
             right: 16
         )
 
@@ -519,9 +574,9 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
     func tileEditCoordinator(
         _ coordinator: TesseraTileEditCoordinator,
         didMove tileID: AnyHashable,
-        toIndex index: Int
+        toCell cell: TileGridPlacement
     ) {
-        print("[TesseraKitExample] Move tile: \(tileID) → \(index)")
+        print("[TesseraKitExample] Move tile: \(tileID) → (\(cell.row), \(cell.column))")
     }
 
     /// Не публикуем изменение повторно, если флаг уже совпадает: иначе
@@ -530,6 +585,326 @@ final class DemoDeskHostController: UIViewController, TesseraTileEditCoordinator
         if model.isEditing != isEditing {
             model.isEditing = isEditing
         }
+    }
+}
+
+// MARK: - Вкладка «Старт» (полный рабочий стол, E12.8)
+
+/// Вкладка «Старт»: полный публичный `TesseraStartScreenViewController` —
+/// пейджер из трёх страниц (хук / START / список приложений), параллакс обоев,
+/// живая плитка, папка и режим редактирования. Вкладка «Стол» остаётся как
+/// есть: там сетка и координатор без пейджера.
+struct StartDemoView: View {
+    @StateObject private var model = StartDemoModel()
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            StartDemoRepresentable(model: model, isEditing: model.isEditing)
+                // Обои идут под статус-бар, а снизу остаётся safe area вкладок:
+                // сетка получает нижнее поле от самого экрана.
+                .ignoresSafeArea(.container, edges: .top)
+
+            // Кнопка выхода из edit поверх экрана: режим также включается
+            // долгим нажатием по плитке и выключается тапом по фону.
+            if model.isEditing {
+                Button {
+                    model.isEditing = false
+                } label: {
+                    Label("Готово", systemImage: "checkmark.circle.fill")
+                }
+                .buttonStyle(DemoCapsuleButtonStyle(tint: .green))
+                .padding(.bottom, 8)
+                .padding(.trailing, 16)
+            }
+        }
+        .alert(item: $model.alert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+    }
+}
+
+/// Мост SwiftUI → полный рабочий стол.
+struct StartDemoRepresentable: UIViewControllerRepresentable {
+    let model: StartDemoModel
+    let isEditing: Bool
+
+    func makeUIViewController(context: Context) -> StartDemoHostController {
+        StartDemoHostController(model: model)
+    }
+
+    func updateUIViewController(_ uiViewController: StartDemoHostController, context: Context) {
+        uiViewController.applyEditingState(isEditing)
+    }
+}
+
+/// Модель вкладки «Старт»: каталог из 7 демо-плиток и 18 дополнительных
+/// приложений (в списке они откреплены), папка и live-плитка.
+final class StartDemoModel: ObservableObject {
+    let store: TileStore
+
+    @Published var isEditing = false
+    @Published var alert: DemoAlert?
+
+    private let liveTileProvider = DemoLiveTileProvider()
+
+    /// Дополнительные приложения: только в списке, на сетке не закреплены.
+    private static let extraApps: [(id: String, title: String, symbol: String, tint: UIColor)] = [
+        ("camera", "Камера", "camera.fill", .systemGray),
+        ("maps", "Карты", "map.fill", .systemGreen),
+        ("clock", "Часы", "clock.fill", .systemOrange),
+        ("contacts", "Контакты", "person.2.fill", .systemBrown),
+        ("phone", "Телефон", "phone.fill", .systemGreen),
+        ("messages", "Сообщения", "message.fill", .systemBlue),
+        ("browser", "Браузер", "safari.fill", .systemBlue),
+        ("files", "Файлы", "folder.fill", .systemCyan),
+        ("books", "Книги", "book.fill", .systemOrange),
+        ("calc", "Калькулятор", "plus.forwardslash.minus", .systemGray),
+        ("wallet", "Кошелёк", "creditcard.fill", .systemIndigo),
+        ("health", "Здоровье", "heart.fill", .systemRed),
+        ("video", "Видео", "play.rectangle.fill", .systemPurple),
+        ("podcasts", "Подкасты", "mic.fill", .systemPurple),
+        ("translate", "Переводчик", "character.bubble.fill", .systemTeal),
+        ("voice", "Диктофон", "waveform", .systemRed),
+        ("stocks", "Акции", "chart.line.uptrend.xyaxis", .systemGreen),
+        ("tips", "Советы", "lightbulb.fill", .systemYellow),
+        ("zeta", "Ёж", "hare.fill", .systemMint),
+        ("latin", "Zoom", "video.fill", .systemBlue),
+    ]
+
+    init() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TesseraKitExampleStart", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        store = TileStore(directoryURL: directory)
+
+        store.setCatalog(makeCatalog())
+        try? store.load()
+        seedIfNeeded()
+    }
+
+    deinit {
+        store.onChange = nil
+    }
+
+    private func makeCatalog() -> [TileDescriptor] {
+        var catalog: [TileDescriptor] = [
+            TileDescriptor(
+                id: "mail", title: "Почта",
+                icon: DemoVisuals.symbol("envelope.fill", tint: .systemBlue),
+                action: makeAction(for: "Почта"), badge: .count(3), size: .small),
+            TileDescriptor(
+                id: "calendar", title: "Календарь",
+                icon: DemoVisuals.symbol("calendar", tint: .systemRed),
+                action: makeAction(for: "Календарь"), badge: .dot, size: .medium),
+            TileDescriptor(
+                id: "weather", title: "Погода",
+                icon: DemoVisuals.symbol("cloud.sun.fill", tint: .systemTeal),
+                action: makeAction(for: "Погода"), size: .wide,
+                liveContent: liveTileProvider),
+            TileDescriptor(
+                id: "notes", title: "Заметки",
+                icon: DemoVisuals.symbol("note.text", tint: .systemYellow),
+                action: makeAction(for: "Заметки"), size: .small),
+            TileDescriptor(
+                id: "photos", title: "Фото",
+                icon: DemoVisuals.symbol("photo.fill", tint: .systemGreen),
+                action: makeAction(for: "Фото"), size: .small),
+            TileDescriptor(
+                id: "music", title: "Музыка",
+                icon: DemoVisuals.symbol("music.note", tint: .systemPink),
+                action: makeAction(for: "Музыка"), badge: .count(5), size: .large),
+            TileDescriptor(
+                id: "settings", title: "Настройки",
+                icon: DemoVisuals.symbol("gearshape.fill", tint: .systemGray),
+                action: makeAction(for: "Настройки"), badge: .dot, size: .small),
+        ]
+        for app in Self.extraApps {
+            catalog.append(
+                TileDescriptor(
+                    id: app.id, title: app.title,
+                    icon: DemoVisuals.symbol(app.symbol, tint: app.tint),
+                    action: makeAction(for: app.title), size: .small)
+            )
+        }
+        return catalog
+    }
+
+    /// Папка «Работа» из двух ярлыков; дополнительные приложения откреплены,
+    /// чтобы в списке были и закреплённые, и свободные строки.
+    private func seedIfNeeded() {
+        guard store.snapshot().folders.isEmpty else { return }
+
+        let columns = TileLayoutEngine.defaultColumns
+        for app in Self.extraApps where store.isPinned(app.id) {
+            _ = store.unpin(app.id, columns: columns)
+        }
+
+        if let folder = store.createFolder(withTile: "notes", title: "Работа", columns: columns) {
+            store.addToFolder("photos", folderID: folder.id, columns: columns)
+        }
+        store.collapseEmptyRows(columns: columns)
+    }
+
+    private func makeAction(for title: String) -> () -> Void {
+        { [weak self] in
+            print("[TesseraKitExample] Start tap shortcut: \(title)")
+            self?.alert = DemoAlert(
+                title: title,
+                message: "Демо-действие ярлыка «\(title)»."
+            )
+        }
+    }
+
+    func showSettingsAlert() {
+        alert = DemoAlert(title: "Настройки", message: "Строка секции настроек списка приложений.")
+    }
+}
+
+/// Простая страница-хук: заголовок и пара строк, чтобы было что листать.
+final class StartDemoHookController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+
+        let title = UILabel()
+        title.text = "Быстрая панель"
+        title.font = .preferredFont(forTextStyle: .largeTitle)
+        title.textColor = .white
+        title.adjustsFontForContentSizeCategory = true
+
+        let detail = UILabel()
+        detail.text = "Страница-хук (QuickPanelProviding): сюда хост кладёт поиск, быстрые настройки, профиль."
+        detail.font = .preferredFont(forTextStyle: .body)
+        detail.textColor = .white
+        detail.numberOfLines = 0
+        detail.adjustsFontForContentSizeCategory = true
+
+        let stack = UIStackView(arrangedSubviews: [title, detail])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 48),
+        ])
+    }
+}
+
+/// UIKit-контейнер полного рабочего стола: пейджер, сетка, координатор
+/// редактирования; всё через публичный API.
+final class StartDemoHostController: UIViewController,
+    StartScreenDelegate, TesseraTileEditCoordinatorDelegate
+{
+    private let model: StartDemoModel
+    private let store: TileStore
+    private let screen = TesseraStartScreenViewController()
+    private var editCoordinator: TesseraTileEditCoordinator?
+
+    init(model: StartDemoModel) {
+        self.model = model
+        self.store = model.store
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        addChild(screen)
+        screen.view.frame = view.bounds
+        screen.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(screen.view)
+        screen.didMove(toParent: self)
+
+        screen.delegate = self
+        screen.wallpaperImage = DemoVisuals.panoramaBackground
+        screen.wallpaperParallaxFactor = 0.5
+        screen.quickPanelTitle = "Быстрая панель"
+        screen.startPageTitle = "Начало"
+        screen.applicationsPageTitle = "Приложения"
+
+        // E14.5: снимок с таблицей явных ячеек — сетка показывает дыры модели.
+        screen.reload(grid: store.snapshot(columns: screen.gridView.columns))
+
+        let store = self.store
+        let model = self.model
+        screen.configure(
+            leftPanel: QuickPanelProvider(makeViewController: { StartDemoHookController() }),
+            rightPage: { [model] in
+                TesseraAppsListPageViewController.make(
+                    store: store,
+                    settings: [
+                        TesseraAppsListSettingsItem(
+                            id: "settings",
+                            title: "Настройки",
+                            subtitle: "Демо-строка настроек",
+                            icon: UIImage(systemName: "gearshape"),
+                            action: { [weak model] in model?.showSettingsAlert() }
+                        ),
+                    ]
+                )
+            }
+        )
+
+        // Данные только из хранилища (один писатель): применяем снимок на
+        // каждое изменение, в том числе pin/unpin со страницы списка.
+        store.onChange = { [weak self] snapshot in
+            self?.screen.reload(grid: snapshot)
+        }
+
+        // Тапы сетки остаются за хостом (контроллер экрана их не пересылает):
+        // действие ярлыка вызываем сами, в режиме редактирования — нет.
+        screen.gridView.onTap = { [weak self] item in
+            guard case .tile(let tile) = item,
+                  self?.editCoordinator?.isEditing != true else { return }
+            tile.action()
+        }
+
+        let coordinator = TesseraTileEditCoordinator(grid: screen.gridView, store: store)
+        coordinator.delegate = self
+        editCoordinator = coordinator
+        applyEditingState(model.isEditing)
+    }
+
+    /// Применяет режим редактирования, инициированный кнопкой SwiftUI.
+    func applyEditingState(_ isEditing: Bool) {
+        guard let editCoordinator else { return }
+
+        if isEditing, !editCoordinator.isEditing {
+            editCoordinator.beginEditing()
+        } else if !isEditing, editCoordinator.isEditing {
+            editCoordinator.endEditing()
+        }
+    }
+
+    // MARK: StartScreenDelegate
+
+    func startScreen(
+        _ screen: TesseraStartScreenViewController,
+        didChangePage page: TesseraStartScreenPage,
+        index: Int
+    ) {
+        print("[TesseraKitExample] Start page: \(page) index \(index)")
+    }
+
+    // MARK: TesseraTileEditCoordinatorDelegate
+
+    func tileEditCoordinatorDidBeginEditing(_ coordinator: TesseraTileEditCoordinator) {
+        if !model.isEditing { model.isEditing = true }
+    }
+
+    func tileEditCoordinatorDidEndEditing(_ coordinator: TesseraTileEditCoordinator) {
+        if model.isEditing { model.isEditing = false }
     }
 }
 

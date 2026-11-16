@@ -1,14 +1,13 @@
 // Раскладка плиточной сетки рабочего стола в юнитных координатах.
 // Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §3 «Плиточная сетка»
-// (формула юнита, упаковка слева направо сверху вниз, хранение позиции в
-// юнитных координатах) и §14 «Уточнения MVP» п. 4 (D15: четыре размера —
-// 1×1, 2×2, 4×2, 4×4).
+// (формула юнита, юнитные координаты, дыры допускаются) и §14 «Уточнения MVP»
+// п. 4 (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
 //
-// E8.5 — строгая компактность: «честные дыры» §3 отменены, финальная раскладка
-// компактна сверху вниз (см. ``TileLayoutEngine/packCompact(items:columns:unit:)``
-// и «Отступления реализации» в проектном документе). Публичный вход прежний —
-// ``TileLayoutEngine/pack(items:columns:unit:)`` — и теперь он компактный:
-// обычная раскладка и edit/drag дают одинаковый визуал.
+// Упаковка по порядку (E8.5) строго компактна: ``TileLayoutEngine/pack(items:columns:unit:)``
+// (реализация — ``TileLayoutEngine/packCompact(items:columns:unit:)``) ставит
+// плитки в самую верхнюю-левую позицию и схлопывает раскладку вверх-влево. С E14
+// (D30) это **не** основная раскладка рабочего стола, а запасной путь (см. ниже):
+// штатно плитки стоят на явных ячейках, дыры сохраняются.
 //
 // D17 (docs/STATE.md) — панель раскрытой папки: чистые функции индекса вставки
 // панели после полосы папки (E10.1), отступа строк под панелью и её высоты — в
@@ -16,15 +15,12 @@
 // (``TileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
 // Основная часть движка остаётся без UIKit и без состояния.
 //
-// E8.4 — ``previewOrder(items:draggingID:targetID:)``: чистое превью порядка
-// при перетаскивании (push-физика без записи в `TileStore`). Функция работает
-// только с идентификаторами модели (`TileGridItem`), геометрию не считает.
-//
-// E8.7 — ``resizePlacement(items:resizingID:newSize:columns:)``: чистое
-// размещение при resize. Увеличенная плитка по возможности остаётся на своём
-// месте, а конфликтующие плитки справа/снизу уходят в конец порядка — их
-// упаковывает ``pack(items:columns:unit:)`` уже ниже. Уменьшение порядок не
-// меняет. Функция тоже работает только с моделью и упаковкой.
+// E14 — размещение по координатам (`TileLayoutEngine+Placement.swift`): превью
+// drag, resize, вставка, схлопывание пустых строк работают над набором
+// `TilePlacedItem` (идентификатор, размер, ячейка). ``pack(items:columns:unit:)``
+// остаётся упаковкой по порядку: откат раскладки сетки без таблицы ячеек (E14.3),
+// миграция v1 → v2, проекция при другой ширине холста (D32) и раскладка первого
+// запуска (`packCompact`).
 //
 // Модуль намеренно чистый: только CoreGraphics (`CGFloat`, `CGSize`, `CGRect`),
 // модель `TileSize` и элементы снимка сетки. Никакого UIKit, layout-контекста и
@@ -61,8 +57,8 @@ public struct TileLayoutSlot: Equatable {
     /// Хранится снимком, чтобы ``frame`` и
     /// ``TileLayoutEngine/rect(for:unit:gap:origin:)`` могли работать без
     /// повторной передачи геометрии. При повороте/смене ширины раскладку
-    /// пересобирают через ``TileLayoutEngine/repack(_:columns:unit:)`` —
-    /// юнитные координаты при этом не меняются.
+    /// пересобирают через ``TileLayoutEngine/pack(items:columns:unit:)`` с новым
+    /// юнитом — юнитные координаты при этом не меняются.
     public let unit: CGFloat
 
     /// Создаёт слот раскладки.
@@ -132,22 +128,30 @@ public struct TileLayoutSlot: Equatable {
 /// Чистые функции раскладки плиточной сетки
 /// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Плиточная сетка»; D15 в docs/STATE.md).
 ///
-/// Сетка описывается числом колонок и размером юнита в точках. Плитки четырёх
-/// размеров упаковываются строго компактно: каждая встаёт в самую верхнюю-левую
-/// позицию, где помещается целиком, а после размещения всю раскладку можно
-/// «схлопнуть» вверх-влево до неподвижной точки. Свободный юнит остаётся только
-/// там, куда не помещается ни одна из текущих плиток (например, справа от 2×2,
-/// если следующая плитка — 4×2); если плитку утащили, нижние поднимаются в
-/// освободившееся место.
-///
-/// «Честные дыры» проектного документа §3 (E8.5) отменены: отступление
-/// зафиксировано в «Отступлениях реализации» docs/STARTSCREEN-IOS-DESIGN.md.
+/// Сетка описывается числом колонок и размером юнита в точках. Упаковка по
+/// порядку (`pack`/`packCompact`) строго компактна: каждая плитка встаёт в
+/// самую верхнюю-левую позицию, где помещается целиком, а после размещения всю
+/// раскладку можно «схлопнуть» вверх-влево до неподвижной точки. Это запасной
+/// путь (сетка без применимой таблицы ячеек), миграция файла v1 → v2, проекция
+/// под другую ширину холста (D32) и раскладка первого запуска. Основная
+/// раскладка — по явным ячейкам (`TileLayoutEngine+Placement.swift`, E14, D30):
+/// дыры сохраняются, коллизии выталкивают плитки вниз (D31). История отказа от
+/// «честных дыр» и возврата к ним — «Отступления реализации» (п. 5 и E14)
+/// docs/STARTSCREEN-IOS-DESIGN.md.
 ///
 /// Все функции — `static` и не хранят состояние: результат зависит только от
 /// аргументов. Направление чтения (RTL) здесь не учитывается — зеркалирование
 /// сетки выполняет вью-слой (документ §9, «RTL»), а движок работает в
 /// LTR-координатах.
 public enum TileLayoutEngine {
+
+    /// Число колонок сетки по умолчанию — 6 малых колонок (D26).
+    ///
+    /// Как в Windows 10 Mobile (docs/W10M-STARTSCREEN.md §2): три средние плитки
+    /// в ряд, широкая занимает 4 колонки из 6, большая — 4×4. Единственный
+    /// источник умолчания для ``TesseraTileGridView/columns`` и для методов
+    /// ``TileStore`` без сетки; хост может задать своё `columns`.
+    public static let defaultColumns = 6
 
     /// Размер одного юнита сетки в точках
     /// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Модель раскладки»).
@@ -370,17 +374,18 @@ public enum TileLayoutEngine {
     /// Упаковывает плитки строго компактно
     /// (docs/STARTSCREEN-IOS-DESIGN.md §3; E8.5).
     ///
-    /// Публичный вход раскладки. Работает как
+    /// Упаковка **по порядку** — запасной путь с E14 (D30): штатная раскладка
+    /// сетки идёт по явным ячейкам и сохраняет дыры, а эта функция нужна для
+    /// отката, миграции v1 → v2, проекции при другой ширине холста и первого
+    /// запуска. Работает как
     /// ``packCompact(items:columns:unit:)``: каждая плитка встаёт в самую
     /// верхнюю-левую позицию, где помещается целиком, затем раскладка
     /// схлопывается вверх-влево до неподвижной точки. Пустые юниты остаются
-    /// только там, куда не помещается ни одна из **текущих** плиток; «честные
-    /// дыры» §3 (E8.5) отменены.
+    /// только там, куда не помещается ни одна из **текущих** плиток; «честных
+    /// дыр» §3 эта функция не допускает (E8.5).
     ///
-    /// Строгая компактность применяется и к обычной раскладке, и к
-    /// edit/drag-переупаковке (обе идут через эту функцию), поэтому визуал
-    /// режимов не различается и после перетаскивания нижние плитки поднимаются
-    /// в освободившиеся места.
+    /// Строгая компактность — свойство именно этой функции: раскладка по
+    /// явным ячейкам (E14) её не применяет.
     ///
     /// Возвращаемые слоты идут **в порядке входного массива**, а не в порядке
     /// обхода сетки: по индексу слота можно сопоставить его с ярлыком. Если
@@ -389,7 +394,7 @@ public enum TileLayoutEngine {
     ///
     /// - Parameters:
     ///   - items: Пары «идентификатор ярлыка — размер плитки» в порядке сетки.
-    ///   - columns: Число колонок, больше нуля (для всех размеров D15 нужно ≥ 4).
+    ///   - columns: Число колонок, больше нуля (для всех размеров D15 нужно ≥ 4; по умолчанию — ``defaultColumns``).
     ///   - unit: Размер юнита в точках, больше нуля.
     /// - Returns: Слоты в порядке `items`; пустой массив для вырожденной
     ///   геометрии или пустого входа.
@@ -610,68 +615,6 @@ public enum TileLayoutEngine {
         return working
     }
 
-    /// Пересобирает раскладку из готовых слотов
-    /// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Реализация — кастомный
-    /// UICollectionViewLayout»: изменения модели переупаковываются и
-    /// инвалидируют layout).
-    ///
-    /// Идентификаторы и размеры берутся из `slots` в порядке массива, после
-    /// чего выполняется ``pack(items:columns:unit:)``. Используется при смене
-    /// числа колонок или размера юнита (поворот/другая ширина экрана): юнитные
-    /// координаты пересчитываются, а ``TileLayoutSlot/unit`` и рамки слотов
-    /// получают новую геометрию.
-    ///
-    /// - Parameters:
-    ///   - slots: Текущие слоты в порядке ярлыков.
-    ///   - columns: Новое число колонок.
-    ///   - unit: Новый размер юнита в точках.
-    /// - Returns: Пересобранные слоты; пустой массив для вырожденной геометрии.
-    public static func repack(
-        _ slots: [TileLayoutSlot],
-        columns: Int,
-        unit: CGFloat
-    ) -> [TileLayoutSlot] {
-        let items: [(id: AnyHashable, size: TileSize)] = slots.map {
-            (id: $0.id, size: $0.size)
-        }
-        return pack(items: items, columns: columns, unit: unit)
-    }
-
-    /// Меняет размер одной плитки и переупаковывает всю сетку
-    /// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14 п. 4; D15).
-    ///
-    /// Resize в WP-стиле — смена ``TileSize`` с последующей переупаковкой:
-    /// меняется только след плитки, порядок остальных ярлыков сохраняется.
-    /// Меняется первая плитка с идентификатором `id`; идентификаторы ярлыков
-    /// уникальны (см. ``TileDescriptor/id``), поэтому неоднозначности нет.
-    /// Если `id` не найден, раскладка просто пересобирается без изменений —
-    /// это позволяет использовать метод как общий `repack`.
-    ///
-    /// - Parameters:
-    ///   - slots: Текущие слоты в порядке ярлыков.
-    ///   - id: Идентификатор изменяемой плитки.
-    ///   - size: Новый размер плитки.
-    ///   - columns: Число колонок.
-    ///   - unit: Размер юнита в точках.
-    /// - Returns: Пересобранные слоты в прежнем порядке ярлыков.
-    public static func resizing(
-        _ slots: [TileLayoutSlot],
-        id: AnyHashable,
-        to size: TileSize,
-        columns: Int,
-        unit: CGFloat
-    ) -> [TileLayoutSlot] {
-        var didResize = false
-        let items: [(id: AnyHashable, size: TileSize)] = slots.map { slot in
-            if !didResize, slot.id == id {
-                didResize = true
-                return (id: slot.id, size: size)
-            }
-            return (id: slot.id, size: slot.size)
-        }
-        return pack(items: items, columns: columns, unit: unit)
-    }
-
     /// Переводит слот из юнитных координат в рамку в точках
     /// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Модель раскладки»).
     ///
@@ -715,248 +658,6 @@ public enum TileLayoutEngine {
             height: CGFloat(rows) * scale + CGFloat(rows - 1) * spacing
         )
     }
-
-    // MARK: - Превью порядка при перетаскивании (E8.4)
-
-    // Функция работает с `TileGridItem` из снимка `TileStore`; этот тип объявлен
-    // под `canImport(UIKit)`, поэтому и функция доступна только там.
-    #if canImport(UIKit)
-
-    /// Превью порядка сетки при наведении перетаскиваемой плитки на цель.
-    ///
-    /// Push-физика спеки WP (E8.4): перетаскиваемая плитка занимает слот цели,
-    /// а не «переставляется рядом с ней». Алгоритм: вынуть `draggingID` из
-    /// `items` и вставить его на **исходный** индекс `targetID` (индекс цели в
-    /// переданном наборе, до вынимания). Следствия:
-    ///
-    /// - если перетаскиваемая плитка была ниже цели, цель и всё, что ниже неё,
-    ///   сдвигается на одну позицию вниз — перетаскиваемая занимает слот цели;
-    /// - если перетаскиваемая была выше цели, плитки между старой и новой
-    ///   позицией сдвигаются на одну позицию вверх, заполняя освободившийся
-    ///   слот, а перетаскиваемая встаёт на место цели.
-    ///
-    /// Индекс вставки совпадает с индексом перетаскиваемой плитки в превью,
-    /// поэтому фиксация drop'а — это `TileStore.moveItem(draggingID,
-    /// toIndex: indexOfDraggingInPreview, columns: grid.columns)`: `TileStore`
-    /// вынимает элемент и вставляет его по тому же правилу, и порядок совпадает
-    /// с превью
-    /// (проверяется тестом `TileDragPushTests`).
-    ///
-    /// Функция чистая: `TileStore` не трогает, от геометрии не зависит и
-    /// вызывается на каждом шаге drag без записи в модель (запись — только на
-    /// drop).
-    ///
-    /// Вырожденные случаи дают `nil`: пустой набор, `draggingID == targetID`,
-    /// один из идентификаторов не найден, а также если найденный элемент —
-    /// панель раскрытой папки (D17): панель не плитка и в перестановке не
-    /// участвует.
-    ///
-    /// - Parameters:
-    ///   - items: Порядок сетки на момент захвата (базовый, без превью).
-    ///   - draggingID: Идентификатор перетаскиваемой плитки.
-    ///   - targetID: Идентификатор плитки-цели под пальцем.
-    /// - Returns: Новый порядок или `nil` для вырожденного случая.
-    public static func previewOrder(
-        items: [TileGridItem],
-        draggingID: AnyHashable,
-        targetID: AnyHashable
-    ) -> [TileGridItem]? {
-        guard !items.isEmpty,
-              draggingID != targetID,
-              let from = items.firstIndex(where: { $0.id == draggingID }),
-              let target = items.firstIndex(where: { $0.id == targetID }),
-              !items[from].isFolderPanel,
-              !items[target].isFolderPanel else {
-            return nil
-        }
-
-        var order = items
-        let dragging = order.remove(at: from)
-        // Индекс цели — исходный: после вынимания он может уменьшиться на 1,
-        // но вставка именно на исходный индекс и даёт «плитка встаёт на место
-        // цели». Для последнего элемента значение зажимается длиной набора.
-        order.insert(dragging, at: min(target, order.count))
-        return order
-    }
-
-    // MARK: - Resize-выталкивание (E8.7)
-
-    /// Новый порядок сетки после изменения размера плитки (E8.7).
-    ///
-    /// Resize в стиле WP: увеличиваемая плитка **по возможности остаётся на
-    /// своём месте**, а плитки, которые мешают новому размеру, выталкиваются
-    /// вниз. Функция чистая: она не трогает `TileStore`, а возвращает порядок
-    /// элементов, который затем упаковывается
-    /// ``pack(items:columns:unit:)`` и анимируется batch-обновлением сетки
-    /// (`TesseraTileGridView.update(snapshot:animated:)`).
-    ///
-    /// ## Правила
-    ///
-    /// 1. **Текущая раскладка.** Элементы упаковываются так же, как в сетке:
-    ///    ``fittingSize(_:columns:)`` (ужимание под узкую сетку) и
-    ///    ``pack(items:columns:unit:)`` с юнитом 1 — юнитные координаты от
-    ///    масштаба не зависят.
-    /// 2. **Целевое место.** Целевая строка — прежняя (если уход конфликтов не
-    ///    открыл выше дыру, в которую плитку поднимет схлопывание E8.5), целевая
-    ///    колонка — `min(колонка, columns − newSize.unitColumns)`: широкая плитка
-    ///    (4 юнита) при четырёх колонках всегда встаёт в колонку 0, средняя при
-    ///    трёх — не правее колонки 1. Собственный старый след плитки при проверке
-    ///    считается свободным: плитка растёт на своём месте.
-    /// 3. **Место справа — по юнитам.** Целевой прямоугольник
-    ///    `newSize.unitColumns × newSize.unitRows` должен быть свободен в каждой
-    ///    строке плитки, то есть число свободных колонок справа от целевой
-    ///    колонки в этих строках должно быть не меньше `newSize.unitColumns`.
-    ///    При росте вниз (wide 4×2 → large 4×4) проверяются и добавленные снизу
-    ///    строки; при росте вширь — колонки справа. Любая другая плитка в этих
-    ///    юнитах — конфликт.
-    /// 4. **Помещается.** Порядок не меняется, изменённая плитка сохраняет
-    ///    индекс. При увеличении она остаётся и на прежней позиции, а соседи не
-    ///    трогаются: ``pack`` воспроизводит их слоты (префикс порядка и размеры
-    ///    остальных плиток прежние). При уменьшении компактная упаковка может
-    ///    подтянуть плитку вверх или влево в освободившееся место — это
-    ///    требование E8.5, а не выталкивание соседей.
-    /// 5. **Не помещается.** Конфликтующие плитки уходят в **конец** порядка:
-    ///    упаковка ставит их последними, то есть в самые нижние свободные места,
-    ///    а изменённая плитка встаёт в первую свободную позицию своего нового
-    ///    следа. Остальные элементы идут в порядке чтения — сверху вниз, слева
-    ///    направо: упаковка сохраняет их взаимный порядок и слоты всюду, где
-    ///    уход конфликтов не освободил место выше. Результат детерминирован —
-    ///    «плавания» по случайным позициям нет, только компактное схлопывание.
-    /// 6. **Уменьшение.** Новый след — подмножество старого, конфликтов нет,
-    ///    порядок не меняется: выталкиваний при уменьшении не бывает.
-    ///
-    /// Строгая компактность E8.5 применяется после: если из-за ухода конфликтов
-    /// выше образовалась дыра, в которую помещается только конфликтующая плитка,
-    /// она её заполнит. Это не произвольное «плавание», а требование E8.5
-    /// (пустых дыр не остаётся). Вниз изменённая плитка при этом не опускается:
-    /// схлопывание двигает плитку только вверх или влево — проверено тестами.
-    ///
-    /// Панель раскрытой папки (D17) — не плитка, а представление: набор, в
-    /// котором она есть, функция не переставляет и возвращает как есть
-    /// (`TileStore` панель не хранит, поэтому в resize-потоке её и нет).
-    ///
-    /// - Parameters:
-    ///   - items: Элементы сетки в порядке `TileStore`.
-    ///   - resizingID: Идентификатор изменяемой плитки или папки.
-    ///   - newSize: Новый размер (D15).
-    ///   - columns: Число колонок сетки, больше нуля.
-    /// - Returns: Новый порядок, в котором изменённая плитка уже имеет
-    ///   `newSize`. Исходный массив — для вырожденных случаев: пустой набор,
-    ///   нет такого элемента, элемент — панель, панель есть в наборе,
-    ///   неположительное число колонок.
-    public static func resizePlacement(
-        items: [TileGridItem],
-        resizingID: AnyHashable,
-        newSize: TileSize,
-        columns: Int
-    ) -> [TileGridItem] {
-        guard columns > 0,
-              !items.isEmpty,
-              !items.contains(where: { $0.isFolderPanel }),
-              let index = items.firstIndex(where: { $0.id == resizingID }),
-              items[index].size != newSize else {
-            return items
-        }
-
-        // Тот же след, что увидит раскладка: ужимаем под узкую сетку (D15).
-        let footprint = fittingSize(newSize, columns: columns)
-        let width = footprint.unitColumns
-        let height = footprint.unitRows
-        guard width > 0, height > 0, width <= columns else { return items }
-
-        let packItems: [(id: AnyHashable, size: TileSize)] = items.map { item in
-            (id: item.id, size: fittingSize(item.size, columns: columns))
-        }
-        let slots = pack(items: packItems, columns: columns, unit: 1)
-        // fittingSize гарантирует, что ни одна плитка не пропущена; страховка
-        // на случай будущих правил нормализации.
-        guard slots.count == items.count,
-              let slot = slots.first(where: { $0.id == resizingID }) else {
-            return items
-        }
-
-        let targetColumn = min(slot.column, columns - width)
-        let targetRow = slot.row
-        let target = CGRect(
-            x: CGFloat(targetColumn),
-            y: CGFloat(targetRow),
-            width: CGFloat(width),
-            height: CGFloat(height)
-        )
-
-        // Конфликт — любая другая плитка, занимающая юниты целевого следа.
-        var conflictingIDs = Set<AnyHashable>()
-        for other in slots where other.id != resizingID && other.unitFrame.intersects(target) {
-            conflictingIDs.insert(other.id)
-        }
-
-        let resizedItem = item(items[index], resizingTo: newSize)
-
-        // Место справа свободно и колонка не требует сдвига — плитка остаётся
-        // на своём месте, порядок не меняем.
-        if conflictingIDs.isEmpty, targetColumn == slot.column {
-            var result = items
-            result[index] = resizedItem
-            return result
-        }
-
-        // Остальные элементы — в порядке чтения: упаковка такого порядка
-        // воспроизводит их слоты (каждая плитка не может встать раньше своей
-        // позиции: более ранние юниты заняты плитками, идущими раньше).
-        let readingOrder = slots.sorted { lhs, rhs in
-            lhs.row != rhs.row ? lhs.row < rhs.row : lhs.column < rhs.column
-        }
-        let itemsByID = Dictionary(
-            items.map { ($0.id, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-
-        var before: [TileGridItem] = []
-        var after: [TileGridItem] = []
-        for other in readingOrder {
-            guard other.id != resizingID,
-                  !conflictingIDs.contains(other.id),
-                  let element = itemsByID[other.id] else { continue }
-            if other.row < targetRow
-                || (other.row == targetRow && other.column < targetColumn) {
-                before.append(element)
-            } else {
-                after.append(element)
-            }
-        }
-
-        let conflicting = readingOrder.compactMap { other -> TileGridItem? in
-            guard conflictingIDs.contains(other.id) else { return nil }
-            return itemsByID[other.id]
-        }
-
-        return before + [resizedItem] + after + conflicting
-    }
-
-    /// Копия элемента сетки с новым размером (E8.7).
-    ///
-    /// Меняет только ``TileSize``: заголовок, иконка, действие, бейдж и
-    /// содержимое папки остаются прежними. Панель раскрытой папки размера не
-    /// имеет, поэтому возвращается без изменений.
-    ///
-    /// - Parameters:
-    ///   - item: Элемент сетки.
-    ///   - size: Новый размер.
-    /// - Returns: Копия элемента с новым размером.
-    private static func item(_ item: TileGridItem, resizingTo size: TileSize) -> TileGridItem {
-        switch item {
-        case .tile(var descriptor):
-            descriptor.size = size
-            return .tile(descriptor)
-        case .folder(var folder):
-            folder.size = size
-            return .folder(folder)
-        case .folderContent:
-            return item
-        }
-    }
-
-    #endif
 
     // MARK: - Панель раскрытой папки (D17)
 
@@ -1067,11 +768,18 @@ public enum TileLayoutEngine {
 
     /// Ужимает след плитки под узкую сетку, не меняя модель (D15).
     ///
-    /// D15 рассчитан на 4 колонки; при меньшем числе колонок широкая плитка
-    /// не помещается. Вместо пропуска плитки (он сдвинул бы соответствие
+    /// D15 рассчитан минимум на 4 колонки (по умолчанию 6, D26); при меньшем
+    /// числе колонок широкая плитка не помещается. Вместо пропуска плитки (он сдвинул бы соответствие
     /// «индекс → элемент») берётся ближайший меньший размер: 2×2 при двух-трёх
     /// колонках и 1×1 при одной. Это деградация геометрии, а не модели:
     /// `TileSize` ярлыка в `TileStore` не меняется.
+    ///
+    /// Связь с ограничением колонки (E14.2): след плитки на сетке — всегда
+    /// `fittingSize`, поэтому `column + ширина ≤ columns` достижимо для любой
+    /// ячейки: ``clamped(cell:size:columns:)`` сдвигает колонку влево именно по
+    /// ужатой ширине. При 6 колонках (D26) ужатия нет — все четыре размера D15
+    /// (максимум 4 колонки) помещаются как есть; ужатие работает только при
+    /// `columns < 4`. Функция зависит только от ширины и не меняет поведения.
     ///
     /// - Parameters:
     ///   - size: Запрошенный размер плитки.
@@ -1445,6 +1153,180 @@ extension TileLayoutEngine {
             }
         }
         return 0
+    }
+
+    // MARK: Панель папки на размещениях по координатам (E14.2)
+
+    /// Геометрия раскрытия по уже посчитанным слотам (E14.2).
+    ///
+    /// В отличие от ``folderPanelGeometry(items:columns:expandedFolderID:)`` ничего
+    /// не упаковывает: дыры на сетке сохраняются, панель не делает репак — строки
+    /// ниже полосы остаются на своих местах (раскладка сдвигает их вниз на высоту
+    /// панели).
+    ///
+    /// - Parameters:
+    ///   - placedSlots: Слоты всех элементов набора без панели, в порядке
+    ///     отображения.
+    ///   - expandedFolderID: Идентификатор раскрытой папки.
+    /// - Returns: Геометрия либо `nil`, если папки среди слотов нет;
+    ///   `folderIndex` — индекс папки в `placedSlots`.
+    private static func folderPanelGeometry(
+        placedSlots: [TileLayoutSlot],
+        expandedFolderID: AnyHashable
+    ) -> FolderPanelGeometry? {
+        guard let folderIndex = placedSlots.firstIndex(where: { $0.id == expandedFolderID }) else {
+            return nil
+        }
+
+        var byID: [AnyHashable: TileLayoutSlot] = [:]
+        byID.reserveCapacity(placedSlots.count)
+        for slot in placedSlots {
+            byID[slot.id] = slot
+        }
+
+        return FolderPanelGeometry(
+            slots: byID,
+            bandEndRow: folderBandEndRow(for: placedSlots[folderIndex], in: placedSlots),
+            folderIndex: folderIndex
+        )
+    }
+
+    /// Нижняя граница полосы раскрытой папки по набору размещений (E14.2).
+    ///
+    /// Та же формула, что у ``folderBandEndRow(for:in:)``, но по ячейкам, а не по
+    /// упаковке: плитки считаются по ужатым под `columns` размерам, дыры не
+    /// заполняются.
+    ///
+    /// - Parameters:
+    ///   - folderID: Идентификатор раскрытой папки.
+    ///   - placements: Набор размещений (без панели).
+    ///   - columns: Число колонок.
+    /// - Returns: Первая строка после полосы либо `nil`, если папки нет в наборе
+    ///   или она не помещается в сетку.
+    public static func folderBandEndRow(
+        forFolder folderID: AnyHashable,
+        in placements: [TilePlacedItem],
+        columns: Int
+    ) -> Int? {
+        let placed = slots(placements: placements, columns: columns, unit: 1, fitting: true)
+        guard let folderSlot = placed.first(where: { $0.id == folderID }) else { return nil }
+        return folderBandEndRow(for: folderSlot, in: placed)
+    }
+
+    /// Индекс вставки панели по уже посчитанным слотам (E14.2).
+    ///
+    /// Правило то же, что у
+    /// ``folderPanelInsertionIndex(items:columns:expandedFolderID:)``: панель
+    /// встаёт после **последнего** по массиву элемента, который остаётся над
+    /// панелью (`row < bandEnd`), но не раньше, чем сразу после папки. Размещение
+    /// не пересчитывается — слоты берутся как есть, дыры сохраняются.
+    ///
+    /// - Parameters:
+    ///   - placedSlots: Слоты элементов в порядке отображения, без панели.
+    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
+    /// - Returns: Индекс для вставки панели либо `nil`, если папки среди слотов
+    ///   нет.
+    public static func folderPanelInsertionIndex(
+        placedSlots: [TileLayoutSlot],
+        expandedFolderID: AnyHashable?
+    ) -> Int? {
+        guard let expandedFolderID,
+              let geometry = folderPanelGeometry(
+                  placedSlots: placedSlots,
+                  expandedFolderID: expandedFolderID
+              ) else {
+            return nil
+        }
+
+        var lastIndexAbovePanel = geometry.folderIndex
+        for (index, slot) in placedSlots.enumerated() where slot.row < geometry.bandEndRow {
+            lastIndexAbovePanel = max(lastIndexAbovePanel, index)
+        }
+        return lastIndexAbovePanel + 1
+    }
+
+    /// Индекс вставки панели по набору размещений (E14.2).
+    ///
+    /// Порядок элементов — порядок массива `placements`. Обёртка над
+    /// ``folderPanelInsertionIndex(placedSlots:expandedFolderID:)``: слоты берутся
+    /// с ужатыми под `columns` размерами, репака нет.
+    ///
+    /// - Parameters:
+    ///   - placements: Набор размещений в порядке отображения, без панели.
+    ///   - columns: Число колонок.
+    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
+    /// - Returns: Индекс для вставки панели либо `nil`.
+    public static func folderPanelInsertionIndex(
+        placements: [TilePlacedItem],
+        columns: Int,
+        expandedFolderID: AnyHashable?
+    ) -> Int? {
+        folderPanelInsertionIndex(
+            placedSlots: slots(placements: placements, columns: columns, unit: 1, fitting: true),
+            expandedFolderID: expandedFolderID
+        )
+    }
+
+    /// Отступ строк под панелью по уже посчитанным слотам (E14.2).
+    ///
+    /// Семантика ``rowsBelowOffset(items:columns:expandedFolderID:panelHeight:spacing:)``
+    /// сохраняется: всё, что **начинается** со строки сразу после полосы папки и
+    /// ниже, уходит под панель на `panelHeight + spacing` (дыры между строками
+    /// остаются: панель — вставка, а не репак). Если под панелью ничего нет — `0`.
+    ///
+    /// - Parameters:
+    ///   - placedSlots: Слоты элементов в порядке отображения, без панели.
+    ///   - expandedFolderID: Идентификатор раскрытой папки.
+    ///   - panelHeight: Высота панели в точках.
+    ///   - spacing: Зазор сетки (`itemSpacing`); отрицательный и нечисловой — 0.
+    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
+    ///   иначе `0`.
+    public static func rowsBelowOffset(
+        placedSlots: [TileLayoutSlot],
+        expandedFolderID: AnyHashable?,
+        panelHeight: CGFloat,
+        spacing: CGFloat = 8
+    ) -> CGFloat {
+        guard panelHeight.isFinite, panelHeight > 0, let expandedFolderID,
+              let geometry = folderPanelGeometry(
+                  placedSlots: placedSlots,
+                  expandedFolderID: expandedFolderID
+              ) else {
+            return 0
+        }
+
+        for (index, slot) in placedSlots.enumerated()
+        where index != geometry.folderIndex && slot.row >= geometry.bandEndRow {
+            return panelHeight + (spacing.isFinite ? max(spacing, 0) : 0)
+        }
+        return 0
+    }
+
+    /// Отступ строк под панелью по набору размещений (E14.2).
+    ///
+    /// Обёртка над ``rowsBelowOffset(placedSlots:expandedFolderID:panelHeight:spacing:)``.
+    ///
+    /// - Parameters:
+    ///   - placements: Набор размещений в порядке отображения, без панели.
+    ///   - columns: Число колонок.
+    ///   - expandedFolderID: Идентификатор раскрытой папки.
+    ///   - panelHeight: Высота панели в точках.
+    ///   - spacing: Зазор сетки (`itemSpacing`).
+    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
+    ///   иначе `0`.
+    public static func rowsBelowOffset(
+        placements: [TilePlacedItem],
+        columns: Int,
+        expandedFolderID: AnyHashable?,
+        panelHeight: CGFloat,
+        spacing: CGFloat = 8
+    ) -> CGFloat {
+        rowsBelowOffset(
+            placedSlots: slots(placements: placements, columns: columns, unit: 1, fitting: true),
+            expandedFolderID: expandedFolderID,
+            panelHeight: panelHeight,
+            spacing: spacing
+        )
     }
 
     /// Высота полноширинной панели раскрытой папки в точках с зазором по

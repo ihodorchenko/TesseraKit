@@ -546,7 +546,9 @@ final class StartScreenControllerReviewTests: XCTestCase {
         let folder = TileFolder(
             id: "folder",
             title: "Folder",
-            tiles: (0..<80).map { tesseraTestTile("f\($0)", size: .small) }
+            // Шесть колонок по умолчанию (D26): плиток нужно столько, чтобы панель
+            // вдвое превысила вьюпорт.
+            tiles: (0..<200).map { tesseraTestTile("f\($0)", size: .small) }
         )
         screen.reload(grid: TileGridSnapshot(items: [.folder(folder)], unpinned: []))
         host(screen)

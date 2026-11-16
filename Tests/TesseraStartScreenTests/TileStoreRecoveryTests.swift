@@ -90,8 +90,8 @@ final class TileStoreRecoveryTests: XCTestCase {
     /// Сохраняет файл с папкой [B, C] на месте B: порядок [A, папка, D].
     private func saveLayoutWithFolder(in directory: TesseraTestDirectory) throws -> AnyHashable {
         let store = makeStore(catalog(["a", "b", "c", "d"]), in: directory)
-        let folder = try XCTUnwrap(store.createFolder(withTile: "b", title: "F"))
-        XCTAssertTrue(store.addToFolder("c", folderID: folder.id))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "b", title: "F", columns: 6))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: 6))
         try store.save()
         return folder.id
     }
@@ -112,16 +112,18 @@ final class TileStoreRecoveryTests: XCTestCase {
         assertInvariants(store, catalogIDs: ["a", "d"])
     }
 
-    /// Часть ярлыков папки осталась в каталоге: папка остаётся только с ними.
+    /// Часть ярлыков папки осталась в каталоге. D45: в папке остался один ярлык —
+    /// она распускается, ярлык «c» встаёт на её место (раньше папка оставалась с
+    /// одним ярлыком).
     func testLoadPrunesUnknownTilesFromFolder() throws {
         let directory = TesseraTestDirectory()
-        let folderID = try saveLayoutWithFolder(in: directory)
+        _ = try saveLayoutWithFolder(in: directory)
 
         let store = makeStore(catalog(["a", "c", "d"]), in: directory)
         try store.load()
 
-        XCTAssertEqual(ids(store), ["a", folderID, "d"])
-        XCTAssertEqual(store.snapshot().folders.first?.tiles.map { $0.id }, ["c"])
+        XCTAssertEqual(ids(store), ["a", "c", "d"])
+        XCTAssertTrue(store.snapshot().folders.isEmpty)
         assertInvariants(store, catalogIDs: ["a", "c", "d"])
     }
 
@@ -169,7 +171,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(store.snapshot().folders.first?.tiles.map { $0.id }, ["b", "c"])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["d"])
         XCTAssertTrue(store.isPinned("b"))
-        XCTAssertFalse(store.pin("b"), "ярлык из папки не закрепляется второй раз")
+        XCTAssertFalse(store.pinTile("b", columns: 6), "ярлык из папки не закрепляется второй раз")
         assertInvariants(store, catalogIDs: ["a", "b", "c", "d"])
     }
 
@@ -200,8 +202,10 @@ final class TileStoreRecoveryTests: XCTestCase {
         store.setCatalog(catalog(["a", "b", "c", "d", "e"]))
         try store.load()
 
-        XCTAssertEqual(ids(store), ["a", "f1", "f2"])
-        XCTAssertEqual(store.snapshot().folders.map { $0.tiles.map { $0.id } }, [["b", "c"], ["d"]])
+        // D45: у «f2» после чистки дубликата остался один ярлык «d» — папка
+        // распускается, «d» встаёт на её место.
+        XCTAssertEqual(ids(store), ["a", "f1", "d"])
+        XCTAssertEqual(store.snapshot().folders.map { $0.tiles.map { $0.id } }, [["b", "c"]])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["e"])
         assertInvariants(store, catalogIDs: ["a", "b", "c", "d", "e"])
     }
@@ -226,7 +230,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), original)
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path))
 
-        XCTAssertTrue(store.unpin("b"))
+        XCTAssertTrue(store.unpin("b", columns: 6))
         XCTAssertNil(store.lastPersistenceError)
         let reloaded = makeStore(catalog(["a", "b", "c"]), in: directory)
         XCTAssertNoThrow(try reloaded.load())
@@ -234,12 +238,12 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), original)
     }
 
-    /// Файл более новой схемы (версия текущей + 1) не затирается схемой v1.
+    /// Файл более новой схемы (версия текущей + 1) не затирается схемой v2.
     func testNewerSchemaFileIsBackedUpBeforeAutosave() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        // Текущая схема — 1 (`TileStore.schemaVersion`), файл записан версией 2.
-        let original = Data(#"{"version":2,"items":[],"sizes":{},"folders":[],"future":true}"#.utf8)
+        // Текущая схема — 2 (`TileStore.schemaVersion`, E14.1), файл записан версией 3.
+        let original = Data(#"{"version":3,"items":[],"sizes":{},"folders":[],"future":true}"#.utf8)
         let store = makeStore(catalog(["a", "b"]), in: directory, autosaves: true)
         try original.write(to: store.fileURL)
 
@@ -247,14 +251,14 @@ final class TileStoreRecoveryTests: XCTestCase {
             guard case TileStoreError.unsupportedSchemaVersion(let version)? = error as? TileStoreError else {
                 return XCTFail("Ожидалась unsupportedSchemaVersion, пришло: \(error)")
             }
-            XCTAssertEqual(version, 2)
+            XCTAssertEqual(version, 3)
         }
 
         let backups = try backupFiles(in: directory)
         XCTAssertEqual(backups.count, 1)
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), original)
 
-        XCTAssertTrue(store.resize("a", to: .wide))
+        XCTAssertTrue(store.resize("a", to: .wide, columns: 6))
         let written = try Data(contentsOf: store.fileURL)
         XCTAssertNotEqual(written, original)
         let reloaded = makeStore(catalog(["a", "b"]), in: directory)

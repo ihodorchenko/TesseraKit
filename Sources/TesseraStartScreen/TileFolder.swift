@@ -20,6 +20,11 @@ import UIKit
 /// стандартную среднюю плитку. Модель допускает и другие размеры из D15;
 /// правило, какие размеры разрешены папке, задаёт `TileStore`/хост.
 ///
+/// - Note: Папка не бывает из 0 или 1 ярлыка (D45): когда в ней остаётся один
+///   ярлык, `TileStore` распускает её, и ярлык встаёт на ячейку папки со своим
+///   размером. Исключение — переходная папка `TileStore.createFolder(withTile:title:columns:)`
+///   до `addToFolder`.
+///
 /// - Note: Вложенные папки не поддерживаются: `tiles` содержит только ярлыки
 ///   (``TileDescriptor``). Создание папки, добавление ярлыка и перемещение
 ///   между папками проходят через функцию одобрения хоста (D14).
@@ -63,6 +68,87 @@ public struct TileFolder {
         self.icon = icon
         self.tiles = tiles
         self.size = size
+    }
+}
+
+// MARK: - Бэйдж папки (D44, E15.7)
+
+extension TileFolder {
+
+    /// Бэйдж плитки папки — сумма числовых бэйджей вложенных ярлыков (D44,
+    /// E15.7).
+    ///
+    /// В W10M (§6.3) бэйдж папки не описан: это решение библиотеки. Правило:
+    /// - складываются все `.count(n)` с `n > 0`; результат — `.count(сумма)`, а
+    ///   «99+» при сумме больше 99 рисует сам бэйдж (так же, как у плитки);
+    /// - если положительных счётчиков нет, но у кого-то есть `.dot`, папка
+    ///   показывает `.dot`; счётчик сильнее точки (точка и счётчик вместе дают
+    ///   счётчик);
+    /// - `.none`, `.count(0)` и отрицательные счётчики не учитываются; если ни
+    ///   у кого нет видимого бэйджа — `.none`.
+    ///
+    /// Считается один раз при применении снимка к ячейке, а не по кадрам
+    /// (контракт 5 AGENTS). Сумма насыщается на `Int.max`, а не переполняется.
+    /// Невидимых членов (вне каталога) в ``tiles`` нет: `TileStore` чистит папку
+    /// по каталогу (D45), поэтому на них хелпер не смотрит.
+    ///
+    /// - Parameter members: Ярлыки папки.
+    /// - Returns: Бэйдж плитки папки.
+    static func aggregateBadge(of members: [TileDescriptor]) -> TileBadge {
+        var sum = 0
+        var hasDot = false
+        for member in members {
+            switch member.badge {
+            case let .count(value) where value > 0:
+                let (total, overflow) = sum.addingReportingOverflow(value)
+                sum = overflow ? Int.max : total
+            case .dot:
+                hasDot = true
+            case .none, .count:
+                break
+            }
+        }
+        if sum > 0 { return .count(sum) }
+        return hasDot ? .dot : .none
+    }
+
+    /// Бэйдж плитки этой папки (``aggregateBadge(of:)`` по ``tiles``).
+    var aggregateBadge: TileBadge {
+        TileFolder.aggregateBadge(of: tiles)
+    }
+}
+
+// MARK: - Правила названия (D35, E15.5)
+
+extension TileFolder {
+
+    /// Предельная длина названия папки в символах (E15.5, D35).
+    ///
+    /// В W10M (§6.7) ограничения по числу символов нет — название обрезается по
+    /// ширине заголовка, одна строка. Предел 64 символа — защита раскладки
+    /// (заголовок панели, подпись плитки, файл состояния), а не продуктовое
+    /// правило: на практике название всегда короче ширины заголовка и усекается
+    /// многоточием. Считаются символы (`Character`), а не байты и не UTF-16.
+    public static let maximumTitleLength = 64
+
+    /// Приводит введённое название к виду, в котором его хранит `TileStore`
+    /// (E15.5).
+    ///
+    /// Переводы строк внутри названия заменяются пробелами (название — одна
+    /// строка), пробелы и переводы строк по краям отбрасываются, строка
+    /// обрезается до ``maximumTitleLength`` символов, после обрезки края
+    /// чистятся ещё раз. Пустой результат означает «вернуть название по
+    /// умолчанию» — подстановку делает вызывающий (`TileStore` и редактор: у
+    /// них разные источники умолчания).
+    ///
+    /// - Parameter raw: Введённая пользователем строка.
+    /// - Returns: Нормализованное название; пустое, если ввод пуст или состоял
+    ///   из пробелов.
+    static func normalizedTitle(_ raw: String) -> String {
+        let singleLine = raw.components(separatedBy: .newlines).joined(separator: " ")
+        let trimmed = singleLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let capped = String(trimmed.prefix(maximumTitleLength))
+        return capped.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

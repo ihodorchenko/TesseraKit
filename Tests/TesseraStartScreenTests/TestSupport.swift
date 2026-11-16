@@ -209,10 +209,13 @@ final class TesseraTestWindowedGrid {
     ///
     /// - Parameters:
     ///   - items: Элементы снимка в порядке отображения.
+    ///   - snapshot: Готовый снимок (например, `TileStore.snapshot(columns:)` с
+    ///     таблицей ячеек, E14.5); вместо `items`, если задан.
     ///   - columns: Число колонок сетки.
     ///   - size: Размер окна и сетки.
     init(
         items: [TileGridItem] = [],
+        snapshot: TileGridSnapshot? = nil,
         columns: Int = 4,
         size: CGSize = TesseraTestWindowedGrid.defaultSize
     ) {
@@ -221,7 +224,7 @@ final class TesseraTestWindowedGrid {
         grid = TesseraTileGridView(frame: CGRect(origin: .zero, size: size))
         grid.columns = columns
         window.addSubview(grid)
-        grid.reload(snapshot: TileGridSnapshot(items: items, unpinned: []))
+        grid.reload(snapshot: snapshot ?? TileGridSnapshot(items: items, unpinned: []))
         layout()
     }
 
@@ -325,16 +328,41 @@ final class TesseraTestWindowedGrid {
 
 // MARK: - Стенд drag-сессий (E10.5)
 
+/// Элемент раскладки стенда, упакованной как до E14 (`TesseraTestDragHost(packed:)`).
+enum TesseraTestPackedEntry {
+
+    /// Ярлык верхнего уровня.
+    case tile(String, TileSize)
+
+    /// Папка верхнего уровня с содержимым (размеры ярлыков внутри).
+    case folder(String, TileSize, [(String, TileSize)])
+
+    /// Идентификатор элемента.
+    var id: String {
+        switch self {
+        case let .tile(id, _), let .folder(id, _, _): return id
+        }
+    }
+
+    /// Запрошенный размер элемента.
+    var size: TileSize {
+        switch self {
+        case let .tile(_, size), let .folder(_, size, _): return size
+        }
+    }
+}
+
 /// Стенд windowed-drag-сессий: окно с сеткой, `TileStore` и живым
 /// координатором редактирования (E10.5).
 ///
-/// Сетка строится из снимка хранилища, поэтому проверки координатора «модель и
-/// снимок согласованы» проходят штатно. Анимации настоящие: завершение
+/// Сетка строится из снимка хранилища с таблицей ячеек
+/// (`TileStore.snapshot(columns:)`, E14.5), поэтому проверки координатора «модель
+/// и снимок согласованы» проходят штатно. Анимации настоящие: завершение
 /// ожидается прокруткой run loop (`waitUntil`), без фиксированных пауз.
 final class TesseraTestDragHost {
 
     /// Временный каталог хранилища (удаляется в `deinit`).
-    let directory = TesseraTestDirectory()
+    let directory: TesseraTestDirectory
 
     /// Единственный писатель модели.
     let store: TileStore
@@ -353,21 +381,133 @@ final class TesseraTestDragHost {
     ///   - configuration: Параметры редактирования («желе», drag, папки).
     ///   - autosaves: Автосохранение хранилища; по умолчанию выключено, чтобы
     ///     тесты не писали на диск.
+    ///   - windowSize: Размер окна и сетки (ширина экрана для проверок геометрии).
     ///   - prepare: Подготовка модели до постройки сетки (например, создание
-    ///     папки через `TileStore`).
-    init(
+    ///     папки через `TileStore`); получает хранилище и ширину сетки для
+    ///     операций по ячейкам (E14.6). Раскладка до `prepare` — упаковка
+    ///     каталога (`placeItems`), операции работают по ячейкам: дыры остаются.
+    convenience init(
         descriptors: [TileDescriptor],
         columns: Int = 4,
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(),
         autosaves: Bool = false,
-        prepare: ((TileStore) -> Void)? = nil
+        windowSize: CGSize = TesseraTestWindowedGrid.defaultSize,
+        prepare: ((TileStore, Int) -> Void)? = nil
     ) {
+        let directory = TesseraTestDirectory()
         try? directory.create()
-        store = TileStore(directoryURL: directory.url)
+        let store = TileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(descriptors)
-        prepare?(store)
-        host = TesseraTestWindowedGrid(items: store.snapshot().items, columns: columns)
+        store.placeItems(columns: columns)
+        prepare?(store, columns)
+        self.init(
+            directory: directory,
+            store: store,
+            columns: columns,
+            configuration: configuration,
+            windowSize: windowSize
+        )
+    }
+
+    /// Создаёт стенд с точной раскладкой по ячейкам (E14.5): файл схемы версии 2
+    /// с дырами (`TileStoreCellFixture`) загружается в `TileStore`, а сетка
+    /// строится из `snapshot(columns:)`.
+    ///
+    /// - Parameters:
+    ///   - tiles: Ярлыки верхнего уровня с ячейками.
+    ///   - folders: Папки верхнего уровня с содержимым.
+    ///   - unpinned: Ярлыки каталога вне сетки.
+    ///   - columns: Число колонок сетки (и ширина холста файла).
+    ///   - configuration: Параметры редактирования.
+    convenience init(
+        cells tiles: [CellFixtureTile],
+        folders: [CellFixtureFolder] = [],
+        unpinned: [(String, TileSize)] = [],
+        columns: Int = 4,
+        configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
+            mergeHoverDuration: 0.05,
+            magnetSnapRadius: 0
+        )
+    ) throws {
+        let directory = TesseraTestDirectory()
+        let store = try TileStoreCellFixture.makeStore(
+            columns: columns,
+            tiles: tiles,
+            folders: folders,
+            unpinned: unpinned,
+            in: directory,
+            autosaves: false
+        )
+        self.init(directory: directory, store: store, columns: columns, configuration: configuration)
+    }
+
+    /// Создаёт стенд с раскладкой, **упакованной как до E14** (E14.6): элементы в
+    /// порядке массива упаковываются `TileLayoutEngine.packCompact` для `columns`,
+    /// результат записывается файлом версии 2 (`TileStoreCellFixture`), так что
+    /// ячейки точные, а порядок модели — порядок чтения. Для тестов, чья геометрия
+    /// была рассчитана на компактную раскладку, которую раньше давали операции по
+    /// порядку.
+    ///
+    /// - Parameters:
+    ///   - entries: Ярлыки и папки верхнего уровня в порядке упаковки.
+    ///   - columns: Число колонок сетки (и ширина холста файла).
+    ///   - unpinned: Ярлыки каталога вне сетки.
+    ///   - configuration: Параметры редактирования.
+    convenience init(
+        packed entries: [TesseraTestPackedEntry],
+        columns: Int = 4,
+        unpinned: [(String, TileSize)] = [],
+        configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
+            mergeHoverDuration: 0.05,
+            magnetSnapRadius: 0
+        )
+    ) throws {
+        let slots = TileLayoutEngine.packCompact(
+            items: entries.map { (id: AnyHashable($0.id), size: $0.size) },
+            columns: columns,
+            unit: 1
+        )
+        var cellByID: [String: (row: Int, column: Int)] = [:]
+        for slot in slots {
+            if let id = slot.id.base as? String { cellByID[id] = (slot.row, slot.column) }
+        }
+        var tiles: [CellFixtureTile] = []
+        var folders: [CellFixtureFolder] = []
+        for entry in entries {
+            let cell = cellByID[entry.id] ?? (0, 0)
+            switch entry {
+            case let .tile(id, size):
+                tiles.append(CellFixtureTile(id, size, cell.row, cell.column))
+            case let .folder(id, size, contents):
+                folders.append(CellFixtureFolder(id, size, cell.row, cell.column, contents: contents))
+            }
+        }
+        try self.init(
+            cells: tiles,
+            folders: folders,
+            unpinned: unpinned,
+            columns: columns,
+            configuration: configuration
+        )
+    }
+
+    /// Общая часть: окно с сеткой из снимка хранилища и живой координатор.
+    private init(
+        directory: TesseraTestDirectory,
+        store: TileStore,
+        columns: Int,
+        configuration: TesseraTileEditConfiguration,
+        windowSize: CGSize = TesseraTestWindowedGrid.defaultSize
+    ) {
+        self.directory = directory
+        self.store = store
+        // E14.5: хост строит сетку из `snapshot(columns:)` — с таблицей ячеек.
+        host = TesseraTestWindowedGrid(
+            snapshot: store.snapshot(columns: columns),
+            columns: columns,
+            size: windowSize
+        )
         host.layout()
         coordinator = TesseraTileEditCoordinator(
             grid: host.grid,
@@ -459,6 +599,35 @@ final class TesseraTestDragHost {
         waitUntil(timeout: timeout) {
             (host.cell(id)?.contentView.alpha ?? 0) > 0
         }
+    }
+
+    /// Геометрия клеток базовой раскладки (E14.5): точка внутри клетки малой
+    /// плитки `(строка, колонка)` в координатах сетки, колонка логическая.
+    ///
+    /// - Parameters:
+    ///   - row: Строка.
+    ///   - column: Логическая колонка (0 — начало чтения).
+    ///   - fx: Доля клетки по ширине.
+    ///   - fy: Доля клетки по высоте.
+    /// - Returns: Точка или `nil`, если геометрию не посчитать.
+    func cellPoint(row: Int, column: Int, fx: CGFloat = 0.5, fy: CGFloat = 0.5) -> CGPoint? {
+        guard let frame = host.grid.baseFrame(
+            forCell: TileGridPlacement(row: row, column: column),
+            size: .small
+        ) else {
+            return nil
+        }
+        return CGPoint(x: frame.minX + frame.width * fx, y: frame.minY + frame.height * fy)
+    }
+
+    /// Рамка клетки малой плитки `(строка, колонка)` в координатах сетки.
+    func cellFrame(row: Int, column: Int, size: TileSize = .small) -> CGRect? {
+        host.grid.baseFrame(forCell: TileGridPlacement(row: row, column: column), size: size)
+    }
+
+    /// Ячейки, которые сейчас показывает сетка (таблица снимка сетки).
+    var gridCells: [AnyHashable: TileGridPlacement]? {
+        host.grid.snapshot?.placementTable?.cells
     }
 }
 

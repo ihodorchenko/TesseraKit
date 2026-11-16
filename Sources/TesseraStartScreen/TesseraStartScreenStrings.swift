@@ -102,6 +102,10 @@ enum TesseraStartScreenStrings {
         /// Папка создана перетаскиванием одного ярлыка на другой.
         case a11yFolderCreatedFromTwoTiles = "a11y.folder.createdFromTwoTiles"
 
+        /// Новая позиция ярлыка после перестановки внутри папки (`%1$d` — номер,
+        /// `%2$d` — число ярлыков, E16.1).
+        case a11yFolderTilePositionFormat = "a11y.folder.tilePositionFormat"
+
         // MARK: Перетаскивание
 
         /// Внешнее изменение модели отменило перетаскивание.
@@ -124,8 +128,12 @@ enum TesseraStartScreenStrings {
         /// Причина отказа: создание папки запрещено.
         case a11yGroupingReasonCreateDenied = "a11y.grouping.reason.createDenied"
 
-        /// Причина отказа: папка создана, но добавление ярлыка запрещено.
+        /// Причина отказа: добавление ярлыка в новую папку запрещено (E11.6:
+        /// создание откатывается целиком).
         case a11yGroupingReasonTileAddDenied = "a11y.grouping.reason.tileAddDenied"
+
+        /// Причина отказа: перенос ярлыка из папки запрещён (E11.1).
+        case a11yGroupingReasonMoveDenied = "a11y.grouping.reason.moveDenied"
 
         // MARK: Custom actions (§9)
 
@@ -134,6 +142,25 @@ enum TesseraStartScreenStrings {
 
         /// Действие «изменить размер плитки».
         case a11yActionResize = "a11y.action.resize"
+
+        /// Действие «переименовать папку» (плитка папки и заголовок панели,
+        /// E15.5, D35).
+        case a11yActionRenameFolder = "a11y.action.renameFolder"
+
+        /// Действие «добавить ярлык в папку» (`%1$@` — название папки, E11.5).
+        case a11yActionAddToFolderFormat = "a11y.action.addToFolderFormat"
+
+        /// Действие «убрать ярлык из папки на рабочий стол» (E11.5).
+        case a11yActionRemoveFromFolder = "a11y.action.removeFromFolder"
+
+        /// Действие «переместить ярлык в другую папку» (`%1$@` — название папки, E11.5).
+        case a11yActionMoveToFolderFormat = "a11y.action.moveToFolderFormat"
+
+        /// Действие «переместить ярлык в панели папки на позицию раньше» (E16.1).
+        case a11yActionMoveEarlier = "a11y.action.moveEarlier"
+
+        /// Действие «переместить ярлык в панели папки на позицию позже» (E16.1).
+        case a11yActionMoveLater = "a11y.action.moveLater"
 
         // MARK: Экран папки
 
@@ -145,6 +172,10 @@ enum TesseraStartScreenStrings {
 
         /// Подпись папки без названия.
         case folderScreenDefaultTitle = "folderScreen.defaultTitle"
+
+        /// Accessibility label поля переименования папки в открытой панели
+        /// (E15.5, D35).
+        case folderNameFieldLabel = "folderName.fieldLabel"
 
         /// VoiceOver-действие «переместить ярлык».
         case folderScreenMoveAction = "folderScreen.moveAction"
@@ -191,6 +222,11 @@ enum TesseraStartScreenStrings {
 
         /// Состояние раскрытой папки в accessibility value.
         case panelExpanded = "panel.expanded"
+
+        // MARK: Бейдж (§9)
+
+        /// Значение VoiceOver для бэйджа-точки без числа (D34, E15.4).
+        case a11yBadgeDot = "a11y.badge.dot"
 
         // MARK: Общие
 

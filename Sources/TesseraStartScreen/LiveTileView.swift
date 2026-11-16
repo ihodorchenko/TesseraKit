@@ -358,6 +358,46 @@ final class TesseraLiveTileFaceView: UIView {
 
     private(set) var face: TesseraLiveTileFace?
 
+    /// Ширина, которую текст стороны отдаёт бэйджу со стороны конца строки
+    /// (D29, E15.1), pt. Бэйдж лежит в нижнем ряду, где прижат текст.
+    var badgeTrailingReserve: CGFloat = 0 {
+        didSet {
+            guard badgeTrailingReserve != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    /// Высота нижнего ряда, которую текст стороны отдаёт бэйджу, pt: текст
+    /// поднимается над рядом бэйджа на узкой плитке (D29, E15.1).
+    var badgeBottomReserve: CGFloat = 0 {
+        didSet {
+            guard badgeBottomReserve != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    /// Плитка малая (1×1, ``TileSize/small``), D47. Выставляет контейнер.
+    var isSmallTile = false {
+        didSet {
+            guard isSmallTile != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    /// Высота нижнего ряда бэйджа с зазором, pt; `0` — бэйджа нет (D47).
+    ///
+    /// Малая плитка с бэйджем и иконкой стороны показывает иконку и бэйдж без
+    /// заголовка и подписи: иконка занимает верхнюю зону над этим рядом
+    /// (``TesseraTileBadgeLayout/smallTileIconFrame(tileSize:inset:bottomReserve:)``).
+    /// Решение принимается для каждой стороны отдельно: у стороны без иконки
+    /// текст остаётся, иначе плитка была бы пустой.
+    var badgeIconBottomReserve: CGFloat = 0 {
+        didSet {
+            guard badgeIconBottomReserve != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
     /// Исходная иконка, уменьшенная копия которой сейчас показана, и её
     /// пиксельный размер: повторная раскладка без изменений кеш не трогает.
     private weak var displayedIconSource: UIImage?
@@ -457,6 +497,15 @@ final class TesseraLiveTileFaceView: UIView {
         setNeedsLayout()
     }
 
+    /// Поле плитки по её ширине (общее у стороны и бэйджа, D29, E15.1).
+    static func inset(forWidth width: CGFloat) -> CGFloat {
+        max(Metrics.minimumInset, min(Metrics.maximumInset, width * 0.08))
+    }
+
+    private var isRightToLeftLayout: Bool {
+        effectiveUserInterfaceLayoutDirection == .rightToLeft
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         layoutFace()
@@ -469,11 +518,32 @@ final class TesseraLiveTileFaceView: UIView {
         let height = bounds.height
         guard width > 0, height > 0 else { return }
 
-        let inset = max(Metrics.minimumInset, min(Metrics.maximumInset, width * 0.08))
-        let contentWidth = width - 2 * inset
-        guard contentWidth > 0 else { return }
+        let inset = TesseraLiveTileFaceView.inset(forWidth: width)
 
-        let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        // D47: малая плитка с бэйджем и иконкой — иконка и бэйдж, без текста.
+        // Иконка рисуется и на плитке уже 80 pt (обычное правило её скрывает).
+        if isSmallTile, badgeIconBottomReserve > 0, let icon = face.icon {
+            let frame = TesseraTileBadgeLayout.smallTileIconFrame(
+                tileSize: bounds.size,
+                inset: inset,
+                bottomReserve: badgeIconBottomReserve
+            )
+            titleLabel.isHidden = true
+            detailLabel.isHidden = true
+            iconView.isHidden = false
+            iconView.frame = frame
+            applyIcon(icon, side: frame.width)
+            return
+        }
+        titleLabel.isHidden = false
+
+        // Нижний ряд делит с бэйджем текст: он уже на `badgeTrailingReserve`
+        // либо поднят на `badgeBottomReserve` (D29, E15.1).
+        let contentWidth = width - 2 * inset - badgeTrailingReserve
+        guard contentWidth > 0 else { return }
+        let textX = isRightToLeftLayout ? inset + badgeTrailingReserve : inset
+
+        let isRightToLeft = isRightToLeftLayout
         let compact = height < Metrics.compactHeight
         titleLabel.numberOfLines = compact ? 2 : 3
         detailLabel.numberOfLines = compact ? 1 : 2
@@ -495,7 +565,7 @@ final class TesseraLiveTileFaceView: UIView {
             applyIcon(icon, side: iconSide)
         }
 
-        let availableHeight = max(0, height - textTop - inset)
+        let availableHeight = max(0, height - textTop - inset - badgeBottomReserve)
 
         // Подпись резервирует не больше 40% доступной высоты; заголовок
         // забирает остаток и усекается, если места мало (1×1, крупный
@@ -522,16 +592,16 @@ final class TesseraLiveTileFaceView: UIView {
         let blockHeight = titleHeight + spacing + detailHeight
         // Текст прижат к низу, как на WP; если под иконкой не помещается —
         // начинается сразу под ней.
-        let blockTop = max(textTop, height - inset - blockHeight)
+        let blockTop = max(textTop, height - inset - badgeBottomReserve - blockHeight)
 
         titleLabel.frame = CGRect(
-            x: inset,
+            x: textX,
             y: blockTop,
             width: contentWidth,
             height: titleHeight
         )
         detailLabel.frame = CGRect(
-            x: inset,
+            x: textX,
             y: blockTop + titleHeight + spacing,
             width: contentWidth,
             height: detailHeight
@@ -648,9 +718,33 @@ public final class TesseraLiveTileView: UIView {
 
     /// Бэйдж поверх плитки; не часть флипа (§4).
     ///
-    /// View создаётся контейнером и позиционируется в верхнем углу с учётом
-    /// направления чтения (§9, RTL): в LTR — справа, в RTL — слева.
+    /// View создаётся контейнером и позиционируется в нижнем углу у конца строки
+    /// (D29, E15.1; ``TesseraTileBadgeLayout``) с учётом направления чтения (§9,
+    /// RTL): в LTR — справа, в RTL — слева.
     public let badgeView = TesseraLiveTileBadgeView()
+
+    /// Сколько нижнего угла у конца строки занимает стрелка размера режима
+    /// редактирования, pt; `0` — вне правки (D29, E15.1). Бэйдж обходит её;
+    /// выставляет ячейка сетки.
+    var badgeEditClearance: CGFloat = 0 {
+        didSet {
+            guard badgeEditClearance != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    /// Плитка малая (1×1, ``TileSize/small``), D47: сторона с иконкой и бэйджем
+    /// показывает их без текста. Выставляет ячейка сетки по модели ярлыка; у
+    /// самостоятельного контейнера вне сетки `false` — раскладка прежняя.
+    var isSmallTile = false {
+        didSet {
+            guard isSmallTile != oldValue else { return }
+            for face in [frontView, backView] {
+                face.isSmallTile = isSmallTile
+            }
+            setNeedsLayout()
+        }
+    }
 
     /// Бэйдж ярлыка (D12/D15): красная точка или счётчик.
     ///
@@ -968,14 +1062,24 @@ public final class TesseraLiveTileView: UIView {
             }
         }
 
-        // Бэйдж не участвует во флипе и позиционируется отдельно. В RTL
-        // верхний угол зеркалится (§9): WP-бэйдж живёт в правом верхнем углу
-        // LTR-интерфейса.
-        let badgeSize = badgeView.intrinsicContentSize
-        let inset: CGFloat = 6
+        // Бэйдж не участвует во флипе и позиционируется отдельно: в нижнем
+        // углу у конца строки (D29, E15.1) — правом в LTR и левом в RTL; в
+        // правке он обходит стрелку размера. Текст сторон уступает ему место.
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
-        let badgeX = isRightToLeft ? inset : bounds.width - inset - badgeSize.width
-        badgeView.frame = CGRect(x: badgeX, y: inset, width: badgeSize.width, height: badgeSize.height)
+        let badgeLayout = TesseraTileBadgeLayout.make(
+            tileSize: bounds.size,
+            badgeSize: badgeView.intrinsicContentSize,
+            inset: TesseraLiveTileFaceView.inset(forWidth: bounds.width),
+            isRightToLeft: isRightToLeft,
+            editClearance: badgeEditClearance
+        )
+        badgeView.frame = badgeLayout.frame
+        badgeView.alpha = badgeLayout.isHiddenByEditControls ? 0 : 1
+        for face in [frontView, backView] {
+            face.badgeTrailingReserve = badgeLayout.titleTrailingReserve
+            face.badgeBottomReserve = badgeLayout.titleBottomReserve
+            face.badgeIconBottomReserve = badgeLayout.iconBottomReserve
+        }
     }
 
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -1006,12 +1110,8 @@ public final class TesseraLiveTileView: UIView {
         if let badgeText = badgeView.accessibilityText, !badgeText.isEmpty {
             accessibilityValue = badgeText
         } else {
-            switch badgeView.badge {
-            case .count(let value) where value > 0:
-                accessibilityValue = String(value)
-            case .none, .dot, .count:
-                accessibilityValue = nil
-            }
+            // D34/E15.4: без текста хоста точка озвучивается строкой модуля.
+            accessibilityValue = badgeView.badge.accessibilityValueText
         }
     }
 

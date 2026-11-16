@@ -25,6 +25,9 @@ final class TileStoreTests: XCTestCase {
 
     // MARK: - Вспомогательные средства
 
+    /// Ширина сетки хоста во всех операциях по ячейкам (E14.6).
+    private let columns = 6
+
     private func makeDescriptors() -> [TileDescriptor] {
         [
             tesseraTestTile("a", size: .small),
@@ -52,6 +55,8 @@ final class TileStoreTests: XCTestCase {
         let store = TileStore(directoryURL: directory.url)
         store.autosaves = autosaves
         store.setCatalog(descriptors)
+        // Раскладка первого запуска: a(0,0) b(0,1) c(0,3) d(0,5) на 6 колонках.
+        store.placeItems(columns: columns)
         return store
     }
 
@@ -79,18 +84,19 @@ final class TileStoreTests: XCTestCase {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
 
-        XCTAssertFalse(store.pin("a"))
+        XCTAssertFalse(store.pinTile("a", columns: columns))
         XCTAssertFalse(store.isPinned("missing"))
-        XCTAssertFalse(store.pin("missing"))
-        XCTAssertFalse(store.unpin("missing"))
+        XCTAssertFalse(store.pinTile("missing", columns: columns))
+        XCTAssertFalse(store.unpin("missing", columns: columns))
 
-        XCTAssertTrue(store.unpin("b"))
+        XCTAssertTrue(store.unpin("b", columns: columns))
         XCTAssertFalse(store.isPinned("b"))
         XCTAssertEqual(ids(store.snapshot()), ["a", "c", "d"])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["b"])
 
-        XCTAssertTrue(store.pin("b", at: 0))
-        XCTAssertEqual(ids(store.snapshot()), ["b", "a", "c", "d"])
+        // Закрепление — новая строка в конце холста (D33): порядок чтения a, c, d, b.
+        XCTAssertTrue(store.pinTile("b", columns: columns))
+        XCTAssertEqual(ids(store.snapshot()), ["a", "c", "d", "b"])
         XCTAssertTrue(store.snapshot().unpinned.isEmpty)
         XCTAssertTrue(store.isPinned("b"))
     }
@@ -100,13 +106,14 @@ final class TileStoreTests: XCTestCase {
     func testUnpinLastFolderTileDissolvesFolder() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
-        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
 
-        XCTAssertEqual(ids(store.snapshot()), [folder.id, "b", "c", "d"])
+        // Папка 2×2 встаёт на ячейку «a» и выталкивает «b» вниз (D31).
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "c", "d", "b"])
 
-        XCTAssertTrue(store.unpin("a"))
+        XCTAssertTrue(store.unpin("a", columns: columns))
         XCTAssertNil(store.folderContaining("a"))
-        XCTAssertEqual(ids(store.snapshot()), ["b", "c", "d"])
+        XCTAssertEqual(ids(store.snapshot()), ["c", "d", "b"])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["a"])
         XCTAssertFalse(store.isPinned("a"))
     }
@@ -116,34 +123,127 @@ final class TileStoreTests: XCTestCase {
     func testPinRejectsTileThatLivesInFolder() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
-        _ = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
+        _ = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
 
-        XCTAssertFalse(store.pin("a"))
+        XCTAssertFalse(store.pinTile("a", columns: columns))
         XCTAssertEqual(store.folderContaining("a")?.tiles.count, 1)
+    }
+
+    // MARK: - E12.2: размер новой папки (всегда medium)
+
+    /// Папка всегда создаётся средней (W10M), независимо от размера ярлыка-цели
+    /// (small/medium/wide/large, сохранённого или из дескриптора); размер
+    /// переживает round-trip. Заменяет E11.4 (наследование размера).
+    func testCreateFolderIsAlwaysMedium() throws {
+        let directory = TesseraTestDirectory()
+        // D45: папка из одного ярлыка при загрузке распускается, поэтому к трём
+        // переходным папкам добавлено по второму ярлыку (кроме проверки размера
+        // новой папки тест ничего не меняет).
+        let descriptors = makeDescriptors() + ["e", "f", "g"].map { tesseraTestTile($0, size: .small) }
+        let store = makeStore(descriptors, in: directory)
+
+        let small = try XCTUnwrap(store.createFolder(withTile: "a", columns: columns))
+        XCTAssertEqual(small.size, .medium)
+        let medium = try XCTUnwrap(store.createFolder(withTile: "b", columns: columns))
+        XCTAssertEqual(medium.size, .medium)
+
+        XCTAssertTrue(store.resize("c", to: .wide, columns: columns))
+        let wide = try XCTUnwrap(store.createFolder(withTile: "c", columns: columns))
+        XCTAssertEqual(wide.size, .medium, "Сохранённый wide-размер ярлыка не наследуется")
+        XCTAssertTrue(store.addToFolder("d", folderID: small.id, columns: columns))
+        XCTAssertTrue(store.addToFolder("e", folderID: medium.id, columns: columns))
+        XCTAssertTrue(store.addToFolder("f", folderID: wide.id, columns: columns))
+
+        XCTAssertEqual(store.snapshot().folders.map { $0.size }, [.medium, .medium, .medium])
+
+        try store.save()
+        let restored = makeStore(descriptors, in: directory)
+        try restored.load()
+        XCTAssertEqual(restored.snapshot().folders.map { $0.size }, [.medium, .medium, .medium])
+    }
+
+    /// Атомарное создание из wide/large цели тоже даёт medium; сам размер
+    /// папки пользователь может поменять (`resize`), и он сохраняется — в том
+    /// числе у папок, записанных на диск при короткой жизни E11.4.
+    func testAtomicCreateFromWideTargetIsMediumAndFolderStaysResizable() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        XCTAssertTrue(store.resize("a", to: .large, columns: columns))
+        guard case .created(let folder) = store.createFolder(from: "b", onto: "a", columns: columns) else {
+            return XCTFail("Создание должно пройти")
+        }
+        XCTAssertEqual(folder.size, .medium)
+
+        XCTAssertTrue(store.resize(folder.id, to: .wide, columns: columns))
+        try store.save()
+        let restored = makeStore(makeDescriptors(), in: directory)
+        try restored.load()
+        XCTAssertEqual(restored.snapshot().folders.first?.size, .wide, "Сохранённый размер папки не трогаем")
+    }
+
+    // MARK: - E11.2/E14.4: вынос из папки на рабочий стол
+
+    /// Вынос ярлыка из папки на ячейку: он встаёт на неё, папка остаётся с
+    /// оставшимся содержимым. D45: в папке остаётся два ярлыка (после выноса из
+    /// папки в три), поэтому она не распускается.
+    func testExtractFromFolderLandsOnCell() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a", columns: columns))
+        XCTAssertTrue(store.addToFolder("b", folderID: folder.id, columns: columns))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: columns))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "d"])
+
+        XCTAssertTrue(store.extractFromFolder("b", toCell: tesseraCell(2, 0), columns: columns))
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(2, 0))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "d", "b"])
+        XCTAssertEqual(store.folderContaining("a")?.tiles.count, 2)
+    }
+
+    /// Вынос последнего ярлыка: папка исчезает, ярлык встаёт на указанную ячейку.
+    func testExtractLastTileRemovesFolder() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        let folder = try XCTUnwrap(store.createFolder(withTile: "b", columns: columns))
+        XCTAssertEqual(ids(store.snapshot()), ["a", folder.id, "c", "d"])
+
+        XCTAssertTrue(store.extractFromFolder("b", toCell: tesseraCell(0, 1), columns: columns))
+        XCTAssertEqual(ids(store.snapshot()), ["a", "b", "c", "d"])
+        XCTAssertTrue(store.snapshot().folders.isEmpty)
+    }
+
+    /// Вынос в новую строку ставит ярлык после последней занятой строки.
+    func testExtractFromFolderToNewRow() throws {
+        let directory = TesseraTestDirectory()
+        let store = makeStore(makeDescriptors(), in: directory)
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a", columns: columns))
+        XCTAssertTrue(store.addToFolder("b", folderID: folder.id, columns: columns))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: columns))
+
+        // D45: в папке из трёх остаётся два — она не распускается.
+        XCTAssertTrue(store.extractFromFolderToNewRow("b", columns: columns))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "d", "b"])
+        XCTAssertEqual(store.placement(of: "b")?.column, 0)
     }
 
     // MARK: - move / resize
 
-    /// Перестановка зажимает индекс и не трогает неизвестные ярлыки; перестановка
-    /// в тот же индекс — no-op (операция раскладки, без одобрения D14).
-    func testMoveClampsToBoundsAndRejectsUnknown() {
+    /// Перенос на ячейку зажимается холстом, неизвестные ярлыки и перенос на
+    /// собственную ячейку — `false` (операция раскладки, без одобрения D14).
+    func testMoveItemRejectsUnknownAndSameCell() {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
 
-        XCTAssertTrue(store.move("a", toIndex: 99))
-        XCTAssertEqual(ids(store.snapshot()), ["b", "c", "d", "a"])
+        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(0, 0), columns: columns), "собственная ячейка")
+        XCTAssertFalse(store.moveItem("missing", toCell: tesseraCell(1, 0), columns: columns))
 
-        XCTAssertTrue(store.move("a", toIndex: -5))
-        XCTAssertEqual(ids(store.snapshot()), ["a", "b", "c", "d"])
+        XCTAssertTrue(store.moveItem("a", toCell: tesseraCell(5, 99), columns: columns))
+        XCTAssertEqual(store.placement(of: "a"), tesseraCell(5, 5), "колонка зажата холстом")
 
-        XCTAssertFalse(store.move("a", toIndex: 0))
-        XCTAssertFalse(store.move("missing", toIndex: 1))
-
-        XCTAssertTrue(store.unpin("a"))
-        XCTAssertTrue(store.unpin("b"))
-        XCTAssertTrue(store.unpin("c"))
-        XCTAssertTrue(store.unpin("d"))
-        XCTAssertFalse(store.move("a", toIndex: 0))
+        for id in ["a", "b", "c", "d"] {
+            XCTAssertTrue(store.unpin(id, columns: columns))
+        }
+        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(0, 0), columns: columns))
     }
 
     /// resize меняет авторитетный размер ярлыка (D15), повтор — no-op,
@@ -153,29 +253,29 @@ final class TileStoreTests: XCTestCase {
         let store = makeStore(makeDescriptors(), in: directory)
 
         for size in [TileSize.medium, .wide, .large, .small] {
-            XCTAssertTrue(store.resize("a", to: size))
+            XCTAssertTrue(store.resize("a", to: size, columns: columns))
             XCTAssertEqual(store.descriptor(withID: "a")?.size, size)
             XCTAssertEqual(
                 store.snapshot().items.first(where: { $0.id == AnyHashable("a") })?.size,
                 size
             )
-            XCTAssertFalse(store.resize("a", to: size))
+            XCTAssertFalse(store.resize("a", to: size, columns: columns))
         }
 
-        XCTAssertFalse(store.resize("missing", to: .wide))
+        XCTAssertFalse(store.resize("missing", to: .wide, columns: columns))
     }
 
     /// Папка тоже масштабируется; размер ярлыка внутри папки виден в её снимке.
     func testResizeFolderAndFolderTiles() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
-        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
 
-        XCTAssertTrue(store.resize(folder.id, to: .wide))
+        XCTAssertTrue(store.resize(folder.id, to: .wide, columns: columns))
         XCTAssertEqual(store.snapshot().folders.first?.size, .wide)
-        XCTAssertFalse(store.resize(folder.id, to: .wide))
+        XCTAssertFalse(store.resize(folder.id, to: .wide, columns: columns))
 
-        XCTAssertTrue(store.resize("a", to: .large))
+        XCTAssertTrue(store.resize("a", to: .large, columns: columns))
         XCTAssertEqual(store.folderContaining("a")?.tiles.first?.size, .large)
     }
 
@@ -188,10 +288,10 @@ final class TileStoreTests: XCTestCase {
         let descriptors = makeDescriptors()
 
         let store = makeStore(descriptors, in: directory)
-        XCTAssertTrue(store.unpin("d"))
-        XCTAssertTrue(store.resize("a", to: .wide))
-        let folder = try XCTUnwrap(store.createFolder(withTile: "b", title: "Работа"))
-        XCTAssertTrue(store.addToFolder("c", folderID: folder.id))
+        XCTAssertTrue(store.unpin("d", columns: columns))
+        XCTAssertTrue(store.resize("a", to: .wide, columns: columns))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "b", title: "Работа", columns: columns))
+        XCTAssertTrue(store.addToFolder("c", folderID: folder.id, columns: columns))
         try store.save()
         XCTAssertNil(store.lastPersistenceError)
 
@@ -210,15 +310,15 @@ final class TileStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.unpinned.map { $0.id }, [AnyHashable("d")])
         XCTAssertFalse(restored.isPinned("d"))
 
-        // Второй round-trip: новое закрепление тоже переживает перезапуск.
-        XCTAssertTrue(restored.pin("d", at: 0))
+        // Второй round-trip: новое закрепление (новая строка) тоже переживает перезапуск.
+        XCTAssertTrue(restored.pinTile("d", columns: columns))
         try restored.save()
 
         let restoredAgain = makeStore(descriptors, in: directory)
         try restoredAgain.load()
         XCTAssertEqual(
             ids(restoredAgain.snapshot()),
-            [AnyHashable("d"), AnyHashable("a"), folder.id]
+            [AnyHashable("a"), folder.id, AnyHashable("d")]
         )
     }
 
@@ -226,10 +326,13 @@ final class TileStoreTests: XCTestCase {
     /// состояния (§5).
     func testAutosaveWritesStateFile() {
         let directory = TesseraTestDirectory()
-        let store = makeStore(makeDescriptors(), in: directory, autosaves: true)
+        // Без `placeItems`: ширина сетки хранилищу ещё неизвестна, файла нет.
+        let store = TileStore(directoryURL: directory.url)
+        store.autosaves = true
+        store.setCatalog(makeDescriptors())
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path))
-        XCTAssertTrue(store.unpin("a"))
+        XCTAssertTrue(store.unpin("a", columns: columns))
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL.path))
         XCTAssertNil(store.lastPersistenceError)
     }
@@ -245,7 +348,7 @@ final class TileStoreTests: XCTestCase {
         store.autosaves = true
         store.setCatalog(makeDescriptors())
 
-        XCTAssertTrue(store.resize("a", to: .wide))
+        XCTAssertTrue(store.resize("a", to: .wide, columns: columns))
         XCTAssertNotNil(store.lastPersistenceError)
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .wide)
         XCTAssertThrowsError(try store.save())
@@ -299,29 +402,29 @@ final class TileStoreTests: XCTestCase {
             return true
         }
 
-        let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
+        let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
         XCTAssertEqual(calls.count, 1)
         XCTAssertNil(calls[0].folder)
         XCTAssertEqual(calls[0].tile, AnyHashable("a"))
         XCTAssertEqual(calls[0].action, .createFolder)
 
-        XCTAssertTrue(store.addToFolder("b", folderID: folderA.id))
+        XCTAssertTrue(store.addToFolder("b", folderID: folderA.id, columns: columns))
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls[1].folder, folderA.id)
         XCTAssertEqual(calls[1].tile, AnyHashable("b"))
         XCTAssertEqual(calls[1].action, .addToFolder)
 
-        let folderB = try XCTUnwrap(store.createFolder(withTile: "c", title: "B"))
+        let folderB = try XCTUnwrap(store.createFolder(withTile: "c", title: "B", columns: columns))
         XCTAssertEqual(calls.count, 3)
         XCTAssertEqual(calls[2].action, .createFolder)
 
-        XCTAssertTrue(store.moveBetweenFolders("b", to: folderB.id))
+        XCTAssertTrue(store.moveBetweenFolders("b", to: folderB.id, columns: columns))
         XCTAssertEqual(calls.count, 4)
         XCTAssertEqual(calls[3].folder, folderB.id)
         XCTAssertEqual(calls[3].tile, AnyHashable("b"))
         XCTAssertEqual(calls[3].action, .moveBetweenFolders)
 
-        XCTAssertTrue(store.moveBetweenFolders("b", to: nil))
+        XCTAssertTrue(store.extractFromFolderToNewRow("b", columns: columns))
         XCTAssertEqual(calls.count, 5)
         XCTAssertNil(calls[4].folder)
         XCTAssertEqual(calls[4].tile, AnyHashable("b"))
@@ -336,7 +439,7 @@ final class TileStoreTests: XCTestCase {
 
         store.approval = { _, _, action in action != .createFolder }
 
-        XCTAssertNil(store.createFolder(withTile: "a", title: "A"))
+        XCTAssertNil(store.createFolder(withTile: "a", title: "A", columns: columns))
         XCTAssertEqual(ids(store.snapshot()), before)
         XCTAssertTrue(store.snapshot().folders.isEmpty)
         XCTAssertTrue(store.isPinned("a"))
@@ -346,12 +449,12 @@ final class TileStoreTests: XCTestCase {
     func testDeniedAddToFolderKeepsTileOnGrid() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
-        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
 
         store.approval = { _, _, action in action != .addToFolder }
 
-        XCTAssertFalse(store.addToFolder("b", folderID: folder.id))
-        XCTAssertEqual(ids(store.snapshot()), [folder.id, "b", "c", "d"])
+        XCTAssertFalse(store.addToFolder("b", folderID: folder.id, columns: columns))
+        XCTAssertEqual(ids(store.snapshot()), [folder.id, "c", "d", "b"], "«b» вытолкнут папкой вниз и остался на сетке")
         XCTAssertEqual(
             store.snapshot().folders.first?.tiles.map { $0.id },
             [AnyHashable("a")]
@@ -362,13 +465,13 @@ final class TileStoreTests: XCTestCase {
     func testDeniedMoveBetweenFoldersKeepsTileInSourceFolder() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
-        let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
-        let folderB = try XCTUnwrap(store.createFolder(withTile: "b", title: "B"))
-        XCTAssertTrue(store.addToFolder("c", folderID: folderA.id))
+        let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
+        let folderB = try XCTUnwrap(store.createFolder(withTile: "b", title: "B", columns: columns))
+        XCTAssertTrue(store.addToFolder("c", folderID: folderA.id, columns: columns))
 
         store.approval = { _, _, action in action != .moveBetweenFolders }
 
-        XCTAssertFalse(store.moveBetweenFolders("c", to: folderB.id))
+        XCTAssertFalse(store.moveBetweenFolders("c", to: folderB.id, columns: columns))
         XCTAssertEqual(store.folderContaining("c")?.id, folderA.id)
         XCTAssertEqual(
             store.snapshot().folders.first(where: { $0.id == folderB.id })?.tiles.map { $0.id },
@@ -376,22 +479,28 @@ final class TileStoreTests: XCTestCase {
         )
     }
 
-    /// Перемещение на рабочий стол (`nil`) проходит через то же одобрение D14 и
-    /// распускает опустевшую исходную папку.
-    func testMoveBetweenFoldersReturnsTileToDesktopAndDissolvesEmptyFolder() throws {
+    /// Перемещение на рабочий стол (`nil`) проходит через то же одобрение D14.
+    /// D45: обе исходные папки теряют ярлык и остаются с одним — распускаются, а
+    /// ярлыки встают на ячейки папок; вынесенный ярлык — в новой строке в конце.
+    func testMoveBetweenFoldersReturnsTileToDesktopAndDissolvesFolders() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(makeDescriptors(), in: directory)
-        let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
-        let folderB = try XCTUnwrap(store.createFolder(withTile: "b", title: "B"))
-        XCTAssertTrue(store.addToFolder("c", folderID: folderA.id))
+        let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
+        let folderB = try XCTUnwrap(store.createFolder(withTile: "b", title: "B", columns: columns))
+        XCTAssertTrue(store.addToFolder("c", folderID: folderA.id, columns: columns))
 
-        XCTAssertTrue(store.moveBetweenFolders("c", to: folderB.id))
-        XCTAssertTrue(store.moveBetweenFolders("c", to: nil))
+        // Из папки A уходит «c»: в ней остаётся «a» — папка распускается.
+        XCTAssertTrue(store.moveBetweenFolders("c", to: folderB.id, columns: columns))
+        XCTAssertNil(store.folderContaining("a"))
+        XCTAssertEqual(store.folderContaining("c")?.id, folderB.id)
+        // Из папки B уходит «c»: остаётся «b» — тоже распускается.
+        XCTAssertTrue(store.extractFromFolderToNewRow("c", columns: columns))
 
+        XCTAssertTrue(store.snapshot().folders.isEmpty)
         XCTAssertNil(store.folderContaining("c"))
-        XCTAssertEqual(store.folderContaining("a")?.id, folderA.id)
-        XCTAssertEqual(store.folderContaining("b")?.id, folderB.id)
-        XCTAssertEqual(ids(store.snapshot()).last, AnyHashable("c"))
+        XCTAssertEqual(Set(ids(store.snapshot())), ["a", "b", "c", "d"])
+        // E14.6: вынос без ячейки — новая строка в конце холста; порядок — по ячейкам.
+        XCTAssertEqual(ids(store.snapshot()).last, "c")
         XCTAssertTrue(store.isPinned("c"))
     }
 
@@ -407,28 +516,12 @@ final class TileStoreTests: XCTestCase {
             return true
         }
 
-        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
+        let folder = try XCTUnwrap(store.createFolder(withTile: "a", title: "A", columns: columns))
         XCTAssertEqual(approvalCalls, 1)
 
-        XCTAssertFalse(store.moveBetweenFolders("a", to: folder.id))
+        XCTAssertFalse(store.moveBetweenFolders("a", to: folder.id, columns: columns))
         XCTAssertEqual(approvalCalls, 1)
         XCTAssertEqual(store.folderContaining("a")?.id, folder.id)
-    }
-
-    /// Алиас `move(_:toFolder:)` ведёт себя как `moveBetweenFolders`.
-    func testMoveToFolderAliasMatchesMoveBetweenFolders() throws {
-        let directory = TesseraTestDirectory()
-        let store = makeStore(makeDescriptors(), in: directory)
-        let folderA = try XCTUnwrap(store.createFolder(withTile: "a", title: "A"))
-        let folderB = try XCTUnwrap(store.createFolder(withTile: "b", title: "B"))
-
-        XCTAssertTrue(store.move("a", toFolder: folderB.id))
-        XCTAssertEqual(store.folderContaining("a")?.id, folderB.id)
-
-        XCTAssertTrue(store.move("a", toFolder: nil))
-        XCTAssertNil(store.folderContaining("a"))
-        XCTAssertTrue(store.isPinned("a"))
-        XCTAssertNotEqual(folderA.id, folderB.id)
     }
 }
 

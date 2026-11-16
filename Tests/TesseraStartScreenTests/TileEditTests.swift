@@ -4,13 +4,13 @@
 //
 //  Тесты режима редактирования (задача E4.7).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим редактирования»
-//  (resize — циклическая смена размера small → medium → wide → large → small,
+//  (resize — циклическая смена размера small → wide → medium → large → small, D28/E15.3,
 //  перетаскивание и расчёт цели drop) и §14 «Уточнения MVP» п. 4 (D15: четыре
 //  размера).
 //
-//  Чистого публичного помощника «следующий размер» и «позиция drop» в
-//  координаторе нет: resize-цикл собирается из `TileSize.allCases`, числа
-//  колонок сетки и `supportedSizesProvider`, а цель drop считается по рамкам
+//  Публичного помощника «позиция drop» в координаторе нет: resize-цикл —
+//  `TileSize.cycleOrder`, число колонок сетки и `supportedSizesProvider`
+//  (подробнее — `TileSizeCycleTests`), а цель drop считается по рамкам
 //  `TesseraTileGridView` (приватный `isPointInDropCenter`). Поэтому resize-цикл
 //  проверяется через реальный `TesseraTileEditCoordinator.cycleSize(of:)`
 //  (без окна и UI-цикла), а расчёт drop — через публичную геометрию сетки,
@@ -51,9 +51,11 @@ final class TileEditTests: XCTestCase {
 
     // MARK: - Модель размера (D15)
 
-    /// Порядок resize-цикла задан моделью: small → medium → wide → large.
+    /// Набор размеров — D15 (`allCases` — порядок «по возрастанию»); порядок
+    /// resize-цикла задан отдельно и явно: small → wide → medium → large (D28).
     func testTileSizeCycleOrderMatchesD15() {
         XCTAssertEqual(TileSize.allCases, [.small, .medium, .wide, .large])
+        XCTAssertEqual(TileSize.cycleOrder, [.small, .wide, .medium, .large])
         XCTAssertEqual(TileSize.small.unitSize, CGSize(width: 1, height: 1))
         XCTAssertEqual(TileSize.medium.unitSize, CGSize(width: 2, height: 2))
         XCTAssertEqual(TileSize.wide.unitSize, CGSize(width: 4, height: 2))
@@ -62,7 +64,7 @@ final class TileEditTests: XCTestCase {
 
     // MARK: - Resize-цикл
 
-    /// Координатор проходит полный цикл и возвращается к исходному размеру,
+    /// Координатор проходит полный цикл D28 и возвращается к исходному размеру,
     /// меняя авторитетный размер в `TileStore` (D15, §5).
     func testCycleSizeFollowsResizeOrder() {
         let directory = TesseraTestDirectory()
@@ -70,12 +72,12 @@ final class TileEditTests: XCTestCase {
         let grid = makeGrid(store: store)
         let editor = TesseraTileEditCoordinator(grid: grid, store: store)
 
-        XCTAssertEqual(editor.cycleSize(of: "a"), .medium)
-        XCTAssertEqual(store.descriptor(withID: "a")?.size, .medium)
-        XCTAssertEqual(grid.items.first { $0.id == AnyHashable("a") }?.size, .medium)
-
         XCTAssertEqual(editor.cycleSize(of: "a"), .wide)
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .wide)
+        XCTAssertEqual(grid.items.first { $0.id == AnyHashable("a") }?.size, .wide)
+
+        XCTAssertEqual(editor.cycleSize(of: "a"), .medium)
+        XCTAssertEqual(store.descriptor(withID: "a")?.size, .medium)
 
         XCTAssertEqual(editor.cycleSize(of: "a"), .large)
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .large)
@@ -123,8 +125,8 @@ final class TileEditTests: XCTestCase {
         XCTAssertEqual(editor.cycleSize(of: "a"), .small)
 
         editor.supportedSizesProvider = { _ in [] }
-        XCTAssertEqual(editor.cycleSize(of: "a"), .medium)
-        XCTAssertEqual(store.descriptor(withID: "a")?.size, .medium)
+        XCTAssertEqual(editor.cycleSize(of: "a"), .wide, "набор по умолчанию, порядок D28")
+        XCTAssertEqual(store.descriptor(withID: "a")?.size, .wide)
     }
 
     /// Если доступен ровно один размер, менять нечего.
@@ -142,12 +144,17 @@ final class TileEditTests: XCTestCase {
     // MARK: - Reduce Motion
 
     /// При Reduce Motion «желе» выключено, но режим редактирования работает
-    /// (§5, §9). Провайдер настройки инжектируется.
+    /// (§5, §9). Провайдер настройки инжектируется; «желе» включено параметром
+    /// явно (E15.6) — иначе `isJiggling` ложен независимо от Reduce Motion.
     func testReduceMotionDisablesJiggle() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a")], in: directory)
         let grid = makeGrid(store: store)
-        let editor = TesseraTileEditCoordinator(grid: grid, store: store)
+        let editor = TesseraTileEditCoordinator(
+            grid: grid,
+            store: store,
+            configuration: TesseraTileEditConfiguration(isJiggleEnabled: true)
+        )
 
         editor.isReduceMotionEnabled = { true }
         editor.beginEditing()
@@ -195,25 +202,25 @@ final class TileEditTests: XCTestCase {
         XCTAssertNil(grid.item(at: CGPoint(x: -1000, y: -1000)))
     }
 
-    /// Перестановка — модель drop'а: индекс зажимается, набор ярлыков не
-    /// теряется и не дублируется (§5, §6).
+    /// Перенос на ячейку — модель drop'а: колонка ограничивается холстом, набор
+    /// ярлыков не теряется и не дублируется (§5, §6, E14.6).
     func testDropReorderThroughStoreKeepsItemSet() {
         let directory = TesseraTestDirectory()
         let store = makeStore(
             [
-                tesseraTestTile("a"),
-                tesseraTestTile("b"),
-                tesseraTestTile("c"),
+                tesseraTestTile("a", size: .small),
+                tesseraTestTile("b", size: .small),
+                tesseraTestTile("c", size: .small),
             ],
             in: directory
         )
 
         let initial = Set(store.snapshot().items.map { $0.id })
-        XCTAssertTrue(store.move("a", toIndex: 2))
+        XCTAssertTrue(store.moveItem("a", toCell: tesseraCell(1, 3), columns: 4))
         XCTAssertEqual(Set(store.snapshot().items.map { $0.id }), initial)
         XCTAssertEqual(store.snapshot().items.map { $0.id }, ["b", "c", "a"])
 
-        XCTAssertFalse(store.move("a", toIndex: 99))
+        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(1, 99), columns: 4), "99 зажата до колонки 3: уже там")
         XCTAssertEqual(store.snapshot().items.map { $0.id }, ["b", "c", "a"])
         XCTAssertEqual(Set(store.snapshot().items.map { $0.id }), initial)
     }

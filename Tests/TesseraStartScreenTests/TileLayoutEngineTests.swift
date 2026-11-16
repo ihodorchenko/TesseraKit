@@ -5,9 +5,11 @@
 //  Тесты чистой раскладки плиточной сетки (задача E4.7, строгая компактность —
 //  E8.5).
 //  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»
-//  (формула юнита, упаковка слева направо сверху вниз, юнитные координаты,
-//  переупаковка при resize; «честные дыры» отменены в E8.5) и §14 «Уточнения
-//  MVP» п. 4 (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
+//  (формула юнита, упаковка слева направо сверху вниз, юнитные координаты) и
+//  §14 «Уточнения MVP» п. 4 (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
+//  Здесь — упаковка **по порядку** (`pack`/`packCompact`, E8.5): с E14 это
+//  запасной путь, миграция v1 → v2 и первый запуск; раскладка по явным ячейкам
+//  с дырами проверяется в `TileLayoutEnginePlacement*Tests`.
 //
 //  Тесты работают только с чистыми функциями `TileLayoutEngine`: без UIKit-цикла,
 //  без окна и без коллекции. Случайные конфигурации seeded — прогон
@@ -525,93 +527,19 @@ final class TileLayoutEngineTests: XCTestCase {
         assertCompactPacking(items: [wide], slots: after, columns: 4)
     }
 
-    /// Перетаскивание меняет порядок (E8.4), а упаковка превью-порядка остаётся
-    /// строго компактной — визуал drag и обычного режима не различается (E8.5).
-    func testDragPreviewOrderPacksCompactly() {
-        let items: [TileGridItem] = [
-            .tile(tesseraTestTile("a", size: .medium)),
-            .tile(tesseraTestTile("b", size: .small)),
-            .tile(tesseraTestTile("c", size: .wide)),
-            .tile(tesseraTestTile("d", size: .small)),
-        ]
-
-        let preview = TileLayoutEngine.previewOrder(
-            items: items,
-            draggingID: AnyHashable("d"),
-            targetID: AnyHashable("b")
-        ) ?? []
-
-        XCTAssertEqual(tesseraTestIDs(preview), ["a", "d", "b", "c"])
-        let packItems: [(id: AnyHashable, size: TileSize)] = preview.map {
-            (id: $0.id, size: $0.size)
-        }
-        let slots = TileLayoutEngine.pack(items: packItems, columns: 4, unit: 10)
-
-        assertCompactPacking(items: packItems, slots: slots, columns: 4)
-    }
-
-    // MARK: - Переупаковка (resize и смена геометрии)
-
-    /// Resize меняет размер одной плитки и переупаковывает остальные, сохраняя
-    /// порядок ярлыков (§3, §5, D15).
-    func testResizeRepacksWithoutOverlapsAndKeepsOrder() {
-        let items: [(id: AnyHashable, size: TileSize)] = [
-            (id: AnyHashable("a"), size: .small),
-            (id: AnyHashable("b"), size: .small),
-            (id: AnyHashable("c"), size: .wide),
-        ]
-        let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 64)
-
-        let resized = TileLayoutEngine.resizing(
-            slots,
-            id: AnyHashable("a"),
-            to: .large,
-            columns: 4,
-            unit: 64
-        )
-
-        XCTAssertEqual(resized.map { $0.id }, items.map { $0.id })
-        XCTAssertEqual(resized.map { $0.size }, [.large, .small, .wide])
-
-        let expected: [(id: AnyHashable, size: TileSize)] = [
-            (id: AnyHashable("a"), size: .large),
-            (id: AnyHashable("b"), size: .small),
-            (id: AnyHashable("c"), size: .wide),
-        ]
-        assertCompactPacking(items: expected, slots: resized, columns: 4)
-    }
-
-    /// Resize неизвестного идентификатора эквивалентен обычной переупаковке:
-    /// метод можно использовать как общий `repack`.
-    func testResizingUnknownIdentifierEqualsRepack() {
-        let items: [(id: AnyHashable, size: TileSize)] = [
-            (id: AnyHashable("a"), size: .medium),
-            (id: AnyHashable("b"), size: .small),
-        ]
-        let slots = TileLayoutEngine.pack(items: items, columns: 4, unit: 40)
-
-        let resized = TileLayoutEngine.resizing(
-            slots,
-            id: AnyHashable("missing"),
-            to: .large,
-            columns: 4,
-            unit: 40
-        )
-        let repacked = TileLayoutEngine.repack(slots, columns: 4, unit: 40)
-
-        XCTAssertEqual(resized, repacked)
-    }
+    // MARK: - Смена геометрии
 
     /// Смена юнита не трогает юнитные координаты: раскладка не зависит от
-    /// пикселей (§3, «Модель раскладки»).
-    func testRepackKeepsUnitCoordinatesAndUpdatesUnit() throws {
+    /// пикселей (§3, «Модель раскладки»). После E14.6 пересборка — это просто
+    /// `pack` тех же элементов с другим юнитом (`repack` удалён).
+    func testPackWithOtherUnitKeepsUnitCoordinatesAndUpdatesUnit() throws {
         let items: [(id: AnyHashable, size: TileSize)] = [
             (id: AnyHashable("a"), size: .small),
             (id: AnyHashable("b"), size: .medium),
             (id: AnyHashable("c"), size: .wide),
         ]
         let original = TileLayoutEngine.pack(items: items, columns: 4, unit: 64)
-        let repacked = TileLayoutEngine.repack(original, columns: 4, unit: 32)
+        let repacked = TileLayoutEngine.pack(items: items, columns: 4, unit: 32)
 
         XCTAssertEqual(repacked.map { $0.id }, original.map { $0.id })
         XCTAssertEqual(repacked.map { $0.column }, original.map { $0.column })
@@ -624,15 +552,14 @@ final class TileLayoutEngineTests: XCTestCase {
         XCTAssertEqual(repackedWidth, originalWidth / 2, accuracy: 1e-9)
     }
 
-    /// Смена числа колонок переупаковывает сетку с новой геометрией.
-    func testRepackWithColumnsChangeProducesValidLayout() {
+    /// Смена числа колонок упаковывает те же элементы с новой геометрией.
+    func testPackWithColumnsChangeProducesValidLayout() {
         let items: [(id: AnyHashable, size: TileSize)] = [
             (id: AnyHashable("wide"), size: .wide),
             (id: AnyHashable("medium"), size: .medium),
             (id: AnyHashable("small"), size: .small),
         ]
-        let original = TileLayoutEngine.pack(items: items, columns: 4, unit: 50)
-        let repacked = TileLayoutEngine.repack(original, columns: 6, unit: 40)
+        let repacked = TileLayoutEngine.pack(items: items, columns: 6, unit: 40)
 
         XCTAssertEqual(repacked.count, items.count)
         XCTAssertEqual(repacked.map { $0.id }, items.map { $0.id })
