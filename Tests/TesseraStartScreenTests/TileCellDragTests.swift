@@ -96,7 +96,8 @@ final class TileCellDragTests: XCTestCase {
     private func makeSixTilesHost(
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
             mergeHoverDuration: 0.05,
-            magnetSnapRadius: 0
+            magnetSnapRadius: 0,
+            reorderPreviewDwell: 0
         )
     ) throws -> TesseraTestDragHost {
         try TesseraTestDragHost(

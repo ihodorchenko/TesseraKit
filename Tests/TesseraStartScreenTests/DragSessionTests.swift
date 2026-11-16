@@ -1383,8 +1383,12 @@ final class DragSessionTests: XCTestCase {
 
     // MARK: - n11: границы центральной зоны
 
-    /// Границы центральной зоны drop: 25%/75% полуоткрыты — левая/верхняя
-    /// границы включительно, правая/нижняя — нет (E8.6/E10.5-A1).
+    /// Границы входной зоны слияния (`TesseraTileMergeZone.entryRect`, E17.1):
+    /// полуоткрыты — левая/верхняя границы включительно, правая/нижняя — нет
+    /// (E8.6/E10.5-A1). Зона после E17.1: `max(50 %, 36 pt)` по оси (на этой сетке
+    /// это прежняя половина рамки), а после входа цель держится гистерезисом.
+    /// Правая/нижняя границы проверяются с чистого состояния (`.cell`), иначе
+    /// удержание слияния (6 pt от края) их не отпустило бы.
     func testDropCenterZoneBoundariesAreHalfOpen() throws {
         let host = TesseraTestDragHost(
             descriptors: [
@@ -1395,16 +1399,10 @@ final class DragSessionTests: XCTestCase {
         )
         XCTAssertTrue(host.startDrag("a"))
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "b"))
-        let central = frame.insetBy(dx: frame.width * 0.25, dy: frame.height * 0.25)
+        let central = TesseraTileMergeZone.entryRect(in: frame)
+        XCTAssertEqual(central.width, frame.width / 2, accuracy: 0.5, "Контроль: на этой сетке зона — половина рамки")
 
-        // Левая и верхняя границы включительны.
-        host.coordinator.updateDrag(to: CGPoint(x: central.minX, y: central.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .group(AnyHashable("b")))
-        host.coordinator.updateDrag(to: CGPoint(x: central.midX, y: central.minY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .group(AnyHashable("b")))
-
-        // Правая граница — уже вне центральной зоны (это же включает
-        // превью размещения, поэтому нижнюю границу пересчитываем по новой рамке).
+        // Правая граница — уже вне входной зоны.
         host.coordinator.updateDrag(to: CGPoint(x: central.maxX, y: central.midY))
         XCTAssertEqual(
             host.coordinator.dragSession?.hover,
@@ -1417,6 +1415,17 @@ final class DragSessionTests: XCTestCase {
             host.coordinator.dragSession?.hover,
             .cell(try cell("b", in: host))
         )
+
+        // Левая и верхняя границы включительны.
+        host.coordinator.updateDrag(to: CGPoint(x: central.minX, y: central.midY))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group(AnyHashable("b")))
+        host.coordinator.updateDrag(to: CGPoint(x: central.midX, y: central.minY))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group(AnyHashable("b")))
+
+        // Гистерезис (E17.1): уже на цели слияния, 1 pt за границей зоны —
+        // всё ещё слияние (область удержания шире входной).
+        host.coordinator.updateDrag(to: CGPoint(x: central.minX - 1, y: central.midY))
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group(AnyHashable("b")))
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitForDragCleanup("a"))
     }
@@ -1571,8 +1580,10 @@ final class DragSessionTests: XCTestCase {
     /// хост открывает панель во время drag, отпускание возвращает ярлык на
     /// исходное место (m7, E9.5-семантика; STARTSCREEN §30).
     func testDropOverExpandedFolderPanelIsNoOp() throws {
+        // E17.1: без паузы перед превью, иначе превью вытеснения не успело бы
+        // появиться до того, как хост откроет панель.
         let host = makeFolderHost(
-            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
+            configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0, reorderPreviewDwell: 0)
         )
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder
@@ -1819,6 +1830,8 @@ final class DragSessionTests: XCTestCase {
         try startPanelDrag(host, folderID: f1, iconIndex: 1)
         host.coordinator.updateDrag(to: try XCTUnwrap(host.point("a", fx: 0.1, fy: 0.5)))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(aCell))
+        // E17.1: превью вытеснения «a» — после паузы 0,2 с на клетке.
+        XCTAssertTrue(host.waitUntil { host.host.grid.frame(forItemID: "c") == aFrame }, "Превью: ярлык на месте цели")
         XCTAssertEqual(
             host.host.grid.frame(forItemID: "c"),
             aFrame,
@@ -2396,7 +2409,10 @@ final class DragSessionTests: XCTestCase {
         host.coordinator.updateDrag(to: baseCenter)
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("b"))
 
-        // Базовый край «b» — по-прежнему размещение на её ячейку.
+        // Базовый край «b» — по-прежнему размещение на её ячейку. E17.1: после
+        // слияния цель держится почти по всей плитке (гистерезис), поэтому край
+        // берётся с чистого состояния — через собственную ячейку.
+        host.coordinator.updateDrag(to: ownSlotCenter)
         host.coordinator.updateDrag(to: baseEdge)
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(bCell))
 
@@ -2420,8 +2436,9 @@ final class DragSessionTests: XCTestCase {
         host.coordinator.updateDrag(to: centerBefore)
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t21"))
 
-        // Превью сдвигает сетку; затем контент уезжает ещё на 100 pt.
-        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("t21", fx: 0.9, fy: 0.5)))
+        // Превью сдвигает сетку; затем контент уезжает ещё на 100 pt. E17.1:
+        // 0,97 — вне области удержания слияния (рамка без 6 pt), иначе цель осталась бы `.group`.
+        host.coordinator.updateDrag(to: try XCTUnwrap(host.point("t21", fx: 0.97, fy: 0.5)))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(try cell("t21", in: host)))
         grid.setContentOffset(CGPoint(x: 0, y: 300), animated: false)
         host.host.layout()

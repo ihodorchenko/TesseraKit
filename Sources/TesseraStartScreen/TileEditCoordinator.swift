@@ -534,6 +534,23 @@ public struct TesseraTileEditConfiguration {
     /// анимация не проигрывается — рамка и масштаб выставляются сразу.
     public var mergeHighlightDuration: TimeInterval
 
+    /// Пауза перед превью «вытеснения» цели на краю плитки в секундах (E17.1, D50).
+    ///
+    /// Пока палец над краем **занятой** клетки, drop поставит перетаскиваемый
+    /// элемент на неё, а цель вытолкнет вниз (D31). Показывать этот сдвиг сразу
+    /// нельзя: на подходе к центру плитки (чтобы собрать папку) палец сначала
+    /// пересекает её край, и цель «убегала» из-под пальца раньше, чем он до неё
+    /// доходил. Поэтому превью вытеснения появляется только после того, как палец
+    /// простоял на этой клетке `reorderPreviewDwell`; до того сетка показывает
+    /// базовую раскладку. Смена клетки начинает отсчёт заново; пустые клетки и
+    /// «новая строка» (никого не вытесняют) показываются сразу. Сам drop от паузы
+    /// не зависит: он фиксирует цель-клетку, даже если превью ещё не показано.
+    ///
+    /// По умолчанию 0,2 с. `0` (и отрицательные/нечисловые значения) — без паузы,
+    /// превью сразу, как до E17.1. При Reduce Motion пауза остаётся: она про то,
+    /// чтобы не двигать плитки на подходе, а не про анимацию.
+    public var reorderPreviewDwell: TimeInterval
+
     /// Радиус притяжения снимка к центру слота в точках (E8.9).
     ///
     /// По умолчанию 28 pt — середина диапазона 24–32 pt из спеки WP.
@@ -587,6 +604,7 @@ public struct TesseraTileEditConfiguration {
     ///   - magnetSnapRadius: Радиус притяжения к слоту, по умолчанию 28 pt.
     ///   - magnetSpringDuration: Длительность spring-подъезда, по умолчанию 0.2 с.
     ///   - magnetSpringDamping: Демпфирование spring, по умолчанию 0.82.
+    ///   - reorderPreviewDwell: Пауза перед превью вытеснения цели, по умолчанию 0.2 с.
     public init(
         isJiggleEnabled: Bool = false,
         seed: UInt64 = 0xE4_0004_0000_0001,
@@ -603,7 +621,8 @@ public struct TesseraTileEditConfiguration {
         mergeHighlightDuration: TimeInterval = 0.2,
         magnetSnapRadius: CGFloat = 28,
         magnetSpringDuration: TimeInterval = 0.2,
-        magnetSpringDamping: CGFloat = 0.82
+        magnetSpringDamping: CGFloat = 0.82,
+        reorderPreviewDwell: TimeInterval = 0.2
     ) {
         self.isJiggleEnabled = isJiggleEnabled
         self.seed = seed
@@ -621,6 +640,7 @@ public struct TesseraTileEditConfiguration {
         self.magnetSnapRadius = magnetSnapRadius
         self.magnetSpringDuration = magnetSpringDuration
         self.magnetSpringDamping = magnetSpringDamping
+        self.reorderPreviewDwell = reorderPreviewDwell
     }
 }
 
@@ -739,6 +759,9 @@ public final class TesseraTileEditCoordinator: NSObject {
             // вернётся к обычной, а новое удержание взведётся при повторном
             // входе пальца на центр ярлыка.
             resetMergeHover()
+            // E17.1: пауза превью могла измениться — отсчёт взведётся заново на
+            // следующем шаге drag.
+            resetReorderDwell()
             // E8.9: радиус и spring притяжения могли измениться — снимаем
             // текущее притяжение, чтобы следующий шаг drag начался от того
             // кадра, который видит пользователь.
@@ -889,6 +912,15 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// один раз через `mergeHoverDuration`.
     private var mergeTimer: Timer?
 
+    /// Таймер паузы перед превью вытеснения (E17.1, D50); `nil` — отсчёта нет.
+    ///
+    /// Одноразовый `Timer` в режиме `.common` (как ``mergeTimer``): он нужен, чтобы
+    /// превью появилось и тогда, когда палец стоит неподвижно и событий касания нет.
+    /// Состояние отсчёта (клетка и признак «выдержано») живёт в сессии
+    /// (``TesseraTileDragSession/reorderDwellCell``), таймер — здесь, и снимается
+    /// вместе с удержанием слияния на каждом выходе из drag.
+    private var reorderDwellTimer: Timer?
+
     /// Кнопки «открепить»/«размер» поверх видимых плиток, по идентификатору.
     private(set) var editControls: [AnyHashable: TesseraTileEditControlView] = [:]
 
@@ -1037,6 +1069,8 @@ public final class TesseraTileEditCoordinator: NSObject {
         mergeTimer?.invalidate()
         mergeTimer = nil
         mergeTracker = nil
+        reorderDwellTimer?.invalidate()
+        reorderDwellTimer = nil
 
         // E8.9: spring притяжения держит замыкание на сессию с видом снимка —
         // останавливаем его до того, как сетка и оверлеи уйдут из иерархии.
@@ -2469,6 +2503,7 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         stopTicker()
         resetMergeHover()
+        resetReorderDwell()
         stopMagnetAnimation(session)
         session.magnetTarget = nil
         dragSession = nil
@@ -3242,6 +3277,11 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// размещений, а не от предыдущего превью (сдвиги не накапливаются), и
     /// возвращается к базовым, когда цель — слияние или её нет.
     ///
+    /// E17.1 (D50): если цель — ``HoverTarget/cell(_:)`` занятой клетки (превью
+    /// вытолкнуло бы соседа), превью показывается только после паузы
+    /// ``TesseraTileEditConfiguration/reorderPreviewDwell`` на этой клетке, см.
+    /// ``reorderPreviewTarget(for:session:)``.
+    ///
     /// E8.9: в конце шага снимок ставится под палец (или притягивается к ячейке
     /// цели). Здесь же сбрасывается признак «палец над панелью папки»:
     /// притяжение над панелью не работает.
@@ -3283,7 +3323,9 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         let target = hoverTarget(at: point, session: session)
 
-        applyDragPreview(for: target, session: session)
+        // E17.1 (D50): превью вытеснения занятой клетки — после паузы; до неё
+        // сетка остаётся в базе. Цель (и drop) от паузы не зависят.
+        applyDragPreview(for: reorderPreviewTarget(for: target, session: session), session: session)
 
         // E8.6: удержание над центром ярлыка/папки взводится, перевзводится и
         // сбрасывается на каждом шаге — до обновления подсветки, чтобы она сразу
@@ -3302,6 +3344,115 @@ public final class TesseraTileEditCoordinator: NSObject {
         // только визуальный слой: цели считаются по точке пальца, поэтому
         // раскладка и таймер слияния от него не зависят.
         updateDragViewPosition(for: point, session: session)
+    }
+
+    // MARK: - Пауза перед превью вытеснения (E17.1, D50)
+
+    /// Пауза перед превью вытеснения в секундах (санитизированная настройка).
+    private var reorderDwellDuration: TimeInterval {
+        let value = configuration.reorderPreviewDwell
+        return value.isFinite ? max(0, value) : 0
+    }
+
+    /// Цель, по которой строится превью раскладки: сама цель либо база.
+    ///
+    /// Для ``HoverTarget/cell(_:)``, превью которой сдвинуло бы **других**
+    /// элементов (занятая клетка: перетаскиваемый встанет на неё, цель уйдёт вниз,
+    /// D31), превью разрешается, только когда палец простоял на этой клетке
+    /// ``TesseraTileEditConfiguration/reorderPreviewDwell``. До этого возвращается
+    /// ``HoverTarget/none`` — база: на подходе к центру плитки, чтобы собрать папку,
+    /// палец сначала пересекает её край, и цель не должна убегать из-под него.
+    ///
+    /// Отсчёт ведёт сессия (``TesseraTileDragSession/reorderDwellCell``), срабатывание
+    /// даёт одноразовый таймер ``reorderDwellTimer``: превью появляется и когда
+    /// палец замер. Смена клетки перезапускает отсчёт; любая другая цель (слияние,
+    /// пустая клетка, «новая строка», нет цели) его снимает. Пустые клетки и
+    /// `.newRow` никого не вытесняют, поэтому показываются сразу. Пауза 0 — без
+    /// ожидания. Drop паузу не учитывает: он фиксирует ``HoverTarget/cell(_:)``.
+    ///
+    /// - Parameters:
+    ///   - target: Цель под пальцем.
+    ///   - session: Активная drag-сессия.
+    /// - Returns: Цель для превью.
+    private func reorderPreviewTarget(
+        for target: HoverTarget,
+        session: TesseraTileDragSession
+    ) -> HoverTarget {
+        guard case .cell(let cell) = target,
+              reorderDwellDuration > 0,
+              previewDisplacesNeighbours(for: target, session: session) else {
+            resetReorderDwell()
+            return target
+        }
+
+        if session.reorderDwellCell != cell {
+            // Новая клетка — новый отсчёт; прежнее превью (если было) уходит в базу.
+            cancelReorderDwellTimer()
+            session.reorderDwellCell = cell
+            session.isReorderDwellElapsed = false
+            let timer = Timer(timeInterval: reorderDwellDuration, repeats: false) { [weak self] _ in
+                self?.reorderDwellTimerDidFire()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            reorderDwellTimer = timer
+        }
+        return session.isReorderDwellElapsed ? target : .none
+    }
+
+    /// Сдвинет ли превью цели **других** элементов относительно базы.
+    ///
+    /// Сравниваются ячейки всех элементов, кроме перетаскиваемого, в раскладке
+    /// превью и в её основе (база либо картина распада папки-источника, D45).
+    ///
+    /// - Parameters:
+    ///   - target: Цель-размещение.
+    ///   - session: Активная drag-сессия.
+    /// - Returns: `true`, если хотя бы один элемент поменял ячейку.
+    private func previewDisplacesNeighbours(
+        for target: HoverTarget,
+        session: TesseraTileDragSession
+    ) -> Bool {
+        let layout = previewLayout(for: target, session: session)
+        var baseCells: [AnyHashable: TileGridPlacement] = [:]
+        for placed in layout.basis { baseCells[placed.id] = placed.cell }
+        return layout.placements.contains {
+            $0.id != session.itemID && baseCells[$0.id] != $0.cell
+        }
+    }
+
+    /// Пауза выдержана: показывает превью вытеснения для цели под пальцем.
+    private func reorderDwellTimerDidFire() {
+        reorderDwellTimer = nil
+
+        guard let session = dragSession,
+              session.panelReorder == nil,
+              case .cell(let cell) = session.hover,
+              session.reorderDwellCell == cell else {
+            return
+        }
+
+        session.isReorderDwellElapsed = true
+        // Тот же шаг, что и от касания: точка пальца прежняя, цель та же, а
+        // отсчёт уже выдержан — превью применится.
+        updateHoverTargets(at: session.lastPoint)
+    }
+
+    /// Снимает отсчёт паузы: таймер и состояние сессии.
+    private func resetReorderDwell() {
+        cancelReorderDwellTimer()
+        dragSession?.reorderDwellCell = nil
+        dragSession?.isReorderDwellElapsed = false
+    }
+
+    /// Останавливает таймер паузы.
+    private func cancelReorderDwellTimer() {
+        reorderDwellTimer?.invalidate()
+        reorderDwellTimer = nil
+    }
+
+    /// Внутренний шов тестов: идёт ли отсчёт паузы или хвост таймера удержания.
+    var hasPendingDragTimersForTesting: (merge: Bool, reorderDwell: Bool) {
+        (mergeTimer != nil, reorderDwellTimer != nil)
     }
 
     // MARK: - Магнитизм к ячейкам (E8.9)
@@ -3514,6 +3665,56 @@ public final class TesseraTileEditCoordinator: NSObject {
         session.magnetTarget = nil
     }
 
+    /// Раскладка превью для цели: размещения, элементы снимка и их основа.
+    ///
+    /// Основа (`basis`) — размещения, от которых считается вставка: база либо
+    /// картина распада папки-источника (D45). Для слияния, родной папки и
+    /// отсутствия цели раскладка — база целиком (`placements == basePlacements`).
+    ///
+    /// - Parameters:
+    ///   - target: Цель для превью.
+    ///   - session: Активная drag-сессия.
+    /// - Returns: Размещения превью, элементы снимка превью и основа расчёта.
+    private func previewLayout(
+        for target: HoverTarget,
+        session: TesseraTileDragSession
+    ) -> (placements: [TilePlacedItem], items: [TileGridItem], basis: [TilePlacedItem]) {
+        var previewItems = session.baseSnapshot.items
+        var basis = session.basePlacements
+        if let dissolution = session.folderDissolution {
+            switch target {
+            case .cell, .newRow:
+                basis = dissolution.placements
+                previewItems = dissolution.items
+            case .none, .folder, .group, .sourceFolder:
+                break
+            }
+        }
+
+        let desired: [TilePlacedItem]
+        switch target {
+        case .cell(let cell):
+            desired = TileLayoutEngine.inserting(
+                id: session.itemID,
+                size: session.magnetSize,
+                at: cell,
+                into: basis,
+                columns: session.columns
+            )
+        case .newRow:
+            desired = TileLayoutEngine.inserting(
+                id: session.itemID,
+                size: session.magnetSize,
+                at: session.newRowCell,
+                into: basis,
+                columns: session.columns
+            )
+        case .none, .folder, .group, .sourceFolder:
+            desired = session.basePlacements
+        }
+        return (desired, previewItems, basis)
+    }
+
     /// Пересобирает превью раскладки сетки для цели под пальцем (E8.4, E14.5).
     ///
     /// Пишет **только в сетку** — `grid.update(snapshot:animated:)` гонит
@@ -3550,38 +3751,9 @@ public final class TesseraTileEditCoordinator: NSObject {
         // шагов, что у `TileStore.extractFromFolder`). Остальные цели (слияние,
         // родная папка, нет цели) — база: папка со вторым ярлыком на месте, как
         // при подъёме.
-        var previewItems = session.baseSnapshot.items
-        let desired: [TilePlacedItem]
-        switch target {
-        case .cell(let cell):
-            var basis = session.basePlacements
-            if let dissolution = session.folderDissolution {
-                basis = dissolution.placements
-                previewItems = dissolution.items
-            }
-            desired = TileLayoutEngine.inserting(
-                id: session.itemID,
-                size: session.magnetSize,
-                at: cell,
-                into: basis,
-                columns: session.columns
-            )
-        case .newRow:
-            var basis = session.basePlacements
-            if let dissolution = session.folderDissolution {
-                basis = dissolution.placements
-                previewItems = dissolution.items
-            }
-            desired = TileLayoutEngine.inserting(
-                id: session.itemID,
-                size: session.magnetSize,
-                at: session.newRowCell,
-                into: basis,
-                columns: session.columns
-            )
-        case .none, .folder, .group, .sourceFolder:
-            desired = session.basePlacements
-        }
+        let layout = previewLayout(for: target, session: session)
+        let desired = layout.placements
+        let previewItems = layout.items
 
         guard desired != session.previewPlacements else {
             animatePlaceholder(to: currentFrame(of: session))
@@ -3683,7 +3855,7 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// `0 ..< columns`, строка — не меньше 0.
     ///
     /// Если клетка занята другим элементом базовой раскладки, решает зона его
-    /// базовой рамки (``isPointInDropCenter(_:of:)``):
+    /// базовой рамки (``TesseraTileMergeZone``, E17.1/D50):
     /// - центр плитки — `.group` (создание папки по удержанию E8.6, D14; только
     ///   для ярлыка, не взятого из папки);
     /// - центр папки — `.folder` (добавление по удержанию; папку в папку
@@ -3766,8 +3938,9 @@ public final class TesseraTileEditCoordinator: NSObject {
 
     /// Цель над занятой клеткой по зоне рамки элемента (E14.5).
     ///
-    /// Центр (``isPointInDropCenter(_:of:)``) — слияние, край — размещение на
-    /// ячейку элемента-цели (``HoverTarget/cell(_:)``).
+    /// Центр (``TesseraTileMergeZone``: входная зона, с гистерезисом после входа,
+    /// E17.1) — слияние, край — размещение на ячейку элемента-цели
+    /// (``HoverTarget/cell(_:)``).
     ///
     /// - Parameters:
     ///   - item: Элемент под пальцем.
@@ -3784,7 +3957,20 @@ public final class TesseraTileEditCoordinator: NSObject {
         session: TesseraTileDragSession
     ) -> HoverTarget {
         let edgeTarget = HoverTarget.cell(cell)
-        let isCenter = isPointInDropCenter(point, of: frame)
+
+        // E17.1 (D50): гистерезис. Если цель уже слияние с этим элементом, она
+        // держится, пока палец внутри рамки, сжатой на 6 pt; войти же в слияние
+        // можно только через (увеличенную) входную зону.
+        let isEngaged: Bool
+        switch session.hover {
+        case .group(let id), .folder(let id):
+            isEngaged = id == item.id
+        case .sourceFolder:
+            isEngaged = session.sourceFolderID == item.id
+        case .none, .cell, .newRow:
+            isEngaged = false
+        }
+        let isCenter = TesseraTileMergeZone.contains(point, in: frame, isEngaged: isEngaged)
 
         switch item {
         case .folder(let folder):
@@ -3871,23 +4057,6 @@ public final class TesseraTileEditCoordinator: NSObject {
     private func isPointOverFolderPanel(_ point: CGPoint) -> Bool {
         guard grid.expandedFolderID != nil else { return false }
         return grid.item(at: point)?.isFolderPanel == true
-    }
-
-    /// Попадает ли точка в центральную половину рамки (зона удержания E8.6).
-    ///
-    /// Центральная зона используется для двух целей: центр ярлыка — создание
-    /// папки (E8.6), центр плитки-папки — добавление ярлыка в папку (E10.5-A1).
-    /// Всё, что снаружи этой зоны, — краевые половины, они переставляют плитку.
-    ///
-    /// - Parameters:
-    ///   - point: Точка в координатах сетки.
-    ///   - frame: Рамка плитки.
-    /// - Returns: `true`, если точка в центральной зоне.
-    private func isPointInDropCenter(_ point: CGPoint, of frame: CGRect) -> Bool {
-        guard frame.width > 0, frame.height > 0 else { return false }
-        let insetX = frame.width * 0.25
-        let insetY = frame.height * 0.25
-        return frame.insetBy(dx: insetX, dy: insetY).contains(point)
     }
 
     // MARK: - Удержание над целью (E8.6)
@@ -4301,6 +4470,7 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         stopTicker()
         resetMergeHover()
+        resetReorderDwell()
         // E8.9: возврат снимка на место (moveDragView/collapseDragView) должен
         // стартовать от текущего кадра, а не от цели незавершённого spring'а.
         stopMagnetAnimation(session)
@@ -4727,6 +4897,7 @@ public final class TesseraTileEditCoordinator: NSObject {
 
         stopTicker()
         resetMergeHover()
+        resetReorderDwell()
         // E8.9: незавершённый spring притяжения не должен пережить сессию —
         // снимок убирается сразу, без хвостовой анимации.
         stopMagnetAnimation(session)
@@ -5972,6 +6143,72 @@ struct TesseraMergeHoverTracker {
     }
 }
 
+/// Зона слияния плитки/папки: куда должен попасть палец, чтобы цель стала
+/// `.group`/`.folder`, и где она удерживается (E17.1, D50).
+///
+/// Чистая геометрия без UIKit-состояния, поэтому тестируется без симулятора
+/// (`TileMergeZoneTests`).
+///
+/// - **Вход** (``entryRect(in:)``): прямоугольник по центру рамки; по каждой оси
+///   его сторона — `max(50 % стороны рамки, 36 pt)`, но не больше самой стороны.
+///   На малой плитке 55 pt это 36 pt (раньше — 27,5 pt), на средней 118 pt —
+///   59 pt (как раньше), у широкой/большой плитки каждая ось считается отдельно,
+///   так что зона не меньше прежней половины рамки.
+/// - **Удержание** (``retainRect(in:)``): когда цель уже `.group`/`.folder`,
+///   она держится, пока палец внутри рамки, сжатой на 6 pt, — почти вся плитка.
+///   Это гистерезис: дрожание пальца у границы входной зоны не переключает цель
+///   между слиянием и размещением (а значит, не гоняет превью туда-сюда и не
+///   перезапускает удержание). Область удержания не меньше входной.
+enum TesseraTileMergeZone {
+
+    /// Доля стороны рамки, которую занимает входная зона.
+    static let entryFraction: CGFloat = 0.5
+
+    /// Минимальная сторона входной зоны по оси, pt: палец не попадает в
+    /// 27 pt на малой плитке.
+    static let entryMinimumSide: CGFloat = 36
+
+    /// Отступ области удержания от краёв рамки, pt.
+    static let retainInset: CGFloat = 6
+
+    /// Входная зона слияния в рамке.
+    ///
+    /// - Parameter frame: Рамка плитки/папки.
+    /// - Returns: Прямоугольник по центру рамки; пустой, если рамка вырождена.
+    static func entryRect(in frame: CGRect) -> CGRect {
+        guard frame.width > 0, frame.height > 0 else { return .zero }
+        let width = min(frame.width, max(frame.width * entryFraction, entryMinimumSide))
+        let height = min(frame.height, max(frame.height * entryFraction, entryMinimumSide))
+        return CGRect(
+            x: frame.midX - width / 2,
+            y: frame.midY - height / 2,
+            width: width,
+            height: height
+        )
+    }
+
+    /// Область удержания цели слияния в рамке.
+    ///
+    /// - Parameter frame: Рамка плитки/папки.
+    /// - Returns: Рамка, сжатая на ``retainInset``, объединённая с входной зоной.
+    static func retainRect(in frame: CGRect) -> CGRect {
+        guard frame.width > 0, frame.height > 0 else { return .zero }
+        return frame.insetBy(dx: retainInset, dy: retainInset).union(entryRect(in: frame))
+    }
+
+    /// Лежит ли палец в зоне слияния.
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - frame: Рамка плитки/папки.
+    ///   - isEngaged: Цель уже была слиянием на этом элементе (гистерезис):
+    ///     тогда проверяется область удержания, иначе — входная зона.
+    /// - Returns: `true`, если точка в зоне.
+    static func contains(_ point: CGPoint, in frame: CGRect, isEngaged: Bool) -> Bool {
+        (isEngaged ? retainRect(in: frame) : entryRect(in: frame)).contains(point)
+    }
+}
+
 /// Чистая математика магнитизма к ячейкам (E8.9).
 ///
 /// Отвечает на один вопрос: «есть ли в радиусе притяжения центр слота, к
@@ -6311,6 +6548,14 @@ final class TesseraTileDragSession {
 
     /// Текущая цель под пальцем.
     var hover: HoverTarget = .none
+
+    /// Клетка, на которой идёт отсчёт паузы перед превью вытеснения (E17.1, D50);
+    /// `nil` — отсчёта нет (цель не `.cell` занятой клетки либо пауза отключена).
+    var reorderDwellCell: TileGridPlacement?
+
+    /// Пауза на ``reorderDwellCell`` выдержана: превью вытеснения показано.
+    /// Сбрасывается вместе с клеткой.
+    var isReorderDwellElapsed = false
 
     /// Палец сейчас над панелью раскрытой папки (D17, E8.9).
     ///
