@@ -427,7 +427,8 @@ final class TesseraTestDragHost {
         columns: Int = 4,
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
             mergeHoverDuration: 0.05,
-            magnetSnapRadius: 0
+            magnetSnapRadius: 0,
+            reorderPreviewDwell: 0
         )
     ) throws {
         let directory = TesseraTestDirectory()
@@ -460,7 +461,8 @@ final class TesseraTestDragHost {
         unpinned: [(String, TileSize)] = [],
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
             mergeHoverDuration: 0.05,
-            magnetSnapRadius: 0
+            magnetSnapRadius: 0,
+            reorderPreviewDwell: 0
         )
     ) throws {
         let slots = TileLayoutEngine.packCompact(
