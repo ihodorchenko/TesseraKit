@@ -210,10 +210,12 @@ final class DragSessionTests: XCTestCase {
 
     // MARK: - Конфигурация E9.8а
 
-    /// Границы E8.6 и «желе»: 600 мс / 10 pt и ±1,2° — значения по умолчанию.
+    /// Границы E8.6 и «желе»: 600 мс / 10 pt и ±1,2° — значения по умолчанию;
+    /// само «желе» выключено (E15.6, D39).
     func testDragConfigurationDefaultsMatchApprovedDecisions() {
         let configuration = TesseraTileEditConfiguration()
 
+        XCTAssertFalse(configuration.isJiggleEnabled)
         XCTAssertEqual(configuration.mergeHoverDuration, 0.6, accuracy: 0.0001)
         XCTAssertEqual(configuration.mergeHoverDisplacement, 10, accuracy: 0.0001)
         XCTAssertEqual(configuration.jiggleAngle, 1.2, accuracy: 0.0001)
@@ -757,11 +759,13 @@ final class DragSessionTests: XCTestCase {
     /// Смена `controlDiameter`/`jiggleDuration` на лету пересоздаёт контролы и
     /// перезапускает «желе» (E10.5-B4).
     func testConfigurationChangeRebuildsControlsAndJiggle() throws {
+        // E15.6: «желе» включено явно — тест проверяет его перезапуск.
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("a", size: .small),
                 tesseraTestTile("b", size: .small),
-            ]
+            ],
+            configuration: TesseraTileEditConfiguration(isJiggleEnabled: true)
         )
         host.coordinator.beginEditing()
         let firstControl = try XCTUnwrap(host.coordinator.editControls[AnyHashable("a")])
@@ -789,11 +793,13 @@ final class DragSessionTests: XCTestCase {
     /// После unpin и создания папки сетка переприменяет «желе» и дим: плитки не
     /// замирают и не теряют прозрачность (E10.5-B5, E8.2, E10.4).
     func testJiggleAndDimmingSurviveUnpinAndFolderCreation() throws {
+        // E15.6: «желе» включено явно — тест проверяет переприменение после render.
         let host = TesseraTestDragHost(
             descriptors: [
                 tesseraTestTile("a", size: .small),
                 tesseraTestTile("b", size: .small),
-            ]
+            ],
+            configuration: TesseraTileEditConfiguration(isJiggleEnabled: true)
         )
         let recorder = DragDelegateRecorder()
         host.coordinator.delegate = recorder

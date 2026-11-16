@@ -382,14 +382,25 @@ public extension TesseraTileEditCoordinatorDelegate {
 
 /// Параметры режима редактирования (docs/STARTSCREEN-IOS-DESIGN.md §5).
 ///
-/// Значения по умолчанию: мягкий синусоидальный поворот «желе» ±1,2° с циклом
-/// 0,4 с, отдельная фаза на каждую плитку (seedable — детерминированная для
-/// тестов E4.7), автопрокрутка у краёв при перетаскивании, параметры
+/// Значения по умолчанию: «желе» **выключено** (``isJiggleEnabled`` — D39: в
+/// W10M сетка в правке статична); если хост его включает — мягкий
+/// синусоидальный поворот ±1,2° с циклом 0,4 с, отдельная фаза на каждую
+/// плитку (seedable — детерминированная для тестов E4.7); автопрокрутка у краёв при перетаскивании, параметры
 /// слияния в папку по удержанию (E8.6): 600 мс удержания, допуск 10 pt и
 /// анимация подсветки «впитывания» 0,2 с с масштабом 1,08, а также параметры
 /// магнитизма к ячейкам (E8.9): радиус 28 pt, spring 0,2 с с демпфированием
 /// 0,82.
 public struct TesseraTileEditConfiguration {
+
+    /// Включено ли «желе» — покачивание плиток в режиме редактирования (E15.6, D39).
+    ///
+    /// По умолчанию `false`: в W10M сетка в правке статична, а покачивание —
+    /// заимствование из iOS. Хост включает его явно; тогда действуют
+    /// ``jiggleAngle``, ``jiggleDuration`` и ``seed``. При Reduce Motion «желе»
+    /// выключено при любом значении (§9). Смена значения на лету во время
+    /// редактирования применяется сразу: координатор пересобирает контролы и
+    /// навешивает либо снимает анимации (см. ``TesseraTileEditCoordinator/configuration``).
+    public var isJiggleEnabled: Bool
 
     /// Seed «желе» и фаз: одинаковый seed даёт одинаковую картину покачивания.
     ///
@@ -517,6 +528,7 @@ public struct TesseraTileEditConfiguration {
     /// Создаёт конфигурацию.
     ///
     /// - Parameters:
+    ///   - isJiggleEnabled: Включено ли «желе», по умолчанию `false` (D39).
     ///   - seed: Seed фаз «желе»; по умолчанию фиксированный.
     ///   - jiggleAngle: Амплитуда в градусах, по умолчанию 1.2.
     ///   - jiggleDuration: Длительность цикла в секундах, по умолчанию 0.4.
@@ -535,6 +547,7 @@ public struct TesseraTileEditConfiguration {
     ///   - magnetSpringDuration: Длительность spring-подъезда, по умолчанию 0.2 с.
     ///   - magnetSpringDamping: Демпфирование spring, по умолчанию 0.82.
     public init(
+        isJiggleEnabled: Bool = false,
         seed: UInt64 = 0xE4_0004_0000_0001,
         jiggleAngle: CGFloat = 1.2,
         jiggleDuration: TimeInterval = 0.4,
@@ -551,6 +564,7 @@ public struct TesseraTileEditConfiguration {
         magnetSpringDuration: TimeInterval = 0.2,
         magnetSpringDamping: CGFloat = 0.82
     ) {
+        self.isJiggleEnabled = isJiggleEnabled
         self.seed = seed
         self.jiggleAngle = jiggleAngle
         self.jiggleDuration = jiggleDuration
@@ -594,7 +608,8 @@ public struct TesseraTileEditConfiguration {
 ///
 /// - **вход**: long-press по плитке или пустому месту → режим редактирования;
 ///   по плитке сразу поднимается drag-сессия (как в iOS home);
-/// - **«желе»**: мягкая синусоидальная `CAKeyframeAnimation` поворота ±1,2°
+/// - **«желе»** (по умолчанию выключено, ``TesseraTileEditConfiguration/isJiggleEnabled``,
+///   D39): мягкая синусоидальная `CAKeyframeAnimation` поворота ±1,2°
 ///   за цикл 0,4 с с детерминированной фазой на каждую плитку; при Reduce
 ///   Motion анимации нет — остаются кнопки открепления;
 /// - **димминг** (E8.2): при входе в режим все плитки, кроме выбранной
@@ -767,9 +782,10 @@ public final class TesseraTileEditCoordinator: NSObject {
         dragSession != nil
     }
 
-    /// Покачиваются ли плитки сейчас (режим редактирования без Reduce Motion).
+    /// Покачиваются ли плитки сейчас (режим редактирования, «желе» включено
+    /// параметром и нет Reduce Motion).
     public var isJiggling: Bool {
-        isEditing && !isReduceMotionEnabled()
+        isEditing && configuration.isJiggleEnabled && !isReduceMotionEnabled()
     }
 
     // MARK: - Внутреннее состояние
@@ -4500,6 +4516,8 @@ public final class TesseraTileEditCoordinator: NSObject {
         editControls = editControls.filter { actualIDs.contains($0.key) }
 
         let reduceMotion = isReduceMotionEnabled()
+        // E15.6, D39: «желе» — только по явному параметру хоста и не при Reduce Motion.
+        let jiggleEnabled = configuration.isJiggleEnabled && !reduceMotion
         let folderTargets = store.snapshot().folders
         // Оверлеи создаются только для плиток у экрана (и одной экранной высоты
         // запаса): держать кнопки для сотни далёких ярлыков незачем.
@@ -4569,10 +4587,10 @@ public final class TesseraTileEditCoordinator: NSObject {
                 applyJiggle(
                     to: cell.contentView,
                     itemID: item.id,
-                    enabled: !reduceMotion
+                    enabled: jiggleEnabled
                 )
             }
-            applyJiggle(to: control, itemID: item.id, enabled: !reduceMotion)
+            applyJiggle(to: control, itemID: item.id, enabled: jiggleEnabled)
             applyEditActions(to: item, folders: folderTargets)
         }
         applyPanelEditActions(folders: folderTargets)

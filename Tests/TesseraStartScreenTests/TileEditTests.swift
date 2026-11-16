@@ -144,12 +144,17 @@ final class TileEditTests: XCTestCase {
     // MARK: - Reduce Motion
 
     /// При Reduce Motion «желе» выключено, но режим редактирования работает
-    /// (§5, §9). Провайдер настройки инжектируется.
+    /// (§5, §9). Провайдер настройки инжектируется; «желе» включено параметром
+    /// явно (E15.6) — иначе `isJiggling` ложен независимо от Reduce Motion.
     func testReduceMotionDisablesJiggle() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a")], in: directory)
         let grid = makeGrid(store: store)
-        let editor = TesseraTileEditCoordinator(grid: grid, store: store)
+        let editor = TesseraTileEditCoordinator(
+            grid: grid,
+            store: store,
+            configuration: TesseraTileEditConfiguration(isJiggleEnabled: true)
+        )
 
         editor.isReduceMotionEnabled = { true }
         editor.beginEditing()
