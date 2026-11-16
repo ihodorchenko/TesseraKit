@@ -387,8 +387,8 @@ public struct StartScreenView: UIViewControllerRepresentable {
                 isFolderPanel = false
             case .folder(let folder):
                 title = folder.title
-                // У папки бейджа нет (§4): счётчик внимания — свойство ярлыка.
-                badge = .none
+                // D44, E15.7: бейдж папки — агрегат бейджей её ярлыков.
+                badge = folder.aggregateBadge
                 iconIdentifier = folder.icon.map { ObjectIdentifier($0) }
                 liveContentIdentifier = nil
                 folderContents = folder.tiles.map { ShortcutSignature(shortcut: $0) }

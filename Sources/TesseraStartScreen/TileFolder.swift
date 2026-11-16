@@ -71,6 +71,53 @@ public struct TileFolder {
     }
 }
 
+// MARK: - Бэйдж папки (D44, E15.7)
+
+extension TileFolder {
+
+    /// Бэйдж плитки папки — сумма числовых бэйджей вложенных ярлыков (D44,
+    /// E15.7).
+    ///
+    /// В W10M (§6.3) бэйдж папки не описан: это решение библиотеки. Правило:
+    /// - складываются все `.count(n)` с `n > 0`; результат — `.count(сумма)`, а
+    ///   «99+» при сумме больше 99 рисует сам бэйдж (так же, как у плитки);
+    /// - если положительных счётчиков нет, но у кого-то есть `.dot`, папка
+    ///   показывает `.dot`; счётчик сильнее точки (точка и счётчик вместе дают
+    ///   счётчик);
+    /// - `.none`, `.count(0)` и отрицательные счётчики не учитываются; если ни
+    ///   у кого нет видимого бэйджа — `.none`.
+    ///
+    /// Считается один раз при применении снимка к ячейке, а не по кадрам
+    /// (контракт 5 AGENTS). Сумма насыщается на `Int.max`, а не переполняется.
+    /// Невидимых членов (вне каталога) в ``tiles`` нет: `TileStore` чистит папку
+    /// по каталогу (D45), поэтому на них хелпер не смотрит.
+    ///
+    /// - Parameter members: Ярлыки папки.
+    /// - Returns: Бэйдж плитки папки.
+    static func aggregateBadge(of members: [TileDescriptor]) -> TileBadge {
+        var sum = 0
+        var hasDot = false
+        for member in members {
+            switch member.badge {
+            case let .count(value) where value > 0:
+                let (total, overflow) = sum.addingReportingOverflow(value)
+                sum = overflow ? Int.max : total
+            case .dot:
+                hasDot = true
+            case .none, .count:
+                break
+            }
+        }
+        if sum > 0 { return .count(sum) }
+        return hasDot ? .dot : .none
+    }
+
+    /// Бэйдж плитки этой папки (``aggregateBadge(of:)`` по ``tiles``).
+    var aggregateBadge: TileBadge {
+        TileFolder.aggregateBadge(of: tiles)
+    }
+}
+
 // MARK: - Правила названия (D35, E15.5)
 
 extension TileFolder {
