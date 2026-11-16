@@ -1484,11 +1484,14 @@ public final class TesseraTileGridView: UIView {
                 height: size.height
             )
         }
+        let slots = cell.slotFrames.map { cell.contentView.convert($0, to: self) }
         return TesseraPanelShortcutGeometry(
             folderID: panel.folder.id,
             tileIDs: panel.folder.tiles.map { $0.id },
             frames: frames,
-            spacing: tileLayout.itemSpacing
+            spacing: tileLayout.itemSpacing,
+            slotFrames: slots.count == frames.count ? slots : frames,
+            panelFrame: cell.convert(cell.bounds, to: self)
         )
     }
 
@@ -2245,6 +2248,51 @@ public final class TesseraTileGridView: UIView {
     /// Видимая ячейка-панель раскрытой папки.
     private var visiblePanelCell: TesseraFolderPanelCell? {
         collectionView.visibleCells.compactMap { $0 as? TesseraFolderPanelCell }.first
+    }
+
+    // MARK: - Перестановка внутри панели (E16.1, D40)
+
+    /// Начинает перестановку ярлыка в открытой панели: ярлык скрывается, на его
+    /// слоте появляется пустышка (``TesseraFolderPanelCell/beginReorder(sourceIndex:)``).
+    ///
+    /// - Parameter sourceIndex: Индекс поднятого ярлыка в порядке папки.
+    /// - Returns: `false`, если панели нет или индекс неверен.
+    @discardableResult
+    func beginPanelReorder(sourceIndex: Int) -> Bool {
+        visiblePanelCell?.beginReorder(sourceIndex: sourceIndex) ?? false
+    }
+
+    /// Сдвигает ярлыки панели, открывая слот `slot` (E16.1).
+    ///
+    /// - Parameters:
+    ///   - slot: Индекс слота-цели.
+    ///   - animated: Анимировать ли сдвиг (bounce E8.8).
+    func setPanelReorderSlot(_ slot: Int, animated: Bool) {
+        visiblePanelCell?.setReorderSlot(slot, animated: animated)
+    }
+
+    /// Слот, в котором сейчас стоит пустышка перестановки; `nil` — перестановки нет.
+    var panelReorderSlot: Int? {
+        visiblePanelCell?.reorderSlot
+    }
+
+    /// Заканчивает превью перестановки без анимации (E16.1): ярлыки на слотах
+    /// раскладки, скрытый показан, пустышки нет.
+    func endPanelReorder() {
+        for cell in collectionView.visibleCells.compactMap({ $0 as? TesseraFolderPanelCell }) {
+            cell.endReorder()
+        }
+    }
+
+    /// Скрывает или показывает ярлык панели по индексу (E16.1): на время полёта
+    /// снимка в новый слот ярлык под ним не дублируется.
+    ///
+    /// - Parameters:
+    ///   - hidden: `true` — скрыть.
+    ///   - index: Индекс ярлыка в порядке папки.
+    func setPanelShortcutHidden(_ hidden: Bool, at index: Int) {
+        guard let panel = visiblePanelCell, panel.shortcutCells.indices.contains(index) else { return }
+        panel.shortcutCells[index].setSourceHidden(hidden)
     }
 
     /// Попадает ли точка в имя папки раскрытой панели (E15.5).
@@ -4543,6 +4591,20 @@ struct TesseraPanelShortcutGeometry {
 
     /// Зазор между ярлыками панели (`itemSpacing` сетки).
     let spacing: CGFloat
+
+    /// Рамки **слотов** панели в координатах сетки (по порядку ``tileIDs``), E16.1.
+    ///
+    /// Слот — место ярлыка в раскладке панели (колонки сетки, RTL
+    /// зеркалит их). В отличие от ``frames`` не зависит от превью
+    /// перестановки: при drag внутри панели ярлыки-соседи сдвинуты, а слоты
+    /// остаются на месте. По ним хит-тест выбирает слот под пальцем.
+    let slotFrames: [CGRect]
+
+    /// Рамка самой панели (ячейки раскрытой папки) в координатах сетки (E16.1).
+    ///
+    /// Выход пальца за неё (с запасом) переводит drag внутри панели в вынос
+    /// ярлыка на рабочий стол.
+    let panelFrame: CGRect
 }
 
 /// Ярлык панели раскрытой папки, найденный под пальцем (E11.1).
@@ -4877,6 +4939,9 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         columns: Int,
         spacing: CGFloat = TileLayoutEngine.panelContentSpacing
     ) {
+        // E16.1: перенастройка (новый снимок) заканчивает превью перестановки:
+        // ярлыки снова привязаны к слотам по индексу.
+        endReorder()
         columnCount = max(1, columns)
         contentSpacing = spacing
         // E12.7: заголовок показывается как набран (как подпись плитки папки);
@@ -4917,6 +4982,9 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
                 cell.alpha = 1
                 cell.transform = .identity
             }
+            // E16.1: скрытие на время полёта снимка при перестановке не переживает
+            // перенастройку.
+            cell.setSourceHidden(false)
         }
 
         // Состав/колонки могли измениться — раскладка пересчитывается один раз
@@ -4936,6 +5004,139 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         // Рамки от шрифта не зависят (заголовок — одна строка фиксированной
         // высоты), поэтому раскладку не сбрасываем: достаточно перерисовать.
         setNeedsLayout()
+    }
+
+    // MARK: - Перестановка ярлыков внутри панели (E16.1, D40)
+
+    /// Индекс ярлыка, который сейчас тащат внутри панели; `nil` — перестановки нет.
+    private(set) var reorderSourceIndex: Int?
+
+    /// Слот, который сейчас занимает пустышка (индекс в порядке папки).
+    private(set) var reorderSlot: Int?
+
+    /// Пустышка на месте поднятого ярлыка: рисуется в слоте, куда он «встанет».
+    private var reorderPlaceholder: TesseraTilePlaceholderView?
+
+    /// Аниматор сдвига соседей (E8.8): удерживается, чтобы следующий шаг
+    /// останавливал прошлый переезд в текущем кадре.
+    private var reorderAnimator: UIViewPropertyAnimator?
+
+    /// Рамки слотов раскладки панели в координатах `contentView` (E16.1).
+    ///
+    /// Слот — место ярлыка в раскладке (колонки сетки; в RTL зеркально). Не
+    /// зависит от превью перестановки.
+    var slotFrames: [CGRect] {
+        applyContentLayoutIfNeeded()
+        return contentLayout?.tileFrames ?? []
+    }
+
+    /// Начинает перестановку: ярлык `sourceIndex` скрывается, на его слоте
+    /// появляется пустышка. Соседей двигает ``setReorderSlot(_:animated:)``.
+    ///
+    /// - Parameter sourceIndex: Индекс поднятого ярлыка в порядке папки.
+    /// - Returns: `false`, если индекс вне диапазона или раскладка не готова.
+    @discardableResult
+    func beginReorder(sourceIndex: Int) -> Bool {
+        endReorder()
+        let slots = slotFrames
+        guard shortcutCells.indices.contains(sourceIndex), slots.count == shortcutCells.count else {
+            return false
+        }
+        reorderSourceIndex = sourceIndex
+        reorderSlot = sourceIndex
+
+        shortcutCells[sourceIndex].setSourceHidden(true)
+        let placeholder = TesseraTilePlaceholderView(frame: slots[sourceIndex])
+        // Под ярлыками: сдвигающиеся соседи проезжают поверх, а не под пустышкой.
+        contentView.insertSubview(placeholder, at: 0)
+        reorderPlaceholder = placeholder
+        return true
+    }
+
+    /// Ставит пустышку в слот `slot` и сдвигает соседей, освобождая его (E16.1).
+    ///
+    /// Раскладка считается **от базового порядка**, а не от прошлого превью:
+    /// ярлык `sourceIndex` вынимается и вставляется на `slot`, остальные идут
+    /// подряд по свободным слотам. Сдвиг — короткая batch-анимация с bounce-кривой
+    /// E8.8 (``TesseraTileGridView/bounceTimingParameters()``); при `animated ==
+    /// false` (Reduce Motion) — мгновенно. Слот вне диапазона ужимается.
+    ///
+    /// - Parameters:
+    ///   - slot: Индекс слота-цели в порядке папки.
+    ///   - animated: Анимировать ли сдвиг.
+    func setReorderSlot(_ slot: Int, animated: Bool) {
+        guard let source = reorderSourceIndex, let placeholder = reorderPlaceholder else { return }
+        let slots = slotFrames
+        guard slots.count == shortcutCells.count, !slots.isEmpty else { return }
+        let target = min(max(slot, 0), slots.count - 1)
+        guard target != reorderSlot else { return }
+        reorderSlot = target
+
+        var order = Array(shortcutCells.indices)
+        order.remove(at: source)
+        order.insert(source, at: target)
+        var frames: [Int: CGRect] = [:]
+        for (displayedSlot, cellIndex) in order.enumerated() where cellIndex != source {
+            frames[cellIndex] = slots[displayedSlot]
+        }
+        let placeholderFrame = slots[target]
+
+        // Незавершённый переезд: фиксируем кадр, который видит пользователь, и
+        // стартуем от него (иначе анимация началась бы с конечного кадра прошлой).
+        if reorderAnimator != nil {
+            let presented = shortcutCells.map { $0.layer.presentation()?.frame ?? $0.frame }
+            let placeholderPresented = placeholder.layer.presentation()?.frame ?? placeholder.frame
+            reorderAnimator?.stopAnimation(true)
+            reorderAnimator = nil
+            withoutImplicitAnimations {
+                for (index, cell) in shortcutCells.enumerated() { cell.frame = presented[index] }
+                placeholder.frame = placeholderPresented
+            }
+        }
+
+        let apply = { [weak self] in
+            guard let self else { return }
+            for (index, frame) in frames { self.shortcutCells[index].frame = frame }
+            placeholder.frame = placeholderFrame
+        }
+        guard animated else {
+            withoutImplicitAnimations(apply)
+            return
+        }
+        let animator = UIViewPropertyAnimator(
+            duration: TesseraTileGridView.tileMoveDuration,
+            timingParameters: TesseraTileGridView.bounceTimingParameters()
+        )
+        animator.addAnimations(apply)
+        animator.addCompletion { [weak self, weak animator] _ in
+            guard let self, let animator, self.reorderAnimator === animator else { return }
+            self.reorderAnimator = nil
+        }
+        reorderAnimator = animator
+        animator.startAnimation()
+    }
+
+    /// Заканчивает перестановку: ярлыки возвращаются на слоты раскладки, поднятый
+    /// показывается, пустышка уходит (E16.1). Без анимации — вызывающий либо
+    /// сразу применяет новый порядок снимком (drop), либо возвращает прежний
+    /// (отмена), и картинка не должна мигать.
+    func endReorder() {
+        reorderAnimator?.stopAnimation(true)
+        reorderAnimator = nil
+        reorderPlaceholder?.removeFromSuperview()
+        reorderPlaceholder = nil
+        guard let source = reorderSourceIndex else { return }
+        if shortcutCells.indices.contains(source) {
+            shortcutCells[source].setSourceHidden(false)
+        }
+        reorderSourceIndex = nil
+        reorderSlot = nil
+        let slots = slotFrames
+        withoutImplicitAnimations {
+            for (index, frame) in slots.enumerated() where shortcutCells.indices.contains(index) {
+                shortcutCells[index].frame = frame
+            }
+        }
     }
 
     // MARK: - Каскад (D17)
@@ -5360,6 +5561,8 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
 
+        // E16.1: перестановка внутри панели не переживает переиспользование.
+        endReorder()
         // Панель могла быть удалена посреди каскада: следующая папка не должна
         // унаследовать невидимые или сдвинутые иконки.
         withoutImplicitAnimations {

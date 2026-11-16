@@ -2033,6 +2033,55 @@ extension TileStore {
         return true
     }
 
+    /// Переставляет ярлык внутри папки (E16.1, D40; W10M §6.5).
+    ///
+    /// Порядок ярлыков в папке — порядок `FolderRecord.tileKeys`: он же
+    /// попадает в файл, в ``TileFolder/tiles`` снимка и в превью/панель.
+    /// Операция меняет только его: размеры, ячейки и состав папок не меняются,
+    /// ширины сетки не нужно. Одобрение хоста (D14) не спрашивается — состав
+    /// папки не меняется (в отличие от переноса между папками).
+    ///
+    /// `toIndex` — индекс **среди видимых ярлыков папки** (тех, что есть в
+    /// каталоге и попадают в ``TileFolder/tiles``); значение вне
+    /// `0...count - 1` ужимается к границе. Невидимые члены (ключи, которых нет
+    /// в каталоге: до первого ``setCatalog(_:)`` после ``load()``) в расчёте
+    /// не участвуют и остаются на своих местах в записи — после регистрации
+    /// каталога чистка всё равно их убирает (D45), поэтому на практике папка
+    /// без видимых членов просто отказывает.
+    ///
+    /// Состояние сохраняется (``autosaves``) и сообщается подписчикам одним
+    /// ``onChange``.
+    ///
+    /// - Parameters:
+    ///   - tileID: Идентификатор ярлыка, лежащего в этой папке.
+    ///   - folderID: Идентификатор папки на рабочем столе.
+    ///   - toIndex: Новый индекс среди ярлыков папки.
+    /// - Returns: `true`, если порядок изменился; `false` — папки/ярлыка нет,
+    ///   ярлык не в этой папке или позиция не меняется (ни сохранения, ни
+    ///   `onChange`).
+    @discardableResult
+    public func moveWithinFolder(_ tileID: AnyHashable, folderID: AnyHashable, toIndex: Int) -> Bool {
+        let folderKey = TileStore.storageKey(for: folderID)
+        let tileKey = TileStore.storageKey(for: tileID)
+        guard let folderIndex = folderRecords.firstIndex(where: { $0.key == folderKey }) else {
+            return false
+        }
+        let keys = folderRecords[folderIndex].tileKeys
+        var visible = keys.filter { catalogIndex[$0] != nil }
+        guard let from = visible.firstIndex(of: tileKey), visible.count >= 2 else { return false }
+        let destination = min(max(toIndex, 0), visible.count - 1)
+        guard destination != from else { return false }
+
+        visible.remove(at: from)
+        visible.insert(tileKey, at: destination)
+        // Невидимые ключи остаются на своих местах: видимые слоты заполняются
+        // новым порядком по очереди.
+        var next = visible.makeIterator()
+        folderRecords[folderIndex].tileKeys = keys.map { catalogIndex[$0] != nil ? (next.next() ?? $0) : $0 }
+        didChange()
+        return true
+    }
+
     // MARK: Закрепление
 
     /// Открепляет ярлык: уход с сетки оставляет дыру (E14.4, D30).

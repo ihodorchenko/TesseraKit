@@ -116,6 +116,18 @@
 //  - C3: встроенный экран папки активирует ярлык общим маршрутом `grid.onTap`,
 //    а не вызовом `action` напрямую; в edit-режиме не активирует.
 //
+//  E16.1 (D40): перестановка ярлыков внутри открытой панели папки. Долгое нажатие по
+//  ярлыку панели в правке начинает drag, при котором панель **остаётся открытой**:
+//  слот под пальцем — по рамкам слотов раскладки панели
+//  (`TesseraPanelShortcutGeometry.slotFrames`), соседи сдвигаются от базового
+//  порядка (превью живёт только в панели, модель не пишется), drop фиксирует
+//  `TileStore.moveWithinFolder` и зовёт делегат `didReorderTile`; одобрения хоста
+//  нет (состав не меняется). Когда палец выходит за рамку панели плюс
+//  `panelReorderExitMargin`, сессия заменяется выносом на рабочий стол (E11.1,
+//  E14.5, D45; панель закрывается мгновенно); возврата к перестановке в том же
+//  drag нет. VoiceOver — «Переместить раньше»/«Переместить позже» на ярлыках панели.
+//  Подробно — STARTSCREEN-IOS-DESIGN, «Отступления реализации (E16)», п. 65.
+//
 //  Дисциплина прокрутки (§3, CORE-IOS-DESIGN.md §2): в колбэке `contentOffset`
 //  координатор трогает только `frame`/`isHidden` видов-кнопок поверх сетки и
 //  `alpha` содержимого ячеек (димминг) — всё это разрешённые в горячем пути
@@ -294,6 +306,28 @@ public protocol TesseraTileEditCoordinatorDelegate: AnyObject {
         to title: String
     )
 
+    /// Ярлык переставлен внутри папки (E16.1, D40).
+    ///
+    /// Вызывается после успешного ``TesseraTileEditCoordinator/moveWithinFolder(_:to:)``
+    /// — из drag внутри открытой панели, из действий VoiceOver «Переместить
+    /// раньше/позже» и из публичного вызова. Не вызывается, если позиция не
+    /// изменилась. Состав папок не меняется, поэтому функция одобрения хоста
+    /// (D14) не спрашивается. К моменту вызова модель и сетка уже показывают
+    /// новый порядок.
+    ///
+    /// - Parameters:
+    ///   - coordinator: Координатор-источник события.
+    ///   - tileID: Идентификатор переставленного ярлыка.
+    ///   - folderID: Идентификатор папки.
+    ///   - index: Новый индекс ярлыка среди ярлыков папки (после ужатия к
+    ///     границам).
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didReorderTile tileID: AnyHashable,
+        inFolder folderID: AnyHashable,
+        toIndex index: Int
+    )
+
     /// Функция одобрения хоста (D14) отказала в операции с папкой.
     ///
     /// Состояние модели не изменилось (кроме случая, когда папка уже создана,
@@ -368,6 +402,13 @@ public extension TesseraTileEditCoordinatorDelegate {
         _ coordinator: TesseraTileEditCoordinator,
         didRenameFolder folderID: AnyHashable,
         to title: String
+    ) {}
+
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didReorderTile tileID: AnyHashable,
+        inFolder folderID: AnyHashable,
+        toIndex index: Int
     ) {}
 
     func tileEditCoordinator(
@@ -1025,6 +1066,7 @@ public final class TesseraTileEditCoordinator: NSObject {
                 grid.update(snapshot: session.baseSnapshot, animated: false)
             }
             grid.setItemHidden(false, forItemID: session.itemID)
+            if session.panelReorder != nil { grid.endPanelReorder() }
             // n1 (фикс-раунд W4): прокрутку выключает только drag-сессия,
             // поэтому восстанавливаем её лишь после прерванного drag, а не
             // безусловно (иначе deinit затирал бы намерение хоста).
@@ -1241,10 +1283,12 @@ public final class TesseraTileEditCoordinator: NSObject {
         // редактирование (и закрывает панель штатно).
         // E11.1: в режиме редактирования долгое нажатие по иконке панели
         // поднимает ярлык (источник — папка); вне панельной иконки (заголовок,
-        // фон) ничего не происходит.
+        // фон) ничего не происходит. E16.1: подъём начинает перестановку внутри
+        // панели (панель остаётся открытой); вынос на рабочий стол начинается,
+        // когда палец выходит за панель (``startPanelDrag(at:)``).
         guard !item.isFolderPanel else {
             if isEditing {
-                startDragFromPanel(at: point)
+                startPanelDrag(at: point)
             } else {
                 beginEditing()
             }
@@ -1725,6 +1769,61 @@ public final class TesseraTileEditCoordinator: NSObject {
             .first { $0.id == folderID }?.title ?? requested
         delegate?.tileEditCoordinator(self, didRenameFolder: folderID, to: stored)
         return true
+    }
+
+    /// Переставляет ярлык внутри его папки (E16.1, D40; W10M §6.5).
+    ///
+    /// Тот же путь, что у drop внутри открытой панели и у действий VoiceOver
+    /// «Переместить раньше/позже»: ``TileStore/moveWithinFolder(_:folderID:toIndex:)``
+    /// (индекс — среди ярлыков папки, значение вне границ ужимается), синхронизация
+    /// сетки (панель переконфигурируется на месте, превью-иконки папки берут
+    /// новый порядок), делегат `didReorderTile`, озвучивание новой позиции и
+    /// фокус VoiceOver на ярлыке в его новой ячейке панели. Состав папки и
+    /// ячейки рабочего стола не меняются, поэтому одобрения хоста (D14)
+    /// операция не требует. К режиму редактирования не привязана; во время drag
+    /// не выполняется (модель drag-сессии не должна меняться, E10.5-B1).
+    ///
+    /// - Parameters:
+    ///   - tileID: Ярлык, лежащий в папке.
+    ///   - index: Новый индекс среди ярлыков папки.
+    /// - Returns: `true`, если порядок изменился; `false` — ярлыка нет в папке,
+    ///   позиция не меняется или идёт drag.
+    @discardableResult
+    public func moveWithinFolder(_ tileID: AnyHashable, to index: Int) -> Bool {
+        guard dragSession == nil, let folder = store.folderContaining(tileID) else { return false }
+        guard store.moveWithinFolder(tileID, folderID: folder.id, toIndex: index) else { return false }
+
+        render(animated: false)
+        finishReorder(of: tileID, inFolder: folder.id)
+        return true
+    }
+
+    /// Общий хвост перестановки внутри папки (E16.1): делегат, озвучивание,
+    /// фокус. Вызывается после того, как модель и сетка уже показывают новый
+    /// порядок.
+    ///
+    /// - Parameters:
+    ///   - tileID: Переставленный ярлык.
+    ///   - folderID: Его папка.
+    private func finishReorder(of tileID: AnyHashable, inFolder folderID: AnyHashable) {
+        let tiles = store.folderContaining(tileID)?.tiles ?? []
+        let position = tiles.firstIndex { $0.id == tileID } ?? 0
+        delegate?.tileEditCoordinator(
+            self,
+            didReorderTile: tileID,
+            inFolder: folderID,
+            toIndex: position
+        )
+        announce(
+            String(
+                format: TesseraStartScreenStrings.string(.a11yFolderTilePositionFormat),
+                position + 1,
+                tiles.count
+            )
+        )
+        // B6: фокус остаётся на переставленном ярлыке — теперь в другой ячейке
+        // панели; если панели нет, фокус получает плитка папки.
+        postLayoutChanged(afterUnpinning: .panelTile(tileID, folderID: folderID))
     }
 
     /// Ставит или снимает обработчик переименования сетки (E15.5): активный
@@ -2381,6 +2480,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         session.placeholder.removeFromSuperview()
         stopPlaceholderAnimation()
         grid.setItemHidden(false, forItemID: session.itemID)
+        if session.panelReorder != nil { grid.endPanelReorder() }
 
         syncGridWithModel(animated: true)
         reconcileEditControls(animated: false)
@@ -2486,12 +2586,23 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// координатах, поэтому ярлык остаётся под пальцем.
     ///
     /// - Parameter point: Точка нажатия в координатах сетки.
-    private func startDragFromPanel(at point: CGPoint) {
+    func startDragFromPanel(at point: CGPoint) {
         guard dragSession == nil, isEditing,
               let hit = grid.panelTile(at: point) else {
             return
         }
+        startDragFromPanel(hit: hit, at: point)
+    }
 
+    /// Вынос ярлыка из панели по уже найденному ярлыку (E11.1, E16.1).
+    ///
+    /// - Parameters:
+    ///   - hit: Ярлык панели под пальцем (снимок, рамка, папка).
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - isHandover: Вынос начинается из перестановки внутри панели
+    ///     (E16.1): снимок уже поднят и едет за пальцем, поэтому подъём не
+    ///     повторяется (ни масштаб, ни haptic).
+    private func startDragFromPanel(hit: TesseraPanelTileHit, at point: CGPoint, isHandover: Bool = false) {
         // m2: контракт хоста — сетка показывает актуальный снимок модели.
         prepareModelForEditing()
         let modelSnapshot = self.modelSnapshot()
@@ -2594,8 +2705,282 @@ public final class TesseraTileEditCoordinator: NSObject {
             modelBaseSnapshot: modelSnapshot,
             sourceFolderID: hit.folder.id,
             magnetSize: hit.tile.size,
-            folderDissolution: dissolution
+            folderDissolution: dissolution,
+            isHandover: isHandover
         )
+    }
+
+    // MARK: - Перестановка внутри панели папки (E16.1, D40)
+
+    /// Запас вокруг панели, в пределах которого палец ещё переставляет ярлык
+    /// внутри неё, pt (E16.1). Выход за рамку панели плюс этот запас переводит
+    /// drag в вынос на рабочий стол (``switchPanelReorderToTakeOut(_:at:)``):
+    /// небольшой запас не даёт дрожи пальца на краю панели вынести ярлык
+    /// случайно.
+    static let panelReorderExitMargin: CGFloat = 16
+
+    /// Слот панели под пальцем (E16.1): индекс среди ярлыков папки.
+    ///
+    /// Слот под точкой выбирается по **рамкам слотов раскладки** панели
+    /// (``TesseraPanelShortcutGeometry/slotFrames``), расширенным на половину
+    /// зазора, чтобы зазоры между ярлыками не были «мёртвыми». Вне рамок
+    /// (заголовок, поля, пустое место последней строки, область ниже панели)
+    /// выбирается слот **ближайшей строки**, а в ней — ближайший по горизонтали:
+    /// палец справа от последнего ярлыка даёт последний слот, а не ярлык строкой
+    /// выше. RTL учитывают сами рамки (колонки панели зеркалятся раскладкой).
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - slotFrames: Рамки слотов в координатах сетки, по порядку папки.
+    ///   - spacing: Зазор между ярлыками панели.
+    /// - Returns: Индекс слота; `nil`, если слотов нет.
+    static func panelReorderSlot(at point: CGPoint, slotFrames: [CGRect], spacing: CGFloat) -> Int? {
+        guard !slotFrames.isEmpty else { return nil }
+        let half = max(0, spacing) / 2
+        var best = 0
+        var bestDistance = (dy: CGFloat.greatestFiniteMagnitude, dx: CGFloat.greatestFiniteMagnitude)
+        for (index, frame) in slotFrames.enumerated() {
+            let expanded = frame.insetBy(dx: -half, dy: -half)
+            let dy = max(expanded.minY - point.y, 0, point.y - expanded.maxY)
+            let dx = max(expanded.minX - point.x, 0, point.x - expanded.maxX)
+            // Строка важнее колонки; в пределах погрешности строки равны.
+            let isCloser = dy < bestDistance.dy - 0.01
+                || (abs(dy - bestDistance.dy) <= 0.01 && dx < bestDistance.dx)
+            if isCloser {
+                best = index
+                bestDistance = (dy, dx)
+            }
+        }
+        return best
+    }
+
+    /// Долгое нажатие по ярлыку открытой панели в правке (E11.1, E16.1).
+    ///
+    /// Если ярлык можно переставлять (в папке не меньше двух ярлыков, панель
+    /// устоялась, геометрия известна), начинается **перестановка внутри
+    /// панели**: панель остаётся открытой, а выход пальца за неё переводит drag
+    /// в вынос (``switchPanelReorderToTakeOut(_:at:)``). Иначе сразу начинается
+    /// вынос, как в E11.1: панель закрывается мгновенно.
+    ///
+    /// - Parameter point: Точка нажатия в координатах сетки.
+    private func startPanelDrag(at point: CGPoint) {
+        guard dragSession == nil, isEditing,
+              let hit = grid.panelTile(at: point) else {
+            return
+        }
+        if beginPanelReorder(hit: hit, at: point) { return }
+        startDragFromPanel(hit: hit, at: point)
+    }
+
+    /// Начинает перестановку внутри панели (E16.1).
+    ///
+    /// Модель за время drag не меняется (E8.4): превью живёт только в панели
+    /// (сдвиг соседей и пустышка), в `TileStore` пишется один раз на drop. Снимок
+    /// ярлыка едет за пальцем над панелью; ярлык под ним скрыт, на его слоте —
+    /// пустышка.
+    ///
+    /// - Parameters:
+    ///   - hit: Ярлык панели под пальцем.
+    ///   - point: Точка нажатия в координатах сетки.
+    /// - Returns: `false`, если перестановка невозможна — тогда вызывающий
+    ///   начинает вынос.
+    private func beginPanelReorder(hit: TesseraPanelTileHit, at point: CGPoint) -> Bool {
+        prepareModelForEditing()
+        let modelSnapshot = self.modelSnapshot()
+        guard gridMatches(modelSnapshot),
+              let geometry = grid.panelShortcutGeometry(),
+              geometry.folderID == hit.folder.id,
+              geometry.tileIDs.count >= 2,
+              geometry.slotFrames.count == geometry.tileIDs.count,
+              let sourceIndex = geometry.tileIDs.firstIndex(of: hit.tile.id),
+              grid.beginPanelReorder(sourceIndex: sourceIndex) else {
+            return false
+        }
+
+        dimmingFocusID = hit.tile.id
+        let reorder = TesseraPanelReorder(
+            folder: hit.folder,
+            tile: hit.tile,
+            baseTileIDs: geometry.tileIDs,
+            sourceIndex: sourceIndex,
+            slot: sourceIndex
+        )
+        installDragSession(
+            itemID: hit.tile.id,
+            isTile: true,
+            slotFrame: geometry.slotFrames[sourceIndex],
+            liftFrame: hit.frame,
+            placeholder: UIView(),
+            dragView: hit.snapshot,
+            point: point,
+            baseSnapshot: modelSnapshot,
+            basePlacements: placedItems(of: modelSnapshot),
+            modelBaseSnapshot: nil,
+            sourceFolderID: nil,
+            magnetSize: hit.tile.size,
+            panelReorder: reorder
+        )
+        return true
+    }
+
+    /// Шаг перестановки: слот под пальцем, сдвиг соседей, вынос при выходе (E16.1).
+    ///
+    /// Слот считает ``panelReorderSlot(at:slotFrames:spacing:)`` по геометрии
+    /// панели **на текущем кадре** (панель могла уехать с автопрокруткой);
+    /// превью каждый раз строится от базового порядка. Если палец вышел за
+    /// рамку панели плюс ``panelReorderExitMargin``, сессия заменяется выносом
+    /// (назад к перестановке в том же drag возврата нет). Исчезнувшая или
+    /// изменившаяся панель отменяет drag, как внешнее изменение (B1).
+    ///
+    /// - Parameters:
+    ///   - point: Точка пальца в координатах сетки.
+    ///   - session: Сессия перестановки.
+    private func updatePanelReorder(at point: CGPoint, session: TesseraTileDragSession) {
+        guard var reorder = session.panelReorder else { return }
+        guard let geometry = grid.panelShortcutGeometry(),
+              geometry.folderID == reorder.folder.id,
+              geometry.tileIDs == reorder.baseTileIDs,
+              geometry.slotFrames.count == reorder.baseTileIDs.count else {
+            cancelDragForExternalChange()
+            return
+        }
+
+        let margin = Self.panelReorderExitMargin
+        if !geometry.panelFrame.insetBy(dx: -margin, dy: -margin).contains(point) {
+            switchPanelReorderToTakeOut(session, at: point)
+            return
+        }
+
+        if let slot = Self.panelReorderSlot(
+            at: point,
+            slotFrames: geometry.slotFrames,
+            spacing: geometry.spacing
+        ), slot != reorder.slot {
+            reorder.slot = slot
+            session.panelReorder = reorder
+            grid.setPanelReorderSlot(slot, animated: !isReduceMotionEnabled())
+        }
+        session.dragView.center = CGPoint(
+            x: point.x + session.grabOffset.x,
+            y: point.y + session.grabOffset.y
+        )
+    }
+
+    /// Переводит перестановку в вынос на рабочий стол (E16.1).
+    ///
+    /// Сессия перестановки снимается (соседи возвращаются на слоты, ярлык
+    /// показывается), и тут же начинается обычный вынос из панели (E11.1,
+    /// E14.5/E14.8): панель закрывается мгновенно, цели — клетки рабочего
+    /// стола, слияние, распад папки в два ярлыка (D45). Тот же снимок едет за
+    /// пальцем без повторного подъёма. Возврата к перестановке в этом drag нет.
+    ///
+    /// - Parameters:
+    ///   - session: Сессия перестановки.
+    ///   - point: Точка пальца в координатах сетки.
+    private func switchPanelReorderToTakeOut(_ session: TesseraTileDragSession, at point: CGPoint) {
+        guard let reorder = session.panelReorder else { return }
+
+        stopTicker()
+        stopMagnetAnimation(session)
+        session.magnetTarget = nil
+        dragSession = nil
+        grid.endPanelReorder()
+        storeChangedDuringDrag = false
+        endDragStoreTransaction(saveIfNeeded: false)
+
+        // Рамка без transform подъёма: поднятый снимок остаётся как есть.
+        let view = session.dragView
+        let size = view.bounds.size
+        let lifted = CGRect(
+            x: view.center.x - size.width / 2,
+            y: view.center.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+        let hit = TesseraPanelTileHit(
+            folder: reorder.folder,
+            tile: reorder.tile,
+            frame: lifted,
+            snapshot: view
+        )
+        startDragFromPanel(hit: hit, at: point, isHandover: true)
+        if dragSession == nil {
+            // Вынос не начался (сетка не приняла отображаемый снимок): снимок
+            // убираем, а сетка уже показывает модель.
+            view.removeFromSuperview()
+            grid.isScrollEnabled = true
+            reconcileEditControls(animated: false)
+        }
+    }
+
+    /// Завершает перестановку внутри панели (E16.1): drop или отмена.
+    ///
+    /// Вызывается из ``finishDrag(commit:)`` после проверки согласованности.
+    /// Drop на другой слот фиксирует порядок одной операцией
+    /// ``TileStore/moveWithinFolder(_:folderID:toIndex:)`` (одобрения хоста нет:
+    /// состав папки не меняется), панель сразу показывает новый порядок на тех
+    /// же местах, где его показывало превью (без мигания), снимок «садится» в
+    /// слот; делегат, озвучивание и фокус — ``finishReorder(of:inFolder:)``.
+    /// Drop на свой слот, отмена и отказ модели возвращают соседей на места,
+    /// снимок возвращается в исходный слот; модель и делегат не трогаются.
+    ///
+    /// - Parameters:
+    ///   - session: Сессия перестановки (уже снята с ``dragSession``).
+    ///   - commit: `true` — зафиксировать, `false` — отмена жеста.
+    private func finishPanelReorder(_ session: TesseraTileDragSession, commit: Bool) {
+        guard let reorder = session.panelReorder else { return }
+        let geometry = grid.panelShortcutGeometry()
+        let slots = geometry?.slotFrames ?? []
+        let target = reorder.slot
+
+        guard commit, target != reorder.sourceIndex, slots.indices.contains(target),
+              geometry?.folderID == reorder.folder.id else {
+            settlePanelReorder(session, in: slots, toSlot: reorder.sourceIndex)
+            return
+        }
+
+        // Порядок фиксируется до анимации снимка (как у других drop): превью
+        // панели снимается и панель тут же перенастраивается моделью — кадр тот
+        // же, что показывало превью.
+        let destination = slots[target]
+        grid.endPanelReorder()
+        guard store.moveWithinFolder(session.itemID, folderID: reorder.folder.id, toIndex: target) else {
+            settlePanelReorder(session, in: slots, toSlot: reorder.sourceIndex)
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return
+        }
+        session.modelChanged = true
+        render(animated: false)
+        grid.setPanelShortcutHidden(true, at: target)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        finishReorder(of: session.itemID, inFolder: reorder.folder.id)
+
+        moveDragView(session, to: destination) { [weak self] in
+            guard let self else { return }
+            self.grid.setPanelShortcutHidden(false, at: target)
+            self.cleanupDrag(session, unhide: false)
+        }
+    }
+
+    /// Возвращает снимок в слот `slot` и соседей — на базовые места (E16.1):
+    /// отмена, drop на свой слот, отказ модели.
+    ///
+    /// - Parameters:
+    ///   - session: Сессия перестановки.
+    ///   - slots: Рамки слотов панели в координатах сетки (пусто — панели нет).
+    ///   - slot: Слот, куда возвращается снимок (исходный).
+    private func settlePanelReorder(_ session: TesseraTileDragSession, in slots: [CGRect], toSlot slot: Int) {
+        grid.setPanelReorderSlot(slot, animated: !isReduceMotionEnabled())
+        guard slots.indices.contains(slot) else {
+            grid.endPanelReorder()
+            cleanupDrag(session, unhide: false)
+            return
+        }
+        moveDragView(session, to: slots[slot]) { [weak self] in
+            guard let self else { return }
+            self.grid.endPanelReorder()
+            self.cleanupDrag(session, unhide: false)
+        }
     }
 
     /// Ставит оверлеи, создаёт drag-сессию и запускает подъём (общий хвост
@@ -2617,6 +3002,11 @@ public final class TesseraTileEditCoordinator: NSObject {
     ///   - magnetSize: Размерность для магнита.
     ///   - folderDissolution: Итоговая картина распада папки-источника (D45),
     ///     если в ней два ярлыка.
+    ///   - panelReorder: Перестановка внутри открытой панели (E16.1): сессия
+    ///     не прячет элемент сетки и не кладёт пустышку на сетку (пустышку и
+    ///     сдвиг соседей ведёт сама панель).
+    ///   - isHandover: Снимок уже поднят (вынос после перестановки, E16.1):
+    ///     масштаб подъёма и haptic не повторяются, рамка не переставляется.
     private func installDragSession(
         itemID: AnyHashable,
         isTile: Bool,
@@ -2630,21 +3020,29 @@ public final class TesseraTileEditCoordinator: NSObject {
         modelBaseSnapshot: TileGridSnapshot?,
         sourceFolderID: AnyHashable?,
         magnetSize: TileSize,
-        folderDissolution: DragFolderDissolution? = nil
+        folderDissolution: DragFolderDissolution? = nil,
+        panelReorder: TesseraPanelReorder? = nil,
+        isHandover: Bool = false
     ) {
         beginDragStoreTransaction()
 
-        grid.setItemHidden(true, forItemID: itemID)
+        if panelReorder == nil {
+            grid.setItemHidden(true, forItemID: itemID)
+        }
         removeControl(for: itemID)
-        // D46: во время drag кнопок на ярлыках панели нет (панель при этом уже
-        // закрыта мгновенно; страховка на случай иного порядка).
+        // D46: во время drag кнопок на ярлыках панели нет (при выносе панель уже
+        // закрыта мгновенно; при перестановке они сняты, пока ярлыки сдвигаются).
         removeAllPanelEditControls()
 
-        placeholder.frame = slotFrame
-        placeholder.layer.zPosition = 500
-        grid.addSubview(placeholder)
+        if panelReorder == nil {
+            placeholder.frame = slotFrame
+            placeholder.layer.zPosition = 500
+            grid.addSubview(placeholder)
+        }
 
-        dragView.frame = liftFrame
+        if !isHandover {
+            dragView.frame = liftFrame
+        }
         dragView.isUserInteractionEnabled = false
         dragView.layer.zPosition = 1000
         dragView.layer.shadowColor = UIColor.black.cgColor
@@ -2672,11 +3070,17 @@ public final class TesseraTileEditCoordinator: NSObject {
             sourceFolderID: sourceFolderID,
             folderDissolution: folderDissolution
         )
+        session.panelReorder = panelReorder
         dragSession = session
         storeChangedDuringDrag = false
         grid.isScrollEnabled = false
 
         updateHoverTargets(at: point)
+
+        if isHandover {
+            startTickerIfNeeded()
+            return
+        }
 
         if !isReduceMotionEnabled() {
             dragView.transform = .identity
@@ -2851,6 +3255,13 @@ public final class TesseraTileEditCoordinator: NSObject {
         // отменяем перетаскивание, не дожидаясь drop.
         guard dragStateIsConsistent(session) else {
             cancelDragForExternalChange()
+            return
+        }
+
+        // E16.1: перестановка внутри панели — слот под пальцем, а не цели
+        // рабочего стола.
+        if session.panelReorder != nil {
+            updatePanelReorder(at: point, session: session)
             return
         }
 
@@ -3898,6 +4309,12 @@ public final class TesseraTileEditCoordinator: NSObject {
         grid.isScrollEnabled = true
         hideDropHighlight()
 
+        // E16.1: перестановка внутри панели завершается своим путём.
+        if session.panelReorder != nil {
+            finishPanelReorder(session, commit: commit)
+            return
+        }
+
         guard commit else {
             restore()
             settleDragView(session) {
@@ -4318,6 +4735,7 @@ public final class TesseraTileEditCoordinator: NSObject {
         grid.isScrollEnabled = true
         hideDropHighlight()
 
+        if session.panelReorder != nil { grid.endPanelReorder() }
         restore()
         session.dragView.removeFromSuperview()
         session.placeholder.removeFromSuperview()
@@ -4973,6 +5391,8 @@ public final class TesseraTileEditCoordinator: NSObject {
     /// «Убрать из папки» — ``moveBetweenFolders(_:to:)`` с `nil`: ярлык
     /// встаёт сразу после папки (или на её месте, если она распалась).
     /// «Открепить» — ``unpin(_:)`` (D45: при двух ярлыках папка распускается).
+    /// «Переместить раньше»/«Переместить позже» — ``moveWithinFolder(_:to:)`` на
+    /// одну позицию (E16.1; у первого ярлыка «раньше», у последнего «позже» нет).
     /// «Переместить в папку <название>» — по одному на другую папку (не больше
     /// ``maxFolderActions``). Вне режима редактирования действий нет.
     ///
@@ -4986,7 +5406,10 @@ public final class TesseraTileEditCoordinator: NSObject {
         for (index, cell) in panel.cells.enumerated() where panel.folder.tiles.indices.contains(index) {
             let tileID = panel.folder.tiles[index].id
             let key = ObjectIdentifier(cell)
-            let signature: [AnyHashable] = [tileID, panel.folder.id] + targets.map { $0.id }
+            // E16.1: положение ярлыка в папке — часть подписи: после перестановки
+            // или ухода соседа набор «раньше/позже» меняется.
+            let signature: [AnyHashable] = [tileID, panel.folder.id, index, panel.folder.tiles.count]
+                + targets.map { $0.id }
             guard editActionsItemByCell[key] != signature else { continue }
 
             var actions: [UIAccessibilityCustomAction] = [
@@ -5009,6 +5432,31 @@ public final class TesseraTileEditCoordinator: NSObject {
                     return true
                 },
             ]
+            // E16.1, D40: порядок внутри папки меняется шагами на одну позицию;
+            // невозможное действие (первый — «раньше», последний — «позже») не
+            // предлагается.
+            if index > 0 {
+                actions.append(
+                    UIAccessibilityCustomAction(
+                        name: TesseraStartScreenStrings.string(.a11yActionMoveEarlier),
+                        image: nil
+                    ) { [weak self] _ in
+                        guard let self else { return false }
+                        return self.moveWithinFolder(tileID, to: index - 1)
+                    }
+                )
+            }
+            if index < panel.folder.tiles.count - 1 {
+                actions.append(
+                    UIAccessibilityCustomAction(
+                        name: TesseraStartScreenStrings.string(.a11yActionMoveLater),
+                        image: nil
+                    ) { [weak self] _ in
+                        guard let self else { return false }
+                        return self.moveWithinFolder(tileID, to: index + 1)
+                    }
+                )
+            }
             for folder in targets {
                 let name = String(
                     format: TesseraStartScreenStrings.string(.a11yActionMoveToFolderFormat),
@@ -5746,6 +6194,29 @@ struct DragFolderDissolution {
     let placements: [TilePlacedItem]
 }
 
+/// Состояние перестановки ярлыка внутри открытой панели папки (E16.1, D40).
+///
+/// Живёт в ``TesseraTileDragSession/panelReorder`` с подъёма ярлыка и до выхода
+/// пальца за панель (тогда сессия заменяется выносом) либо до drop/отмены.
+/// Порядок и слоты считаются от **базового** порядка папки на момент захвата.
+struct TesseraPanelReorder {
+
+    /// Папка (из снимка сетки на захвате).
+    let folder: TileFolder
+
+    /// Поднятый ярлык.
+    let tile: TileDescriptor
+
+    /// Идентификаторы ярлыков папки в базовом порядке.
+    let baseTileIDs: [AnyHashable]
+
+    /// Индекс поднятого ярлыка в базовом порядке.
+    let sourceIndex: Int
+
+    /// Слот, который показывает превью сейчас (индекс среди ярлыков папки).
+    var slot: Int
+}
+
 /// Активная drag-сессия.
 ///
 /// Класс, а не структура: координатор и таймер меняют `lastPoint`/`hover`
@@ -5832,6 +6303,11 @@ final class TesseraTileDragSession {
     /// (переход панели папки, E10.2). Становится ``expectedSnapshot``, когда
     /// сетка его применит.
     var pendingSnapshot: TileGridSnapshot?
+
+    /// Перестановка внутри открытой панели папки (E16.1); `nil` — обычный drag
+    /// или вынос ярлыка из панели. Пока не `nil`, цели рабочего стола, слияние и
+    /// превью сетки не работают: палец выбирает слот панели.
+    var panelReorder: TesseraPanelReorder?
 
     /// Текущая цель под пальцем.
     var hover: HoverTarget = .none

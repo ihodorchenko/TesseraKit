@@ -91,6 +91,15 @@
 /* Move a shortcut to another folder (%@ — folder title). */
 "a11y.action.moveToFolderFormat" = "Move to folder %@";
 
+/* Move a shortcut one position earlier inside the open folder panel. */
+"a11y.action.moveEarlier" = "Move earlier";
+
+/* Move a shortcut one position later inside the open folder panel. */
+"a11y.action.moveLater" = "Move later";
+
+/* Spoken position of a shortcut after reordering inside a folder (%1$d — position, %2$d — count). */
+"a11y.folder.tilePositionFormat" = "Position %1$d of %2$d.";
+
 /* MARK: - Экран папки (TesseraFolderViewController) */
 
 /* Кнопка закрытия экрана папки. */

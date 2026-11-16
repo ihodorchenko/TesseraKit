@@ -1753,7 +1753,6 @@ final class DragSessionTests: XCTestCase {
         let folder = try XCTUnwrap(host.folders.first { $0.id == folderID })
         host.host.grid.openFolder(folder, animated: false)
         host.host.layout()
-        let panelItem = try XCTUnwrap(host.host.grid.displayItems.first { $0.isFolderPanel })
         let panel = try XCTUnwrap(host.host.panelCell(folderID: folderID))
         let icon = try XCTUnwrap(panel.shortcutCells[iconIndex] as TesseraTileCell?)
         // `grab` — доля рамки иконки (E12.3: хват за центр и за края).
@@ -1763,7 +1762,10 @@ final class DragSessionTests: XCTestCase {
             y: iconFrame.minY + iconFrame.height * grab.y
         )
 
-        host.coordinator.handleLongPress(on: panelItem, at: point)
+        // E16.1: долгое нажатие по ярлыку панели теперь начинает перестановку
+        // внутри панели; эти сценарии проверяют вынос, поэтому входят в него
+        // напрямую (переход «палец вышел за панель» — TilePanelDragReorderTests).
+        host.coordinator.startDragFromPanel(at: point)
         return point
     }
 
