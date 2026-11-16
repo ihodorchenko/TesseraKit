@@ -285,6 +285,38 @@ public final class TesseraTileGridView: UIView {
     /// вынести ярлык из папки перетаскиванием.
     public var folderTapHandler: ((TileFolder) -> Bool)?
 
+    /// Обработчик переименования папки (D35, E15.5; W10M §6.7).
+    ///
+    /// Пока обработчик задан, заголовок открытой панели редактируется: долгое
+    /// нажатие по нему (≈0,5 с) превращает подпись в однострочное поле, return
+    /// («Готово») или тап мимо поля фиксируют имя, а у плитки папки и у
+    /// заголовка панели появляется действие VoiceOver «Переименовать». Без
+    /// обработчика заголовок статичен: сетка остаётся пригодной без хранилища.
+    ///
+    /// Колбэк получает идентификатор папки и **нормализованное** имя
+    /// (``TileFolder/normalizedTitle(_:)``: пробелы по краям отброшены, одна
+    /// строка, не длиннее ``TileFolder/maximumTitleLength`` символов); пустая
+    /// строка означает «вернуть имя по умолчанию» — его подставляет получатель
+    /// (`TileStore.renameFolder(_:to:)`, координатор). До применения нового
+    /// снимка заголовок показывает локализованное имя по умолчанию. Колбэк
+    /// вызывается только если имя отличается от показанного, синхронно и после
+    /// того, как панель вышла из правки; реакция хоста — новый снимок через
+    /// ``update(snapshot:animated:)``.
+    ///
+    /// Закрытие панели, выход из окна, вход в режим редактирования и выход из
+    /// него завершают правку **фиксацией**, не отменой. Свойство занимает
+    /// `TesseraTileEditCoordinator` (он ставит обработчик, вызывающий
+    /// `TileStore.renameFolder`); хост с координатором задавать его не должен.
+    public var folderRenameHandler: ((AnyHashable, String) -> Void)? {
+        willSet {
+            // Старый обработчик ещё получит имя, набранное до смены.
+            commitFolderNameEditing()
+        }
+        didSet {
+            refreshVisibleCells()
+        }
+    }
+
     /// Событие раскрытия/закрытия папки встроенной панелью (D17, E7.3).
     ///
     /// Внутренний канал для SwiftUI-фасада: UIKit-хост читает состояние через
@@ -935,6 +967,20 @@ public final class TesseraTileGridView: UIView {
             name: UIContentSizeCategory.didChangeNotification,
             object: nil
         )
+        // E15.5: клавиатура при переименовании папки. Наблюдатели постоянные —
+        // см. ``lastKeyboardFrame``.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(keyboardWillChangeFrame(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(keyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification,
+            object: nil
+        )
     }
 
     // MARK: - Размер
@@ -1363,6 +1409,21 @@ public final class TesseraTileGridView: UIView {
         cell.onBackgroundTap = { [weak self] in
             self?.closeFolder(animated: true)
         }
+        // E15.5, D35: переименование — заголовок редактируется, пока у сетки есть
+        // обработчик. Начать можно только на устоявшейся панели этой же папки.
+        let folderID = folder.id
+        cell.isTitleEditable = folderRenameHandler != nil
+        cell.canBeginTitleEditing = { [weak self] in
+            guard let self else { return false }
+            return self.folderTransition == .idle && self.expandedFolderID == folderID
+        }
+        cell.onTitleCommit = { [weak self] name in
+            self?.folderRenameHandler?(folderID, name)
+        }
+        cell.onTitleEditingChanged = { [weak self, weak cell] isEditing in
+            guard let self, let cell else { return }
+            self.folderNameEditingDidChange(isEditing, in: cell)
+        }
         // E10.4: ярлык панели активируется тем же маршрутом, что и плитка сетки
         // (onTap хоста), а не вызовом `action` мимо события. В режиме
         // редактирования действие не выполняется: панель — представление, а
@@ -1470,6 +1531,14 @@ public final class TesseraTileGridView: UIView {
         let itemID = item.id
         cell.onActivate = { [weak self] in
             self?.activate(itemID: itemID)
+        }
+        // E15.5, D35: у плитки папки — действие VoiceOver «Переименовать».
+        if case .folder = item, folderRenameHandler != nil {
+            cell.onRename = { [weak self] in
+                _ = self?.beginRenamingFolder(itemID)
+            }
+        } else {
+            cell.onRename = nil
         }
     }
 
@@ -2139,6 +2208,213 @@ public final class TesseraTileGridView: UIView {
         collectionView.setContentOffset(offset, animated: animated)
     }
 
+    // MARK: - Переименование папки (E15.5, D35)
+
+    /// Ячейка-панель, в которой сейчас идёт правка имени.
+    private weak var renamingPanelCell: TesseraFolderPanelCell?
+
+    /// Снимок состояния прокрутки на время правки имени: поля коллекции и
+    /// смещение до того, как сетка уступила место клавиатуре.
+    private struct RenameKeyboardState {
+        /// Нижнее поле коллекции до правки.
+        var originalBottomInset: CGFloat
+        /// Вертикальное смещение до правки.
+        var originalOffsetY: CGFloat
+        /// Смещение, которое выставила сама сетка (`nil` — не прокручивала).
+        var appliedOffsetY: CGFloat?
+    }
+
+    /// Состояние клавиатуры на время правки имени; `nil` — вне правки.
+    private var renameKeyboard: RenameKeyboardState?
+
+    /// Последняя известная рамка клавиатуры в координатах экрана; `nil` —
+    /// клавиатура скрыта. Наблюдатели постоянные (`commonInit`): уведомление о
+    /// показе может прийти уже во время `becomeFirstResponder`, до того как
+    /// правка успела зарегистрироваться.
+    private var lastKeyboardFrame: CGRect?
+
+    /// Не возвращать фокус VoiceOver на заголовок (правка завершается
+    /// закрытием панели: фокус уйдёт на плитку папки).
+    private var suppressesRenameFocusReturn = false
+
+    /// Идёт ли правка имени папки в открытой панели.
+    var isEditingFolderName: Bool {
+        renamingPanelCell?.isEditingTitle == true
+    }
+
+    /// Видимая ячейка-панель раскрытой папки.
+    private var visiblePanelCell: TesseraFolderPanelCell? {
+        collectionView.visibleCells.compactMap { $0 as? TesseraFolderPanelCell }.first
+    }
+
+    /// Попадает ли точка в имя папки раскрытой панели (E15.5).
+    ///
+    /// Долгое нажатие по имени — переименование: ни жест сетки, ни жест
+    /// координатора (вход в правку, drag) касания по нему не принимают. Область —
+    /// вся строка заголовка (полная ширина панели, высота `panelHeaderHeight`);
+    /// вне панели и без обработчика переименования ответ всегда `false`.
+    ///
+    /// - Parameter point: Точка в координатах сетки.
+    func isFolderNameHit(at point: CGPoint) -> Bool {
+        guard folderRenameHandler != nil, expandedFolderID != nil,
+              let panel = visiblePanelCell else {
+            return false
+        }
+        return panel.isTitleHit(convert(point, to: panel.contentView))
+    }
+
+    /// Начинает переименование папки (действие VoiceOver «Переименовать» на
+    /// плитке папки приходит сюда; на заголовке панели — в ячейку напрямую).
+    ///
+    /// Закрытая папка сначала раскрывается (без анимации при Reduce Motion), и
+    /// правка начинается, когда панель устоялась.
+    ///
+    /// - Parameter folderID: Идентификатор папки из снимка.
+    /// - Returns: `true`, если правка началась или запланирована; `false` —
+    ///   обработчика нет или папки нет в снимке.
+    @discardableResult
+    func beginRenamingFolder(_ folderID: AnyHashable) -> Bool {
+        guard folderRenameHandler != nil,
+              let folder = currentFolder(withID: folderID) else {
+            return false
+        }
+        if expandedFolderID == folderID, folderTransition == .idle {
+            return visiblePanelCell?.beginTitleEditing() ?? false
+        }
+        openFolder(folder, animated: true)
+        performAfterFolderTransition { [weak self] in
+            guard let self, self.expandedFolderID == folderID else { return }
+            _ = self.visiblePanelCell?.beginTitleEditing()
+        }
+        return true
+    }
+
+    /// Фиксирует правку имени, если она идёт (D35: закрытие панели, вход в режим
+    /// редактирования и выход из него, смена обработчика).
+    ///
+    /// - Parameter restoresFocus: Вернуть ли фокус VoiceOver на заголовок (при
+    ///   закрытии панели — нет).
+    func commitFolderNameEditing(restoresFocus: Bool = true) {
+        guard let cell = renamingPanelCell, cell.isEditingTitle else { return }
+        let saved = suppressesRenameFocusReturn
+        suppressesRenameFocusReturn = !restoresFocus
+        cell.endTitleEditing()
+        suppressesRenameFocusReturn = saved
+    }
+
+    /// Панель сообщила о начале или конце правки имени.
+    private func folderNameEditingDidChange(_ isEditing: Bool, in cell: TesseraFolderPanelCell) {
+        if isEditing {
+            renamingPanelCell = cell
+            beginRenameKeyboardHandling()
+            // VoiceOver: фокус на поле, а не на спрятанный заголовок.
+            accessibilityNotificationPoster(.layoutChanged, cell.titleTextField)
+        } else {
+            if renamingPanelCell === cell { renamingPanelCell = nil }
+            endRenameKeyboardHandling(restoresOffset: !suppressesRenameFocusReturn)
+            // Фокус возвращается на заголовок, пока панель на месте.
+            if !suppressesRenameFocusReturn, cell.superview != nil, expandedFolderID != nil {
+                accessibilityNotificationPoster(.layoutChanged, cell.titleHeaderLabel)
+            }
+        }
+    }
+
+    /// Запоминает поля и смещение и подстраивает прокрутку под клавиатуру.
+    private func beginRenameKeyboardHandling() {
+        renameKeyboard = RenameKeyboardState(
+            originalBottomInset: collectionView.contentInset.bottom,
+            originalOffsetY: collectionView.contentOffset.y,
+            appliedOffsetY: nil
+        )
+        if let frame = lastKeyboardFrame {
+            applyKeyboardFrame(frame)
+        } else {
+            revealRenameField()
+        }
+    }
+
+    /// Возвращает поля коллекции и (если пользователь не прокручивал сам)
+    /// прежнее смещение.
+    private func endRenameKeyboardHandling(restoresOffset: Bool) {
+        guard let state = renameKeyboard else { return }
+        renameKeyboard = nil
+        collectionView.contentInset.bottom = state.originalBottomInset
+        guard restoresOffset, let applied = state.appliedOffsetY,
+              abs(collectionView.contentOffset.y - applied) < 1 else {
+            return
+        }
+        let maximumY = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        let target = min(max(state.originalOffsetY, 0), maximumY)
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: target),
+            animated: window != nil && !isReduceMotionEnabled()
+        )
+    }
+
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return
+        }
+        lastKeyboardFrame = frame
+        if renameKeyboard != nil {
+            applyKeyboardFrame(frame)
+        }
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        lastKeyboardFrame = nil
+        if renameKeyboard != nil {
+            applyKeyboardOverlap(0)
+        }
+    }
+
+    /// Применяет рамку клавиатуры (координаты экрана): перекрытие низа сетки
+    /// становится нижним полем коллекции, поле имени прокручивается в видимую
+    /// часть.
+    ///
+    /// - Parameter screenFrame: Конечная рамка клавиатуры в координатах экрана.
+    func applyKeyboardFrame(_ screenFrame: CGRect) {
+        guard let screen = window?.screen else {
+            applyKeyboardOverlap(0)
+            return
+        }
+        let frame = convert(screenFrame, from: screen.coordinateSpace)
+        applyKeyboardOverlap(max(0, min(bounds.height, bounds.maxY - frame.minY)))
+    }
+
+    /// Нижнее поле коллекции = исходное + перекрытие клавиатурой.
+    private func applyKeyboardOverlap(_ overlap: CGFloat) {
+        guard let state = renameKeyboard else { return }
+        collectionView.contentInset.bottom = state.originalBottomInset + overlap
+        revealRenameField()
+    }
+
+    /// Прокручивает коллекцию так, чтобы поле имени (с запасом 8 pt) было в
+    /// видимой части над клавиатурой; заголовок остаётся виден, а при нехватке
+    /// места верх поля важнее низа.
+    private func revealRenameField() {
+        guard var state = renameKeyboard, let cell = renamingPanelCell else { return }
+        let field = cell.titleTextField
+        let rect = field.convert(field.bounds, to: collectionView).insetBy(dx: 0, dy: -8)
+        let offset = collectionView.contentOffset
+        let bottomInset = collectionView.contentInset.bottom
+        let visibleHeight = collectionView.bounds.height - bottomInset
+
+        var y = offset.y
+        if rect.maxY > y + visibleHeight { y = rect.maxY - visibleHeight }
+        if rect.minY < y { y = rect.minY }
+        let maximumY = max(0, collectionView.contentSize.height + bottomInset - collectionView.bounds.height)
+        y = min(max(y, 0), maximumY)
+        guard abs(y - offset.y) > 0.5 else { return }
+
+        state.appliedOffsetY = y
+        renameKeyboard = state
+        collectionView.setContentOffset(
+            CGPoint(x: offset.x, y: y),
+            animated: window != nil && !isReduceMotionEnabled()
+        )
+    }
+
     // MARK: - Внутренние помощники
 
     /// Элементы снимка в порядке сетки (без панели раскрытой папки).
@@ -2549,6 +2825,10 @@ public final class TesseraTileGridView: UIView {
     private func collapseExpansion(animated: Bool, notify: Bool) {
         guard let expandedID = expandedFolderID else { return }
 
+        // E15.5: закрытие панели посреди правки имени фиксирует имя (D35); фокус
+        // VoiceOver после закрытия уходит на плитку папки, а не на заголовок.
+        commitFolderNameEditing(restoresFocus: false)
+
         if folderTransition != .idle {
             pendingFolderChange = .close(animated: animated)
             return
@@ -2796,6 +3076,17 @@ public final class TesseraTileGridView: UIView {
 
     /// Тап по пустому месту сетки закрывает раскрытую папку (D17).
     @objc private func handleBackgroundTap(_ recognizer: UITapGestureRecognizer) {
+        // E15.5: тап мимо поля имени фиксирует имя и больше ничего не делает —
+        // папка остаётся открытой (тап в самой панели обрабатывает панель).
+        if isEditingFolderName {
+            let point = recognizer.location(in: collectionView)
+            if let indexPath = collectionView.indexPathForItem(at: point),
+               displayItem(atIndex: indexPath.item)?.isFolderPanel == true {
+                return
+            }
+            commitFolderNameEditing()
+            return
+        }
         guard expandedFolderID != nil else { return }
 
         // Хит-тест по коллекции: тап по ячейке (включая панель и её иконки)
@@ -2923,6 +3214,21 @@ extension TesseraTileGridView: UIGestureRecognizerDelegate {
     ) -> Bool {
         guard otherGestureRecognizer !== collectionView.panGestureRecognizer else { return false }
         return otherGestureRecognizer.view === self || otherGestureRecognizer.view === collectionView
+    }
+
+    /// Долгое нажатие по имени папки (E15.5) принадлежит заголовку панели, а не
+    /// сетке; тап по самому полю во время правки не считается тапом «по фону».
+    public func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldReceive touch: UITouch
+    ) -> Bool {
+        if gestureRecognizer === longPressRecognizer {
+            return !isFolderNameHit(at: touch.location(in: self))
+        }
+        if gestureRecognizer === backgroundTapRecognizer, isEditingFolderName {
+            return !isFolderNameHit(at: touch.location(in: self))
+        }
+        return true
     }
 }
 
@@ -3157,6 +3463,44 @@ final class TesseraTileCell: UICollectionViewCell {
     /// `collectionView(_:didSelectItemAt:)`.
     var onActivate: (() -> Void)?
 
+    /// Переименование папки (E15.5, D35): сетка задаёт замыкание у плитки папки,
+    /// пока у неё есть обработчик переименования. Не `nil` — у ячейки-папки есть
+    /// действие VoiceOver «Переименовать».
+    var onRename: (() -> Void)?
+
+    /// Показывает ли ячейка сейчас папку (а не ярлык): действие
+    /// «Переименовать» есть только у папки.
+    private var showsFolderItem = false
+
+    /// Действия, выставленные координатором редактирования (resize, unpin, «в
+    /// папку»); к ним в ``accessibilityCustomActions`` добавляется «Переименовать».
+    private var assignedCustomActions: [UIAccessibilityCustomAction]?
+
+    private lazy var renameAction = UIAccessibilityCustomAction(
+        name: TesseraStartScreenStrings.string(.a11yActionRenameFolder),
+        image: nil
+    ) { [weak self] _ in
+        guard let onRename = self?.onRename else { return false }
+        onRename()
+        return true
+    }
+
+    /// Custom actions ячейки: заданные снаружи плюс «Переименовать» у папки с
+    /// обработчиком. Редактор по-прежнему назначает и снимает **свои** действия
+    /// (`= nil` не стирает «Переименовать»): оно доступно и вне правки (D35).
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get {
+            var actions = assignedCustomActions ?? []
+            if showsFolderItem, onRename != nil {
+                actions.append(renameAction)
+            }
+            return actions.isEmpty ? nil : actions
+        }
+        set {
+            assignedCustomActions = newValue
+        }
+    }
+
     private let iconView = UIImageView()
     private let titleLabel = UILabel()
 
@@ -3341,6 +3685,7 @@ final class TesseraTileCell: UICollectionViewCell {
     ) {
         itemID = item.id
         isSmallTile = item.tile?.size == .small
+        if case .folder = item { showsFolderItem = true } else { showsFolderItem = false }
 
         switch item {
         case .tile(let descriptor):
@@ -3809,6 +4154,8 @@ final class TesseraTileCell: UICollectionViewCell {
         isSmallTile = false
         liveTileView?.isSmallTile = false
         onActivate = nil
+        onRename = nil
+        showsFolderItem = false
         iconView.image = nil
         iconView.tintColor = nil
         titleLabel.text = nil
@@ -4220,8 +4567,65 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         return nil
     }
 
-    /// Заголовок папки (в отображении — в нижнем регистре, WP-стиль).
+    /// Заголовок папки (как набран; приведение к нижнему регистру снято в E12.7).
     private let titleLabel = UILabel()
+
+    // MARK: - Переименование (E15.5, D35)
+
+    /// Поле имени папки: на время переименования занимает рамку заголовка
+    /// (тот же шрифт и та же высота строки), поэтому плитки под панелью не
+    /// сдвигаются. Вне переименования скрыто и не участвует в раскладке.
+    private let titleField = UITextField()
+
+    /// Подчёркивание поля: признак «имя редактируется» (на время правки).
+    private let titleUnderline = UIView()
+
+    /// Долгое нажатие по заголовку — вход в переименование (W10M §6.7).
+    private let titleLongPress = UILongPressGestureRecognizer()
+
+    /// Текст, который сейчас показывает заголовок: название папки или название
+    /// по умолчанию, если у папки пусто. По нему отсекается «ничего не
+    /// изменилось»: обработчик переименования не зовётся впустую.
+    private var shownTitle = ""
+
+    /// Касание тапа по панели началось во время переименования (E15.5): такой тап
+    /// только завершает правку имени, а не закрывает папку и не активирует ярлык.
+    ///
+    /// Флаг выставляется в `shouldReceive` (на касании), а не при распознавании:
+    /// сетка может завершить правку своим жестом раньше, чем сработает жест
+    /// панели.
+    private var tapBeganWhileEditingTitle = false
+
+    /// Можно ли переименовать папку (E15.5): сетка включает, когда у неё есть
+    /// обработчик ``TesseraTileGridView/folderRenameHandler``. Без обработчика
+    /// заголовок не реагирует на долгое нажатие и у него нет действия VoiceOver.
+    var isTitleEditable = false {
+        didSet {
+            guard isTitleEditable != oldValue else { return }
+            updateTitleEditability()
+        }
+    }
+
+    /// Идёт ли правка имени прямо сейчас.
+    private(set) var isEditingTitle = false
+
+    /// Завершение правки: итоговое **нормализованное** название
+    /// (``TileFolder/normalizedTitle(_:)``); пустая строка — «вернуть название по
+    /// умолчанию». Вызывается только если название отличается от показанного.
+    var onTitleCommit: ((String) -> Void)?
+
+    /// Начало (`true`) и конец (`false`) правки: сетка следит за клавиатурой и
+    /// возвращает фокус VoiceOver. Конец приходит до `onTitleCommit`.
+    var onTitleEditingChanged: ((Bool) -> Void)?
+
+    /// Разрешает ли сетка начать правку сейчас (панель устоялась, папка та же).
+    var canBeginTitleEditing: (() -> Bool)?
+
+    /// Поле имени — для фокуса VoiceOver и тестов.
+    var titleTextField: UITextField { titleField }
+
+    /// Заголовок — для фокуса VoiceOver и тестов.
+    var titleHeaderLabel: UILabel { titleLabel }
 
     /// Ярлыки папки в порядке отображения.
     private var tiles: [TileDescriptor] = []
@@ -4334,12 +4738,47 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         titleLabel.accessibilityTraits = .header
         contentView.addSubview(titleLabel)
 
+        // E15.5: поле имени и подчёркивание лежат над заголовком и скрыты; одна
+        // строка, без автокоррекции, return — «Готово».
+        titleField.font = TesseraFolderPanelCell.makeTitleFont(compatibleWith: nil)
+        titleField.textColor = .label
+        titleField.textAlignment = .natural
+        titleField.borderStyle = .none
+        titleField.backgroundColor = .clear
+        titleField.returnKeyType = .done
+        titleField.enablesReturnKeyAutomatically = false
+        titleField.autocorrectionType = .no
+        titleField.spellCheckingType = .no
+        titleField.autocapitalizationType = .words
+        titleField.adjustsFontForContentSizeCategory = false
+        titleField.accessibilityLabel = TesseraStartScreenStrings.string(.folderNameFieldLabel)
+        titleField.delegate = self
+        titleField.isHidden = true
+        contentView.addSubview(titleField)
+        titleUnderline.backgroundColor = .secondaryLabel
+        titleUnderline.isUserInteractionEnabled = false
+        titleUnderline.isHidden = true
+        contentView.addSubview(titleUnderline)
+
+        // Долгое нажатие по заголовку (≈0,5 с) — переименование. Жест на самом
+        // заголовке; пока переименование не включено, он выключен и не мешает
+        // обычному тапу. Тап по панели ждёт его отказа: удержание не закрывает
+        // папку, а короткое касание отрабатывает сразу после отпускания.
+        titleLabel.isUserInteractionEnabled = true
+        titleLongPress.minimumPressDuration = 0.5
+        titleLongPress.delegate = self
+        titleLongPress.isEnabled = false
+        titleLongPress.addTarget(self, action: #selector(handleTitleLongPress(_:)))
+        titleLabel.addGestureRecognizer(titleLongPress)
+
         // Тап по ярлыку — действие ярлыка; панель остаётся открытой. Тап мимо
         // ярлыков (фон/заголовок) закрывает папку через `onBackgroundTap`.
         // Жест не отменяет касания: выбор ячейки коллекции для панели всё равно
         // отключён (`shouldSelectItemAt`), а прокрутка не должна ломаться.
         tapRecognizer.cancelsTouchesInView = false
+        tapRecognizer.delegate = self
         tapRecognizer.addTarget(self, action: #selector(handleTap(_:)))
+        tapRecognizer.require(toFail: titleLongPress)
         contentView.addGestureRecognizer(tapRecognizer)
     }
 
@@ -4370,6 +4809,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             : folder.title
         titleLabel.text = title
         titleLabel.accessibilityLabel = title
+        shownTitle = title
 
         tiles = folder.tiles
 
@@ -4413,6 +4853,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         titleLabel.font = TesseraFolderPanelCell.makeTitleFont(
             compatibleWith: traitCollection
         )
+        titleField.font = titleLabel.font
         shortcutCells.forEach { $0.refreshTypography() }
         // Рамки от шрифта не зависят (заголовок — одна строка фиксированной
         // высоты), поэтому раскладку не сбрасываем: достаточно перерисовать.
@@ -4526,12 +4967,129 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     /// Тап по панели: попал в ярлык — выполнить его действие; мимо ярлыков —
     /// закрыть папку (D17, «повторный тап» по панели).
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+        // E15.5: тап, начатый во время правки имени (не по самому полю), только
+        // завершает правку — папку не закрывает и ярлык не активирует.
+        if tapBeganWhileEditingTitle {
+            tapBeganWhileEditingTitle = false
+            endTitleEditing()
+            return
+        }
         let point = recognizer.location(in: contentView)
         for (index, cell) in shortcutCells.enumerated() where cell.frame.contains(point) {
             activateTile(at: index)
             return
         }
         onBackgroundTap?()
+    }
+
+    // MARK: - Переименование (E15.5, D35)
+
+    /// Включает или выключает долгое нажатие и действие VoiceOver «Переименовать»
+    /// на заголовке.
+    private func updateTitleEditability() {
+        titleLongPress.isEnabled = isTitleEditable
+        if isTitleEditable {
+            titleLabel.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(
+                    name: TesseraStartScreenStrings.string(.a11yActionRenameFolder),
+                    image: nil
+                ) { [weak self] _ in
+                    self?.beginTitleEditing() ?? false
+                },
+            ]
+        } else {
+            titleLabel.accessibilityCustomActions = nil
+            endTitleEditing()
+        }
+    }
+
+    @objc private func handleTitleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        beginTitleEditing()
+    }
+
+    /// Попадает ли точка в область заголовка (долгое нажатие по нему — не вход
+    /// в редактирование и не drag).
+    ///
+    /// - Parameter point: Точка в координатах `contentView` панели.
+    func isTitleHit(_ point: CGPoint) -> Bool {
+        titleLabel.frame.contains(point)
+    }
+
+    /// Начинает правку имени: заголовок превращается в поле с текущим названием,
+    /// весь текст выделен (как при переименовании в «Файлах»).
+    ///
+    /// - Returns: `true`, если правка началась (поле стало первым респондером).
+    @discardableResult
+    func beginTitleEditing() -> Bool {
+        guard isTitleEditable, !isEditingTitle else { return isEditingTitle }
+        guard canBeginTitleEditing?() ?? true else { return false }
+
+        applyContentLayoutIfNeeded()
+        titleField.text = shownTitle
+        withoutImplicitAnimations {
+            titleField.isHidden = false
+            titleUnderline.isHidden = false
+            titleLabel.isHidden = true
+        }
+        isEditingTitle = true
+        guard titleField.becomeFirstResponder() else {
+            isEditingTitle = false
+            withoutImplicitAnimations {
+                titleField.isHidden = true
+                titleUnderline.isHidden = true
+                titleLabel.isHidden = false
+            }
+            return false
+        }
+        titleField.selectedTextRange = titleField.textRange(
+            from: titleField.beginningOfDocument,
+            to: titleField.endOfDocument
+        )
+        onTitleEditingChanged?(true)
+        return true
+    }
+
+    /// Завершает правку имени **фиксацией** (D35): и return, и тап мимо, и закрытие
+    /// панели, и вход в режим правки/выход из него фиксируют набранное, отмены
+    /// нет. Пустое имя — «вернуть название по умолчанию».
+    ///
+    /// Порядок: поле прячется и теряет фокус, заголовок показывает итог,
+    /// `onTitleEditingChanged(false)` (сетка отпускает клавиатуру) и только затем
+    /// `onTitleCommit` — если обработчик синхронно обновит снимок сетки, панель
+    /// уже вне правки.
+    ///
+    /// - Parameter deferringHandler: Вызвать `onTitleCommit` на следующем проходе
+    ///   runloop (переиспользование ячейки внутри обновления коллекции).
+    func endTitleEditing(deferringHandler: Bool = false) {
+        guard isEditingTitle else { return }
+        let normalized = TileFolder.normalizedTitle(titleField.text ?? "")
+        isEditingTitle = false
+        titleField.resignFirstResponder()
+        withoutImplicitAnimations {
+            titleField.isHidden = true
+            titleUnderline.isHidden = true
+            titleLabel.isHidden = false
+        }
+
+        let display = normalized.isEmpty
+            ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
+            : normalized
+        let changed = display != shownTitle
+        if changed {
+            shownTitle = display
+            titleLabel.text = display
+            titleLabel.accessibilityLabel = display
+        }
+
+        onTitleEditingChanged?(false)
+
+        guard changed, let handler = onTitleCommit else { return }
+        if deferringHandler {
+            DispatchQueue.main.async { handler(normalized) }
+        } else {
+            handler(normalized)
+        }
     }
 
     // MARK: - Раскладка
@@ -4578,6 +5136,13 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         // неявные анимации — это подготовка кадра, а не движение.
         withoutImplicitAnimations {
             titleLabel.frame = layout.titleFrame
+            titleField.frame = layout.titleFrame
+            titleUnderline.frame = CGRect(
+                x: layout.titleFrame.minX,
+                y: layout.titleFrame.maxY - 2,
+                width: layout.titleFrame.width,
+                height: 1
+            )
             for (index, cell) in shortcutCells.enumerated()
             where layout.tileFrames.indices.contains(index) {
                 cell.frame = layout.tileFrames[index]
@@ -4726,6 +5291,17 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
                 cell.transform = .identity
             }
         }
+        // E15.5: панель ушла в переиспользование посреди правки имени — правка
+        // завершается фиксацией (D35), обработчик зовётся на следующем проходе
+        // runloop: переиспользование идёт внутри обновления коллекции.
+        endTitleEditing(deferringHandler: true)
+        isTitleEditable = false
+        onTitleCommit = nil
+        onTitleEditingChanged = nil
+        canBeginTitleEditing = nil
+        tapBeganWhileEditingTitle = false
+        shownTitle = ""
+        titleField.text = nil
         tiles = []
         titleLabel.text = nil
         titleLabel.accessibilityLabel = nil
@@ -4759,6 +5335,57 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             maximumPointSize: maximumPointSize,
             compatibleWith: traitCollection
         )
+    }
+}
+
+// MARK: - Поле имени и жесты панели (E15.5)
+
+extension TesseraFolderPanelCell: UITextFieldDelegate, UIGestureRecognizerDelegate {
+
+    /// Return («Готово») фиксирует имя.
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        endTitleEditing()
+        return false
+    }
+
+    /// Поле потеряло фокус не через нашу кнопку (смена респондера, уход из окна):
+    /// правка тоже завершается фиксацией.
+    func textFieldDidEndEditing(_ textField: UITextField) {
+        endTitleEditing()
+    }
+
+    /// Предел длины (``TileFolder/maximumTitleLength``): правка, после которой
+    /// строка стала бы длиннее предела, не применяется (удаление и замена
+    /// короче предела проходят).
+    func textField(
+        _ textField: UITextField,
+        shouldChangeCharactersIn range: NSRange,
+        replacementString string: String
+    ) -> Bool {
+        let current = textField.text ?? ""
+        guard let swiftRange = Range(range, in: current) else { return false }
+        let result = current.replacingCharacters(in: swiftRange, with: string)
+        return result.count <= TileFolder.maximumTitleLength
+    }
+
+    /// Жесты панели решают по касанию.
+    ///
+    /// Долгое нажатие по заголовку работает только вне правки. Тап по панели не
+    /// принимает касания по самому полю (там каретка и выделение), а касание
+    /// мимо поля во время правки запоминает как «завершающий правку».
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === titleLongPress {
+            return isTitleEditable && !isEditingTitle
+        }
+        if gestureRecognizer === tapRecognizer {
+            if isEditingTitle {
+                if let view = touch.view, view.isDescendant(of: titleField) { return false }
+                tapBeganWhileEditingTitle = true
+            } else {
+                tapBeganWhileEditingTitle = false
+            }
+        }
+        return true
     }
 }
 

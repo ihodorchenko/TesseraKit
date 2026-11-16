@@ -71,4 +71,38 @@ public struct TileFolder {
     }
 }
 
+// MARK: - Правила названия (D35, E15.5)
+
+extension TileFolder {
+
+    /// Предельная длина названия папки в символах (E15.5, D35).
+    ///
+    /// В W10M (§6.7) ограничения по числу символов нет — название обрезается по
+    /// ширине заголовка, одна строка. Предел 64 символа — защита раскладки
+    /// (заголовок панели, подпись плитки, файл состояния), а не продуктовое
+    /// правило: на практике название всегда короче ширины заголовка и усекается
+    /// многоточием. Считаются символы (`Character`), а не байты и не UTF-16.
+    public static let maximumTitleLength = 64
+
+    /// Приводит введённое название к виду, в котором его хранит `TileStore`
+    /// (E15.5).
+    ///
+    /// Переводы строк внутри названия заменяются пробелами (название — одна
+    /// строка), пробелы и переводы строк по краям отбрасываются, строка
+    /// обрезается до ``maximumTitleLength`` символов, после обрезки края
+    /// чистятся ещё раз. Пустой результат означает «вернуть название по
+    /// умолчанию» — подстановку делает вызывающий (`TileStore` и редактор: у
+    /// них разные источники умолчания).
+    ///
+    /// - Parameter raw: Введённая пользователем строка.
+    /// - Returns: Нормализованное название; пустое, если ввод пуст или состоял
+    ///   из пробелов.
+    static func normalizedTitle(_ raw: String) -> String {
+        let singleLine = raw.components(separatedBy: .newlines).joined(separator: " ")
+        let trimmed = singleLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let capped = String(trimmed.prefix(maximumTitleLength))
+        return capped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 #endif
