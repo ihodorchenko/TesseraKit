@@ -43,9 +43,12 @@ final class TileEditControlsTests: XCTestCase {
     /// сверки у них нет анимации положения из нулевой рамки (перелёт из
     /// левого верхнего угла), в том числе при включённом Reduce Motion.
     func testControlsAppearInPlaceWithoutFlyInFromOrigin() throws {
-        for reduceMotion in [false, true] {
+        // E15.6: «желе» по умолчанию выключено; включённое — поворачивает слой
+        // оверлея, и центр кнопок по-прежнему должен совпадать с плиткой.
+        for (reduceMotion, jiggle) in [(false, false), (false, true), (true, false), (true, true)] {
             let host = TesseraTestDragHost(
-                descriptors: (0..<4).map { tesseraTestTile("t\($0)", size: .medium) }
+                descriptors: (0..<4).map { tesseraTestTile("t\($0)", size: .medium) },
+                configuration: TesseraTileEditConfiguration(isJiggleEnabled: jiggle)
             )
             host.coordinator.isReduceMotionEnabled = { reduceMotion }
             host.coordinator.beginEditing()
