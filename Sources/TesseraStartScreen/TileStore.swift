@@ -1996,6 +1996,43 @@ extension TileStore {
         return true
     }
 
+    /// Переименовывает папку (E15.5, D35; W10M §6.7).
+    ///
+    /// Название нормализуется (``TileFolder/normalizedTitle(_:)``: пробелы и
+    /// переводы строк по краям отбрасываются, переводы строк внутри становятся
+    /// пробелами, длина — не больше ``TileFolder/maximumTitleLength``). Пустое
+    /// название возвращает **название по умолчанию** — то же, что получает новая
+    /// папка (`folderScreen.defaultTitle`, en/ru; редактор подставляет его же,
+    /// а `TesseraTileEditConfiguration.folderTitle` лишь перекрывает). Размер,
+    /// ячейка и состав папки не меняются; раскладку операция не трогает, поэтому
+    /// ширины сетки не требует. Одобрения хоста (D14) не нужно: название не
+    /// меняет состав папок.
+    ///
+    /// Состояние сохраняется (``autosaves``) и сообщается подписчикам одним
+    /// ``onChange``.
+    ///
+    /// - Parameters:
+    ///   - folderID: Идентификатор папки на рабочем столе.
+    ///   - newTitle: Новое название (как набрано пользователем).
+    /// - Returns: `true`, если название изменилось; `false` — папки нет или
+    ///   нормализованное название совпало с текущим (ни сохранения, ни `onChange`).
+    @discardableResult
+    public func renameFolder(_ folderID: AnyHashable, to newTitle: String) -> Bool {
+        let folderKey = TileStore.storageKey(for: folderID)
+        guard let index = folderRecords.firstIndex(where: { $0.key == folderKey }) else {
+            return false
+        }
+        var title = TileFolder.normalizedTitle(newTitle)
+        if title.isEmpty {
+            title = TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
+        }
+        guard folderRecords[index].title != title else { return false }
+
+        folderRecords[index].title = title
+        didChange()
+        return true
+    }
+
     // MARK: Закрепление
 
     /// Открепляет ярлык: уход с сетки оставляет дыру (E14.4, D30).

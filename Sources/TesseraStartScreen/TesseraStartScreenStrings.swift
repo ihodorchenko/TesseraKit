@@ -139,6 +139,10 @@ enum TesseraStartScreenStrings {
         /// Действие «изменить размер плитки».
         case a11yActionResize = "a11y.action.resize"
 
+        /// Действие «переименовать папку» (плитка папки и заголовок панели,
+        /// E15.5, D35).
+        case a11yActionRenameFolder = "a11y.action.renameFolder"
+
         /// Действие «добавить ярлык в папку» (`%1$@` — название папки, E11.5).
         case a11yActionAddToFolderFormat = "a11y.action.addToFolderFormat"
 
@@ -158,6 +162,10 @@ enum TesseraStartScreenStrings {
 
         /// Подпись папки без названия.
         case folderScreenDefaultTitle = "folderScreen.defaultTitle"
+
+        /// Accessibility label поля переименования папки в открытой панели
+        /// (E15.5, D35).
+        case folderNameFieldLabel = "folderName.fieldLabel"
 
         /// VoiceOver-действие «переместить ярлык».
         case folderScreenMoveAction = "folderScreen.moveAction"

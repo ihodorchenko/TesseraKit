@@ -275,6 +275,25 @@ public protocol TesseraTileEditCoordinatorDelegate: AnyObject {
         remainingTile tileID: AnyHashable
     )
 
+    /// Папка переименована (D35, E15.5).
+    ///
+    /// Вызывается после успешного
+    /// ``TesseraTileEditCoordinator/renameFolder(_:to:)`` — в том числе из
+    /// встроенного редактирования имени в открытой панели (долгое нажатие по
+    /// имени, действие VoiceOver «Переименовать»). Не вызывается, если имя не
+    /// изменилось. К моменту вызова модель и сетка уже показывают новое имя.
+    ///
+    /// - Parameters:
+    ///   - coordinator: Координатор-источник события.
+    ///   - folderID: Идентификатор переименованной папки.
+    ///   - title: Новое имя папки, как его хранит `TileStore` (нормализованное;
+    ///     пустой ввод — имя по умолчанию).
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didRenameFolder folderID: AnyHashable,
+        to title: String
+    )
+
     /// Функция одобрения хоста (D14) отказала в операции с папкой.
     ///
     /// Состояние модели не изменилось (кроме случая, когда папка уже создана,
@@ -343,6 +362,12 @@ public extension TesseraTileEditCoordinatorDelegate {
         _ coordinator: TesseraTileEditCoordinator,
         didDissolveFolder folderID: AnyHashable,
         remainingTile tileID: AnyHashable
+    ) {}
+
+    func tileEditCoordinator(
+        _ coordinator: TesseraTileEditCoordinator,
+        didRenameFolder folderID: AnyHashable,
+        to title: String
     ) {}
 
     func tileEditCoordinator(
@@ -605,6 +630,12 @@ public struct TesseraTileEditConfiguration {
 ///   в нём долгое нажатие на ярлык открывает меню «переместить в другую папку /
 ///   на рабочий стол», которое вызывает `TileStore.moveBetweenFolders` (тоже
 ///   через одобрение);
+/// - **переименование папки** (D35, E15.5): координатор ставит
+///   ``TesseraTileGridView/folderRenameHandler`` — долгое нажатие по имени в
+///   открытой панели (и действие VoiceOver «Переименовать» у плитки папки и
+///   заголовка) превращает имя в поле; результат идёт в
+///   `TileStore.renameFolder(_:to:)`, затем в делегат (`didRenameFolder`).
+///   Работает и вне режима редактирования; публично — ``renameFolder(_:to:)``;
 /// - **ярлык из папки** (E11.1): в режиме редактирования тап по папке
 ///   раскрывает панель, а долгое нажатие по иконке в панели мгновенно закрывает
 ///   её и поднимает ярлык (источник drag — папка, `TesseraTileDragSession.sourceFolderID`).
@@ -685,6 +716,9 @@ public final class TesseraTileEditCoordinator: NSObject {
         didSet {
             guard oldValue != isEnabled else { return }
             longPressRecognizer.isEnabled = isEnabled
+            // E15.5: пока координатор выключен, имена папок не редактируются
+            // (обработчик снимается — заголовок статичен); набранное фиксируется.
+            updateRenameHandler()
             if !isEnabled {
                 endEditing()
             }
@@ -926,9 +960,12 @@ public final class TesseraTileEditCoordinator: NSObject {
             guard let self, self.isEditing else { return }
             self.reconcilePanelEditControls(fadesIn: true)
         }
+        // E15.5, D35: переименование папки из панели идёт через координатор.
+        updateRenameHandler()
     }
 
     deinit {
+        grid.folderRenameHandler = nil
         grid.folderPanelStateDidChange = nil
         grid.panelShortcutsDidConfigure = nil
         grid.columnsDidChange = nil
@@ -1097,6 +1134,9 @@ public final class TesseraTileEditCoordinator: NSObject {
     private func beginEditing(focusing itemID: AnyHashable?) {
         guard !isEditing, isEnabled else { return }
 
+        // E15.5, D35: вход в режим редактирования фиксирует имя папки, если оно
+        // как раз набирается.
+        grid.commitFolderNameEditing()
         isEditing = true
         dimmingFocusID = itemID
         backgroundTapRecognizer.isEnabled = true
@@ -1140,6 +1180,8 @@ public final class TesseraTileEditCoordinator: NSObject {
     public func endEditing() {
         guard isEditing else { return }
 
+        // E15.5, D35: выход из режима редактирования фиксирует набираемое имя.
+        grid.commitFolderNameEditing()
         cancelDragImmediately()
         isEditing = false
         dimmingFocusID = nil
@@ -1637,6 +1679,48 @@ public final class TesseraTileEditCoordinator: NSObject {
         postLayoutChanged(focusing: folderID)
         announce(TesseraStartScreenStrings.string(.a11yFolderTileAdded))
         return true
+    }
+
+    /// Переименовывает папку (D35, E15.5; W10M §6.7).
+    ///
+    /// Тот же путь, что у встроенного редактирования имени в открытой панели:
+    /// ``TileStore/renameFolder(_:to:)`` (нормализация, предел
+    /// ``TileFolder/maximumTitleLength``), синхронизация сетки, затем делегат
+    /// (`didRenameFolder`). Пустое имя возвращает **имя по умолчанию** — так же,
+    /// как у новой папки: ``TesseraTileEditConfiguration/folderTitle``, если он
+    /// задан, иначе локализованное «Папка»/«Folder». Размер, ячейка и состав не
+    /// меняются; одобрения хоста (D14) операция не требует; к режиму
+    /// редактирования не привязана.
+    ///
+    /// - Parameters:
+    ///   - folderID: Идентификатор папки на рабочем столе.
+    ///   - newTitle: Новое имя (как набрано).
+    /// - Returns: `true`, если имя изменилось; `false` — папки нет или имя то же.
+    @discardableResult
+    public func renameFolder(_ folderID: AnyHashable, to newTitle: String) -> Bool {
+        let normalized = TileFolder.normalizedTitle(newTitle)
+        let requested = normalized.isEmpty
+            ? resolvedNewFolderTitle(configuration.folderTitle)
+            : normalized
+        guard store.renameFolder(folderID, to: requested) else { return false }
+
+        render(animated: false)
+        let stored = store.snapshot(columns: storeColumns).folders
+            .first { $0.id == folderID }?.title ?? requested
+        delegate?.tileEditCoordinator(self, didRenameFolder: folderID, to: stored)
+        return true
+    }
+
+    /// Ставит или снимает обработчик переименования сетки (E15.5): активный
+    /// координатор подключает правку имени в панели, выключенный — нет.
+    private func updateRenameHandler() {
+        if isEnabled {
+            grid.folderRenameHandler = { [weak self] folderID, name in
+                self?.renameFolder(folderID, to: name)
+            }
+        } else {
+            grid.folderRenameHandler = nil
+        }
     }
 
     /// Перемещает ярлык между папками или из папки на рабочий стол (D14).
@@ -5177,9 +5261,17 @@ extension TesseraTileEditCoordinator: UIGestureRecognizerDelegate {
             // включая выступ в зазор и расширенную до 44 pt зону) принадлежит
             // кнопке: иначе тап по выступающей части сработал бы и как «тап по
             // пустому месту» и вывел бы из правки (E15.10).
+            // E15.5: пока набирается имя папки, тап мимо только фиксирует его
+            // (жест сетки), а из правки не выходит.
             return isEditing && dragSession == nil && !isEditControlHit(by: touch)
+                && !grid.isEditingFolderName
         }
         if gestureRecognizer === longPressRecognizer {
+            // E15.5: долгое нажатие по имени папки — переименование, а не вход в
+            // правку и не drag.
+            if grid.isFolderNameHit(at: touch.location(in: grid)) {
+                return false
+            }
             var view: UIView? = touch.view
             while let current = view {
                 if current is UIControl {

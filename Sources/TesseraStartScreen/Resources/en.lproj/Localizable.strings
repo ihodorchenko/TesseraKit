@@ -79,6 +79,9 @@
 /* Change tile size. */
 "a11y.action.resize" = "Change size";
 
+/* Rename a folder (folder tile and open panel header; E15.5, D35). */
+"a11y.action.renameFolder" = "Rename";
+
 /* Add to a folder (%@ — folder title). */
 "a11y.action.addToFolderFormat" = "Add to folder %@";
 
@@ -98,6 +101,9 @@
 
 /* Подпись папки без названия. */
 "folderScreen.defaultTitle" = "Folder";
+
+/* Accessibility label of the folder rename text field (E15.5, D35). */
+"folderName.fieldLabel" = "Folder name";
 
 /* VoiceOver-действие «переместить ярлык». */
 "folderScreen.moveAction" = "Move";
