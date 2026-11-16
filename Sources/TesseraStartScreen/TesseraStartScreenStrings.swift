@@ -102,6 +102,10 @@ enum TesseraStartScreenStrings {
         /// Папка создана перетаскиванием одного ярлыка на другой.
         case a11yFolderCreatedFromTwoTiles = "a11y.folder.createdFromTwoTiles"
 
+        /// Новая позиция ярлыка после перестановки внутри папки (`%1$d` — номер,
+        /// `%2$d` — число ярлыков, E16.1).
+        case a11yFolderTilePositionFormat = "a11y.folder.tilePositionFormat"
+
         // MARK: Перетаскивание
 
         /// Внешнее изменение модели отменило перетаскивание.
@@ -151,6 +155,12 @@ enum TesseraStartScreenStrings {
 
         /// Действие «переместить ярлык в другую папку» (`%1$@` — название папки, E11.5).
         case a11yActionMoveToFolderFormat = "a11y.action.moveToFolderFormat"
+
+        /// Действие «переместить ярлык в панели папки на позицию раньше» (E16.1).
+        case a11yActionMoveEarlier = "a11y.action.moveEarlier"
+
+        /// Действие «переместить ярлык в панели папки на позицию позже» (E16.1).
+        case a11yActionMoveLater = "a11y.action.moveLater"
 
         // MARK: Экран папки
 

@@ -120,14 +120,11 @@ final class TileFolderDissolveUITests: XCTestCase {
     /// Долгое нажатие по иконке панели: drag ярлыка из папки.
     private func startPanelDrag(_ host: TesseraTestDragHost, folderID: AnyHashable, iconIndex: Int) throws {
         try openPanel(host, folderID: folderID)
-        let panelItem = try XCTUnwrap(host.host.grid.displayItems.first { $0.isFolderPanel })
         let panel = try XCTUnwrap(host.host.panelCell(folderID: folderID))
         let icon = try XCTUnwrap(panel.shortcutCells[iconIndex] as TesseraTileCell?)
         let iconFrame = try XCTUnwrap(icon.superview).convert(icon.frame, to: host.host.grid)
-        host.coordinator.handleLongPress(
-            on: panelItem,
-            at: CGPoint(x: iconFrame.midX, y: iconFrame.midY)
-        )
+        // E16.1: вход сразу в вынос (долгое нажатие по панели начинает перестановку).
+        host.coordinator.startDragFromPanel(at: CGPoint(x: iconFrame.midX, y: iconFrame.midY))
         XCTAssertTrue(host.coordinator.isDragging)
     }
 

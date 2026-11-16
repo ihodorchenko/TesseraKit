@@ -648,9 +648,10 @@ final class TilePanelUnpinButtonTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Drag ярлыка из панели: панель закрывается, кнопок на ярлыках нет ни во
-    /// время drag, ни после отмены (панели нет); долгое нажатие по телу ярлыка
-    /// с кнопками стартует drag.
+    /// Drag ярлыка из панели: кнопок на ярлыках нет ни во время drag; долгое
+    /// нажатие по телу ярлыка с кнопками стартует drag. E16.1: сначала это
+    /// перестановка внутри панели (панель открыта, кнопки возвращаются после
+    /// отмены); выход пальца за панель выносит ярлык (панель закрыта, кнопок нет).
     func testDragOutStillWorksAndRemovesPanelButtons() throws {
         let host = try makeHost()
         try openPanel(host)
@@ -662,7 +663,12 @@ final class TilePanelUnpinButtonTests: XCTestCase {
         host.coordinator.handleLongPress(on: panelItem, at: CGPoint(x: y.midX, y: y.midY))
         XCTAssertTrue(host.coordinator.isDragging, "Long-press по телу ярлыка поднимает его")
         XCTAssertTrue(host.coordinator.panelEditControls.isEmpty, "Во время drag кнопок на ярлыках панели нет")
+        XCTAssertNotNil(host.host.grid.expandedFolderID, "Перестановка: панель остаётся открытой")
+
+        // Выход за панель — вынос: панель закрывается мгновенно.
+        host.coordinator.updateDrag(to: CGPoint(x: y.midX, y: geometry.panelFrame.maxY + 60))
         XCTAssertNil(host.host.grid.expandedFolderID)
+        XCTAssertTrue(host.coordinator.panelEditControls.isEmpty)
 
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })

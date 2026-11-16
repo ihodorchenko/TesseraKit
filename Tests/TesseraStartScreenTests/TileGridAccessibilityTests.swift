@@ -377,6 +377,9 @@ final class TileGridAccessibilityTests: XCTestCase {
             [
                 TesseraStartScreenStrings.string(.a11yActionRemoveFromFolder),
                 TesseraStartScreenStrings.string(.a11yActionUnpin),
+                // E16.1: средний ярлык панели можно сдвинуть в обе стороны.
+                TesseraStartScreenStrings.string(.a11yActionMoveEarlier),
+                TesseraStartScreenStrings.string(.a11yActionMoveLater),
                 moveName("Play"),
             ]
         )
