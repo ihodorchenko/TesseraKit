@@ -2,18 +2,18 @@
 //  TileStoreCellOperationsTests.swift
 //  TesseraStartScreenTests
 //
-//  Операции `TesseraTileStore` по ячейкам (E14.4): перенос, resize на месте, папки,
-//  открепление/закрепление, схлопывание пустых строк.
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 и «Отступления
-//  реализации (E14)»; решения D20, D30–D33 в docs/STATE.md; план — E14.4.
+//  `TesseraTileStore` cell operations: move, in-place resize, folders,
+//  unpin/pin, collapsing empty rows.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 and "Implementation
+//  deviations"; decisions D20, D30–D33 in docs/STATE.md.
 //
-//  Проверяются: дыры остаются (репака нет), выталкивание вниз каскадом,
-//  папка 2×2 на месте малой цели и сдвиг колонки влево, вынос на ячейку и в
-//  новую строку, исчезновение опустевшей папки с дырой, resize на месте,
-//  закрепление в новую строку, схлопывание только непокрытых строк (и
-//  идемпотентность), одно уведомление на операцию, no-op на неверный ввод,
-//  согласованность модели (`tesseraAssertCellInvariants`). Имена после E14.6:
-//  `resize(_:to:columns:)` и `pinTile(_:columns:)` (были `resizeInPlace`,
+//  What is tested: holes remain (no repack), cascading push down,
+//  a 2×2 folder in place of a small target and a column shift to the left, take-out onto a cell and into
+//  a new row, a folder that became empty disappearing with a hole, in-place resize,
+//  pinning into a new row, collapsing only uncovered rows (and
+//  idempotency), one notification per operation, no-op on invalid input,
+//  model consistency (`tesseraAssertCellInvariants`). The names are
+//  `resize(_:to:columns:)` and `pinTile(_:columns:)` (formerly `resizeInPlace`,
 //  `pinTileToNewRow`).
 //
 
@@ -46,9 +46,9 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tiles.map { $0.id } + folders.flatMap { $0.contents.map { $0.id } } + unpinned.map { $0.0 }
     }
 
-    // MARK: - Перенос
+    // MARK: - Move
 
-    /// Перенос на свободную ячейку: дыра остаётся, остальные не двигаются.
+    /// A move to a free cell: a hole remains, the others do not move.
     func testMoveItemToFreeCellLeavesHole() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 0, 2)]
@@ -59,12 +59,12 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(3, 4))
         XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 1))
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(0, 2))
-        XCTAssertNil(store.placements.values.first { $0 == tesseraCell(0, 0) }, "ячейка (0, 0) — дыра")
+        XCTAssertNil(store.placements.values.first { $0 == tesseraCell(0, 0) }, "cell (0, 0) is a hole")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
         XCTAssertEqual(tesseraTestIDs(store.snapshot().items), ["b", "c", "a"])
     }
 
-    /// Каскад: вставка выталкивает вниз цепочку, остальное не трогает.
+    /// Cascade: an insertion pushes a chain down and leaves the rest alone.
     func testMoveItemPushesDownCascade() throws {
         let directory = TesseraTestDirectory()
         let tiles = [
@@ -82,11 +82,11 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(store.placement(of: "A"), tesseraCell(1, 0))
         XCTAssertEqual(store.placement(of: "B"), tesseraCell(3, 0))
         XCTAssertEqual(store.placement(of: "C"), tesseraCell(4, 0))
-        XCTAssertEqual(store.placement(of: "D"), tesseraCell(0, 3), "вне затронутой области — на месте")
+        XCTAssertEqual(store.placement(of: "D"), tesseraCell(0, 3), "outside the affected area: stays in place")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Слишком правая ячейка сдвигается влево; перенос на свою ячейку — no-op.
+    /// A cell that is too far right shifts left; a move onto its own cell is a no-op.
     func testMoveItemClampsLeftAndSameCellIsNoOp() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("w", .wide, 0, 0), CellFixtureTile("s", .small, 2, 0)]
@@ -95,16 +95,16 @@ final class TileStoreCellOperationsTests: XCTestCase {
         store.onChange = { _ in notifications += 1 }
 
         XCTAssertTrue(store.moveItem("w", toCell: tesseraCell(4, 5), columns: columns))
-        XCTAssertEqual(store.placement(of: "w"), tesseraCell(4, 2), "wide 4×2 на 6 колонках: колонка ≤ 2")
+        XCTAssertEqual(store.placement(of: "w"), tesseraCell(4, 2), "wide 4×2 on 6 columns: column ≤ 2")
         XCTAssertEqual(notifications, 1)
 
         XCTAssertFalse(store.moveItem("w", toCell: tesseraCell(4, 2), columns: columns))
-        XCTAssertFalse(store.moveItem("w", toCell: tesseraCell(4, 5), columns: columns), "после зажима та же ячейка")
-        XCTAssertEqual(notifications, 1, "no-op не уведомляет")
+        XCTAssertFalse(store.moveItem("w", toCell: tesseraCell(4, 5), columns: columns), "after clamping the same cell")
+        XCTAssertEqual(notifications, 1, "a no-op does not notify")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Папку переносят так же, как ярлык.
+    /// A folder is moved the same way as a tile.
     func testMoveFolderToCell() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small)])]
@@ -117,7 +117,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Перенос в новую строку: после последней занятой, колонка 0, дыра остаётся.
+    /// A move to a new row: after the last occupied one, column 0, a hole remains.
     func testMoveItemToNewRow() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .medium, 0, 2), CellFixtureTile("c", .small, 1, 0)]
@@ -131,7 +131,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Единственный элемент в последней строке: «новая строка» — его собственная.
+    /// The only item in the last row: the "new row" is its own.
     func testMoveItemToNewRowWhenAlreadyAloneAtBottomIsNoOp() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 1, 0)]
@@ -141,7 +141,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
     // MARK: - Resize
 
-    /// Рост выталкивает вниз; размер сохраняется в модели; якорь остаётся.
+    /// Growth pushes down; the size is kept in the model; the anchor stays.
     func testResizeGrowthPushesDown() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 1, 0), CellFixtureTile("z", .small, 0, 4)]
@@ -151,13 +151,13 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
         XCTAssertEqual(store.snapshot().item(withID: "a")?.size, .medium)
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 0))
-        XCTAssertEqual(store.placement(of: "b"), tesseraCell(2, 1), "b пересекал 2×2 — вниз под него")
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(2, 1), "b intersected the 2×2: down below it")
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(2, 0))
         XCTAssertEqual(store.placement(of: "z"), tesseraCell(0, 4))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Уменьшение оставляет дыру и ничего не двигает.
+    /// Shrinking leaves a hole and moves nothing.
     func testResizeShrinkLeavesHole() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("big", .large, 0, 0), CellFixtureTile("n", .small, 4, 0)]
@@ -166,11 +166,11 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertTrue(store.resize("big", to: .small, columns: columns))
 
         XCTAssertEqual(store.placement(of: "big"), tesseraCell(0, 0))
-        XCTAssertEqual(store.placement(of: "n"), tesseraCell(4, 0), "ничего не подтянулось")
+        XCTAssertEqual(store.placement(of: "n"), tesseraCell(4, 0), "nothing was pulled up")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Рост у правого края сдвигает колонку влево; папка меняет размер так же.
+    /// Growth at the right edge shifts the column left; a folder resizes the same way.
     func testResizeClampsLeftAndWorksForFolders() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("s", .small, 0, 5)]
@@ -186,7 +186,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Тот же размер, неизвестный элемент: no-op. Ярлык в папке — только размер.
+    /// The same size, an unknown item: a no-op. A tile inside a folder: only the size.
     func testResizeNoOpsAndTileInFolder() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -203,14 +203,14 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
         XCTAssertTrue(store.resize("x", to: .wide, columns: columns))
         XCTAssertEqual(store.tileSizeInFolder("x"), .wide)
-        XCTAssertEqual(store.placements, before, "ячейки не менялись")
+        XCTAssertEqual(store.placements, before, "cells did not change")
         XCTAssertEqual(notifications, 1)
     }
 
-    // MARK: - Создание папки
+    // MARK: - Folder creation
 
-    /// Малая цель становится папкой 2×2 на своей ячейке и выталкивает соседа;
-    /// ячейка источника остаётся дырой.
+    /// A small target becomes a 2×2 folder on its own cell and pushes a neighbor;
+    /// the source cell stays a hole.
     func testCreateFolderOnSmallTargetBecomesMediumAndPushesNeighbor() throws {
         let directory = TesseraTestDirectory()
         let tiles = [
@@ -221,43 +221,43 @@ final class TileStoreCellOperationsTests: XCTestCase {
         ]
         let store = try makeStore(tiles, in: directory)
 
-        guard case .created(let folder) = store.createFolder(from: "S", onto: "T", title: "Игры", columns: columns) else {
-            return XCTFail("папка должна создаться")
+        guard case .created(let folder) = store.createFolder(from: "S", onto: "T", title: "Games", columns: columns) else {
+            return XCTFail("the folder must be created")
         }
 
-        XCTAssertEqual(folder.size, .medium, "D20: папка всегда 2×2")
-        XCTAssertEqual(folder.title, "Игры")
+        XCTAssertEqual(folder.size, .medium, "D20: a folder is always 2×2")
+        XCTAssertEqual(folder.title, "Games")
         XCTAssertEqual(folder.tiles.map { $0.id }, ["T", "S"])
         XCTAssertEqual(store.placement(of: folder.id), tesseraCell(1, 1))
-        XCTAssertEqual(store.placement(of: "N"), tesseraCell(3, 2), "N вытолкнут под папку")
+        XCTAssertEqual(store.placement(of: "N"), tesseraCell(3, 2), "N is pushed below the folder")
         XCTAssertEqual(store.placement(of: "K"), tesseraCell(4, 4))
         XCTAssertNil(store.placement(of: "S"))
         XCTAssertNil(store.placement(of: "T"))
-        XCTAssertFalse(store.placements.values.contains(tesseraCell(0, 5)), "ячейка источника — дыра")
+        XCTAssertFalse(store.placements.values.contains(tesseraCell(0, 5)), "the source cell is a hole")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Цель у правого края: папка сдвигается влево.
+    /// A target at the right edge: the folder shifts left.
     func testCreateFolderClampsLeft() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("T", .small, 0, 5), CellFixtureTile("S", .small, 3, 0)]
         let store = try makeStore(tiles, in: directory)
 
         guard case .created(let folder) = store.createFolder(from: "S", onto: "T", columns: columns) else {
-            return XCTFail("папка должна создаться")
+            return XCTFail("the folder must be created")
         }
         XCTAssertEqual(store.placement(of: folder.id), tesseraCell(0, 4))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Широкая цель замещается средней папкой, остальные ячейки — дыры.
+    /// A wide target is replaced by a medium folder, the other cells are holes.
     func testCreateFolderOnWideTargetKeepsHoles() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("T", .wide, 0, 0), CellFixtureTile("S", .small, 2, 0), CellFixtureTile("K", .small, 0, 4)]
         let store = try makeStore(tiles, in: directory)
 
         guard case .created(let folder) = store.createFolder(from: "S", onto: "T", columns: columns) else {
-            return XCTFail("папка должна создаться")
+            return XCTFail("the folder must be created")
         }
         XCTAssertEqual(store.placement(of: folder.id), tesseraCell(0, 0))
         XCTAssertEqual(store.snapshot().item(withID: folder.id)?.size, .medium)
@@ -265,7 +265,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Одобрение хоста: порядок вопросов, отказ первого и второго шага без следов.
+    /// Host approval: the order of the questions, a rejection of the first and second step leaves no trace.
     func testCreateFolderApprovalAndDenials() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("T", .small, 0, 0), CellFixtureTile("S", .small, 0, 1)]
@@ -277,14 +277,14 @@ final class TileStoreCellOperationsTests: XCTestCase {
         var actions: [TesseraTileGroupingAction] = []
         store.approval = { _, _, action in actions.append(action); return action != .createFolder }
         guard case .createDenied = store.createFolder(from: "S", onto: "T", columns: columns) else {
-            return XCTFail("ожидался отказ создания")
+            return XCTFail("a creation rejection was expected")
         }
         XCTAssertEqual(actions, [.createFolder])
 
         actions = []
         store.approval = { _, _, action in actions.append(action); return action != .addToFolder }
         guard case .addDenied = store.createFolder(from: "S", onto: "T", columns: columns) else {
-            return XCTFail("ожидался отказ добавления")
+            return XCTFail("an addition rejection was expected")
         }
         XCTAssertEqual(actions, [.createFolder, .addToFolder])
 
@@ -293,25 +293,25 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(notifications, 0)
     }
 
-    /// Неверный ввод: тот же ярлык, нет на сетке, папка вместо ярлыка, ширина 0.
+    /// Invalid input: the same tile, not on the grid, a folder instead of a tile, width 0.
     func testCreateFolderInvalidInput() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("T", .small, 0, 0), CellFixtureTile("S", .small, 0, 1)]
-        // D45: в папке не меньше двух ярлыков (одноярлычная при загрузке распускается).
+        // D45: a folder has at least two tiles (a single-tile one is dissolved on load).
         let folders = [CellFixtureFolder("f", .medium, 2, 0, contents: [("x", .small), ("x2", .small)])]
         let store = try makeStore(tiles, folders: folders, unpinned: [("u", .small)], in: directory)
 
         for (source, target, columns) in [("T", "T", 6), ("S", "u", 6), ("u", "T", 6), ("S", "f", 6), ("S", "x", 6), ("S", "T", 0)] as [(String, String, Int)] {
             guard case .createDenied = store.createFolder(from: source, onto: target, columns: columns) else {
-                return XCTFail("(\(source), \(target), \(columns)) должен быть отказом")
+                return XCTFail("(\(source), \(target), \(columns)) must be rejected")
             }
         }
         XCTAssertEqual(store.snapshot().folders.count, 1)
     }
 
-    // MARK: - Добавление в папку
+    // MARK: - Adding to a folder
 
-    /// Ярлык уходит в папку; его ячейка — дыра, папка остаётся на своей.
+    /// A tile goes into the folder; its cell is a hole, the folder stays on its own.
     func testAddToFolderLeavesHole() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 0, 4)]
@@ -329,7 +329,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Отказ хоста, повтор, ярлык в другой папке, неизвестные id — всё no-op.
+    /// A host rejection, a repeat, a tile in another folder, unknown ids: all no-ops.
     func testAddToFolderNoOps() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -342,22 +342,22 @@ final class TileStoreCellOperationsTests: XCTestCase {
         var notifications = 0
         store.onChange = { _ in notifications += 1 }
 
-        XCTAssertFalse(store.addToFolder("x", folderID: "f", columns: columns), "уже в этой папке")
-        XCTAssertFalse(store.addToFolder("y", folderID: "f", columns: columns), "в другой папке")
-        XCTAssertFalse(store.addToFolder("u", folderID: "f", columns: columns), "не на сетке")
+        XCTAssertFalse(store.addToFolder("x", folderID: "f", columns: columns), "already in this folder")
+        XCTAssertFalse(store.addToFolder("y", folderID: "f", columns: columns), "in another folder")
+        XCTAssertFalse(store.addToFolder("u", folderID: "f", columns: columns), "not on the grid")
         XCTAssertFalse(store.addToFolder("a", folderID: "nope", columns: columns))
         XCTAssertFalse(store.addToFolder("a", folderID: "f", columns: 0))
         store.approval = { _, _, _ in false }
-        XCTAssertFalse(store.addToFolder("a", folderID: "f", columns: columns), "хост запретил")
+        XCTAssertFalse(store.addToFolder("a", folderID: "f", columns: columns), "the host forbade it")
 
         XCTAssertEqual(store.placements, before)
         XCTAssertEqual(notifications, 0)
     }
 
-    // MARK: - Вынос из папки
+    // MARK: - Take-out from a folder
 
-    /// Вынос на ячейку со своим размером: каскад; папка из трёх остаётся с двумя
-    /// (D45: из двух осталась бы с одним — распускается, см. `TileStoreFolderMinTwoTests`).
+    /// A take-out onto a cell with the tile's own size: a cascade; a folder of three stays with two
+    /// (D45: from two it would be left with one, so it is dissolved, see `TileStoreFolderMinTwoTests`).
     func testExtractFromFolderToCellKeepsFolderWithRemainingTile() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 3, 0), CellFixtureTile("b", .small, 5, 0)]
@@ -367,17 +367,17 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertTrue(store.extractFromFolder("x", toCell: tesseraCell(3, 0), columns: columns))
 
         XCTAssertEqual(store.placement(of: "x"), tesseraCell(3, 0))
-        XCTAssertEqual(store.snapshot().item(withID: "x")?.size, .medium, "размер ярлыка свой")
-        XCTAssertEqual(store.placement(of: "a"), tesseraCell(5, 0), "a вытолкнут под x")
-        XCTAssertEqual(store.placement(of: "b"), tesseraCell(6, 0), "каскад дошёл до b")
-        XCTAssertEqual(store.placement(of: "f"), tesseraCell(0, 0), "папка с двумя ярлыками остаётся")
+        XCTAssertEqual(store.snapshot().item(withID: "x")?.size, .medium, "the tile keeps its own size")
+        XCTAssertEqual(store.placement(of: "a"), tesseraCell(5, 0), "a is pushed below x")
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(6, 0), "the cascade reached b")
+        XCTAssertEqual(store.placement(of: "f"), tesseraCell(0, 0), "the folder with two tiles stays")
         XCTAssertEqual(store.folderContaining("y")?.tiles.map { $0.id }, ["y", "z"])
         XCTAssertNil(store.folderContaining("x"))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Вынос последнего ярлыка переходной папки (D45: папка из одного ярлыка —
-    /// только `createFolder(withTile:)`): папка исчезает, её ячейка — дыра.
+    /// Taking out the last tile of a transitional folder (D45: a single-tile folder is
+    /// only `createFolder(withTile:)`): the folder disappears, its cell is a hole.
     func testExtractLastTileRemovesFolderAndLeavesHole() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 3), CellFixtureTile("x", .small, 0, 0)]
@@ -392,11 +392,11 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertTrue(store.snapshot().folders.isEmpty)
         XCTAssertEqual(store.placement(of: "x"), tesseraCell(4, 4))
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 3))
-        XCTAssertFalse(store.placements.values.contains(tesseraCell(0, 0)), "ячейка папки — дыра")
+        XCTAssertFalse(store.placements.values.contains(tesseraCell(0, 0)), "the folder cell is a hole")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Вынос в новую строку; опустевшая папка в расчёт строки не входит.
+    /// A take-out into a new row; an emptied folder does not count toward the row.
     func testExtractToNewRow() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 3)]
@@ -406,21 +406,21 @@ final class TileStoreCellOperationsTests: XCTestCase {
         ]
         let store = try makeStore(tiles, folders: folders, in: directory)
 
-        // D45: из папки f (x, y) уходит x — f распадается в y на своей ячейке.
+        // D45: x leaves folder f (x, y), and f dissolves into y on its own cell.
         XCTAssertTrue(store.extractFromFolderToNewRow("x", columns: columns))
-        XCTAssertEqual(store.placement(of: "x"), tesseraCell(6, 0), "после папки g (строки 4–5)")
-        XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0), "y заняла место f")
+        XCTAssertEqual(store.placement(of: "x"), tesseraCell(6, 0), "after folder g (rows 4–5)")
+        XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0), "y took the place of f")
 
-        // Из папки g уходит z: g распадается в z2 (малая, строка 4), строки 5 свободна;
-        // новая строка считается по нижней занятой — это x (строка 6).
+        // z leaves folder g: g dissolves into z2 (small, row 4), row 5 is free;
+        // the new row is computed from the lowest occupied one, which is x (row 6).
         XCTAssertTrue(store.extractFromFolderToNewRow("z", columns: columns))
         XCTAssertNil(store.placement(of: "g"))
         XCTAssertEqual(store.placement(of: "z2"), tesseraCell(4, 0))
-        XCTAssertEqual(store.placement(of: "z"), tesseraCell(7, 0), "после x (строка 6)")
+        XCTAssertEqual(store.placement(of: "z"), tesseraCell(7, 0), "after x (row 6)")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Вынос широкого ярлыка к правому краю сдвигает колонку влево.
+    /// Taking a wide tile out to the right edge shifts the column left.
     func testExtractClampsLeft() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .wide), ("y", .small)])]
@@ -430,7 +430,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(store.placement(of: "x"), tesseraCell(3, 2))
     }
 
-    /// Неверный ввод и отказ хоста: no-op; хост получает `.moveBetweenFolders`.
+    /// Invalid input and a host rejection: a no-op; the host receives `.moveBetweenFolders`.
     func testExtractNoOpsAndApprovalAction() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -440,7 +440,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         var notifications = 0
         store.onChange = { _ in notifications += 1 }
 
-        XCTAssertFalse(store.extractFromFolder("a", toCell: tesseraCell(1, 1), columns: columns), "ярлык не в папке")
+        XCTAssertFalse(store.extractFromFolder("a", toCell: tesseraCell(1, 1), columns: columns), "the tile is not in a folder")
         XCTAssertFalse(store.extractFromFolder("nope", toCell: tesseraCell(1, 1), columns: columns))
         XCTAssertFalse(store.extractFromFolderToNewRow("a", columns: columns))
         XCTAssertFalse(store.extractFromFolder("x", toCell: tesseraCell(1, 1), columns: 0))
@@ -450,16 +450,16 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertFalse(store.extractFromFolder("x", toCell: tesseraCell(1, 1), columns: columns))
         XCTAssertEqual(seen.count, 1)
         XCTAssertEqual(seen.first?.0, .moveBetweenFolders)
-        XCTAssertEqual(seen.first?.1, true, "папка-цель nil — на рабочий стол")
+        XCTAssertEqual(seen.first?.1, true, "target folder nil: onto the desktop")
 
         XCTAssertEqual(store.placements, before)
         XCTAssertEqual(notifications, 0)
     }
 
-    // MARK: - Между папками
+    // MARK: - Between folders
 
-    /// Папка-источник из двух ярлыков распалась (D45): оставшийся ярлык встал на её
-    /// ячейку (раньше при опустевшей папке тут оставалась дыра), остальное на месте.
+    /// A source folder of two tiles dissolved (D45): the remaining tile took its
+    /// cell (previously an emptied folder left a hole here), the rest stays in place.
     func testMoveBetweenFoldersDissolvingSourceFillsCellWithRemainingTile() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 4)]
@@ -480,8 +480,8 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Папка-источник остаётся (в ней три ярлыка, D45): ячейки не меняются; та же
-    /// папка/отказ — no-op.
+    /// The source folder stays (it has three tiles, D45): cells do not change; the same
+    /// folder/rejection is a no-op.
     func testMoveBetweenFoldersKeepingSourceAndNoOps() throws {
         let directory = TesseraTestDirectory()
         let folders = [
@@ -491,7 +491,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let store = try makeStore([], folders: folders, in: directory)
         let before = store.placements
 
-        XCTAssertFalse(store.moveBetweenFolders("x", to: "f", columns: columns), "в ту же папку")
+        XCTAssertFalse(store.moveBetweenFolders("x", to: "f", columns: columns), "into the same folder")
         XCTAssertFalse(store.moveBetweenFolders("x", to: "nope", columns: columns))
         XCTAssertFalse(store.moveBetweenFolders("ghost", to: "g", columns: columns))
         store.approval = { _, _, _ in false }
@@ -503,9 +503,9 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(store.folderContaining("x2")?.tiles.map { $0.id }, ["x2", "x3"])
     }
 
-    // MARK: - Открепление и закрепление
+    // MARK: - Unpin and pin
 
-    /// Открепление ярлыка на сетке оставляет дыру; он появляется среди откреплённых.
+    /// Unpinning a tile on the grid leaves a hole; it appears among the unpinned ones.
     func testUnpinLeavesHole() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 1, 0)]
@@ -521,8 +521,8 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Открепление ярлыков из папки по одному (D45): из трёх — папка остаётся с двумя,
-    /// из двух — распускается, и последний ярлык встаёт на ячейку папки.
+    /// Unpinning tiles from a folder one by one (D45): from three, the folder stays with two,
+    /// from two it dissolves, and the last tile takes the folder's cell.
     func testUnpinFolderContentOneByOneDissolvesFolder() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 4)]
@@ -536,13 +536,13 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertTrue(store.unpin("y", columns: columns))
         XCTAssertNil(store.placement(of: "f"))
         XCTAssertTrue(store.snapshot().folders.isEmpty)
-        XCTAssertEqual(store.placement(of: "z"), tesseraCell(0, 0), "оставшийся ярлык — на месте папки")
+        XCTAssertEqual(store.placement(of: "z"), tesseraCell(0, 0), "the remaining tile is in the folder's place")
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 4))
         XCTAssertEqual(Set(store.snapshot().unpinned.map { $0.id }), ["x", "y"])
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Открепление неизвестного, уже откреплённого, папки и ширина 0 — no-op.
+    /// Unpinning an unknown or already unpinned tile, a folder and width 0 are no-ops.
     func testUnpinNoOps() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -551,12 +551,12 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
         XCTAssertFalse(store.unpin("u", columns: columns))
         XCTAssertFalse(store.unpin("nope", columns: columns))
-        XCTAssertFalse(store.unpin("f", columns: columns), "папку открепить нельзя (D38)")
+        XCTAssertFalse(store.unpin("f", columns: columns), "a folder cannot be unpinned (D38)")
         XCTAssertFalse(store.unpin("a", columns: 0))
         XCTAssertEqual(store.snapshot().items.count, 2)
     }
 
-    /// Закрепление: новая строка в конце, размер из `sizes`/каталога.
+    /// Pinning: a new row at the end, the size from `sizes`/the catalog.
     func testPinTileGoesToNewRow() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .medium, 0, 0), CellFixtureTile("b", .small, 0, 4)]
@@ -573,7 +573,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, unpinned: [("w", .wide), ("s", .small)]))
     }
 
-    /// На узкой сетке большая плитка ужимается по ширине, колонка — 0.
+    /// On a narrow grid a large tile shrinks in width, the column is 0.
     func testPinTileFitsNarrowGrid() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -584,7 +584,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: 2, catalogIDs: ["a", "L"])
     }
 
-    /// Закрепление: уже на сетке, в папке, нет в каталоге, ширина 0 — no-op.
+    /// Pinning: already on the grid, in a folder, not in the catalog, width 0 are no-ops.
     func testPinTileNoOps() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -598,30 +598,30 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertEqual(store.snapshot().items.count, 2)
     }
 
-    // MARK: - Схлопывание пустых строк
+    // MARK: - Collapsing empty rows
 
-    /// Схлопываются только строки, которых не покрывает ни один элемент.
+    /// Only rows that no item covers are collapsed.
     func testCollapseEmptyRowsOnlyRemovesUncoveredRows() throws {
         let directory = TesseraTestDirectory()
         let tiles = [
-            CellFixtureTile("tall", .large, 1, 0),   // строки 1–4
-            CellFixtureTile("s1", .small, 1, 4),     // строка 1
-            CellFixtureTile("s2", .small, 7, 4),     // строка 7; 5–6 пусты
-            CellFixtureTile("s3", .small, 10, 0),    // 8–9 пусты
+            CellFixtureTile("tall", .large, 1, 0),   // rows 1–4
+            CellFixtureTile("s1", .small, 1, 4),     // row 1
+            CellFixtureTile("s2", .small, 7, 4),     // row 7; 5–6 are empty
+            CellFixtureTile("s3", .small, 10, 0),    // 8–9 are empty
         ]
         let store = try makeStore(tiles, in: directory)
 
         XCTAssertTrue(store.collapseEmptyRows(columns: columns))
 
-        // Строка 0 пуста (выше всех), 5–6 пусты, 8–9 пусты: всего 5 строк уйдёт.
+        // Row 0 is empty (above all), 5–6 are empty, 8–9 are empty: 5 rows in total will go away.
         XCTAssertEqual(store.placement(of: "tall"), tesseraCell(0, 0))
-        XCTAssertEqual(store.placement(of: "s1"), tesseraCell(0, 4), "строки 2–4 покрыты высокой плиткой")
+        XCTAssertEqual(store.placement(of: "s1"), tesseraCell(0, 4), "rows 2–4 are covered by the tall tile")
         XCTAssertEqual(store.placement(of: "s2"), tesseraCell(5 - 1, 4), "7 − (1 + 2)")
         XCTAssertEqual(store.placement(of: "s3"), tesseraCell(10 - 5, 0))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles))
     }
 
-    /// Идемпотентность: повторный вызов и раскладка без пустых строк — no-op.
+    /// Idempotency: a repeated call and a layout without empty rows are a no-op.
     func testCollapseEmptyRowsIsIdempotentAndSilent() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 3, 0)]
@@ -641,21 +641,21 @@ final class TileStoreCellOperationsTests: XCTestCase {
         XCTAssertFalse(store.collapseEmptyRows(columns: 0))
     }
 
-    /// Операции строк не схлопывают: дыра-строка остаётся, пока не позвали `collapseEmptyRows`.
+    /// Row operations do not collapse: a hole row stays until `collapseEmptyRows` is called.
     func testOperationsDoNotCollapseRowsByThemselves() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 1, 0), CellFixtureTile("c", .small, 2, 0)]
         let store = try makeStore(tiles, in: directory)
 
         XCTAssertTrue(store.unpin("b", columns: columns))
-        XCTAssertEqual(store.placement(of: "c"), tesseraCell(2, 0), "пустая строка 1 осталась")
+        XCTAssertEqual(store.placement(of: "c"), tesseraCell(2, 0), "empty row 1 stayed")
         XCTAssertTrue(store.collapseEmptyRows(columns: columns))
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(1, 0))
     }
 
-    // MARK: - Уведомления и отсутствие репака
+    // MARK: - Notifications and no repack
 
-    /// Одна операция — один `onChange`, и снимок уже согласован.
+    /// One operation is one `onChange`, and the snapshot is already consistent.
     func testSingleNotificationPerOperation() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1)]
@@ -664,28 +664,28 @@ final class TileStoreCellOperationsTests: XCTestCase {
         store.onChange = { snapshots.append($0) }
 
         guard case .created(let folder) = store.createFolder(from: "a", onto: "b", columns: columns) else {
-            return XCTFail("папка должна создаться")
+            return XCTFail("the folder must be created")
         }
         XCTAssertEqual(snapshots.count, 1)
         XCTAssertEqual(tesseraTestIDs(snapshots[0].items), [folder.id])
     }
 
-    /// Операции не пересчитывают ячейки упаковкой: уход соседа оставляет дыру, а
-    /// ячейка далёкой плитки не подтягивается (переходный репак E14.1 удалён в E14.6).
+    /// Operations do not recompute cells by packing: a neighbor leaving leaves a hole, and
+    /// the cell of a distant tile is not pulled up (the transitional repack was removed).
     func testUnpinDoesNotRepackOtherCells() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1), CellFixtureTile("c", .small, 3, 3)]
         let store = try makeStore(tiles, in: directory)
 
         XCTAssertTrue(store.moveItem("c", toCell: tesseraCell(5, 5), columns: columns))
-        XCTAssertEqual(store.placement(of: "c"), tesseraCell(5, 5), "ячейка не пересчитана упаковкой")
+        XCTAssertEqual(store.placement(of: "c"), tesseraCell(5, 5), "the cell was not recomputed by packing")
 
         XCTAssertTrue(store.unpin("a", columns: columns))
-        XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 1), "дыра на месте «a» осталась")
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 1), "the hole at \"a\" stayed")
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(5, 5))
     }
 
-    /// Ширина хоста, отличная от холста, при ошибке ввода не перезаписывает файл (D32).
+    /// A host width different from the canvas does not overwrite the file on an input error (D32).
     func testInvalidInputDoesNotAdoptCanvasOrWriteFile() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 3, 5)]
@@ -693,8 +693,8 @@ final class TileStoreCellOperationsTests: XCTestCase {
         let original = try Data(contentsOf: store.fileURL)
 
         XCTAssertFalse(store.moveItem("nope", toCell: tesseraCell(0, 0), columns: 4))
-        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(0, 0), columns: 4), "уже на месте в проекции")
-        XCTAssertFalse(store.collapseEmptyRows(columns: 4), "в проекции пустых строк нет")
+        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(0, 0), columns: 4), "already in place in the projection")
+        XCTAssertFalse(store.collapseEmptyRows(columns: 4), "there are no empty rows in the projection")
 
         XCTAssertEqual(store.canvasColumns, 6)
         XCTAssertEqual(try Data(contentsOf: store.fileURL), original)
@@ -703,7 +703,7 @@ final class TileStoreCellOperationsTests: XCTestCase {
 
 private extension TesseraTileStore {
 
-    /// Размер ярлыка из каталога хранилища (для проверки resize внутри папки).
+    /// The size of a tile from the store catalog (for checking resize inside a folder).
     func tileSizeInFolder(_ id: AnyHashable) -> TesseraTileSize? {
         folderContaining(id)?.tiles.first { $0.id == id }?.size
     }

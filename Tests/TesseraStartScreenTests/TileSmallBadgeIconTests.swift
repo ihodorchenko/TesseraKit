@@ -2,15 +2,15 @@
 //  TileSmallBadgeIconTests.swift
 //  TesseraStartScreenTests
 //
-//  Малая плитка 1×1 с видимым бэйджем (капсула или точка): иконка и бэйдж, без
-//  подписи (D47, как в W10M). Раньше подпись шла над бэйджем и выдавливала иконку
-//  («Почта» с бэйджем «3» была без иконки). Подпись скрыта только визуально:
-//  label и value VoiceOver не меняются. Малая плитка без бэйджа и плитки 2×2, 4×2
-//  раскладываются как раньше. Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  «Отступления реализации (E15)», п. 60; решение D47 в docs/STATE.md.
+//  A small 1×1 tile with a visible badge (a capsule or a dot): an icon and a badge, no
+//  title (D47, as in Windows 10 Mobile). Previously the title sat above the badge and squeezed the icon out
+//  ("Mail" with badge "3" had no icon). The title is hidden only visually:
+//  the VoiceOver label and value do not change. A small tile without a badge and 2×2, 4×2 tiles
+//  are laid out as before. Design document: docs/STARTSCREEN-IOS-DESIGN.md
+//  ("Implementation deviations"); decision D47 in docs/STATE.md.
 //
-//  Ширины экрана 375/390/402/414 pt при 6 колонках (поля 16, зазор 8): малая
-//  плитка 50,3 / 53 / 55 / 57 pt.
+//  Screen widths 375/390/402/414 pt with 6 columns (margins 16, gap 8): a small
+//  tile is 50.3 / 53 / 55 / 57 pt.
 //
 
 #if canImport(UIKit)
@@ -29,7 +29,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Стенд
+    // MARK: - Rig
 
     private let screenWidths: [CGFloat] = [375, 390, 402, 414]
 
@@ -49,7 +49,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
 
     private let envelope = UIImage(systemName: "envelope.fill")
 
-    /// Ячейка в окне с переопределёнными категорией Dynamic Type и направлением.
+    /// A cell in a window with overridden Dynamic Type category and direction.
     private func makeCell(
         size: CGSize,
         descriptor: TesseraTileDescriptor,
@@ -85,7 +85,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
     }
 
     private func descriptor(
-        title: String = "Почта",
+        title: String = "Mail",
         badge: TesseraTileBadge,
         size: TesseraTileSize = .small,
         withIcon: Bool = true
@@ -108,11 +108,11 @@ final class TileSmallBadgeIconTests: XCTestCase {
         cell.contentView.subviews.compactMap { $0 as? UIImageView }.first ?? UIImageView()
     }
 
-    // MARK: - Малая плитка с бэйджем: иконка и бэйдж
+    // MARK: - Small tile with a badge: icon and badge
 
-    /// Капсула, «99+» и точка на 1×1 (все четыре ширины, LTR и RTL): подписи нет,
-    /// иконка видна внутри плитки, не пересекает бэйдж, стоит по центру верхней
-    /// зоны, бэйдж — в нижнем углу у конца строки. Измеренные размеры — в лог.
+    /// A capsule, "99+" and a dot on 1×1 (all four widths, LTR and RTL): there is no title,
+    /// the icon is visible inside the tile, does not intersect the badge, sits at the center of the upper
+    /// zone, and the badge is in the bottom corner at the end of the line. Measured sizes go to the log.
     func testSmallTileWithBadgeShowsIconAndBadgeWithoutTitle() {
         for width in screenWidths {
             let side = unit(width)
@@ -126,18 +126,18 @@ final class TileSmallBadgeIconTests: XCTestCase {
                     let icon = iconView(of: cell)
                     let badgeFrame = badgeView(of: cell).frame
 
-                    XCTAssertTrue(title.isHidden, "подписи нет: \(label)")
-                    XCTAssertFalse(icon.isHidden, "иконка есть: \(label)")
+                    XCTAssertTrue(title.isHidden, "no title: \(label)")
+                    XCTAssertFalse(icon.isHidden, "the icon is present: \(label)")
                     XCTAssertGreaterThanOrEqual(icon.frame.width, TesseraTileBadgeLayout.minimumSmallIconSide, label)
                     XCTAssertEqual(icon.frame.width, icon.frame.height, accuracy: 0.001, label)
                     XCTAssertTrue(
                         CGRect(origin: .zero, size: size).contains(icon.frame),
-                        "иконка внутри плитки: \(label) \(icon.frame)"
+                        "the icon is inside the tile: \(label) \(icon.frame)"
                     )
-                    XCTAssertFalse(icon.frame.intersects(badgeFrame), "иконка × бэйдж: \(label)")
-                    XCTAssertEqual(icon.frame.midX, size.width / 2, accuracy: 0.5, "иконка по центру: \(label)")
-                    XCTAssertLessThanOrEqual(icon.frame.maxY, badgeFrame.minY + 0.001, "иконка над рядом бэйджа: \(label)")
-                    XCTAssertEqual(badgeFrame.maxY, size.height - margin, accuracy: 0.5, "бэйдж внизу: \(label)")
+                    XCTAssertFalse(icon.frame.intersects(badgeFrame), "icon × badge: \(label)")
+                    XCTAssertEqual(icon.frame.midX, size.width / 2, accuracy: 0.5, "the icon is centered: \(label)")
+                    XCTAssertLessThanOrEqual(icon.frame.maxY, badgeFrame.minY + 0.001, "the icon is above the badge row: \(label)")
+                    XCTAssertEqual(badgeFrame.maxY, size.height - margin, accuracy: 0.5, "the badge is at the bottom: \(label)")
                     if rtl {
                         XCTAssertEqual(badgeFrame.minX, margin, accuracy: 0.5, label)
                     } else {
@@ -149,7 +149,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
         }
     }
 
-    /// В RTL иконка стоит там же, где в LTR (по центру), бэйдж — зеркально.
+    /// In RTL the icon stands where it does in LTR (centered), and the badge is mirrored.
     func testIconPositionDoesNotDependOnDirection() {
         let size = CGSize(width: 53, height: 53)
         for (_, badge) in badges {
@@ -164,7 +164,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
         }
     }
 
-    /// Бэйдж «0» не виден: подпись остаётся, как без бэйджа.
+    /// A "0" badge is not visible: the title stays, as without a badge.
     func testZeroCountBadgeDoesNotHideTitle() {
         let size = CGSize(width: 53, height: 53)
         let cell = makeCell(size: size, descriptor: descriptor(badge: .count(0)))
@@ -172,10 +172,10 @@ final class TileSmallBadgeIconTests: XCTestCase {
         XCTAssertGreaterThan(titleLabel(of: cell).frame.width, 0)
     }
 
-    // MARK: - Без изменений
+    // MARK: - Unchanged
 
-    /// Малая плитка без бэйджа: подпись и иконка как раньше (E15.1): подпись у
-    /// низа полной ширины, иконка в верхнем углу по направлению чтения.
+    /// A small tile without a badge: the title and icon as before: the title is at
+    /// the bottom at full width, and the icon is in the top corner in reading direction.
     func testSmallTileWithoutBadgeKeepsTitle() {
         for width in screenWidths {
             let side = unit(width)
@@ -193,8 +193,8 @@ final class TileSmallBadgeIconTests: XCTestCase {
         }
     }
 
-    /// Малая плитка с бэйджем, но без иконки: подпись остаётся (иначе плитка
-    /// осталась бы пустой), по-прежнему над рядом бэйджа.
+    /// A small tile with a badge but no icon: the title stays (otherwise the tile
+    /// would be left empty), still above the badge row.
     func testSmallTileWithBadgeButNoIconKeepsTitleAboveBadge() {
         let size = CGSize(width: 53, height: 53)
         for (badgeName, badge) in badges {
@@ -206,8 +206,8 @@ final class TileSmallBadgeIconTests: XCTestCase {
         }
     }
 
-    /// Плитки 2×2 и 4×2 (и 4×4) с бэйджем: подпись есть, иконка в углу — раскладка
-    /// E15.1 не менялась.
+    /// 2×2 and 4×2 (and 4×4) tiles with a badge: the title is present and the icon is in the corner; the
+    /// layout did not change.
     func testMediumWideAndLargeTilesKeepTheirTitleLayout() {
         for width in screenWidths {
             let side = unit(width)
@@ -225,7 +225,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
                     XCTAssertFalse(title.isHidden, label)
                     XCTAssertGreaterThan(title.frame.width, 0, label)
                     XCTAssertFalse(title.frame.intersects(badgeView(of: cell).frame), label)
-                    // Иконка — в верхнем углу (левый в LTR), а не по центру.
+                    // The icon is in the top corner (the left one in LTR), not centered.
                     XCTAssertFalse(icon.isHidden, label)
                     XCTAssertEqual(icon.frame.minX, inset(for: size), accuracy: 0.5, label)
                     XCTAssertEqual(icon.frame.minY, inset(for: size), accuracy: 0.5, label)
@@ -234,8 +234,8 @@ final class TileSmallBadgeIconTests: XCTestCase {
         }
     }
 
-    /// Размер ярлыка в модели решает, а не геометрия: плитка той же ширины,
-    /// но не `.small`, остаётся с подписью.
+    /// The tile's size in the model decides, not geometry: a tile of the same width
+    /// that is not `.small` keeps its title.
     func testDecisionFollowsModelSizeNotGeometry() {
         let size = CGSize(width: 53, height: 53)
         let medium = makeCell(size: size, descriptor: descriptor(badge: .count(3), size: .medium))
@@ -246,29 +246,29 @@ final class TileSmallBadgeIconTests: XCTestCase {
 
     // MARK: - Accessibility
 
-    /// label и value VoiceOver те же, что и до D47: подпись по-прежнему
-    /// озвучивается, число — в value; точка — строка D34 («есть уведомление»).
+    /// The VoiceOver label and value are the same as before D47: the title is still
+    /// spoken, the number is in the value; a dot is the D34 string ("has a notification").
     func testAccessibilityLabelAndValueAreUnchanged() {
         let size = CGSize(width: 53, height: 53)
-        let counted = makeCell(size: size, descriptor: descriptor(title: "Почта", badge: .count(3)))
-        XCTAssertEqual(counted.accessibilityLabel, "Почта")
+        let counted = makeCell(size: size, descriptor: descriptor(title: "Mail", badge: .count(3)))
+        XCTAssertEqual(counted.accessibilityLabel, "Mail")
         XCTAssertEqual(counted.accessibilityValue, "3")
         XCTAssertTrue(counted.isAccessibilityElement)
 
-        let dotted = makeCell(size: size, descriptor: descriptor(title: "Почта", badge: .dot))
-        XCTAssertEqual(dotted.accessibilityLabel, "Почта")
+        let dotted = makeCell(size: size, descriptor: descriptor(title: "Mail", badge: .dot))
+        XCTAssertEqual(dotted.accessibilityLabel, "Mail")
         XCTAssertEqual(dotted.accessibilityValue, TesseraStartScreenStrings.string(.a11yBadgeDot))
 
-        // Те же значения, что у такой же плитки без иконки (подпись на ней видна).
-        let plain = makeCell(size: size, descriptor: descriptor(title: "Почта", badge: .count(3), withIcon: false))
+        // The same values as for an equivalent tile without an icon (its title is visible).
+        let plain = makeCell(size: size, descriptor: descriptor(title: "Mail", badge: .count(3), withIcon: false))
         XCTAssertEqual(plain.accessibilityLabel, counted.accessibilityLabel)
         XCTAssertEqual(plain.accessibilityValue, counted.accessibilityValue)
     }
 
-    // MARK: - Повторное использование и смена размера
+    // MARK: - Reuse and size change
 
-    /// Смена размера малая → средняя возвращает подпись (resize), обратно —
-    /// скрывает; переиспользованная ячейка не наследует чужой признак.
+    /// Changing the size from small to medium brings the title back (resize), and back
+    /// hides it; a reused cell does not inherit another's flag.
     func testResizeAndReuseRestoreTheTitle() {
         let size = CGSize(width: 53, height: 53)
         let cell = makeCell(size: size, descriptor: descriptor(badge: .count(3), size: .small))
@@ -295,23 +295,23 @@ final class TileSmallBadgeIconTests: XCTestCase {
         cell.prepareForReuse()
         XCTAssertFalse(cell.isSmallTile)
 
-        // Папка в такой ячейке снова показывает подпись.
-        let folder = TesseraTileFolder(id: "F", title: "Папка", tiles: [descriptor(badge: .none, size: .small)], size: .small)
+        // A folder in such a cell shows the title again.
+        let folder = TesseraTileFolder(id: "F", title: "Folder", tiles: [descriptor(badge: .none, size: .small)], size: .small)
         cell.configure(with: .folder(folder), liveTileEngine: nil, isVisible: false)
         cell.layoutIfNeeded()
         XCTAssertFalse(titleLabel(of: cell).isHidden)
     }
 
-    // MARK: - Правка
+    // MARK: - Edit mode
 
-    /// В правке бэйдж на 1×1 по-прежнему уходит от стрелки размера (зазор 2 pt),
-    /// иконка остаётся на месте, подпись не возвращается (не прыгает при входе).
+    /// In edit mode the badge on 1×1 still moves away from the resize arrow (a 2 pt gap),
+    /// the icon stays in place, and the title does not come back (it does not jump on entering).
     func testEditModeSlidesBadgeAndKeepsIconAndHiddenTitle() {
         for width in screenWidths {
             let side = unit(width)
             let size = CGSize(width: side, height: side)
             let clearance = TesseraTileEditControlView.badgeClearance(forTileSize: size, maxDiameter: 28)
-            XCTAssertEqual(clearance, 16, accuracy: 0.001, "стрелка 20 pt, выступ 4 pt")
+            XCTAssertEqual(clearance, 16, accuracy: 0.001, "arrow 20 pt, protrusion 4 pt")
             for rtl in [false, true] {
                 for badge in [TesseraTileBadge.count(3), .dot] {
                     let label = "\(Int(width)) pt rtl=\(rtl) \(badge)"
@@ -319,8 +319,8 @@ final class TileSmallBadgeIconTests: XCTestCase {
                     let editing = makeCell(
                         size: size, descriptor: descriptor(badge: badge), rightToLeft: rtl, editClearance: clearance
                     )
-                    XCTAssertEqual(iconView(of: editing).frame, iconView(of: normal).frame, "иконка на месте: \(label)")
-                    XCTAssertTrue(titleLabel(of: editing).isHidden, "подпись не возвращается: \(label)")
+                    XCTAssertEqual(iconView(of: editing).frame, iconView(of: normal).frame, "the icon is in place: \(label)")
+                    XCTAssertTrue(titleLabel(of: editing).isHidden, "the title does not come back: \(label)")
                     XCTAssertEqual(badgeView(of: editing).alpha, 1, accuracy: 0.001, label)
 
                     let arrow = TesseraTileEditControlView.resizeButtonFrame(
@@ -330,16 +330,16 @@ final class TileSmallBadgeIconTests: XCTestCase {
                     )
                     let badgeFrame = badgeView(of: editing).frame
                     let gap = rtl ? badgeFrame.minX - arrow.maxX : arrow.minX - badgeFrame.maxX
-                    XCTAssertEqual(gap, TesseraTileBadgeLayout.editGap, accuracy: 0.01, "зазор до стрелки: \(label)")
-                    XCTAssertFalse(iconView(of: editing).frame.intersects(badgeFrame), "иконка × бэйдж: \(label)")
+                    XCTAssertEqual(gap, TesseraTileBadgeLayout.editGap, accuracy: 0.01, "gap to the arrow: \(label)")
+                    XCTAssertFalse(iconView(of: editing).frame.intersects(badgeFrame), "icon × badge: \(label)")
                 }
             }
         }
     }
 
-    /// Правило скрытия «99+» на 1×1 в правке остаётся (плитка уже 58 pt: 34 pt
-    /// капсулы + 16 pt стрелки + 2 pt зазора + поле 6 pt); иконка при этом на
-    /// месте, подпись скрыта — плитка не пустеет и не прыгает.
+    /// The rule of hiding "99+" on 1×1 in edit mode remains (the tile is only 58 pt: 34 pt
+    /// of capsule + 16 pt of arrow + 2 pt of gap + 6 pt margin); the icon stays
+    /// in place and the title is hidden, so the tile does not go empty and does not jump.
     func testHiddenCapsuleInEditKeepsIconAndNoTitle() {
         for width in screenWidths {
             let side = unit(width)
@@ -350,7 +350,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
             )
             let shouldHide = side < 34 + clearance + TesseraTileBadgeLayout.editGap + inset(for: size)
             XCTAssertEqual(badgeView(of: cell).alpha, shouldHide ? 0 : 1, accuracy: 0.001, "\(Int(width)) pt")
-            XCTAssertTrue(shouldHide, "на всех четырёх ширинах 99+ скрыт: \(Int(width)) pt")
+            XCTAssertTrue(shouldHide, "at all four widths 99+ is hidden: \(Int(width)) pt")
             XCTAssertFalse(iconView(of: cell).isHidden)
             XCTAssertTrue(titleLabel(of: cell).isHidden)
         }
@@ -358,11 +358,11 @@ final class TileSmallBadgeIconTests: XCTestCase {
 
     // MARK: - Dynamic Type
 
-    /// Иконка не выдавливается ни бэйджем, ни подписью на всех категориях
-    /// Dynamic Type: она есть и лежит внутри плитки; до xxxLarge она не
-    /// пересекает бэйдж (на accessibility-размерах счётчик вырастает больше
-    /// самой плитки и ложится поверх иконки — такого бэйджа с иконкой не
-    /// разнести).
+    /// The icon is squeezed out by neither the badge nor the title at all Dynamic Type
+    /// categories: it is present and lies inside the tile; up to xxxLarge it does not
+    /// intersect the badge (at accessibility sizes the counter grows larger than
+    /// the tile itself and lies over the icon; such a badge cannot be
+    /// separated from the icon).
     func testDynamicTypeNeverPushesIconOut() {
         let categories: [UIContentSizeCategory] = [
             .extraSmall, .large, .extraExtraLarge, .extraExtraExtraLarge,
@@ -383,15 +383,15 @@ final class TileSmallBadgeIconTests: XCTestCase {
                         )
                         let icon = iconView(of: cell)
                         let badgeFrame = badgeView(of: cell).frame
-                        XCTAssertFalse(icon.isHidden, "иконка есть: \(label)")
-                        XCTAssertTrue(titleLabel(of: cell).isHidden, "подписи нет: \(label)")
+                        XCTAssertFalse(icon.isHidden, "the icon is present: \(label)")
+                        XCTAssertTrue(titleLabel(of: cell).isHidden, "no title: \(label)")
                         XCTAssertGreaterThanOrEqual(icon.frame.width, TesseraTileBadgeLayout.minimumSmallIconSide, label)
                         XCTAssertTrue(
                             CGRect(origin: .zero, size: size).insetBy(dx: -0.5, dy: -0.5).contains(icon.frame),
-                            "иконка внутри плитки: \(label) \(icon.frame)"
+                            "the icon is inside the tile: \(label) \(icon.frame)"
                         )
                         if intersectionFree.contains(category) {
-                            XCTAssertFalse(icon.frame.intersects(badgeFrame), "иконка × бэйдж: \(label)")
+                            XCTAssertFalse(icon.frame.intersects(badgeFrame), "icon × badge: \(label)")
                         }
                         if category == .large || category == .extraSmall {
                             print("[D47] \(label): icon \(icon.frame.size.width) pt, badge \(badgeFrame.size)")
@@ -402,10 +402,10 @@ final class TileSmallBadgeIconTests: XCTestCase {
         }
     }
 
-    // MARK: - Чистая раскладка
+    // MARK: - Pure layout
 
-    /// Помощник рамки иконки: внутри плитки, по центру, сторона в пределах
-    /// [12, 34] и не больше 45 % меньшей стороны; растёт вместе с плиткой.
+    /// An icon frame helper: inside the tile, centered, with a side within
+    /// [12, 34] and no more than 45 % of the smaller side; it grows with the tile.
     func testSmallTileIconFrameHelper() {
         var previous: CGFloat = 0
         for tile in [CGFloat(40), 50, 53, 55, 57, 60, 75, 100, 180] {
@@ -423,13 +423,13 @@ final class TileSmallBadgeIconTests: XCTestCase {
             )
             XCTAssertEqual(frame.midX, tile / 2, accuracy: 0.5, "\(tile)")
             XCTAssertGreaterThanOrEqual(frame.minY, inset - 0.001, "\(tile)")
-            XCTAssertGreaterThanOrEqual(frame.width, previous, "растёт вместе с плиткой: \(tile)")
+            XCTAssertGreaterThanOrEqual(frame.width, previous, "grows with the tile: \(tile)")
             previous = frame.width
         }
     }
 
-    /// Раскладка бэйджа: `hidesTitle` без бэйджа ничего не меняет; с бэйджем —
-    /// способ `.iconAndBadge` без резерва для подписи и с резервом для иконки.
+    /// Badge layout: `hidesTitle` without a badge changes nothing; with a badge it is
+    /// the `.iconAndBadge` mode, with no reserve for the title and a reserve for the icon.
     func testLayoutHidesTitleOnlyWithBadge() {
         let tile = CGSize(width: 55, height: 55)
         let none = TesseraTileBadgeLayout.make(
@@ -451,10 +451,10 @@ final class TileSmallBadgeIconTests: XCTestCase {
             editClearance: 0, hidesTitle: false
         )
         XCTAssertNotEqual(withTitle.arrangement, .iconAndBadge)
-        XCTAssertEqual(withTitle.frame, capsule.frame, "угол бэйджа тот же")
+        XCTAssertEqual(withTitle.frame, capsule.frame, "the badge corner is the same")
     }
 
-    // MARK: - Живая плитка
+    // MARK: - Live tile
 
     private func liveDescriptor(
         badge: TesseraTileBadge,
@@ -481,12 +481,12 @@ final class TileSmallBadgeIconTests: XCTestCase {
         face.subviews.compactMap { $0 as? UIImageView }.first
     }
 
-    /// Живая плитка 1×1 в ячейке сетки с бэйджем и иконкой стороны: подписи
-    /// (заголовок и подпись) скрыты, иконка видна (хотя плитка уже 80 pt, где
-    /// иконку обычно прячут), бэйдж в углу; без бэйджа и без иконки — как раньше.
+    /// A 1×1 live tile in a grid cell with a badge and a face icon: the labels
+    /// (title and detail) are hidden, the icon is visible (although the tile is only 80 pt, where the
+    /// icon is usually hidden), the badge is in the corner; without a badge and without an icon, as before.
     func testLiveSmallTileShowsIconAndBadgeWithoutText() {
         let size = CGSize(width: 53, height: 53)
-        let face = TesseraLiveTileFace(title: "Погода", detail: "Солнечно", icon: envelope)
+        let face = TesseraLiveTileFace(title: "Weather", detail: "Sunny", icon: envelope)
         for (badgeName, badge) in badges {
             for rtl in [false, true] {
                 let label = "\(badgeName) rtl=\(rtl)"
@@ -500,39 +500,39 @@ final class TileSmallBadgeIconTests: XCTestCase {
                 }
                 let front = faceViews(of: live)[0]
                 XCTAssertTrue(live.isSmallTile, label)
-                XCTAssertTrue(labels(of: front).allSatisfy { $0.isHidden }, "текста нет: \(label)")
+                XCTAssertTrue(labels(of: front).allSatisfy { $0.isHidden }, "no text: \(label)")
                 let liveIcon = icon(of: front)
-                XCTAssertEqual(liveIcon?.isHidden, false, "иконка есть: \(label)")
+                XCTAssertEqual(liveIcon?.isHidden, false, "the icon is present: \(label)")
                 let iconFrame = front.convert(liveIcon?.frame ?? .zero, to: live)
                 XCTAssertGreaterThanOrEqual(iconFrame.width, TesseraTileBadgeLayout.minimumSmallIconSide, label)
-                XCTAssertFalse(iconFrame.intersects(live.badgeView.frame), "иконка × бэйдж: \(label)")
+                XCTAssertFalse(iconFrame.intersects(live.badgeView.frame), "icon × badge: \(label)")
                 XCTAssertTrue(live.bounds.contains(iconFrame), label)
                 XCTAssertEqual(iconFrame.midX, size.width / 2, accuracy: 0.5, label)
-                // Тот же угол и тот же размер иконки, что у статичной ячейки.
+                // The same corner and the same icon size as in the static cell.
                 let staticCell = makeCell(size: size, descriptor: descriptor(badge: badge), rightToLeft: rtl)
-                XCTAssertEqual(iconFrame, iconView(of: staticCell).frame, "как у статичной: \(label)")
-                XCTAssertEqual(live.badgeView.frame, badgeView(of: staticCell).frame, "бэйдж как у статичной: \(label)")
+                XCTAssertEqual(iconFrame, iconView(of: staticCell).frame, "same as the static one: \(label)")
+                XCTAssertEqual(live.badgeView.frame, badgeView(of: staticCell).frame, "the badge is the same as on the static one: \(label)")
             }
         }
     }
 
-    /// Живая плитка 1×1: без бэйджа, без иконки стороны и не-малая плитка
-    /// остаются с текстом; сторона без иконки сохраняет текст, даже если на
-    /// фронте иконка есть.
+    /// A 1×1 live tile: without a badge, without a face icon, and a non-small tile
+    /// keep their text; a face without an icon keeps its text even if the
+    /// front has an icon.
     func testLiveTileKeepsTextWhenRuleDoesNotApply() {
         let size = CGSize(width: 53, height: 53)
-        let withIcon = TesseraLiveTileFace(title: "Погода", icon: envelope)
-        let withoutIcon = TesseraLiveTileFace(title: "Завтра")
+        let withIcon = TesseraLiveTileFace(title: "Weather", icon: envelope)
+        let withoutIcon = TesseraLiveTileFace(title: "Tomorrow")
 
-        // Без бэйджа.
+        // Without a badge.
         let noBadge = makeCell(size: size, descriptor: liveDescriptor(badge: .none, front: withIcon))
         XCTAssertTrue(labels(of: faceViews(of: liveView(of: noBadge))[0]).contains { !$0.isHidden })
 
-        // Бэйдж есть, иконки у стороны нет.
+        // There is a badge, the face has no icon.
         let noIcon = makeCell(size: size, descriptor: liveDescriptor(badge: .count(3), front: withoutIcon))
         XCTAssertTrue(labels(of: faceViews(of: liveView(of: noIcon))[0]).contains { !$0.isHidden })
 
-        // Фронт с иконкой, бэк без: фронт без текста, бэк с текстом.
+        // Front with an icon, back without: the front has no text, the back has text.
         let mixed = makeCell(
             size: size,
             descriptor: liveDescriptor(badge: .count(3), front: withIcon, back: withoutIcon)
@@ -541,7 +541,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
         XCTAssertTrue(labels(of: faces[0]).allSatisfy { $0.isHidden })
         XCTAssertTrue(labels(of: faces[1]).contains { !$0.isHidden })
 
-        // Не малая плитка (2×2) с бэйджем и иконкой: прежний текстовый layout.
+        // A non-small tile (2×2) with a badge and an icon: the previous text layout.
         let medium = makeCell(
             size: CGSize(width: 114, height: 114),
             descriptor: liveDescriptor(badge: .count(3), front: withIcon, size: .medium)
@@ -550,22 +550,22 @@ final class TileSmallBadgeIconTests: XCTestCase {
         XCTAssertTrue(labels(of: faceViews(of: liveView(of: medium))[0]).contains { !$0.isHidden })
     }
 
-    /// Самостоятельный контейнер вне сетки (`isSmallTile` не выставлен) не
-    /// меняет раскладку: публичное поведение `TesseraLiveTileView` прежнее.
+    /// A standalone container outside the grid (`isSmallTile` not set) does not
+    /// change the layout: the public behavior of `TesseraLiveTileView` is the same.
     func testStandaloneLiveTileViewIsUnchanged() {
         let live = TesseraLiveTileView(frame: CGRect(x: 0, y: 0, width: 53, height: 53))
-        live.setFaces(front: TesseraLiveTileFace(title: "Погода", icon: envelope), back: nil)
+        live.setFaces(front: TesseraLiveTileFace(title: "Weather", icon: envelope), back: nil)
         live.badge = .count(3)
         live.layoutIfNeeded()
         XCTAssertFalse(live.isSmallTile)
         XCTAssertTrue(labels(of: faceViews(of: live)[0]).contains { !$0.isHidden })
     }
 
-    // MARK: - Настоящая правка
+    // MARK: - Real edit mode
 
-    /// Сетка в окне, правка включена: Почта 1×1 с бэйджем в ряду малых плиток —
-    /// иконка и бэйдж без подписи; кнопки не закрывают иконку и не пересекаются
-    /// с бэйджем; зазор бэйдж — стрелка 2 pt на ширинах 375/390/402/414.
+    /// A grid in a window with edit mode on: a Mail 1×1 with a badge in a row of small tiles:
+    /// the icon and the badge without a title; the buttons do not cover the icon and do not intersect
+    /// the badge; the badge-arrow gap is 2 pt at widths 375/390/402/414.
     func testRealEditSessionKeepsIconBadgeAndButtonsApart() throws {
         for width in screenWidths {
             for badge in [TesseraTileBadge.count(3), .dot] {
@@ -582,7 +582,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
                 let label = "\(Int(width)) pt \(badge)"
                 let cell = try XCTUnwrap(host.host.cell("mail"), label)
                 cell.layoutIfNeeded()
-                XCTAssertTrue(titleLabel(of: cell).isHidden, "обычный режим, подписи нет: \(label)")
+                XCTAssertTrue(titleLabel(of: cell).isHidden, "normal mode, no title: \(label)")
                 let normalIcon = iconView(of: cell).frame
 
                 host.coordinator.beginEditing()
@@ -592,7 +592,7 @@ final class TileSmallBadgeIconTests: XCTestCase {
                 control.layoutIfNeeded()
                 let tile = try XCTUnwrap(host.host.grid.frame(forItemID: "mail"), label)
 
-                XCTAssertEqual(iconView(of: cell).frame, normalIcon, "иконка не двигается в правке: \(label)")
+                XCTAssertEqual(iconView(of: cell).frame, normalIcon, "the icon does not move in edit mode: \(label)")
                 XCTAssertTrue(titleLabel(of: cell).isHidden, label)
 
                 let iconFrame = cell.contentView.convert(iconView(of: cell).frame, to: host.host.grid)
@@ -601,10 +601,10 @@ final class TileSmallBadgeIconTests: XCTestCase {
                 let unpin = control.convert(control.unpinButtonFrame, to: host.host.grid)
 
                 XCTAssertTrue(tile.insetBy(dx: -0.5, dy: -0.5).contains(iconFrame), label)
-                XCTAssertFalse(iconFrame.intersects(unpin), "иконка × открепление: \(label)")
-                XCTAssertFalse(iconFrame.intersects(resize), "иконка × стрелка: \(label)")
-                XCTAssertFalse(badgeFrame.intersects(resize), "бэйдж × стрелка: \(label)")
-                XCTAssertFalse(badgeFrame.intersects(unpin), "бэйдж × открепление: \(label)")
+                XCTAssertFalse(iconFrame.intersects(unpin), "icon × unpin: \(label)")
+                XCTAssertFalse(iconFrame.intersects(resize), "icon × arrow: \(label)")
+                XCTAssertFalse(badgeFrame.intersects(resize), "badge × arrow: \(label)")
+                XCTAssertFalse(badgeFrame.intersects(unpin), "badge × unpin: \(label)")
                 XCTAssertEqual(resize.minX - badgeFrame.maxX, TesseraTileBadgeLayout.editGap, accuracy: 0.01, label)
                 print("[D47] edit \(label): tile \(tile.size.width), icon \(iconFrame.size.width) pt, " +
                       "badge \(badgeFrame.size), gap to arrow \(resize.minX - badgeFrame.maxX)")

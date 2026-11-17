@@ -2,16 +2,16 @@
 //  TileGridAccessibilityTests.swift
 //  TesseraStartScreenTests
 //
-//  VoiceOver-подписи сетки (E9.8в, волна W3 плана E9/E10).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §4 «Live-плитки»
-//  (фронт/бэк контентной модели) и §9 «Accessibility» (плитка — один элемент:
-//  label — заголовок, value — счётчик бэйджа; ярлык панели раскрытой папки —
-//  тот же путь).
+//  VoiceOver labels of the grid.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §4 "Live tiles"
+//  (front/back of the content model) and §9 "Accessibility" (a tile is a single element:
+//  label is the title, value is the badge count; a tile of an opened folder's panel
+//  takes the same path).
 //
-//  E9.8в: label live-плитки строится из `liveContent.frontFace` — заголовок и
-//  подпись через запятую, — потому что VoiceOver должен читать то, что видно на
-//  лицевой стороне, а не статичный заголовок ярлыка. value по-прежнему берётся
-//  из бэйджа.
+//  The label of a live tile is built from `liveContent.frontFace` — the title and the
+//  detail separated by a comma — because VoiceOver must read what is visible on the
+//  front face, not the tile's static title. The value is still taken
+//  from the badge.
 //
 
 #if canImport(UIKit)
@@ -22,55 +22,55 @@ import XCTest
 
 final class TileGridAccessibilityTests: XCTestCase {
 
-    // MARK: - Live-плитки (E9.8в)
+    // MARK: - Live tiles
 
-    /// Label живой плитки — заголовок и подпись фронта через запятую; value —
-    /// счётчик бэйджа, как у статичной плитки.
+    /// The label of a live tile is the front title and detail separated by a comma; the value is
+    /// the badge count, as for a static tile.
     func testLiveTileLabelComesFromFrontFaceAndValueFromBadge() {
         let live = tesseraTestLiveTile(
             "weather",
-            front: TesseraLiveTileFace(title: "Погода", detail: "Минск, +12°"),
-            back: TesseraLiveTileFace(title: "Прогноз"),
+            front: TesseraLiveTileFace(title: "Weather", detail: "Minsk, +12°"),
+            back: TesseraLiveTileFace(title: "Forecast"),
             badge: .count(3)
         )
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         cell.configure(with: .tile(live), liveTileEngine: nil, isVisible: false)
 
-        XCTAssertEqual(cell.accessibilityLabel, "Погода, Минск, +12°")
+        XCTAssertEqual(cell.accessibilityLabel, "Weather, Minsk, +12°")
         XCTAssertEqual(cell.accessibilityValue, "3")
     }
 
-    /// Фронт без подписи даёт только заголовок; пустой заголовок фронта
-    /// откатывается к заголовку ярлыка.
+    /// A front without a detail gives only the title; an empty front title
+    /// falls back to the tile's title.
     func testLiveTileLabelFallsBackWhenFrontFaceIsEmpty() {
         let withoutDetail = tesseraTestLiveTile(
             "mail",
-            front: TesseraLiveTileFace(title: "Почта"),
+            front: TesseraLiveTileFace(title: "Mail"),
             badge: .dot
         )
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         cell.configure(with: .tile(withoutDetail), liveTileEngine: nil, isVisible: false)
-        XCTAssertEqual(cell.accessibilityLabel, "Почта")
+        XCTAssertEqual(cell.accessibilityLabel, "Mail")
         XCTAssertEqual(
             cell.accessibilityValue,
             TesseraStartScreenStrings.string(.a11yBadgeDot),
-            "D34/E15.4: точка без числа озвучивается строкой «есть уведомление»"
+            "D34: a dot without a number is announced with the \"has a notification\" string"
         )
 
         let emptyFront = TesseraTileDescriptor(
             id: "empty-front",
-            title: "Заголовок ярлыка",
+            title: "Tile title",
             action: {},
             liveContent: TesseraTestLiveProvider(
-                frontFace: TesseraLiveTileFace(title: "", detail: "Деталь")
+                frontFace: TesseraLiveTileFace(title: "", detail: "Detail")
             )
         )
         cell.configure(with: .tile(emptyFront), liveTileEngine: nil, isVisible: false)
-        XCTAssertEqual(cell.accessibilityLabel, "Заголовок ярлыка, Деталь")
+        XCTAssertEqual(cell.accessibilityLabel, "Tile title, Detail")
     }
 
-    /// Статичная плитка без live-контента озвучивается прежним заголовком:
-    /// поведение E9.8в не затрагивает.
+    /// A static tile without live content is announced with its usual title:
+    /// the live-tile behavior does not affect it.
     func testStaticTileLabelUnchanged() {
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         cell.configure(
@@ -82,12 +82,12 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertNil(cell.accessibilityValue)
     }
 
-    /// Ярлык внутри панели раскрытой папки идёт тем же путём: label из фронта
-    /// live-контента, value — из бэйджа.
+    /// A tile inside an opened folder's panel takes the same path: the label comes from the front
+    /// of the live content, the value from the badge.
     func testPanelShortcutLabelComesFromFrontFace() throws {
         let live = tesseraTestLiveTile(
             "in-folder",
-            front: TesseraLiveTileFace(title: "Внутри", detail: "2 новых"),
+            front: TesseraLiveTileFace(title: "Inside", detail: "2 new"),
             badge: .count(2),
             size: .small
         )
@@ -99,12 +99,12 @@ final class TileGridAccessibilityTests: XCTestCase {
         panel.layoutIfNeeded()
 
         let shortcut = try XCTUnwrap(panel.shortcutCells.first)
-        XCTAssertEqual(shortcut.accessibilityLabel, "Внутри, 2 новых")
+        XCTAssertEqual(shortcut.accessibilityLabel, "Inside, 2 new")
         XCTAssertEqual(shortcut.accessibilityValue, "2")
     }
 
-    /// Ярлык панели без live-контента озвучивается заголовком ярлыка, как и
-    /// плитка сетки.
+    /// A panel tile without live content is announced with the tile's title, like
+    /// a grid tile.
     func testPanelShortcutLabelWithoutLiveContent() throws {
         let folder = TesseraTileFolder(
             id: "folder",
@@ -122,9 +122,9 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertNil(shortcut.accessibilityValue)
     }
 
-    // MARK: - Бэйдж-точка (D34, E15.4)
+    // MARK: - Dot badge (D34)
 
-    /// Строка точки: ru «есть уведомление», en «has a notification».
+    /// The dot string is localized in both ru and en ("has a notification" in en).
     func testDotBadgeStringIsLocalizedInBothLanguages() {
         XCTAssertEqual(
             TesseraStartScreenStrings.string(.a11yBadgeDot, language: "ru"),
@@ -136,7 +136,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         )
     }
 
-    /// `.dot` озвучивается строкой, label не меняется, число и `.none` — как раньше.
+    /// `.dot` is announced as a string, the label does not change, a number and `.none` — as before.
     func testStaticTileValueForDotCountAndNone() {
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
@@ -147,7 +147,7 @@ final class TileGridAccessibilityTests: XCTestCase {
             isVisible: false
         )
         XCTAssertEqual(cell.accessibilityValue, dotValue)
-        XCTAssertEqual(cell.accessibilityLabel, "mail", "Label точкой не меняется")
+        XCTAssertEqual(cell.accessibilityLabel, "mail", "The dot does not change the label")
 
         cell.configure(
             with: .tile(tesseraTestTile("mail", badge: .count(7))),
@@ -161,7 +161,7 @@ final class TileGridAccessibilityTests: XCTestCase {
             liveTileEngine: nil,
             isVisible: false
         )
-        XCTAssertNil(cell.accessibilityValue, "Нулевой счётчик не озвучивается")
+        XCTAssertNil(cell.accessibilityValue, "A zero count is not announced")
 
         cell.configure(
             with: .tile(tesseraTestTile("mail", badge: .none)),
@@ -171,7 +171,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertNil(cell.accessibilityValue)
     }
 
-    /// Значение следует за бэйджем: `.dot` → число → `.dot` → `.none`.
+    /// The value follows the badge: `.dot` → number → `.dot` → `.none`.
     func testValueUpdatesWhenBadgeChanges() {
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
@@ -191,8 +191,8 @@ final class TileGridAccessibilityTests: XCTestCase {
         }
     }
 
-    /// 1x1: заголовок скрыт визуально (D47), но label по-прежнему его
-    /// озвучивает, а значение точки добавляется.
+    /// 1x1: the title is visually hidden (D47), but the label still
+    /// announces it, and the dot value is added.
     func testSmallTileKeepsLabelAndAnnouncesDot() {
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
         cell.configure(
@@ -207,8 +207,8 @@ final class TileGridAccessibilityTests: XCTestCase {
         )
     }
 
-    /// Ярлык панели папки и автономная live-плитка озвучивают точку так же;
-    /// текст хоста (`accessibilityText`) приоритетнее строки модуля.
+    /// A folder panel tile and a standalone live tile announce the dot the same way;
+    /// the host text (`accessibilityText`) takes priority over the module string.
     func testPanelShortcutAndStandaloneLiveTileAnnounceDot() throws {
         let dotValue = TesseraStartScreenStrings.string(.a11yBadgeDot)
 
@@ -226,11 +226,11 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertEqual(shortcut.accessibilityValue, dotValue)
 
         let live = TesseraLiveTileView(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
-        live.setFaces(front: TesseraLiveTileFace(title: "Почта"), back: nil)
+        live.setFaces(front: TesseraLiveTileFace(title: "Mail"), back: nil)
         live.badge = .dot
         XCTAssertEqual(live.accessibilityValue, dotValue)
-        live.badgeView.accessibilityText = "Новое письмо"
-        XCTAssertEqual(live.accessibilityValue, "Новое письмо")
+        live.badgeView.accessibilityText = "New message"
+        XCTAssertEqual(live.accessibilityValue, "New message")
         live.badgeView.accessibilityText = nil
         live.badge = .count(5)
         XCTAssertEqual(live.accessibilityValue, "5")
@@ -238,9 +238,9 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertNil(live.accessibilityValue)
     }
 
-    // MARK: - Custom actions папок в режиме редактирования (E11.5)
+    // MARK: - Custom actions of folders in edit mode
 
-    /// Стенд: ярлыки a, b, c, d, e small; папка «Work» из b, папка «Play» из e.
+    /// The test bench: small tiles a, b, c, d, e; folder "Work" from b, folder "Play" from e.
     private func makeActionsHost(
         extraFolders: Int = 0
     ) -> TesseraTestDragHost {
@@ -273,8 +273,8 @@ final class TileGridAccessibilityTests: XCTestCase {
         String(format: TesseraStartScreenStrings.string(.a11yActionMoveToFolderFormat), title)
     }
 
-    /// Ярлык на сетке получает «Добавить в папку <название>» по одному на
-    /// папку; действие кладёт ярлык в папку через координатор (делегат получает
+    /// A tile on the grid gets "Add to folder <title>", one per folder; the action
+    /// puts the tile into the folder through the coordinator (the delegate receives
     /// `didAdd`).
     func testGridTileGetsAddToFolderActionPerFolder() throws {
         let host = makeActionsHost()
@@ -295,7 +295,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertFalse(host.gridIDs.contains("a"))
     }
 
-    /// У плитки-папки новых действий нет.
+    /// A folder tile has no new actions.
     func testFolderTileHasNoFolderActions() throws {
         let host = makeActionsHost()
         host.coordinator.beginEditing()
@@ -306,8 +306,8 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertFalse(names.contains(TesseraStartScreenStrings.string(.a11yActionRemoveFromFolder)))
     }
 
-    /// Отказ функции одобрения: действие возвращает `false`, модель не
-    /// меняется, делегат получает `didFailGrouping`.
+    /// A refusal from the approval function: the action returns `false`, the model does not
+    /// change, the delegate receives `didFailGrouping`.
     func testAddToFolderActionDeniedByApproval() throws {
         let host = makeActionsHost()
         host.coordinator.beginEditing()
@@ -319,7 +319,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertEqual(host.storeIDs, before)
     }
 
-    /// Не больше `maxFolderActions` пунктов «в папку» на ярлык.
+    /// No more than `maxFolderActions` "to folder" items per tile.
     func testAddToFolderActionsAreCapped() {
         let host = makeActionsHost(extraFolders: 8)
         host.coordinator.beginEditing()
@@ -328,8 +328,8 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertEqual(addNames.count, TesseraTileEditCoordinator.maxFolderActions)
     }
 
-    /// Новая папка появляется в действиях уже настроенных ячеек (подпись
-    /// действий включает состав папок).
+    /// A new folder appears in the actions of already configured cells (the action
+    /// label includes the folder composition).
     func testActionsRefreshWhenFolderIsCreated() throws {
         let host = makeActionsHost()
         host.coordinator.beginEditing()
@@ -342,7 +342,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         })
     }
 
-    /// Ярлыки панели в edit: «Убрать из папки» и «Переместить в папку <другая>».
+    /// Panel tiles in edit mode: "Remove from folder" and "Move to folder <other>".
     private func openPanel(_ host: TesseraTestDragHost, folderID: AnyHashable) throws -> TesseraFolderPanelCell {
         host.coordinator.beginEditing()
         let folder = try XCTUnwrap(host.folders.first { $0.id == folderID })
@@ -350,17 +350,17 @@ final class TileGridAccessibilityTests: XCTestCase {
         host.host.layout()
         XCTAssertTrue(host.waitUntil {
             host.host.panelCell(folderID: folderID)?.shortcutCells.first?.accessibilityCustomActions != nil
-        }, "Действия ярлыков панели выставлены отложенной сверкой")
+        }, "The panel tiles' actions are set by the deferred reconciliation")
         return try XCTUnwrap(host.host.panelCell(folderID: folderID))
     }
 
-    /// «Убрать из папки» выносит ярлык на рабочий стол на первую свободную ячейку
-    /// после папки (E14.5: порядок чтения по ячейкам).
+    /// "Remove from folder" takes a tile out to the desktop, to the first free cell
+    /// after the folder (reading order by cells).
     func testPanelShortcutRemoveFromFolderAction() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
             prepare: { store, columns in
-                // D45: в «Work» три ярлыка — после ухода одного папка остаётся.
+                // D45: "Work" has three tiles — after one leaves, the folder remains.
                 if let folder = store.createFolder(withTile: "b", title: "Work", columns: columns) {
                     _ = store.addToFolder("c", folderID: folder.id, columns: columns)
                     _ = store.addToFolder("d", folderID: folder.id, columns: columns)
@@ -377,7 +377,7 @@ final class TileGridAccessibilityTests: XCTestCase {
             [
                 TesseraStartScreenStrings.string(.a11yActionRemoveFromFolder),
                 TesseraStartScreenStrings.string(.a11yActionUnpin),
-                // E16.1: средний ярлык панели можно сдвинуть в обе стороны.
+                // The middle panel tile can be moved in both directions.
                 TesseraStartScreenStrings.string(.a11yActionMoveEarlier),
                 TesseraStartScreenStrings.string(.a11yActionMoveLater),
                 moveName("Play"),
@@ -391,14 +391,14 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertGreaterThan(
             order.firstIndex(of: "c") ?? -1,
             order.firstIndex(of: work) ?? Int.max,
-            "Ярлык встаёт после папки в порядке чтения"
+            "A tile lands after the folder in reading order"
         )
         let workCell = try XCTUnwrap(host.store.placement(of: work))
         let cCell = try XCTUnwrap(host.store.placement(of: "c"))
-        XCTAssertTrue(TesseraTileGridPlacement.isReadingOrdered(workCell, before: cCell), "Ячейка — после ячейки папки")
+        XCTAssertTrue(TesseraTileGridPlacement.isReadingOrdered(workCell, before: cCell), "The cell is after the folder's cell")
     }
 
-    /// «Переместить в папку <другая>» переносит ярлык панели в другую папку.
+    /// "Move to folder <other>" moves a panel tile to another folder.
     func testPanelShortcutMoveToFolderAction() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) },
@@ -420,7 +420,7 @@ final class TileGridAccessibilityTests: XCTestCase {
         XCTAssertEqual(host.folders.first { $0.id == work }?.tiles.map { $0.id }, ["b", "d"] as [AnyHashable])
     }
 
-    /// Выход из edit снимает действия и с ячеек сетки, и с ярлыков панели.
+    /// Leaving edit mode removes the actions from both grid cells and panel tiles.
     func testEndEditingClearsFolderActions() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c"].map { tesseraTestTile($0, size: .small) },

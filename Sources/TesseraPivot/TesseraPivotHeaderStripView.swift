@@ -2,37 +2,36 @@
 //  TesseraPivotHeaderStripView.swift
 //  TesseraPivot
 //
-//  Лента заголовков пивота: горизонтальный UICollectionView + отдельный индикатор.
-//  Контракт: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (TesseraPivotHeaderStripView —
-//  «UICollectionView заголовков + индикатор», режим ленты по ширине контента или
-//  равные ширины), §4 «Математика ядра» (индикатор интерполируется между
-//  центрами заголовков; окраска — по расстоянию от `t`; автоцентрирование —
-//  только если лента переполнена), §5 «Синхронизация ленты и пейджера» (один
-//  источник истины и один писатель contentOffset), §7 «Производительность»
-//  (переиспользование ячеек; в горячем пути только frame/transform/alpha, без
-//  reloadData и layout), §8 «Accessibility» (Dynamic Type, RTL, VoiceOver).
-//  Задача плана: E2.2.
+//  The pivot header strip: a horizontal UICollectionView + a separate indicator.
+//  Contract: docs/PIVOT-IOS-DESIGN.md (architecture: TesseraPivotHeaderStripView is a
+//  UICollectionView of headers + an indicator, with a strip mode of content width or
+//  equal widths; core math: the indicator is interpolated between
+//  the header centers; coloring by the distance from `t`; auto-centering
+//  only if the strip overflows; synchronizing the strip and the pager: a single
+//  source of truth and a single writer of contentOffset; performance:
+//  cell reuse, and on the hot path only frame/transform/alpha, no
+//  reloadData or layout; accessibility: Dynamic Type, RTL, VoiceOver).
 //
-//  Дисциплина производительности (§4, §7): `apply(progress:)` и
-//  `scrollViewDidScroll` ленты меняют только `transform` индикатора и
-//  цвет/шрифт/alpha уже видимых ячеек. `reloadData`, `invalidateLayout`,
-//  измерение текста и пересборка геометрии выполняются только в layout-проходе
-//  и в сеттерах конфигурации — никогда в горячем пути свайпа.
+//  Performance discipline: `apply(progress:)` and the strip's
+//  `scrollViewDidScroll` change only the indicator's `transform` and the
+//  color/font/alpha of already visible cells. `reloadData`, `invalidateLayout`,
+//  text measurement, and geometry rebuilds happen only in the layout pass
+//  and in the configuration setters, never on the swipe hot path.
 //
 
 #if canImport(UIKit)
 import UIKit
 import TesseraCore
 
-/// Горизонтальная лента заголовков секций с непрерывным индикатором.
+/// A horizontal strip of section headers with a continuous indicator.
 ///
-/// Синхронизация односторонняя (§5): контроллер в `scrollViewDidScroll` пейджера
-/// вызывает ``apply(progress:)``, лента двигает индикатор и перекрашивает
-/// заголовки. Обратной записи нет — лента никогда не трогает `contentOffset`
-/// пейджера; тап лишь сообщает о намерении через ``onSelect``, а переход
-/// выполняет контроллер (единственный писатель, §5).
+/// Synchronization is one-way: in the pager's `scrollViewDidScroll`, the controller
+/// calls ``apply(progress:)``, and the strip moves the indicator and recolors the
+/// headers. There is no write-back: the strip never touches the pager's `contentOffset`;
+/// a tap only reports the intent through ``onSelect``, and the transition is
+/// performed by the controller (the single writer).
 ///
-/// ## Порядок использования
+/// ## Usage
 ///
 /// ```swift
 /// let strip = TesseraPivotHeaderStripView()
@@ -44,50 +43,50 @@ import TesseraCore
 /// strip.inactiveColor = style.inactiveColor
 /// strip.showsIndicator = style.indicatorStyle != .accentText
 /// strip.onSelect = { index in pivot.select(index: index) }
-/// // в scrollViewDidScroll пейджера, на каждом кадре:
+/// // in the pager's scrollViewDidScroll, on every frame:
 /// strip.apply(progress: t)
 /// ```
 ///
-/// ## Режимы ширины (§3)
+/// ## Width modes
 ///
-/// - ``TesseraPivotStyle/StripMode/content`` — ячейка по ширине текста; лента
-///   скроллится, если не помещается;
-/// - ``TesseraPivotStyle/StripMode/fill`` — равные ширины: заголовки делят ширину
-///   ленты поровну, лента не скроллится.
+/// - ``TesseraPivotStyle/StripMode/content``: a cell is as wide as its text; the strip
+///   scrolls if it does not fit;
+/// - ``TesseraPivotStyle/StripMode/fill``: equal widths; the headers share the strip's width
+///   equally, and the strip does not scroll.
 ///
-/// Режим — это запрос вызывающего; лента вправе отступить от `.fill` на крупном
-/// Dynamic Type и на слишком узких ячейках (см. документацию ``mode``), потому
-/// что усечённые до нечитаемого заголовки-кнопки нарушают §8.
+/// The mode is the caller's request; the strip may depart from `.fill` at large
+/// Dynamic Type sizes and on cells that are too narrow (see the documentation of ``mode``), because
+/// header buttons truncated to illegibility break accessibility.
 ///
-/// ## RTL (§8)
+/// ## RTL
 ///
-/// Порядок заголовков задаёт раскладка ленты: в RTL секция `0` оказывается
-/// справа. Индикатор работает в координатах контента и берёт центры из
-/// фактических атрибутов раскладки, поэтому `t` в порядке чтения указывает на
-/// визуально правильный заголовок независимо от того, как UIKit реализует
-/// зеркалирование. Точка контента переводится в координаты ленты через
-/// `convert(_:to:)` — без ручной арифметики на `contentOffset`.
+/// The header order is set by the strip's layout: in RTL, section `0` ends up
+/// on the right. The indicator works in content coordinates and takes centers from the
+/// actual layout attributes, so `t` in reading order points to the
+/// visually correct header regardless of how UIKit implements
+/// mirroring. A content point is converted into strip coordinates through
+/// `convert(_:to:)`, with no manual arithmetic on `contentOffset`.
 ///
 /// ## Accessibility
 ///
-/// - заголовки — кнопки VoiceOver (`.button`, у активного — `.selected`, §8);
-/// - шрифт масштабируется по ``titleFont``/``titleTextStyle`` и пересобирается
-///   при смене категории Dynamic Type;
-/// - в горячем пути не создаётся и не измеряется ни одного шрифта: активный и
-///   неактивный шрифты кешируются на layout-проход.
+/// - the headers are VoiceOver buttons (`.button`, and `.selected` for the active one);
+/// - the font is scaled by ``titleFont``/``titleTextStyle`` and rebuilt
+///   when the Dynamic Type category changes;
+/// - no font is created or measured on the hot path: the active and
+///   inactive fonts are cached per layout pass.
 ///
-/// Все методы — главный поток: UIKit-вью не рассчитана на фоновые вызовы
-/// (docs/CORE-IOS-DESIGN.md §3, «вся работа на главном потоке UI»).
+/// All methods run on the main thread: a UIKit view is not designed for calls from background threads
+/// (docs/CORE-IOS-DESIGN.md: all UI work happens on the main thread).
 public final class TesseraPivotHeaderStripView: UIView {
 
-    // MARK: - Данные
+    // MARK: - Data
 
-    /// Заголовки секций в порядке чтения: индекс `0` — первая секция для
-    /// пользователя независимо от LTR/RTL (§8).
+    /// The section headers in reading order: index `0` is the first section for the
+    /// user regardless of LTR/RTL.
     ///
-    /// Установка перезагружает ячейки (`reloadData`), поэтому в горячем пути
-    /// свайпа менять нельзя. Прогресс зажимается в новый диапазон индексов:
-    /// после смены набора лента не «зависает» за последним заголовком.
+    /// Setting this reloads the cells (`reloadData`), so it must not be changed on the swipe
+    /// hot path. The progress is clamped to the new index range:
+    /// after the set changes, the strip does not "hang" past the last header.
     public var titles: [String] = [] {
         didSet {
             guard titles != oldValue else { return }
@@ -95,19 +94,19 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Режим ширины заголовков (§3).
+    /// The header width mode.
     ///
-    /// Стиль (``TesseraPivotStyle``) хранит запрос пользователя, а лента применяет его
-    /// с поправкой на §8:
-    /// - на accessibility-размерах `.fill` уступает `.content`, если равная
-    ///   ширина меньше ширины самого длинного заголовка — текст не усекается до
-    ///   нечитаемого;
-    /// - `.fill` уступает `.content` и тогда, когда равная ширина меньше
-    ///   ``minimumItemWidth``: заголовок перестаёт быть пригодной для тапа
-    ///   кнопкой.
+    /// The style (``TesseraPivotStyle``) holds the user's request, and the strip applies it
+    /// with these adjustments:
+    /// - at accessibility sizes, `.fill` yields to `.content` if the equal
+    ///   width is less than the width of the longest header, so the text is not truncated to
+    ///   illegibility;
+    /// - `.fill` also yields to `.content` when the equal width is less than
+    ///   ``minimumItemWidth``: the header stops being a button that is
+    ///   usable for tapping.
     ///
-    /// На обычных размерах `.fill` усекает длинные заголовки хвостом
-    /// (`.byTruncatingTail`) — это осознанный компромисс режима «равные ширины».
+    /// At regular sizes, `.fill` truncates long headers at the tail
+    /// (`.byTruncatingTail`); this is a deliberate compromise of the "equal widths" mode.
     public var mode: TesseraPivotStyle.StripMode = .content {
         didSet {
             guard mode != oldValue else { return }
@@ -115,27 +114,27 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Ближайшая к последнему применённому прогрессу секция.
+    /// The section nearest to the last applied progress.
     ///
-    /// Обновляется в ``apply(progress:)``: на середине свайпа «активной» уже
-    /// считается следующая секция. Используется для жирности активного
-    /// заголовка и для accessibility-признака `.selected` (§8).
+    /// Updated in ``apply(progress:)``: in the middle of a swipe, the next section is already
+    /// considered "active". Used for the active header's boldness
+    /// and for the accessibility `.selected` trait.
     public private(set) var selectedIndex: Int = 0
 
-    /// Тап по заголовку: индекс в порядке чтения (§8, RTL).
+    /// A tap on a header: the index in reading order.
     ///
-    /// Лента не меняет выделение и не двигает пейджер сама (§5: один писатель
-    /// `contentOffset`). Контроллер в обработчике выполняет программный переход,
-    /// а выделение вернётся вместе со следующим `apply(progress:)`.
+    /// The strip changes neither the selection nor the pager by itself (the single writer of
+    /// `contentOffset`). In its handler, the controller performs a programmatic transition,
+    /// and the selection returns with the next `apply(progress:)`.
     public var onSelect: ((Int) -> Void)?
 
-    // MARK: - Внешний вид (§3: шрифты/цвета настраиваемые)
+    // MARK: - Appearance (fonts and colors are configurable)
 
-    /// Акцентный цвет: цвет активного заголовка и подчёркивания.
+    /// The accent color: the color of the active header and the underline.
     ///
-    /// Промежуточные оттенки неактивных соседей получаются непрерывной
-    /// интерполяцией от ``inactiveColor`` к этому цвету по расстоянию от `t`
-    /// (§4, «Окраска текста»). По умолчанию `.systemBlue` — дефолт
+    /// The intermediate shades of inactive neighbors are obtained by continuous
+    /// interpolation from ``inactiveColor`` to this color by the distance from `t`
+    /// (the text coloring). The default is `.systemBlue`, the default of
     /// ``TesseraPivotStyle/activeColor``.
     public var activeColor: UIColor = .systemBlue {
         didSet {
@@ -145,7 +144,7 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Цвет неактивного заголовка (§4). По умолчанию `.systemGray` — дефолт
+    /// The color of an inactive header. The default is `.systemGray`, the default of
     /// ``TesseraPivotStyle/inactiveColor``.
     public var inactiveColor: UIColor = .systemGray {
         didSet {
@@ -154,13 +153,13 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Базовый (немасштабированный) шрифт заголовков (§8, «Dynamic Type»).
+    /// The base (unscaled) font of the headers (see Dynamic Type).
     ///
-    /// Компонент сам масштабирует его через `UIFontMetrics(forTextStyle:)` с
-    /// ``titleTextStyle`` и пересобирает при смене категории размера текста.
-    /// Передавать уже масштабированный шрифт нельзя — он будет масштабирован
-    /// повторно; передавайте базовый размер. По умолчанию — системный semibold
-    /// 17 pt, как у ``TesseraPivotStyle/titleFont``.
+    /// The component scales it itself through `UIFontMetrics(forTextStyle:)` with
+    /// ``titleTextStyle`` and rebuilds it when the text size category changes.
+    /// Do not pass an already scaled font: it would be scaled
+    /// again; pass the base size. The default is the system semibold
+    /// 17 pt, like ``TesseraPivotStyle/titleFont``.
     public var titleFont: UIFont = .systemFont(ofSize: 17, weight: .semibold) {
         didSet {
             guard titleFont != oldValue else { return }
@@ -168,8 +167,8 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Текстовый стиль, метрики которого масштабируют ``titleFont`` (§8).
-    /// По умолчанию `.headline` — как у ``TesseraPivotStyle/titleTextStyle``.
+    /// The text style whose metrics scale ``titleFont``.
+    /// The default is `.headline`, like ``TesseraPivotStyle/titleTextStyle``.
     public var titleTextStyle: UIFont.TextStyle = .headline {
         didSet {
             guard titleTextStyle != oldValue else { return }
@@ -177,14 +176,14 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Жирность активного заголовка (§3: «жирность активного»).
+    /// The boldness of the active header.
     ///
-    /// Неактивные заголовки показываются ``titleFont`` как есть, активный — тот
-    /// же шрифт с этой жирностью. По умолчанию `.semibold`: совпадает с
-    /// дефолтным ``TesseraPivotStyle/titleFont``, поэтому «из коробки» акцент передаётся
-    /// цветом, а не скачком ширины текста. Классический WP-контраст получается,
-    /// если задать ``titleFont`` без жирности (`.regular`) — тогда активный
-    /// заголовок станет semibold.
+    /// Inactive headers are shown in ``titleFont`` as is, and the active one in the same
+    /// font with this weight. The default is `.semibold`: it matches the
+    /// default ``TesseraPivotStyle/titleFont``, so out of the box the accent is conveyed
+    /// by color rather than by a jump in text width. The classic Windows Phone contrast is obtained
+    /// by setting ``titleFont`` without weight (`.regular`); then the active
+    /// header becomes semibold.
     public var activeFontWeight: UIFont.Weight = .semibold {
         didSet {
             guard activeFontWeight != oldValue else { return }
@@ -192,11 +191,11 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Радиус «передачи акцента» в единицах прогресса (§4).
+    /// The radius of the "accent handover" in progress units.
     ///
-    /// `1` (по умолчанию) — заголовок на полпути между секциями уже полностью
-    /// неактивен; большее значение подсвечивает и дальних соседей. Отрицательные
-    /// и нулевые значения трактуются как «без размывания» (см.
+    /// `1` (the default) means a header halfway between sections is already fully
+    /// inactive; a larger value also highlights farther neighbors. Negative
+    /// and zero values are treated as "no blurring" (see
     /// ``TesseraPivotHeaderIndicator/blendFactor(distanceFromProgress:span:)``).
     public var highlightSpan: CGFloat = 1 {
         didSet {
@@ -205,11 +204,11 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Показывать подчёркивание под активным заголовком.
+    /// Whether to show the underline under the active header.
     ///
-    /// Для `TesseraPivotStyle.IndicatorStyle.accentText` контроллер выставляет `false`
-    /// (§3: вид индикатора — только акцентный текст). Непрерывная окраска
-    /// заголовков от флага не зависит — она работает всегда (§4).
+    /// For `TesseraPivotStyle.IndicatorStyle.accentText` the controller sets `false`
+    /// (the indicator style is accent text only). The continuous coloring of the
+    /// headers does not depend on the flag: it always works.
     public var showsIndicator: Bool = true {
         didSet {
             guard showsIndicator != oldValue else { return }
@@ -217,9 +216,9 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Горизонтальные отступы ленты: слева/справа от крайних заголовков в режиме
-    /// `.content` (§3). В `.fill` ячейки делят ширину ленты, поэтому внешние
-    /// отступы не применяются.
+    /// The strip's horizontal insets: left/right of the outermost headers in
+    /// `.content` mode. In `.fill` the cells share the strip's width, so the outer
+    /// insets are not applied.
     public var horizontalInset: CGFloat = 16 {
         didSet {
             guard horizontalInset != oldValue else { return }
@@ -227,8 +226,8 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Промежуток между заголовками в точках (§3). В `.fill` он вычитается из
-    /// доступной ширины до деления на число заголовков.
+    /// The spacing between headers in points. In `.fill` it is subtracted from the
+    /// available width before dividing by the number of headers.
     public var interItemSpacing: CGFloat = 20 {
         didSet {
             guard interItemSpacing != oldValue else { return }
@@ -236,8 +235,8 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Горизонтальный отступ текста внутри ячейки: ширина ячейки в `.content`
-    /// равна ширине текста плюс два таких отступа.
+    /// The horizontal inset of the text inside a cell: the cell width in `.content`
+    /// is the text width plus two such insets.
     public var horizontalTextPadding: CGFloat = 8 {
         didSet {
             guard horizontalTextPadding != oldValue else { return }
@@ -245,8 +244,8 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Минимальная ширина ячейки заголовка: тапабельная цель и нижняя граница
-    /// применимости режима `.fill` (§8).
+    /// The minimum width of a header cell: a tappable target and the lower bound of
+    /// where the `.fill` mode is applicable.
     public var minimumItemWidth: CGFloat = 44 {
         didSet {
             guard minimumItemWidth != oldValue else { return }
@@ -254,64 +253,64 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    // MARK: - Состояние
+    // MARK: - State
 
     private let headerLayout: UICollectionViewFlowLayout
     private let collectionView: UICollectionView
 
-    /// Индикатор ленты.
+    /// The strip's indicator.
     ///
-    /// Доступен на уровне модуля (`@testable`), чтобы контрактные тесты E2.7
-    /// могли проверить, что в горячем пути меняется только `transform`;
-    /// в публичную поверхность не входит — геометрией владеет лента.
+    /// Available at module level (`@testable`) so that contract tests
+    /// can verify that only `transform` changes on the hot path;
+    /// it is not part of the public surface: the strip owns the geometry.
     internal private(set) var indicator: TesseraPivotHeaderIndicator
 
-    /// Последний применённый прогресс. Хранится, чтобы перекрашивать заново
-    /// появляющиеся ячейки и повторять положение индикатора при собственной
-    /// прокрутке ленты без обращения к пейджеру.
+    /// The last applied progress. Stored so that newly appearing cells can be recolored
+    /// and the indicator position repeated during the strip's own
+    /// scrolling without asking the pager.
     ///
-    /// Чтение открыто на уровне модуля (`@testable`) — контрактным тестам
-    /// синхронизации; пишет только сама лента.
+    /// Readable at module level (`@testable`) for the synchronization
+    /// contract tests; written only by the strip itself.
     private(set) var lastProgress: CGFloat = 0
 
-    /// Сколько раз лента запускала анимированную доцентровку (`scrollToItem`
-    /// с анимацией).
+    /// How many times the strip started an animated re-centering (`scrollToItem`
+    /// with animation).
     ///
-    /// Только для контрактных тестов модуля (`@testable`): анимация прокрутки
-    /// в тестовом окружении без сцены не исполняется, и по `contentOffset`
-    /// анимированную доцентровку не отличить от мгновенной (E9.6).
+    /// For module contract tests only (`@testable`): a scroll animation
+    /// does not run in a test environment without a scene, and by `contentOffset`
+    /// an animated re-centering cannot be told from an instant one.
     private(set) var animatedCenteringCount = 0
 
-    /// Кеш ширин ячеек и центров в координатах контента. Считается только в
-    /// layout-проходе (§4, §7).
+    /// The cache of cell widths and centers in content coordinates. Computed only in
+    /// the layout pass.
     private var requiredWidthsCache: [CGFloat] = []
     private var contentCenters: [CGFloat] = []
     private var contentWidth: CGFloat = 0
     private var isGeometryValid = false
     private var lastLayoutSize: CGSize = .zero
 
-    /// Направление раскладки коллекции, для которого посчитана геометрия.
+    /// The collection's layout direction for which the geometry was computed.
     ///
-    /// Центры заголовков зависят от направления (в RTL раскладка зеркалит
-    /// ячейки), а размер ленты при смене направления не меняется — поэтому
-    /// одной проверки размера в `layoutSubviews` мало (E9.6).
+    /// Header centers depend on the direction (in RTL the layout mirrors
+    /// the cells), and the strip's size does not change when the direction changes, so
+    /// a size check in `layoutSubviews` alone is not enough.
     private var lastLayoutDirection: UIUserInterfaceLayoutDirection?
 
-    /// Нужно ли после ближайшего layout'а вернуть выделенный заголовок в
-    /// видимую область: поворот/смена ширины или направления раскладки
-    /// сдвигают ячейки относительно сохранённого `contentOffset` (§9, E9.6).
+    /// Whether, after the next layout, the selected header must be returned to
+    /// the visible area: a rotation or a width or layout direction change
+    /// shifts the cells relative to the saved `contentOffset`.
     private var needsSelectionVisibilityRestore = false
 
-    /// Кеш шрифтов: активный/неактивный шрифт пересобирается только при смене
-    /// Dynamic Type или настроек шрифта, а не на каждом кадре свайпа (§7).
+    /// The font cache: the active/inactive font is rebuilt only when
+    /// Dynamic Type or the font settings change, not on every swipe frame.
     private var activeFontCache: UIFont?
     private var inactiveFontCache: UIFont?
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт ленту с пустым набором заголовков.
+    /// Creates a strip with an empty set of headers.
     ///
-    /// - Parameter frame: Начальный кадр; обычно ленту раскладывает контроллер.
+    /// - Parameter frame: The initial frame; usually the controller lays the strip out.
     public override init(frame: CGRect) {
         headerLayout = PivotHeaderFlowLayout()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: headerLayout)
@@ -320,9 +319,9 @@ public final class TesseraPivotHeaderStripView: UIView {
         commonInit()
     }
 
-    /// Создаёт ленту из архива/сториборда.
+    /// Creates a strip from an archive/storyboard.
     ///
-    /// - Parameter coder: Декодер архива.
+    /// - Parameter coder: The archive decoder.
     public required init?(coder: NSCoder) {
         headerLayout = PivotHeaderFlowLayout()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: headerLayout)
@@ -331,10 +330,10 @@ public final class TesseraPivotHeaderStripView: UIView {
         commonInit()
     }
 
-    /// Общая настройка: коллекция заголовков и отдельный слой индикатора (§3, §7).
+    /// Common setup: the headers collection and a separate indicator layer.
     ///
-    /// Индикатор добавлен после коллекции, поэтому всегда выше ячеек; событий он
-    /// не ловит и потому тапы по заголовкам не перекрывает.
+    /// The indicator is added after the collection, so it is always above the cells; it catches
+    /// no events and therefore does not block taps on the headers.
     private func commonInit() {
         backgroundColor = .clear
         clipsToBounds = true
@@ -342,10 +341,10 @@ public final class TesseraPivotHeaderStripView: UIView {
         headerLayout.scrollDirection = .horizontal
         headerLayout.minimumInteritemSpacing = 0
         headerLayout.estimatedItemSize = .zero
-        // §8, RTL: порядок ячеек — это порядок секций в модели, а визуальное
-        // направление задаёт раскладка по `semanticContentAttribute` окружения.
-        // Геометрия индикатора читает фактические атрибуты, поэтому зеркалирование
-        // отдельной веткой не дублируется.
+        // RTL: the cell order is the order of sections in the model, and the visual
+        // direction is set by the layout according to the environment's `semanticContentAttribute`.
+        // The indicator geometry reads the actual attributes, so mirroring
+        // is not duplicated in a separate branch.
         headerLayout.sectionInset = UIEdgeInsets(
             top: 0,
             left: max(horizontalInset, 0),
@@ -372,8 +371,8 @@ public final class TesseraPivotHeaderStripView: UIView {
         addSubview(collectionView)
         addSubview(indicator)
 
-        // §8, Dynamic Type: пересчитать шрифты и ширины при смене категории.
-        // Уведомление приходит на главном потоке после обновления traits.
+        // Dynamic Type: recompute fonts and widths when the category changes.
+        // The notification arrives on the main thread after the traits update.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(contentSizeCategoryDidChange),
@@ -382,20 +381,20 @@ public final class TesseraPivotHeaderStripView: UIView {
         )
     }
 
-    // MARK: - Публичный API синхронизации (§5)
+    // MARK: - Public synchronization API
 
-    /// Применяет прогресс пейджера: двигает индикатор и перекрашивает заголовки.
+    /// Applies the pager's progress: moves the indicator and recolors the headers.
     ///
-    /// Единственная точка входа из `scrollViewDidScroll` пейджера (§5). Внутри —
-    /// только `transform` индикатора и цвет/шрифт/alpha уже видимых ячеек: ни
-    /// `reloadData`, ни `layoutIfNeeded`, ни `invalidateLayout`, ни измерения
-    /// текста (§4, §7). Если лента ещё не разложена, вызов безопасен: прогресс
-    /// запоминается и применится в ближайшем layout-проходе.
+    /// The only entry point from the pager's `scrollViewDidScroll`. Inside it there is
+    /// only the indicator's `transform` and the color/font/alpha of already visible cells: no
+    /// `reloadData`, no `layoutIfNeeded`, no `invalidateLayout`, and no text
+    /// measurement. If the strip has not been laid out yet, the call is safe: the progress
+    /// is remembered and applied in the next layout pass.
     ///
-    /// - Parameter t: Нормализованный по направлению чтения прогресс
-    ///   `contentOffset.x / pageWidth` (§4, ``TesseraRTL/normalizedProgress(_:pageCount:layoutDirection:)``).
-    ///   Значения за пределами диапазона допустимы: индикатор зажимается
-    ///   крайними центрами, «активный» заголовок — крайней секцией.
+    /// - Parameter t: The progress normalized by the reading direction
+    ///   `contentOffset.x / pageWidth` (see ``TesseraRTL/normalizedProgress(_:pageCount:layoutDirection:)``).
+    ///   Values outside the range are allowed: the indicator is clamped
+    ///   to the outermost centers, and the "active" header to the outermost section.
     public func apply(progress t: CGFloat) {
         lastProgress = t.isNaN ? 0 : t
         selectedIndex = nearestIndex(to: lastProgress)
@@ -403,16 +402,16 @@ public final class TesseraPivotHeaderStripView: UIView {
         applyHighlightToVisibleHeaders()
     }
 
-    /// Устанавливает выделение по индексу без прокрутки ленты и без `onSelect`.
+    /// Sets the selection by index without scrolling the strip and without `onSelect`.
     ///
-    /// Используется контроллером для начального состояния, восстановления после
-    /// поворота и программных переходов: это ``apply(progress:)`` с целым `t`.
-    /// Доцентрирование ленты — отдельный вызов
-    /// ``scrollToCenter(index:animated:)`` (§4: лента доцентровывается по
-    /// завершении перехода).
+    /// Used by the controller for the initial state, restoring after
+    /// a rotation, and programmatic transitions: this is ``apply(progress:)`` with an integer `t`.
+    /// Re-centering the strip is a separate call,
+    /// ``scrollToCenter(index:animated:)``: the strip is re-centered when a
+    /// transition completes.
     ///
-    /// - Parameter index: Индекс секции в порядке чтения; зажимается в диапазон
-    ///   существующих заголовков. Пустая лента даёт ``selectedIndex`` `0`.
+    /// - Parameter index: The section index in reading order; clamped to the range of
+    ///   existing headers. An empty strip gives ``selectedIndex`` `0`.
     public func select(index: Int) {
         guard !titles.isEmpty else {
             selectedIndex = 0
@@ -422,23 +421,23 @@ public final class TesseraPivotHeaderStripView: UIView {
         apply(progress: CGFloat(min(max(index, 0), titles.count - 1)))
     }
 
-    /// Доцентровывает ленту так, чтобы заголовок `index` оказался по центру.
+    /// Re-centers the strip so that the header `index` ends up at the center.
     ///
-    /// По §4 — только если лента переполнена **и заголовок за краем** (целиком
-    /// или частично вне видимой области): видимый заголовок ленту не двигает,
-    /// иначе она дёргалась бы на каждом переходе (E9.6). Позиция —
-    /// `.centeredHorizontally`. Если лента не переполнена, а `contentOffset`
-    /// остался ненулевым (например, после поворота в более широкую ориентацию),
-    /// он возвращается к началу без анимации — все заголовки и так видны.
+    /// Only if the strip overflows **and the header is off the edge** (fully
+    /// or partly outside the visible area): a visible header does not move the strip,
+    /// otherwise it would jitter on every transition. The position is
+    /// `.centeredHorizontally`. If the strip does not overflow, but `contentOffset`
+    /// remains non-zero (for example, after a rotation to a wider orientation),
+    /// it returns to the start without animation, since all headers are visible anyway.
     ///
-    /// `animated` — намерение вызывающего, но при Reduce Motion анимация
-    /// отключается принудительно (§8: «прыжок по тапу — без анимации»):
-    /// автоцентрирование — самодвижущаяся анимация, а не повтор жеста, в
-    /// отличие от непрерывного индикатора.
+    /// `animated` is the caller's intent, but with Reduce Motion the animation
+    /// is forcibly disabled (a jump on tap has no animation):
+    /// auto-centering is a self-driven animation, not a repeat of the gesture, unlike
+    /// the continuous indicator.
     ///
     /// - Parameters:
-    ///   - index: Индекс секции в порядке чтения; зажимается в диапазон.
-    ///   - animated: Анимировать ли прокрутку ленты (с поправкой на Reduce Motion).
+    ///   - index: The section index in reading order; clamped to the range.
+    ///   - animated: Whether to animate the strip's scroll (adjusted for Reduce Motion).
     public func scrollToCenter(index: Int, animated: Bool) {
         guard !titles.isEmpty else { return }
 
@@ -463,11 +462,11 @@ public final class TesseraPivotHeaderStripView: UIView {
         )
     }
 
-    /// Заголовок целиком или частично вне видимой области ленты (§4).
+    /// A header fully or partly outside the strip's visible area.
     ///
-    /// Сравнение — в координатах контента коллекции: и фрейм атрибутов, и
-    /// `bounds` (видимый прямоугольник) живут в них, в том числе в RTL.
-    /// Нет атрибутов — считаем «за краем», чтобы не потерять доцентровку.
+    /// The comparison is in the collection's content coordinates: both the attributes' frame and
+    /// `bounds` (the visible rectangle) live in them, including in RTL.
+    /// No attributes means "off the edge", so that re-centering is not lost.
     private func isItemBeyondVisibleEdge(at indexPath: IndexPath) -> Bool {
         guard let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame else {
             return true
@@ -477,8 +476,8 @@ public final class TesseraPivotHeaderStripView: UIView {
         return frame.minX < visible.minX - tolerance || frame.maxX > visible.maxX + tolerance
     }
 
-    /// Непереполненная лента не скроллится: остаточный `contentOffset`
-    /// сбрасывается к началу без анимации.
+    /// A strip that does not overflow does not scroll: a residual `contentOffset`
+    /// is reset to the start without animation.
     private func resetOffsetIfNotOverflowing() {
         let leading = CGPoint(x: -collectionView.adjustedContentInset.left, y: collectionView.contentOffset.y)
         guard abs(collectionView.contentOffset.x - leading.x) > 0.5 else { return }
@@ -487,29 +486,29 @@ public final class TesseraPivotHeaderStripView: UIView {
 
     // MARK: - Layout
 
-    /// Раскладывает коллекцию, пересобирает геометрию ленты и ставит индикатор.
+    /// Lays out the collection, rebuilds the strip geometry, and places the indicator.
     ///
-    /// Единственный layout-проход ленты: здесь допустимы измерение текста,
-    /// `invalidateLayout` и `bounds`/`center` индикатора (§4, §7).
+    /// The strip's only layout pass: text measurement,
+    /// `invalidateLayout`, and the indicator's `bounds`/`center` are allowed here.
     ///
-    /// Геометрия пересобирается при смене размера **и** направления раскладки
-    /// (E9.6): в RTL раскладка зеркалит ячейки, а размер ленты при этом прежний.
-    /// После поворота или смены направления выделенный заголовок возвращается в
-    /// видимую область без анимации (§9 «лента пересоберётся сама»).
+    /// The geometry is rebuilt when the size **or** the layout direction changes
+    /// (in RTL the layout mirrors the cells, while the strip's size stays the same).
+    /// After a rotation or a direction change, the selected header returns to
+    /// the visible area without animation (the strip rebuilds itself).
     public override func layoutSubviews() {
         super.layoutSubviews()
 
         let size = bounds.size
         if size != lastLayoutSize {
-            // Первый layout с ненулевой шириной — не поворот: доцентровку при
-            // первом показе выполняет контроллер.
+            // The first layout with a non-zero width is not a rotation: the controller
+            // performs the re-centering on first display.
             if lastLayoutSize.width > 0 {
                 needsSelectionVisibilityRestore = true
             }
             lastLayoutSize = size
             isGeometryValid = false
-            // Ширины ячеек зависят от ширины ленты, поэтому размеры делегата
-            // нужно перезапросить, а не брать из кеша раскладки.
+            // Cell widths depend on the strip's width, so the delegate's sizes
+            // must be requested again rather than taken from the layout cache.
             collectionView.collectionViewLayout.invalidateLayout()
         }
 
@@ -534,13 +533,13 @@ public final class TesseraPivotHeaderStripView: UIView {
         updateIndicatorPosition()
     }
 
-    /// Смена `semanticContentAttribute` ленты на лету (E9.6).
+    /// A `semanticContentAttribute` change of the strip on the fly.
     ///
-    /// Коллекция — дочерний вид и семантику родителя не наследует (её
-    /// `effectiveUserInterfaceLayoutDirection` берётся из trait-коллекции),
-    /// поэтому атрибут переносится на неё явно, а геометрия помечается
-    /// невалидной: иначе центры остались бы посчитанными для прежнего
-    /// направления и индикатор стоял бы под чужим заголовком.
+    /// The collection is a child view and does not inherit the parent's semantics (its
+    /// `effectiveUserInterfaceLayoutDirection` comes from the collection's traits),
+    /// so the attribute is carried over to it explicitly, and the geometry is marked
+    /// invalid: otherwise the centers would stay computed for the previous
+    /// direction and the indicator would sit under the wrong header.
     public override var semanticContentAttribute: UISemanticContentAttribute {
         didSet {
             guard semanticContentAttribute != oldValue else { return }
@@ -549,9 +548,9 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Смена направления из окружения (trait `layoutDirection`) — та же
-    /// инвалидация, что и при смене семантики (E9.6). Саму пересборку выполняет
-    /// `layoutSubviews`, сверяя направление коллекции с запомненным.
+    /// A direction change from the environment (the `layoutDirection` trait) is the same
+    /// invalidation as a semantics change. The rebuild itself is done by
+    /// `layoutSubviews`, comparing the collection's direction with the remembered one.
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if previousTraitCollection?.layoutDirection != traitCollection.layoutDirection {
@@ -559,11 +558,11 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Синхронизирует отступы раскладки с действующим режимом ширины (§3).
+    /// Synchronizes the layout insets with the effective width mode.
     ///
-    /// В `.fill` внешние отступы ленты не применяются: ячейки делят всю ширину
-    /// (плюс промежутки), иначе суммарная ширина перестала бы совпадать с
-    /// шириной ленты и появился бы ложный скролл.
+    /// In `.fill`, the strip's outer insets are not applied: the cells share the whole width
+    /// (plus the gaps), otherwise the total width would stop matching
+    /// the strip's width and a false scroll would appear.
     private func syncLayoutMetrics() {
         let inset = effectiveHorizontalInset
         let spacing = effectiveItemSpacing
@@ -576,22 +575,22 @@ public final class TesseraPivotHeaderStripView: UIView {
         headerLayout.invalidateLayout()
     }
 
-    // MARK: - Геометрия (только layout-проход)
+    // MARK: - Geometry (layout pass only)
 
-    /// Пересобирает кеш геометрии, если он помечен невалидным.
+    /// Rebuilds the geometry cache if it is marked invalid.
     private func rebuildGeometryIfNeeded() {
         guard !isGeometryValid else { return }
         rebuildGeometry()
     }
 
-    /// Считает центры заголовков в координатах контента (§4).
+    /// Computes the header centers in content coordinates.
     ///
-    /// Источник истины — фактические атрибуты раскладки: они уже учитывают
-    /// направление чтения, отступы и промежутки, поэтому в RTL ничего не нужно
-    /// зеркалить руками. Ручная геометрия (ширины + отступы + промежутки) —
-    /// только запасной вариант для ячеек, которых раскладка ещё не отдала:
-    /// нужный вариант (прямой или зеркальный) определяется сверкой с реальными
-    /// атрибутами, а не догадкой о поведении UIKit в RTL (§8).
+    /// The source of truth is the actual layout attributes: they already account for
+    /// the reading direction, insets, and gaps, so nothing needs to be mirrored by hand in RTL.
+    /// Manual geometry (widths + insets + gaps) is
+    /// only a fallback for cells the layout has not provided yet:
+    /// the right variant (direct or mirrored) is determined by checking against the real
+    /// attributes rather than by guessing UIKit's behavior in RTL.
     private func rebuildGeometry() {
         guard !titles.isEmpty, bounds.width > 0 else {
             contentCenters = []
@@ -600,9 +599,9 @@ public final class TesseraPivotHeaderStripView: UIView {
             return
         }
 
-        // Атрибуты существующих ячеек доступны только после подготовки
-        // раскладки; принудительный проход здесь допустим — это layout, а не
-        // горячий путь свайпа (§4, §7).
+        // The attributes of existing cells are available only after the layout is
+        // prepared; a forced pass is acceptable here because this is layout, not the
+        // swipe hot path.
         collectionView.layoutIfNeeded()
 
         let inset = effectiveHorizontalInset
@@ -628,7 +627,7 @@ public final class TesseraPivotHeaderStripView: UIView {
             ? mirroredCenters
             : directCenters
 
-        // Точные позиции из раскладки: перекрывают расчётные там, где доступны.
+        // Exact positions from the layout: they override the computed ones where available.
         for item in titles.indices {
             let indexPath = IndexPath(item: item, section: 0)
             guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else { continue }
@@ -640,13 +639,13 @@ public final class TesseraPivotHeaderStripView: UIView {
         isGeometryValid = true
     }
 
-    /// Решает, зеркалит ли раскладка заголовки в текущем направлении (§8).
+    /// Decides whether the layout mirrors the headers in the current direction.
     ///
-    /// Сверяет расчётные прямые и зеркальные центры с фактическими атрибутами:
-    /// так решение не зависит от того, как именно UIKit реализует RTL
-    /// (зеркалит ячейки или уводит `contentOffset` в минус). Если раскладка ещё
-    /// не подготовлена, для RTL ожидается зеркалирование — это штатное поведение
-    /// потоковой раскладки; выбор уточнится на следующем layout-проходе.
+    /// Compares the computed direct and mirrored centers with the actual attributes:
+    /// this way the decision does not depend on exactly how UIKit implements RTL
+    /// (mirroring the cells or moving `contentOffset` negative). If the layout is not
+    /// prepared yet, mirroring is expected for RTL: this is the standard behavior
+    /// of the flow layout; the choice is refined on the next layout pass.
     private func shouldMirrorCenters(direct: [CGFloat], mirrored: [CGFloat]) -> Bool {
         guard isRightToLeft else { return false }
 
@@ -668,10 +667,10 @@ public final class TesseraPivotHeaderStripView: UIView {
         return mirroredError < directError
     }
 
-    /// Ширина ячейки заголовка для действующего режима (§3, §8).
+    /// The width of a header cell for the effective mode.
     ///
-    /// В `.content` ширина считается по самому широкому состоянию (активный
-    /// шрифт): при смене жирности текст не прыгает и не обрезается.
+    /// In `.content`, the width is computed for the widest state (the active
+    /// font): when the weight changes, the text neither jumps nor is truncated.
     private func itemWidth(at index: Int) -> CGFloat {
         guard titles.indices.contains(index) else { return 0 }
 
@@ -683,19 +682,19 @@ public final class TesseraPivotHeaderStripView: UIView {
         return requiredWidthsCache[index]
     }
 
-    /// Ширина ячейки в режиме `.fill`: все заголовки делят ширину ленты поровну,
-    /// промежутки вычитаются до деления (§3).
+    /// The cell width in `.fill` mode: all headers share the strip's width equally,
+    /// and the gaps are subtracted before dividing.
     private var fillItemWidth: CGFloat {
         let count = CGFloat(titles.count)
         guard count > 0 else { return 0 }
 
         let available = bounds.width - effectiveItemSpacing * (count - 1)
-        // Не даём ширине схлопнуться в ноль: нулевая ячейка ломает раскладку,
-        // а переполнение ленты обрабатывается как обычный скролл.
+        // Do not let the width collapse to zero: a zero-width cell breaks the layout,
+        // and a strip overflow is handled as ordinary scrolling.
         return max(available / count, 1)
     }
 
-    /// Ширины заголовков в режиме `.content` с учётом Dynamic Type.
+    /// The header widths in `.content` mode, taking Dynamic Type into account.
     private func rebuildRequiredWidthsIfNeeded() {
         guard requiredWidthsCache.count != titles.count else { return }
 
@@ -713,23 +712,23 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Ширина строки в шрифте с округлением вверх: дробные значения дали бы
-    /// обрезанный хвост текста при усечении.
+    /// The string width in a font, rounded up: fractional values would give
+    /// a truncated tail of the text when truncating.
     private func measuredTextWidth(_ title: String, font: UIFont) -> CGFloat {
         (title as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
     }
 
-    /// Действующий режим ширины: запрос вызывающего плюс поправки §8.
+    /// The effective width mode: the caller's request plus the accessibility adjustments.
     private var effectiveMode: TesseraPivotStyle.StripMode {
         guard mode == .fill else { return .content }
         guard titles.count > 1, bounds.width > 0 else { return .fill }
 
         let fillWidth = fillItemWidth
-        // Слишком тесные ячейки — не кнопки: отдаём ширину тексту и скролл.
+        // Cells that are too tight are not buttons: give the width to the text and scroll.
         guard fillWidth >= max(minimumItemWidth, 1) else { return .content }
 
-        // На обычных размерах усечение хвоста допустимо, на accessibility —
-        // нет: текст заголовка не должен теряться (§8).
+        // At regular sizes, truncating the tail is acceptable, and at accessibility sizes
+        // it is not: the header text must not be lost.
         guard isAccessibilityTextSize else { return .fill }
 
         rebuildRequiredWidthsIfNeeded()
@@ -753,20 +752,20 @@ public final class TesseraPivotHeaderStripView: UIView {
         isGeometryValid && contentWidth > bounds.width + 0.5
     }
 
-    /// Направление, в котором раскладка фактически расставляет ячейки, — это
-    /// направление коллекции, а не самой ленты (E9.6).
+    /// The direction in which the layout actually arranges the cells is
+    /// the collection's direction, not the strip's own.
     private var isRightToLeft: Bool {
         collectionView.effectiveUserInterfaceLayoutDirection == .rightToLeft
     }
 
-    // MARK: - Индикатор (§4, §7)
+    // MARK: - Indicator
 
-    /// Ставит индикатор на центр, соответствующий последнему прогрессу.
+    /// Places the indicator at the center corresponding to the last progress.
     ///
-    /// Индикатор — отдельный слой поверх ленты (§7), поэтому точка контента
-    /// переводится в координаты ленты через `convert(_:to:)`: это единственный
-    /// способ не зависеть от того, как UIKit реализует RTL (сдвиг координат или
-    /// отрицательный `contentOffset`). Меняется только `transform` (§4).
+    /// The indicator is a separate layer above the strip, so a content point
+    /// is converted into strip coordinates through `convert(_:to:)`: this is the only
+    /// way to not depend on how UIKit implements RTL (a coordinate shift or
+    /// a negative `contentOffset`). Only `transform` changes.
     private func updateIndicatorPosition() {
         guard isGeometryValid else { return }
 
@@ -786,14 +785,14 @@ public final class TesseraPivotHeaderStripView: UIView {
         indicator.move(toCenterX: centerInStrip.x)
     }
 
-    // MARK: - Шрифты (§8, Dynamic Type)
+    // MARK: - Fonts (Dynamic Type)
 
-    /// Шрифт заголовка для активного/неактивного состояния.
+    /// The header font for the active/inactive state.
     ///
-    /// Базовый шрифт масштабируется метриками ``titleTextStyle``; активный
-    /// дополнительно получает жирность ``activeFontWeight`` через дескриптор,
-    /// чтобы сохранить семейство и размер. Результат кешируется: горячий путь
-    /// свайпа не создаёт шрифтов (§7).
+    /// The base font is scaled by the ``titleTextStyle`` metrics; the active one
+    /// additionally gets the ``activeFontWeight`` weight through a descriptor
+    /// to preserve the family and size. The result is cached: the swipe
+    /// hot path creates no fonts.
     private func headerFont(isActive: Bool) -> UIFont {
         if isActive, let cached = activeFontCache { return cached }
         if !isActive, let cached = inactiveFontCache { return cached }
@@ -821,12 +820,12 @@ public final class TesseraPivotHeaderStripView: UIView {
         return font
     }
 
-    // MARK: - Окраска (§4, «Окраска текста»)
+    // MARK: - Coloring (the text coloring)
 
-    /// Перекрашивает видимые заголовки по их расстоянию от прогресса.
+    /// Recolors the visible headers by their distance from the progress.
     ///
-    /// Только уже существующие ячейки: `reloadData` и создание новых ячеек в
-    /// горячем пути запрещены (§7). Новые ячейки получают состояние в
+    /// Only existing cells: `reloadData` and creating new cells on the
+    /// hot path are forbidden. New cells get their state in
     /// `cellForItemAt`.
     private func applyHighlightToVisibleHeaders() {
         guard !titles.isEmpty else { return }
@@ -841,7 +840,7 @@ public final class TesseraPivotHeaderStripView: UIView {
         }
     }
 
-    /// Применяет к ячейке состояние заголовка `index`.
+    /// Applies the state of the header `index` to a cell.
     private func configure(_ cell: PivotHeaderCell, at index: Int, activeIndex: Int) {
         guard titles.indices.contains(index) else { return }
 
@@ -861,16 +860,16 @@ public final class TesseraPivotHeaderStripView: UIView {
         )
     }
 
-    // MARK: - Инвалидация конфигурации
+    // MARK: - Configuration invalidation
 
-    /// Сбрасывает кеши ширины/шрифтов и просит раскладку пересчитать ячейки.
+    /// Resets the width/font caches and asks the layout to recompute the cells.
     ///
-    /// Вызывается из сеттеров конфигурации и из уведомления Dynamic Type, то
-    /// есть вне горячего пути свайпа (§7).
+    /// Called from the configuration setters and from the Dynamic Type notification, that
+    /// is, off the swipe hot path.
     ///
-    /// - Parameter reloadData: Нужно ли пересоздать ячейки. Шрифты и тексты
-    ///   ячеек обновляются и без `reloadData`, поэтому перезагрузка нужна только
-    ///   при смене шрифта/стиля, но не при смене режима или отступов.
+    /// - Parameter reloadData: Whether the cells must be recreated. The fonts and texts of
+    ///   cells are updated without `reloadData`, so a reload is needed only
+    ///   when the font/style changes, not when the mode or insets change.
     private func invalidateHeaderGeometry(reloadData: Bool) {
         requiredWidthsCache.removeAll(keepingCapacity: true)
         activeFontCache = nil
@@ -885,10 +884,10 @@ public final class TesseraPivotHeaderStripView: UIView {
         applyHighlightToVisibleHeaders()
     }
 
-    /// Перезагружает ленту после смены набора заголовков.
+    /// Reloads the strip after the set of headers changes.
     ///
-    /// Прогресс зажимается в новый диапазон: после удаления секций лента не
-    /// должна указывать на несуществующий заголовок.
+    /// The progress is clamped to the new range: after sections are removed, the strip
+    /// must not point to a nonexistent header.
     private func reloadHeaders() {
         lastProgress = min(max(lastProgress, 0), CGFloat(max(titles.count - 1, 0)))
         selectedIndex = nearestIndex(to: lastProgress)
@@ -903,7 +902,7 @@ public final class TesseraPivotHeaderStripView: UIView {
         setNeedsLayout()
     }
 
-    /// Индекс ближайшей к прогрессу секции, зажатый в диапазон заголовков.
+    /// The index of the section nearest to the progress, clamped to the range of headers.
     private func nearestIndex(to progress: CGFloat) -> Int {
         guard !titles.isEmpty, !progress.isNaN else { return 0 }
 
@@ -912,9 +911,9 @@ public final class TesseraPivotHeaderStripView: UIView {
         return Int(clampedProgress.rounded())
     }
 
-    // MARK: - Уведомления
+    // MARK: - Notifications
 
-    /// Смена категории Dynamic Type: шрифты и ширины пересчитываются (§8).
+    /// A Dynamic Type category change: fonts and widths are recomputed.
     @objc private func contentSizeCategoryDidChange() {
         invalidateHeaderGeometry(reloadData: true)
     }
@@ -924,7 +923,7 @@ public final class TesseraPivotHeaderStripView: UIView {
 
 extension TesseraPivotHeaderStripView: UICollectionViewDataSource {
 
-    /// Число заголовков — по одному на секцию.
+    /// The number of headers: one per section.
     public func collectionView(
         _ collectionView: UICollectionView,
         numberOfItemsInSection section: Int
@@ -932,7 +931,7 @@ extension TesseraPivotHeaderStripView: UICollectionViewDataSource {
         titles.count
     }
 
-    /// Ячейка заголовка с состоянием, соответствующим последнему прогрессу.
+    /// A header cell with the state matching the last progress.
     public func collectionView(
         _ collectionView: UICollectionView,
         cellForItemAt indexPath: IndexPath
@@ -952,7 +951,7 @@ extension TesseraPivotHeaderStripView: UICollectionViewDataSource {
 
 extension TesseraPivotHeaderStripView: UICollectionViewDelegateFlowLayout {
 
-    /// Размер ячейки: высота — вся лента, ширина — по режиму (§3).
+    /// The cell size: the height is the whole strip, the width depends on the mode.
     public func collectionView(
         _ collectionView: UICollectionView,
         layout collectionViewLayout: UICollectionViewLayout,
@@ -966,7 +965,7 @@ extension TesseraPivotHeaderStripView: UICollectionViewDelegateFlowLayout {
         )
     }
 
-    /// Тап по заголовку: сообщает намерение, не меняя состояние ленты (§5).
+    /// A tap on a header: reports the intent without changing the strip's state.
     public func collectionView(
         _ collectionView: UICollectionView,
         didSelectItemAt indexPath: IndexPath
@@ -977,29 +976,29 @@ extension TesseraPivotHeaderStripView: UICollectionViewDelegateFlowLayout {
         onSelect?(indexPath.item)
     }
 
-    /// Собственная прокрутка ленты пользователем: индикатор следует за
-    /// заголовком, к которому «прилип», только трансформом (§4, §7).
+    /// The user's own scrolling of the strip: the indicator follows the
+    /// header it has "snapped" to, by transform only.
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === collectionView else { return }
         updateIndicatorPosition()
     }
 }
 
-// MARK: - Ячейка заголовка
+// MARK: - Header cell
 
-/// Ячейка заголовка ленты.
+/// A strip header cell.
 ///
-/// Внутренняя деталь: без autolayout и без `intrinsicContentSize`-зависимостей,
-/// чтобы смена шрифта и цвета в горячем пути не запускала layout-проход (§4, §7).
-/// Размер задаёт делегат ленты, текст центрируется в `contentView`.
+/// An internal detail: no autolayout and no `intrinsicContentSize` dependencies,
+/// so that changing the font and color on the hot path does not trigger a layout pass.
+/// The size is set by the strip's delegate, and the text is centered in `contentView`.
 private final class PivotHeaderCell: UICollectionViewCell {
 
     static let reuseIdentifier = "PivotHeaderCell"
 
     private let titleLabel = UILabel()
 
-    // Последнее применённое состояние: позволяет пропускать работу, когда
-    // прогресс сдвинулся меньше чем на полпроцента (§7).
+    // The last applied state: lets us skip work when the
+    // progress moved by less than half a percent.
     private var appliedTitle: String?
     private var appliedFont: UIFont?
     private var appliedIsActive: Bool?
@@ -1033,8 +1032,8 @@ private final class PivotHeaderCell: UICollectionViewCell {
         titleLabel.text = nil
     }
 
-    /// Общая настройка: ячейка — кнопка для VoiceOver (§8), подпись — её
-    /// accessibility-label, а не отдельный элемент.
+    /// Common setup: the cell is a button for VoiceOver, and the caption is its
+    /// accessibility label rather than a separate element.
     private func setUp() {
         backgroundColor = .clear
         isAccessibilityElement = true
@@ -1042,27 +1041,27 @@ private final class PivotHeaderCell: UICollectionViewCell {
 
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 1
-        // §8: в `.fill` длинный заголовок усекается хвостом; на обычных размерах
-        // это осознанный компромисс режима равных ширин (см. `mode`).
+        // In `.fill`, a long header is truncated at the tail; at regular sizes
+        // this is a deliberate compromise of the equal-widths mode (see `mode`).
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.isAccessibilityElement = false
         contentView.addSubview(titleLabel)
     }
 
-    /// Применяет состояние заголовка.
+    /// Applies the header state.
     ///
-    /// Вызывается и из `cellForItemAt`, и из горячего пути свайпа, поэтому
-    /// сначала сравнивает состояние с последним применённым и выходит без
-    /// работы, если ничего заметно не изменилось (§7).
+    /// Called both from `cellForItemAt` and from the swipe hot path, so it
+    /// first compares the state with the last applied one and exits without
+    /// doing any work if nothing noticeable changed.
     ///
     /// - Parameters:
-    ///   - title: Текст заголовка.
-    ///   - font: Уже масштабированный шрифт состояния.
-    ///   - isActive: Ближайший ли это к прогрессу заголовок (жирность + `.selected`).
-    ///   - factor: Коэффициент акцента `0...1` из
+    ///   - title: The header text.
+    ///   - font: The already scaled font of the state.
+    ///   - isActive: Whether this is the header nearest to the progress (weight + `.selected`).
+    ///   - factor: The accent coefficient `0...1` from
     ///     ``TesseraPivotHeaderIndicator/blendFactor(distanceFromProgress:span:)``.
-    ///   - activeColor: Цвет полного акцента.
-    ///   - inactiveColor: Цвет неактивного заголовка.
+    ///   - activeColor: The full accent color.
+    ///   - inactiveColor: The color of an inactive header.
     func apply(
         title: String,
         font: UIFont,
@@ -1109,12 +1108,12 @@ private final class PivotHeaderCell: UICollectionViewCell {
         }
     }
 
-    /// Непрерывная интерполяция цвета от неактивного к активному (§4).
+    /// Continuous color interpolation from inactive to active.
     ///
-    /// Цвет создаётся динамическим (`UIColor(dynamicProvider:)`) и разрешает
-    /// исходные цвета в момент отрисовки: системные динамические цвета
-    /// продолжают подстраиваться под светлую/тёмную тему, тогда как
-    /// преждевременное `getRed` зафиксировало бы одну тему навсегда.
+    /// The color is created dynamic (`UIColor(dynamicProvider:)`) and resolves the
+    /// source colors at draw time: system dynamic colors
+    /// keep adapting to the light/dark theme, whereas
+    /// a premature `getRed` would freeze a single theme forever.
     private static func blendedColor(active: UIColor, inactive: UIColor, amount: CGFloat) -> UIColor {
         let blendAmount = min(max(amount, 0), 1)
         if blendAmount <= 0 { return inactive }
@@ -1128,7 +1127,7 @@ private final class PivotHeaderCell: UICollectionViewCell {
                 let activeComponents = resolvedActive.rgbaComponents,
                 let inactiveComponents = resolvedInactive.rgbaComponents
             else {
-                // Нецветовые/шаблонные цвета не смешиваются: отдаём ближайший полюс.
+                // Non-color/template colors are not blended: return the nearest pole.
                 return blendAmount < 0.5 ? resolvedInactive : resolvedActive
             }
 
@@ -1146,31 +1145,31 @@ private final class PivotHeaderCell: UICollectionViewCell {
     }
 }
 
-// MARK: - Раскладка ленты
+// MARK: - Strip layout
 
-/// Потоковая раскладка ленты, зеркалящая заголовки в RTL (§8, E9.6).
+/// A flow layout of the strip that mirrors the headers in RTL.
 ///
-/// У `UICollectionViewFlowLayout` `flipsHorizontallyInOppositeLayoutDirection`
-/// по умолчанию `false`: при направлении, заданном локально
-/// (`semanticContentAttribute`), ячейки не зеркалились, хотя пейджер зеркалит
-/// слоты страниц, — порядок заголовков расходился с направлением свайпа.
-/// Включённый флаг переворачивает систему координат, когда
-/// `effectiveUserInterfaceLayoutDirection` коллекции противоположно
-/// `developmentLayoutDirection` раскладки (LTR). Геометрия индикатора по-прежнему
-/// читает фактические атрибуты, поэтому от способа зеркалирования не зависит.
+/// For `UICollectionViewFlowLayout`, `flipsHorizontallyInOppositeLayoutDirection`
+/// is `false` by default: with a direction set locally
+/// (`semanticContentAttribute`), the cells were not mirrored even though the pager mirrors
+/// the page slots, so the header order diverged from the swipe direction.
+/// The enabled flag flips the coordinate system when the collection's
+/// `effectiveUserInterfaceLayoutDirection` is opposite to the layout's
+/// `developmentLayoutDirection` (LTR). The indicator geometry still
+/// reads the actual attributes, so it does not depend on the mirroring method.
 private final class PivotHeaderFlowLayout: UICollectionViewFlowLayout {
     override var flipsHorizontallyInOppositeLayoutDirection: Bool { true }
 
     override var developmentLayoutDirection: UIUserInterfaceLayoutDirection { .leftToRight }
 }
 
-// MARK: - Компоненты цвета
+// MARK: - Color components
 
 private extension UIColor {
 
-    /// RGBA-компоненты в `0...1`; `nil` для цветов, которые нельзя разложить
-    /// (например, шаблонных). Вызывать только для разрешённого цвета: у
-    /// динамического цвета `getRed` не знает темы.
+    /// RGBA components in `0...1`; `nil` for colors that cannot be decomposed
+    /// (for example, template colors). Call only for a resolved color: a
+    /// dynamic color's `getRed` does not know the theme.
     var rgbaComponents: (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)? {
         var red: CGFloat = 0
         var green: CGFloat = 0

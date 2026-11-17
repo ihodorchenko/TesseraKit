@@ -2,16 +2,16 @@
 //  PanoHeaderTests.swift
 //  TesseraPanoramaTests
 //
-//  Контрактные тесты математики заголовков панорамы (задача E3.7).
-//  Проектный документ: docs/PANORAMA-IOS-DESIGN.md §4 «Геометрия и математика
-//  ядра» («Заголовки: кусочно-линейная интерполяция между ключевыми кадрами
-//  0, 0.5, 1») и §7 «Accessibility и системная интеграция» (Reduce Motion —
-//  параллакс и анимации заголовков отключаются, остаётся статичное состояние).
+//  Contract tests for the panorama header math.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md §4 (geometry and core math:
+//  "Headers: piecewise-linear interpolation between the keyframes
+//  0, 0.5, 1") and §7 (accessibility and system integration: Reduce Motion —
+//  header parallax and animations are disabled, leaving a static state).
 //
-//  Проверяются: чистые `keyframeAlpha`/`keyframeOffset` (ключевые кадры,
-//  линейность между ними, монотонность, симметрия, кламп за пределами,
-//  защитные `NaN`/бесконечности) и поведение слоя заголовков с инжектируемым
-//  провайдером Reduce Motion (заголовки статичны, виден только активный).
+//  Checked: the pure `keyframeAlpha`/`keyframeOffset` (keyframes,
+//  linearity between them, monotonicity, symmetry, clamping outside the range,
+//  defensive `NaN`/infinities) and the header layer's behavior with an injectable
+//  Reduce Motion provider (headers are static, only the active one is visible).
 //
 
 #if canImport(UIKit)
@@ -22,13 +22,13 @@ import UIKit
 
 final class PanoHeaderTests: XCTestCase {
 
-    /// Ширина слоя заголовков для проверок `transform` (§4: `travel = width × 0.3`).
+    /// The header layer width for `transform` checks (§4: `travel = width × 0.3`).
     private let width: CGFloat = 390
 
-    /// Полный размах сдвига при `travelRatio == 0.3` (дефолт стиля слоя).
+    /// The full shift range when `travelRatio == 0.3` (the layer style's default).
     private var travel: CGFloat { width * 0.3 }
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func alpha(_ phase: CGFloat) -> CGFloat {
         TesseraPanoHeaderView.keyframeAlpha(progress: phase)
@@ -38,13 +38,13 @@ final class PanoHeaderTests: XCTestCase {
         TesseraPanoHeaderView.keyframeOffset(progress: phase, travel: travel)
     }
 
-    /// Слой заголовков с принудительным LTR: знак сдвига не зависит от
-    /// системного языка тестового симулятора (§7, «RTL»).
+    /// A header layer with forced LTR: the sign of the shift does not depend on
+    /// the test simulator's system language (§7, RTL).
     ///
-    /// Reduce Motion по умолчанию выключен явно: анимированные контракты не
-    /// должны зависеть от системной настройки машины, на которой идут тесты.
+    /// Reduce Motion is explicitly off by default: animated contracts must not
+    /// depend on the system setting of the machine running the tests.
     private func makeHeader(
-        titles: [String] = ["Один", "Два", "Три"]
+        titles: [String] = ["One", "Two", "Three"]
     ) -> TesseraPanoHeaderView {
         let header = TesseraPanoHeaderView(titles: titles)
         header.semanticContentAttribute = .forceLeftToRight
@@ -54,21 +54,21 @@ final class PanoHeaderTests: XCTestCase {
         return header
     }
 
-    /// Метки в порядке чтения: `rebuildLabels()` добавляет их по порядку titles.
+    /// Labels in reading order: `rebuildLabels()` adds them in the order of titles.
     private func headerLabels(in header: TesseraPanoHeaderView) -> [UILabel] {
         header.subviews.compactMap { $0 as? UILabel }
     }
 
-    // MARK: - keyframeAlpha: ключевые кадры (§4)
+    // MARK: - keyframeAlpha: keyframes (§4)
 
-    /// Ключевые кадры альфы: `0 → 0`, `0.5 → 1`, `1 → 0`.
+    /// The alpha keyframes: `0 → 0`, `0.5 → 1`, `1 → 0`.
     func testAlphaKeyframes() {
         XCTAssertEqual(alpha(0), 0)
         XCTAssertEqual(alpha(0.5), 1)
         XCTAssertEqual(alpha(1), 0)
     }
 
-    /// Между кадрами альфа линейна: `2x` до центра и `2 − 2x` после.
+    /// Between keyframes alpha is linear: `2x` up to the center and `2 − 2x` after it.
     func testAlphaIsLinearBetweenKeyframes() {
         let cases: [(phase: CGFloat, expected: CGFloat)] = [
             (0.1, 0.2),
@@ -85,13 +85,13 @@ final class PanoHeaderTests: XCTestCase {
                 alpha(entry.phase),
                 entry.expected,
                 accuracy: 0.000_001,
-                "альфа на фазе \(entry.phase)"
+                "alpha at phase \(entry.phase)"
             )
         }
     }
 
-    /// Альфа монотонно растёт до центра и монотонно убывает после: заголовок не
-    /// «мигает» на переходе (§4).
+    /// Alpha rises monotonically up to the center and falls monotonically after it: the header does not
+    /// "flicker" on a transition (§4).
     func testAlphaIsMonotonicAroundCenter() {
         var previous = alpha(0)
 
@@ -106,24 +106,24 @@ final class PanoHeaderTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(
                     value,
                     previous - 0.000_001,
-                    "альфа должна расти на фазе \(phase)"
+                    "alpha must rise at phase \(phase)"
                 )
             } else {
                 XCTAssertLessThanOrEqual(
                     value,
                     previous + 0.000_001,
-                    "альфа должна убывать на фазе \(phase)"
+                    "alpha must fall at phase \(phase)"
                 )
             }
             previous = value
         }
     }
 
-    /// За пределами `0...1` фаза зажимается: альфа остаётся 0, включая bounce,
-    /// `NaN` и бесконечности.
+    /// Outside `0...1` the phase is clamped: alpha stays 0, including bounce,
+    /// `NaN`, and infinities.
     func testAlphaClampsOutsideKeyframeRange() {
         for phase: CGFloat in [-1, -0.001, 1.001, 2, 100] {
-            XCTAssertEqual(alpha(phase), 0, accuracy: 0.000_001, "фаза \(phase)")
+            XCTAssertEqual(alpha(phase), 0, accuracy: 0.000_001, "phase \(phase)")
         }
 
         XCTAssertEqual(alpha(.nan), 0)
@@ -131,29 +131,29 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertEqual(alpha(-.infinity), 0)
     }
 
-    /// Альфа симметрична относительно середины: соседние секции проявляются
-    /// одинаково до и после центра (§4).
+    /// Alpha is symmetric about the middle: adjacent sections fade in
+    /// the same way before and after the center (§4).
     func testAlphaIsSymmetricAroundCenter() {
         for delta: CGFloat in [0, 0.1, 0.25, 0.4, 0.5] {
             XCTAssertEqual(
                 alpha(0.5 - delta),
                 alpha(0.5 + delta),
                 accuracy: 0.000_001,
-                "симметрия альфы при отклонении \(delta)"
+                "alpha symmetry at deviation \(delta)"
             )
         }
     }
 
-    // MARK: - keyframeOffset: ключевые кадры (§4)
+    // MARK: - keyframeOffset: keyframes (§4)
 
-    /// Ключевые кадры сдвига: `0 → −travel/2`, `0.5 → 0`, `1 → +travel/2`.
+    /// The shift keyframes: `0 → −travel/2`, `0.5 → 0`, `1 → +travel/2`.
     func testOffsetKeyframes() {
         XCTAssertEqual(offset(0, travel: 100), -50)
         XCTAssertEqual(offset(0.5, travel: 100), 0)
         XCTAssertEqual(offset(1, travel: 100), 50)
     }
 
-    /// Сдвиг линейно интерполируется: `offset = (x − 0.5) × travel`.
+    /// The shift is linearly interpolated: `offset = (x − 0.5) × travel`.
     func testOffsetIsLinearBetweenKeyframes() {
         XCTAssertEqual(offset(0.25, travel: 100), -25, accuracy: 0.000_001)
         XCTAssertEqual(offset(0.4, travel: 100), -10, accuracy: 0.000_001)
@@ -161,8 +161,8 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertEqual(offset(0.75, travel: 100), 25, accuracy: 0.000_001)
     }
 
-    /// За пределами ключевых кадров фаза зажимается, сдвиг не уезжает дальше
-    /// `±travel/2`; `NaN` даёт нулевой сдвиг (защитный контракт метода).
+    /// Outside the keyframes the phase is clamped, and the shift does not go beyond
+    /// `±travel/2`; `NaN` gives a zero shift (the method's defensive contract).
     func testOffsetClampsOutsideKeyframeRange() {
         XCTAssertEqual(offset(-1, travel: 100), -50)
         XCTAssertEqual(offset(2, travel: 100), 50)
@@ -171,21 +171,21 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertEqual(offset(.nan, travel: 100), 0)
     }
 
-    /// Сдвиг антисимметричен относительно центра: уходящая и приходящая метки
-    /// отклоняются в разные стороны одинаково (§4).
+    /// The shift is antisymmetric about the center: the outgoing and incoming labels
+    /// deviate in opposite directions by equal amounts (§4).
     func testOffsetIsAntisymmetricAroundCenter() {
         for delta: CGFloat in [0, 0.1, 0.25, 0.4, 0.5] {
             XCTAssertEqual(
                 offset(0.5 - delta, travel: 100),
                 -offset(0.5 + delta, travel: 100),
                 accuracy: 0.000_001,
-                "антисимметрия сдвига при отклонении \(delta)"
+                "shift antisymmetry at deviation \(delta)"
             )
         }
     }
 
-    /// Знак амплитуды задаёт вызывающий: отрицательный `travel` меняет знак
-    /// сдвига, нулевой — обнуляет его (§4, «RTL»).
+    /// The caller sets the sign of the amplitude: a negative `travel` flips the sign
+    /// of the shift, and a zero one zeroes it (§4, RTL).
     func testOffsetRespectsTravelSignAndZero() {
         XCTAssertEqual(offset(0.75, travel: -100), -25, accuracy: 0.000_001)
         XCTAssertEqual(offset(0.25, travel: -100), 25, accuracy: 0.000_001)
@@ -195,10 +195,10 @@ final class PanoHeaderTests: XCTestCase {
         }
     }
 
-    // MARK: - Применение прогресса к меткам (§4)
+    // MARK: - Applying progress to labels (§4)
 
-    /// На `t = 0.5` обе соседние метки видны с альфой 0.5, третья погашена;
-    /// сдвиги соседей противоположны по знаку (`travel = 390 × 0.3 = 117`).
+    /// At `t = 0.5` both adjacent labels are visible with alpha 0.5 and the third is hidden;
+    /// the neighbors' shifts have opposite signs (`travel = 390 × 0.3 = 117`).
     func testApplyProgressFadesNeighbourHeaders() {
         let header = makeHeader()
         header.apply(progress: 0.5, activeIndex: 0)
@@ -214,8 +214,8 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertEqual(labels[1].transform.tx, travel / 4, accuracy: 0.000_001)
     }
 
-    /// На целых `t` видна ровно одна метка: активная стоит без сдвига, соседи
-    /// полностью прозрачны. Это ключевые кадры 0.5/0/1 через `apply`.
+    /// At whole `t` exactly one label is visible: the active one stands without a shift, and its neighbors
+    /// are fully transparent. These are the 0.5/0/1 keyframes through `apply`.
     func testApplyProgressAtIntegerShowsSingleActiveHeader() {
         let header = makeHeader()
 
@@ -223,16 +223,16 @@ final class PanoHeaderTests: XCTestCase {
         var labels = headerLabels(in: header)
         XCTAssertEqual(labels.map(\.alpha), [0, 1, 0])
         XCTAssertEqual(labels[1].transform, .identity)
-        XCTAssertEqual(header.accessibilityLabel, "Два")
+        XCTAssertEqual(header.accessibilityLabel, "Two")
 
         header.apply(progress: 2, activeIndex: 2)
         labels = headerLabels(in: header)
         XCTAssertEqual(labels.map(\.alpha), [0, 0, 1])
-        XCTAssertEqual(header.accessibilityLabel, "Три")
+        XCTAssertEqual(header.accessibilityLabel, "Three")
     }
 
-    /// Прогресс за границы ленты (bounce) зажимается: крайний заголовок не
-    /// «затухает» при упругом отскоке (§4).
+    /// Progress beyond the strip's bounds (bounce) is clamped: the edge header does not
+    /// "fade out" on the elastic rebound (§4).
     func testApplyProgressClampsOutOfRangeValues() {
         let header = makeHeader()
 
@@ -245,8 +245,8 @@ final class PanoHeaderTests: XCTestCase {
 
     // MARK: - Reduce Motion (§7)
 
-    /// При включённом Reduce Motion заголовки статичны: виден только активный,
-    /// без сдвига и фейдов, независимо от дробного прогресса.
+    /// With Reduce Motion on, headers are static: only the active one is visible,
+    /// with no shift or fades, regardless of fractional progress.
     func testReduceMotionShowsOnlyActiveHeader() {
         let header = makeHeader()
         header.isReduceMotionEnabled = { true }
@@ -260,14 +260,14 @@ final class PanoHeaderTests: XCTestCase {
             XCTAssertEqual(
                 label.transform,
                 .identity,
-                "при Reduce Motion сдвига заголовков быть не должно"
+                "headers must not shift under Reduce Motion"
             )
         }
-        XCTAssertEqual(header.accessibilityLabel, "Два")
+        XCTAssertEqual(header.accessibilityLabel, "Two")
     }
 
-    /// Провайдер читается при каждом `apply`: включение/выключение Reduce Motion
-    /// на лету переключает статичное и анимированное состояние (§7).
+    /// The provider is read on every `apply`: toggling Reduce Motion
+    /// on the fly switches between the static and animated states (§7).
     func testReduceMotionProviderIsReadOnEachApply() {
         let header = makeHeader()
         var reduceMotion = true
@@ -293,15 +293,15 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertTrue(labels.allSatisfy { $0.transform == .identity })
     }
 
-    // MARK: - Цвет активного заголовка (E9.7)
+    // MARK: - Active header color
 
-    /// Акцентная копия метки: единственная `UILabel` внутри метки заголовка.
+    /// The accent copy of a label: the only `UILabel` inside the header label.
     private func accentLabel(of label: UILabel) -> UILabel? {
         label.subviews.compactMap { $0 as? UILabel }.first
     }
 
-    /// Вес акцента — «активность» секции `max(0, 1 − |i − t|)`: совпадает с
-    /// альфой фазы, линейно меняется между целыми `t`.
+    /// The accent weight is the section's "activity" `max(0, 1 − |i − t|)`: it matches
+    /// the phase's alpha and changes linearly between whole `t` values.
     func testActiveColorWeightInterpolatesByProgress() {
         let cases: [(index: Int, t: CGFloat, weight: CGFloat)] = [
             (0, 0, 1), (1, 0, 0), (1, 1, 1),
@@ -314,22 +314,22 @@ final class PanoHeaderTests: XCTestCase {
                 TesseraPanoHeaderView.activeColorWeight(index: entry.index, progress: entry.t),
                 entry.weight,
                 accuracy: 0.000_001,
-                "секция \(entry.index), t = \(entry.t)"
+                "section \(entry.index), t = \(entry.t)"
             )
         }
     }
 
-    /// `activeTextColor` задан: у каждой метки есть акцентная копия этого цвета
-    /// с тем же текстом, её альфа — вес акцента по `t`, а основная метка
-    /// остаётся цвета `textColor`. На целом `t` активный заголовок целиком
-    /// в акценте, на середине перехода — пополам у обоих соседей.
+    /// `activeTextColor` is set: every label has an accent copy of this color
+    /// with the same text, its alpha is the accent weight by `t`, and the main label
+    /// stays `textColor`. At whole `t` the active header is entirely
+    /// in the accent; at the midpoint of a transition, half and half for both neighbors.
     func testActiveColorIsAppliedAndInterpolatedByProgress() throws {
         let header = makeHeader()
         header.style = TesseraPanoHeaderView.Style(textColor: .white, activeTextColor: .systemYellow)
         header.layoutIfNeeded()
 
         let labels = headerLabels(in: header)
-        XCTAssertEqual(labels.count, 3, "акцентные копии не должны быть соседями меток")
+        XCTAssertEqual(labels.count, 3, "accent copies must not be siblings of the labels")
         let accents = try labels.map { try XCTUnwrap(accentLabel(of: $0)) }
         for (label, accent) in zip(labels, accents) {
             XCTAssertEqual(label.textColor, .white)
@@ -351,12 +351,12 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertEqual(accents[0].alpha, 0.75, accuracy: 0.000_001)
         XCTAssertEqual(accents[1].alpha, 0.25, accuracy: 0.000_001)
 
-        // Основная фаза (фейд/сдвиг) не изменилась от добавления акцента.
+        // The main phase (fade/shift) did not change from adding the accent.
         XCTAssertEqual(labels[0].alpha, 0.75, accuracy: 0.000_001)
         XCTAssertEqual(labels[1].alpha, 0.25, accuracy: 0.000_001)
     }
 
-    /// Reduce Motion: акцент у активного заголовка целиком, у остальных — нет.
+    /// Reduce Motion: the active header is fully accented, the others are not.
     func testActiveColorUnderReduceMotionIsStatic() throws {
         let header = makeHeader()
         header.style = TesseraPanoHeaderView.Style(activeTextColor: .systemRed)
@@ -368,8 +368,8 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertEqual(accents.map(\.alpha), [0, 1, 0])
     }
 
-    /// Без `activeTextColor` акцентных копий нет; включение и выключение цвета
-    /// на лету создаёт и убирает их, а смена заголовков пересоздаёт под новый набор.
+    /// Without `activeTextColor` there are no accent copies; turning the color on and off
+    /// on the fly creates and removes them, and changing the titles rebuilds them for the new set.
     func testAccentLabelsFollowStyleAndTitles() {
         let header = makeHeader()
         XCTAssertTrue(headerLabels(in: header).allSatisfy { accentLabel(of: $0) == nil })
@@ -386,8 +386,8 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertTrue(headerLabels(in: header).allSatisfy { accentLabel(of: $0) == nil })
     }
 
-    /// `TesseraPanoramaStyle.headerActiveColor` доходит до слоя заголовков панорамы;
-    /// совпадающий с `headerColor` — акцент не нужен.
+    /// `TesseraPanoramaStyle.headerActiveColor` reaches the panorama's header layer;
+    /// one equal to `headerColor` needs no accent.
     func testPanoramaStyleHeaderActiveColorReachesHeaderLayer() {
         let sections = (0..<3).map { index in
             TesseraPanoramaSection(id: index, title: "S\(index)") { UIViewController() }
@@ -403,10 +403,10 @@ final class PanoHeaderTests: XCTestCase {
         XCTAssertNil(panorama.headerView.style.activeTextColor)
     }
 
-    // MARK: - VoiceOver с заголовка (E9.7)
+    // MARK: - VoiceOver from the header
 
-    /// Трёхпальцевый свайп с фокусом на слое заголовков уходит в обработчик;
-    /// без обработчика слой жест не присваивает.
+    /// A three-finger swipe with focus on the header layer goes to the handler;
+    /// without a handler the layer does not claim the gesture.
     func testAccessibilityScrollIsRoutedToHandler() {
         let header = makeHeader()
         XCTAssertFalse(header.accessibilityScroll(.left))

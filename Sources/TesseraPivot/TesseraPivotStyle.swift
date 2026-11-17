@@ -1,126 +1,126 @@
-// Конфигурация внешнего вида пивота.
-// Проектный документ: docs/PIVOT-IOS-DESIGN.md — §3 «Архитектура»
-// (TesseraPivotStyle — шрифты/цвета заголовков, вид индикатора, режим ленты),
-// §4 «Математика ядра» (непрерывная окраска по расстоянию от t) и
-// §8 «Accessibility и системная интеграция» (Dynamic Type, Reduce Motion, RTL).
+// Appearance configuration of the pivot.
+// Design document: docs/PIVOT-IOS-DESIGN.md (architecture:
+// TesseraPivotStyle holds the header fonts/colors, the indicator style, and the strip mode),
+// core math (continuous coloring by the distance from t), and
+// accessibility and system integration (Dynamic Type, Reduce Motion, RTL).
 
 #if canImport(UIKit)
 import UIKit
 
-/// Внешний вид пивота: шрифт и цвета ленты заголовков, вид индикатора,
-/// режим ширины заголовков и крупный заголовок приложения
-/// (docs/PIVOT-IOS-DESIGN.md §3).
+/// The appearance of the pivot: the font and colors of the header strip, the indicator style,
+/// the header width mode, and the large app title
+/// (see docs/PIVOT-IOS-DESIGN.md).
 ///
-/// Тип — конфиг-структура с дефолтами у всех полей: достаточно создать
-/// `TesseraPivotStyle()`, чтобы получить системный вид. Стиль не хранит состояние и
-/// не зависит от иерархии представлений — это чистый снимок настроек; компонент
-/// читает его при применении и при смене Dynamic Type (§8).
+/// A configuration struct with defaults for every field: creating
+/// `TesseraPivotStyle()` is enough to get the system look. The style holds no state and
+/// does not depend on the view hierarchy; it is a pure snapshot of settings. The component
+/// reads it when applying it and when Dynamic Type changes.
 ///
-/// - Note: Значения читаются на главном потоке: цвета и шрифты — UIKit-объекты.
-/// - Note: Reduce Motion не входит в стиль: это системная настройка, а не
-///   предпочтение оформления. Компонент запрашивает её через
-///   ``TesseraAccessibility/isReduceMotionEnabled`` в момент решения (§8).
+/// - Note: Values are read on the main thread: colors and fonts are UIKit objects.
+/// - Note: Reduce Motion is not part of the style: it is a system setting, not an
+///   appearance preference. The component queries it through
+///   ``TesseraAccessibility/isReduceMotionEnabled`` at the moment of the decision.
 public struct TesseraPivotStyle {
 
-    /// Вид выделения активного заголовка (docs/PIVOT-IOS-DESIGN.md §3).
+    /// How the active header is highlighted (see docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// Выбор влияет только на визуальное выделение; синхронизация ленты и
-    /// пейджера от него не зависит (§5).
+    /// The choice affects only the visual highlight; the synchronization of the strip and
+    /// the pager does not depend on it.
     public enum IndicatorStyle {
-        /// Только подчёркивание под активным заголовком.
+        /// An underline under the active header only.
         case underline
 
-        /// Только акцентный цвет текста: активный заголовок окрашивается в
-        /// ``TesseraPivotStyle/activeColor``, соседние — интерполируются к
-        /// ``TesseraPivotStyle/inactiveColor`` по расстоянию от `t` (§4, «Окраска
-        /// текста»). Отдельного подчёркивания нет.
+        /// An accent text color only: the active header is tinted with
+        /// ``TesseraPivotStyle/activeColor`` and the neighboring ones are interpolated toward
+        /// ``TesseraPivotStyle/inactiveColor`` by the distance from `t` (see the text coloring
+        /// notes in the design document). There is no separate underline.
         case accentText
 
-        /// Подчёркивание и акцентный цвет текста одновременно.
+        /// An underline and an accent text color at the same time.
         case underlineAndText
     }
 
-    /// Режим ширины заголовков в ленте (docs/PIVOT-IOS-DESIGN.md §3).
+    /// The header width mode in the strip (see docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// Отличие от Panorama: заголовки пивота имеют разную ширину, поэтому
-    /// индикатор интерполируется между их центрами, а не по константному шагу
-    /// (§4, «Важная тонкость»).
+    /// A difference from Panorama: pivot headers have different widths, so the
+    /// indicator is interpolated between their centers rather than by a constant step
+    /// (see the important subtlety in the design document).
     public enum StripMode {
-        /// Ширина заголовка — по его тексту; лента прокручивается, если
-        /// заголовки не помещаются.
+        /// The header width follows its text; the strip scrolls if the
+        /// headers do not fit.
         case content
 
-        /// Заголовки делят доступную ширину поровну. При очень крупном
-        /// Dynamic Type компонент вправе отступить от режима (усечение или
-        /// возврат к `.content`), иначе заголовки сольются (§8, «Dynamic Type»);
-        /// сам стиль при этом остаётся запросом пользователя.
+        /// The headers share the available width equally. At very large
+        /// Dynamic Type sizes, the component may depart from the mode (truncation or
+        /// falling back to `.content`), otherwise the headers would run together (see the Dynamic Type notes in the design document);
+        /// the style itself remains the user's request.
         case fill
     }
 
-    /// Базовый шрифт заголовков ленты.
+    /// The base font of the strip headers.
     ///
-    /// По умолчанию — системный semibold 17 pt, то есть базовый размер
-    /// `UIFont.TextStyle.headline`. Это именно базовый, немасштабированный
-    /// шрифт: компонент масштабирует его под текущую категорию Dynamic Type
-    /// через `UIFontMetrics(forTextStyle:)` с ``titleTextStyle`` и пересчитывает
-    /// при изменении категории (docs/PIVOT-IOS-DESIGN.md §8, «Dynamic Type»).
+    /// The default is the system semibold 17 pt, that is, the base size of
+    /// `UIFont.TextStyle.headline`. This is deliberately a base, unscaled
+    /// font: the component scales it for the current Dynamic Type category
+    /// through `UIFontMetrics(forTextStyle:)` with ``titleTextStyle`` and recomputes it
+    /// when the category changes (see the Dynamic Type notes in docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// Если передать уже масштабированный шрифт, он будет масштабирован
-    /// повторно; для точного контроля передавайте базовый размер.
+    /// If you pass an already scaled font, it will be scaled
+    /// again; pass the base size for precise control.
     public var titleFont: UIFont
 
-    /// Текстовый стиль, метрики которого используются для Dynamic Type
-    /// (docs/PIVOT-IOS-DESIGN.md §8, «Dynamic Type»).
+    /// The text style whose metrics are used for Dynamic Type
+    /// (see the Dynamic Type notes in docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// Определяет, как растёт ``titleFont`` при увеличении системного размера
-    /// текста. По умолчанию `.headline` — семантически корректный стиль для
-    /// заголовков ленты.
+    /// Determines how ``titleFont`` grows when the system text size
+    /// increases. The default is `.headline`, a semantically appropriate style for
+    /// strip headers.
     public var titleTextStyle: UIFont.TextStyle
 
-    /// Цвет активного заголовка и индикатора.
+    /// The color of the active header and the indicator.
     ///
-    /// По умолчанию `.systemBlue`. При `.accentText` и `.underlineAndText`
-    /// этот цвет —
-    /// «полюс акцента», к которому интерполируются цвета соседних заголовков
-    /// по расстоянию от `t` (§4, «Окраска текста»).
+    /// The default is `.systemBlue`. With `.accentText` and `.underlineAndText`
+    /// this color is
+    /// the "accent pole" toward which the colors of neighboring headers are interpolated
+    /// by the distance from `t` (see the text coloring notes in the design document).
     public var activeColor: UIColor
 
-    /// Цвет неактивного заголовка.
+    /// The color of an inactive header.
     ///
-    /// По умолчанию `.systemGray`. Промежуточные значения получаются
-    /// интерполяцией между ``activeColor`` и этим цветом (§4).
+    /// The default is `.systemGray`. Intermediate values are obtained by
+    /// interpolating between ``activeColor`` and this color.
     public var inactiveColor: UIColor
 
-    /// Вид выделения активного заголовка. По умолчанию `.underline`.
+    /// How the active header is highlighted. The default is `.underline`.
     public var indicatorStyle: IndicatorStyle
 
-    /// Режим ширины заголовков в ленте. По умолчанию `.content`.
+    /// The header width mode in the strip. The default is `.content`.
     public var stripMode: StripMode
 
-    /// Крупный заголовок приложения над лентой
-    /// (docs/PIVOT-IOS-DESIGN.md §1, «Крупный заголовок приложения»).
+    /// The large app title above the strip
+    /// (see the large app title notes in docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// `nil` — не показывать: компонент занимает экран только лентой и
-    /// контентом, а крупный заголовок может интегрироваться с
-    /// `navigationItem.largeTitle` снаружи (§9, «Заголовок приложения»).
-    /// Строка — встроенный статичный заголовок WP-поведения (§9).
+    /// `nil` means not shown: the component fills the screen with only the strip and
+    /// the content, and the large title can be integrated with
+    /// `navigationItem.largeTitle` from outside (see the app title notes in the design document).
+    /// A string is the built-in static title of the Windows Phone behavior.
     public var appTitle: String?
 
-    /// Создаёт стиль пивота; у всех параметров есть системные дефолты.
+    /// Creates a pivot style; every parameter has a system default.
     ///
     /// - Parameters:
-    ///   - titleFont: базовый (немасштабированный) шрифт заголовков,
-    ///     по умолчанию системный semibold 17 pt.
-    ///   - titleTextStyle: стиль метрик Dynamic Type, по умолчанию `.headline`.
-    ///   - activeColor: цвет активного заголовка и индикатора,
-    ///     по умолчанию `.systemBlue`.
-    ///   - inactiveColor: цвет неактивного заголовка,
-    ///     по умолчанию `.systemGray`.
-    ///   - indicatorStyle: вид выделения активного заголовка,
-    ///     по умолчанию `.underline`.
-    ///   - stripMode: режим ширины заголовков, по умолчанию `.content`.
-    ///   - appTitle: крупный заголовок приложения; `nil` (по умолчанию) —
-    ///     не показывать.
+    ///   - titleFont: The base (unscaled) font of the headers,
+    ///     the system semibold 17 pt by default.
+    ///   - titleTextStyle: The Dynamic Type metrics style, `.headline` by default.
+    ///   - activeColor: The color of the active header and the indicator,
+    ///     `.systemBlue` by default.
+    ///   - inactiveColor: The color of an inactive header,
+    ///     `.systemGray` by default.
+    ///   - indicatorStyle: How the active header is highlighted,
+    ///     `.underline` by default.
+    ///   - stripMode: The header width mode, `.content` by default.
+    ///   - appTitle: The large app title; `nil` (the default) means
+    ///     not shown.
     public init(
         titleFont: UIFont = .systemFont(ofSize: 17, weight: .semibold),
         titleTextStyle: UIFont.TextStyle = .headline,

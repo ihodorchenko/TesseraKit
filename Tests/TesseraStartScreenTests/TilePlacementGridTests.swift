@@ -2,24 +2,24 @@
 //  TilePlacementGridTests.swift
 //  TesseraStartScreenTests
 //
-//  Сетка со снимком, несущим таблицу явных ячеек (E14.3, D30). Проектный
-//  документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и «Отступления
-//  реализации (E14)», п. 51; решения D30–D33 в docs/STATE.md.
+//  A grid with a snapshot carrying a table of explicit cells (D30). Design
+//  document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid" and "Implementation
+//  deviations"; decisions D30–D33 in docs/STATE.md.
 //
-//  Проверяется `TesseraTileGridView`:
-//  - `baseContentFrames(for:placementTable:)` берёт слоты из того же источника,
-//    что раскладка: рамки совпадают с тем, что рисует сетка, — для снимка с
-//    дырами, при откате на упаковку и в RTL;
-//  - раскрытие папки на снимке с дырами: индекс панели считается по ячейкам, строки
-//    ниже полосы сдвигаются без репака;
-//  - дифф снимка: смена одних ячеек (те же элементы в том же порядке) —
-//    изменение раскладки и анимируется как перестановка; тот же снимок кадры не
-//    меняет;
-//  - `TesseraTileStore.snapshot(columns:)` для другой ширины сетки игнорируется (рамки
-//    упаковки); равенство рамок сетки и ячеек модели после операций — в
-//    `TileCellWiringTests` (после E14.6 операции оставляют дыры, и прежнее
-//    сравнение «таблица = упаковка» потеряло смысл);
-//  - магнитные центры без таблицы остаются на упаковке по порядку.
+//  `TesseraTileGridView` is checked:
+//  - `baseContentFrames(for:placementTable:)` takes slots from the same source
+//    as the layout: the frames match what the grid draws, for a snapshot with
+//    holes, when falling back to packing, and in RTL;
+//  - expanding a folder on a snapshot with holes: the panel index is computed from cells, and rows
+//    below the band shift without repacking;
+//  - snapshot diff: a change of cells only (the same items in the same order) is
+//    a layout change and is animated as a reorder; the same snapshot does not change
+//    frames;
+//  - `TesseraTileStore.snapshot(columns:)` for a different grid width is ignored (packing
+//    frames); equality of grid frames and model cells after operations is checked in
+//    `TileCellWiringTests` (operations now leave holes, so the former
+//    "table = packing" comparison lost its meaning);
+//  - magnet centers without a table stay on order-based packing.
 //
 
 #if canImport(UIKit)
@@ -30,7 +30,7 @@ import XCTest
 
 final class TilePlacementGridTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func cell(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
         TesseraTileGridPlacement(row: row, column: column)
@@ -62,7 +62,7 @@ final class TilePlacementGridTests: XCTestCase {
         return grid
     }
 
-    /// Снимок с дырами: a и b в первой строке с зазором, c ниже и правее.
+    /// A snapshot with holes: a and b in the first row with a gap, c below and to the right.
     private func holeSnapshot(columns: Int = 4) -> TesseraTileGridSnapshot {
         TesseraTileGridSnapshot(
             items: [small("a"), small("b"), medium("c")],
@@ -87,17 +87,17 @@ final class TilePlacementGridTests: XCTestCase {
         XCTAssertEqual(lhs.height, rhs.height, accuracy: 0.01, "\(message): h", file: file, line: line)
     }
 
-    /// Рамки сетки по идентификаторам (координаты сетки).
+    /// Grid frames by identifier (grid coordinates).
     private func gridFrames(_ grid: TesseraTileGridView, ids: [AnyHashable]) throws -> [AnyHashable: CGRect] {
         var result: [AnyHashable: CGRect] = [:]
-        for id in ids { result[id] = try XCTUnwrap(grid.frame(forItemID: id), "рамка \(id)") }
+        for id in ids { result[id] = try XCTUnwrap(grid.frame(forItemID: id), "frame \(id)") }
         return result
     }
 
     // MARK: - baseContentFrames
 
-    /// Рамки базовой раскладки совпадают с тем, что рисует сетка, — для снимка с
-    /// дырами; без таблицы они прежние (упаковка), и это другая картинка.
+    /// Base layout frames match what the grid draws, for a snapshot with
+    /// holes; without a table they are the previous ones (packing), which is a different picture.
     func testBaseContentFramesMatchLayoutForSnapshotWithHoles() throws {
         let grid = makeGrid()
         let snapshot = holeSnapshot()
@@ -111,12 +111,12 @@ final class TilePlacementGridTests: XCTestCase {
             assertClose(grid.gridFrame(fromContentFrame: try XCTUnwrap(base[id])), try XCTUnwrap(drawn[id]), "\(id)")
         }
 
-        // Без таблицы — упаковка по порядку: c поднимается к a и b.
+        // Without a table, order-based packing: c moves up next to a and b.
         let packed = try XCTUnwrap(grid.baseContentFrames(for: snapshot.items))
         XCTAssertLessThan(try XCTUnwrap(packed["c"]).minY, try XCTUnwrap(base["c"]).minY)
     }
 
-    /// Негодная таблица: рамки и сетки, и базовой раскладки — упаковка по порядку.
+    /// An invalid table: both the grid's and the base layout's frames are order-based packing.
     func testInvalidTableFallsBackInGridAndBaseFrames() throws {
         let items: [TesseraTileGridItem] = [small("a"), small("b"), medium("c")]
         let broken = TesseraTileGridPlacementTable(
@@ -137,17 +137,17 @@ final class TilePlacementGridTests: XCTestCase {
             assertClose(
                 try XCTUnwrap(grid.frame(forItemID: item.id)),
                 try XCTUnwrap(reference.frame(forItemID: item.id)),
-                "сетка \(item.id)"
+                "grid \(item.id)"
             )
             assertClose(
                 grid.gridFrame(fromContentFrame: try XCTUnwrap(base[item.id])),
                 try XCTUnwrap(reference.frame(forItemID: item.id)),
-                "базовая раскладка \(item.id)"
+                "base layout \(item.id)"
             )
         }
     }
 
-    /// RTL: базовые рамки с дырами совпадают с зеркальной раскладкой сетки.
+    /// RTL: base frames with holes match the mirrored grid layout.
     func testBaseContentFramesMatchLayoutInRightToLeft() throws {
         let grid = makeGrid(rightToLeft: true)
         let snapshot = holeSnapshot()
@@ -162,15 +162,15 @@ final class TilePlacementGridTests: XCTestCase {
                 "\(item.id)"
             )
         }
-        // Логическая колонка 0 в RTL — правая: a правее b.
+        // Logical column 0 in RTL is the right one: a is to the right of b.
         XCTAssertGreaterThan(try XCTUnwrap(base["a"]).minX, try XCTUnwrap(base["b"]).minX)
     }
 
-    // MARK: - Раскрытие папки
+    // MARK: - Folder expansion
 
-    /// Раскрытие папки на снимке с дырами: индекс панели по ячейкам, строки
-    /// ниже полосы сдвинуты на панель без репака; магнит при открытой папке
-    /// по-прежнему пуст.
+    /// Expanding a folder on a snapshot with holes: the panel index is by cells, rows
+    /// below the band are shifted by the panel without repacking; the magnet with an open folder
+    /// is still empty.
     func testOpeningFolderKeepsHolesBelowBand() throws {
         let folder = tesseraTestFolder("f", tileCount: 6)
         let items: [TesseraTileGridItem] = [.folder(folder), small("s"), small("x"), small("y")]
@@ -188,7 +188,7 @@ final class TilePlacementGridTests: XCTestCase {
         grid.openFolder(folder, animated: false)
         layoutGrid(grid)
 
-        // Панель — после s (последняя плитка полосы), до x и y.
+        // The panel goes after s (the last band tile), before x and y.
         let panelIndex = try XCTUnwrap(grid.displayItems.firstIndex { $0.isFolderPanel })
         XCTAssertEqual(
             panelIndex,
@@ -202,22 +202,22 @@ final class TilePlacementGridTests: XCTestCase {
 
         let openX = try XCTUnwrap(grid.frame(forItemID: "x"))
         let openY = try XCTUnwrap(grid.frame(forItemID: "y"))
-        XCTAssertEqual(openX.minY - closedX.minY, openY.minY - closedY.minY, accuracy: 0.01, "оба сдвинуты одинаково")
-        XCTAssertGreaterThan(openX.minY - closedX.minY, 0, "сдвиг вниз на панель")
-        XCTAssertEqual(openY.minY - openX.minY, closedY.minY - closedX.minY, accuracy: 0.01, "дыра между x и y сохранена")
-        XCTAssertTrue(grid.magnetSlotCenters(for: .small).isEmpty, "при открытой папке магнит пуст")
+        XCTAssertEqual(openX.minY - closedX.minY, openY.minY - closedY.minY, accuracy: 0.01, "both are shifted equally")
+        XCTAssertGreaterThan(openX.minY - closedX.minY, 0, "shifted down by the panel")
+        XCTAssertEqual(openY.minY - openX.minY, closedY.minY - closedX.minY, accuracy: 0.01, "the hole between x and y is preserved")
+        XCTAssertTrue(grid.magnetSlotCenters(for: .small).isEmpty, "the magnet is empty with an open folder")
 
         grid.closeFolder(animated: false)
         layoutGrid(grid)
-        assertClose(try XCTUnwrap(grid.frame(forItemID: "x")), closedX, "x вернулась")
-        assertClose(try XCTUnwrap(grid.frame(forItemID: "y")), closedY, "y вернулась")
+        assertClose(try XCTUnwrap(grid.frame(forItemID: "x")), closedX, "x came back")
+        assertClose(try XCTUnwrap(grid.frame(forItemID: "y")), closedY, "y came back")
     }
 
-    // MARK: - Дифф снимка
+    // MARK: - Snapshot diff
 
-    /// Смена одних ячеек (те же элементы в том же порядке) — изменение
-    /// раскладки: идёт веткой «тот же состав» с batch-анимацией (не кроссфейд и
-    /// не мгновенно) и доезжает до новых рамок.
+    /// A change of cells only (the same items in the same order) is a layout
+    /// change: it takes the "same composition" branch with a batch animation (not a crossfade and
+    /// not instant) and arrives at the new frames.
     func testCellOnlyChangeIsDetectedAndAnimatesLikeReorder() throws {
         let host = TesseraTestWindowedGrid(columns: 4)
         host.grid.isReduceMotionEnabled = { false }
@@ -237,23 +237,23 @@ final class TilePlacementGridTests: XCTestCase {
         )
         host.grid.update(snapshot: moved, animated: true)
 
-        XCTAssertFalse(host.grid.didApplyLastSnapshotWithCrossfade, "переезд, а не кроссфейд")
-        XCTAssertFalse(host.grid.didApplyLastSnapshotWithoutAnimation, "переезд анимируется")
+        XCTAssertFalse(host.grid.didApplyLastSnapshotWithCrossfade, "a move, not a crossfade")
+        XCTAssertFalse(host.grid.didApplyLastSnapshotWithoutAnimation, "the move is animated")
 
         let arrived = host.waitUntil(timeout: 3) {
             guard let frame = host.grid.frame(forItemID: "c") else { return false }
             return frame.minY > beforeC.minY + 1
         }
-        XCTAssertTrue(arrived, "c доехала до новой ячейки")
+        XCTAssertTrue(arrived, "c arrived at the new cell")
         host.layout()
         let afterC = try XCTUnwrap(host.grid.frame(forItemID: "c"))
         XCTAssertGreaterThan(afterC.minY, beforeC.minY)
         XCTAssertEqual(afterC.minX, try XCTUnwrap(host.grid.baseContentFrames(for: moved.items, placementTable: moved.placementTable)?["c"]).minX, accuracy: 0.01)
-        assertClose(try XCTUnwrap(host.grid.frame(forItemID: "a")), beforeA, "a не двигалась")
+        assertClose(try XCTUnwrap(host.grid.frame(forItemID: "a")), beforeA, "a did not move")
     }
 
-    /// Тот же снимок кадры не меняет: ни при анимированном, ни при
-    /// неанимированном применении.
+    /// The same snapshot does not change frames: neither with an animated nor with a
+    /// non-animated application.
     func testUnchangedSnapshotDoesNotMoveAnything() throws {
         let host = TesseraTestWindowedGrid(columns: 4)
         host.grid.isReduceMotionEnabled = { false }
@@ -275,8 +275,8 @@ final class TilePlacementGridTests: XCTestCase {
         }
     }
 
-    /// Неанимированная смена ячеек применяется сразу (`reload`): рамки новые
-    /// без ожидания анимации.
+    /// A non-animated change of cells is applied immediately (`reload`): the frames are new
+    /// without waiting for an animation.
     func testCellOnlyChangeAppliesImmediatelyWithoutAnimation() throws {
         let grid = makeGrid()
         grid.reload(snapshot: holeSnapshot())
@@ -295,11 +295,11 @@ final class TilePlacementGridTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(grid.frame(forItemID: "c")).minY, before.minY)
     }
 
-    // MARK: - Магнит
+    // MARK: - Magnet
 
-    /// `magnetSlotCenters` на снимке без таблицы остаётся на упаковке по
-    /// порядку (откат E14.3): снимок с дырами, поданный без таблицы, его не
-    /// ломает. `baseInsertionIndex` (позиция вставки по порядку) удалён в E14.6.
+    /// `magnetSlotCenters` on a snapshot without a table stays on order-based
+    /// packing (the fallback): a snapshot with holes passed without a table does not
+    /// break it. `baseInsertionIndex` (the order-based insertion position) was removed.
     func testMagnetStaysPackBasedOnSnapshotWithoutTable() throws {
         let grid = makeGrid()
         let snapshot = holeSnapshot()
@@ -309,9 +309,9 @@ final class TilePlacementGridTests: XCTestCase {
         XCTAssertFalse(grid.magnetSlotCenters(for: .small).isEmpty)
     }
 
-    // MARK: - Снимок хранилища
+    // MARK: - Store snapshot
 
-    /// Случайный каталог: ярлыки разных размеров (малые чаще).
+    /// A random catalog: tiles of different sizes (small ones more often).
     private func randomCatalog(seed: UInt64, count: Int) -> [TesseraTileDescriptor] {
         var generator = TesseraTestSeededGenerator(seed: seed)
         let sizes: [TesseraTileSize] = [.small, .small, .medium, .medium, .wide, .large]
@@ -320,7 +320,7 @@ final class TilePlacementGridTests: XCTestCase {
         }
     }
 
-    /// Таблица для другой ширины сетки игнорируется: рамки прежние.
+    /// A table for a different grid width is ignored: the frames are the previous ones.
     func testStoreSnapshotForOtherWidthFallsBackToPack() throws {
         let directory = TesseraTestDirectory()
         let store = TesseraTileStore(directoryURL: directory.url)

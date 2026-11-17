@@ -2,22 +2,21 @@
 //  LocalizationTests.swift
 //  TesseraStartScreenTests
 //
-//  E9.8г (W5): локализация строк по умолчанию `TesseraStartScreen`.
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §9 «Accessibility»
-//  (озвучивание VoiceOver локализованными строками), «Отступления реализации».
+//  Localization of the default `TesseraStartScreen` strings.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §9 "Accessibility"
+//  (VoiceOver announcements with localized strings), "Implementation deviations".
 //
-//  Проверяется:
-//  - паритет таблиц `Resources/en.lproj/Localizable.strings` и `ru.lproj`
-//    (нет ключа только в одной таблице; значения непустые и не равны ключу);
-//  - каждый ключ из `TesseraStartScreenStrings.Key` есть в обеих таблицах и
-//    резолвится через internal-шов (`string(_:language:bundle:)`);
-//  - резолв ru/en, полный тег (`ru-RU`), базовая локаль для неподдержанного
-//    языка (`de` → en) и системный язык;
-//  - дефолты ``TesseraAppsListTexts`` непустые, совпадают с таблицей и
-//    различаются в en/ru там, где ожидается перевод;
-//  - статическая проверка исходников: в `Sources/TesseraStartScreen/*.swift`
-//    не осталось кириллических string-литералов вне allowlist
-//    developer-facing строк (комментарии и doc-примеры не считаются).
+//  What is checked:
+//  - parity of the `Resources/en.lproj/Localizable.strings` and `ru.lproj` tables
+//    (no key present in only one table; values are non-empty and differ from the key);
+//  - every key of `TesseraStartScreenStrings.Key` exists in both tables and
+//    resolves through the internal seam (`string(_:language:bundle:)`);
+//  - ru/en resolution, a full tag (`ru-RU`), the base locale for an unsupported
+//    language (`de` → en) and the system language;
+//  - the ``TesseraAppsListTexts`` defaults are non-empty, match the table and
+//    differ between en and ru where a translation is expected;
+//  - a static scan of the sources: `Sources/TesseraStartScreen/*.swift`
+//    contains no Cyrillic string literals (comments and doc examples do not count).
 //
 
 #if canImport(UIKit)
@@ -26,7 +25,7 @@ import Foundation
 import XCTest
 @testable import TesseraStartScreen
 
-/// Строковый литерал исходника, найденный сканером.
+/// A source string literal found by the scanner.
 private struct FoundLiteral {
     let value: String
     let line: Int
@@ -34,38 +33,13 @@ private struct FoundLiteral {
 
 final class LocalizationTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Developer-facing кириллические строки, которым локализация не нужна.
+    /// Reads the `Localizable.strings` table of a specific language from the built
+    /// module resource bundle (`Bundle.module`).
     ///
-    /// Это не user-facing текст: диагностика для разработчика/хоста, сообщение
-    /// компилятору или DEBUG-only assertion. Всё, что видит пользователь,
-    /// должно идти через `TesseraStartScreenStrings` (ключи таблиц en/ru).
-    private static let developerFacingAllowlist: Set<String> = [
-        // TesseraTileStore: описание ошибки для логов/диагностики хоста
-        // (`CustomStringConvertible`), в UI не показывается.
-        "TesseraTileStore: неподдерживаемая версия схемы \\(version)",
-        // LiveTileEngine: precondition программиста, сообщение для отладки.
-        "upperBound должен быть положительным",
-        // TesseraStartScreenView: `@available(*, deprecated, message:)` — сообщение
-        // компилятору и интегратору, а не пользователю.
-        "Переходы страниц приходят через TesseraStartScreenViewController.delegate",
-        // TileEditCoordinator: DEBUG-assertion контракта хоста (E10.5-B1);
-        // собирается из трёх литералов, ни один не показывается пользователю.
-        "TesseraTileEditCoordinator.startDrag: снимок сетки не совпадает ",
-        "с моделью TesseraTileStore на захвате — drag не начнётся. ",
-        "Хост обязан применять снимки store к сетке (E10.5-B1).",
-        // AppsListPage: fatalError для неверного способа создания
-        // контроллера/кнопки — programmer error, не UI.
-        "TesseraAppsListPageViewController создаётся через make(store:settings:texts:columns:)",
-        "TesseraAppsListPinButton создаётся только программно",
-    ]
-
-    /// Читает таблицу `Localizable.strings` конкретного языка из собранного
-    /// ресурсного бандла модуля (`Bundle.module`).
-    ///
-    /// Чтение идёт по фактическому файлу, а не через резолвер: тест должен
-    /// видеть обе таблицы независимо от языка системы.
+    /// It reads the actual file rather than going through the resolver: the test must
+    /// see both tables regardless of the system language.
     private func table(
         for language: String,
         file: StaticString = #filePath,
@@ -76,7 +50,7 @@ final class LocalizationTests: XCTestCase {
             bundle.resourceURL?
                 .appendingPathComponent("\(language).lproj", isDirectory: true)
                 .appendingPathComponent("Localizable.strings", isDirectory: false),
-            "В собранном бандле нет \(language).lproj/Localizable.strings",
+            "The built bundle has no \(language).lproj/Localizable.strings",
             file: file,
             line: line
         )
@@ -88,18 +62,18 @@ final class LocalizationTests: XCTestCase {
         )
         return try XCTUnwrap(
             plist as? [String: String],
-            "\(language).lproj/Localizable.strings не читается как таблица ключ-значение",
+            "\(language).lproj/Localizable.strings cannot be read as a key-value table",
             file: file,
             line: line
         )
     }
 
-    /// Каталог исходников `Sources/TesseraStartScreen`.
+    /// The `Sources/TesseraStartScreen` source directory.
     ///
-    /// Путь берётся из `#filePath` (абсолютный путь на момент компиляции):
-    /// в рантайме симулятора он указывает на рабочее дерево. Если дерево
-    /// недоступно (например, бинарная сборка без исходников), тест
-    /// пропускается, а не падает ложно.
+    /// The path comes from `#filePath` (the absolute path at compile time):
+    /// in the simulator runtime it points at the working tree. If the tree
+    /// is unavailable (for example, a binary build without sources), the test
+    /// is skipped rather than failing spuriously.
     private func sourcesDirectory(
         file: StaticString = #filePath,
         line: UInt = #line
@@ -113,7 +87,7 @@ final class LocalizationTests: XCTestCase {
             .appendingPathComponent("TesseraStartScreen", isDirectory: true)
         guard FileManager.default.fileExists(atPath: sources.path) else {
             throw XCTSkip(
-                "Статическая проверка литералов не нашла исходники (\(sources.path))",
+                "The static literal check did not find the sources (\(sources.path))",
                 file: file,
                 line: line
             )
@@ -121,30 +95,30 @@ final class LocalizationTests: XCTestCase {
         return sources
     }
 
-    // MARK: - Ресурсы упакованы
+    // MARK: - Resources are packaged
 
-    /// Ресурсный бандл — именно бандл модуля, и в нём обе локализации.
+    /// The resource bundle is exactly the module bundle, and it contains both localizations.
     func testResourceBundleContainsBothLocalizations() {
         let bundle = TesseraStartScreenStrings.bundle
 
         XCTAssertTrue(
             bundle.bundleURL.lastPathComponent.contains("TesseraStartScreen"),
-            "Bundle.module должен указывать на ресурсный бандл модуля: \(bundle.bundleURL)"
+            "Bundle.module must point at the module resource bundle: \(bundle.bundleURL)"
         )
         XCTAssertTrue(
             Set(bundle.localizations).isSuperset(of: ["en", "ru"]),
-            "В бандле должны быть локализации en и ru: \(bundle.localizations)"
+            "The bundle must contain the en and ru localizations: \(bundle.localizations)"
         )
         XCTAssertTrue(
             TesseraStartScreenStrings.supportedLanguages.isSubset(of: Set(bundle.localizations)),
-            "Каждый поддержанный язык обязан иметь таблицу"
+            "Every supported language must have a table"
         )
     }
 
-    // MARK: - Паритет таблиц
+    // MARK: - Table parity
 
-    /// Наборы ключей en/ru совпадают; каждый ключ кода есть в обеих таблицах;
-    /// значения непустые и не являются сырым ключом.
+    /// The en/ru key sets are equal; every code key exists in both tables;
+    /// values are non-empty and are not the raw key.
     func testTablesHaveSameKeysAndTranslationsForEveryCodeKey() throws {
         let english = try table(for: "en")
         let russian = try table(for: "ru")
@@ -152,29 +126,29 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(
             Set(english.keys),
             Set(russian.keys),
-            "Ключи en/ru расходятся: только в en \(Set(english.keys).subtracting(russian.keys)), "
-                + "только в ru \(Set(russian.keys).subtracting(english.keys))"
+            "The en/ru keys diverge: only in en \(Set(english.keys).subtracting(russian.keys)), "
+                + "only in ru \(Set(russian.keys).subtracting(english.keys))"
         )
-        XCTAssertFalse(english.isEmpty, "Таблица en пуста")
+        XCTAssertFalse(english.isEmpty, "The en table is empty")
 
         for key in TesseraStartScreenStrings.Key.allCases {
             let raw = key.rawValue
-            let en = try XCTUnwrap(english[raw], "Нет ключа \(raw) в en.lproj")
-            let ru = try XCTUnwrap(russian[raw], "Нет ключа \(raw) в ru.lproj")
+            let en = try XCTUnwrap(english[raw], "No key \(raw) in en.lproj")
+            let ru = try XCTUnwrap(russian[raw], "No key \(raw) in ru.lproj")
             XCTAssertFalse(
                 en.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                "Пустое значение en для \(raw)"
+                "Empty en value for \(raw)"
             )
             XCTAssertFalse(
                 ru.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                "Пустое значение ru для \(raw)"
+                "Empty ru value for \(raw)"
             )
-            XCTAssertNotEqual(en, raw, "Значение en для \(raw) не переведено")
-            XCTAssertNotEqual(ru, raw, "Значение ru для \(raw) не переведено")
+            XCTAssertNotEqual(en, raw, "The en value for \(raw) is not translated")
+            XCTAssertNotEqual(ru, raw, "The ru value for \(raw) is not translated")
         }
     }
 
-    /// Каждый ключ кода резолвится в обеих локалях через internal-шов.
+    /// Every code key resolves in both locales through the internal seam.
     func testEveryCodeKeyResolvesThroughSeamInBothLanguages() {
         for key in TesseraStartScreenStrings.Key.allCases {
             for language in ["en", "ru"] {
@@ -182,16 +156,16 @@ final class LocalizationTests: XCTestCase {
                 XCTAssertNotEqual(
                     value,
                     key.rawValue,
-                    "Ключ \(key.rawValue) не найден в таблице \(language)"
+                    "Key \(key.rawValue) not found in the \(language) table"
                 )
-                XCTAssertFalse(value.isEmpty, "Пустая строка \(key.rawValue) (\(language))")
+                XCTAssertFalse(value.isEmpty, "Empty string \(key.rawValue) (\(language))")
             }
         }
     }
 
-    // MARK: - Резолв
+    // MARK: - Resolution
 
-    /// Явная локаль через шов: ru и en дают разные значения.
+    /// An explicit locale through the seam: ru and en give different values.
     func testResolvesRussianAndEnglishThroughExplicitLanguageSeam() {
         XCTAssertEqual(
             TesseraStartScreenStrings.string(.folderScreenDone, language: "ru"),
@@ -219,7 +193,7 @@ final class LocalizationTests: XCTestCase {
         )
     }
 
-    /// Полный тег языка и исторические формы приводятся к коду таблицы.
+    /// A full language tag and historical forms are mapped to the table code.
     func testFullLanguageTagResolvesToTable() {
         XCTAssertEqual(
             TesseraStartScreenStrings.string(.folderScreenDone, language: "ru-RU"),
@@ -235,27 +209,27 @@ final class LocalizationTests: XCTestCase {
         )
     }
 
-    /// Язык без таблицы откатывается к базовой локали en, а не к ключу/пустой
-    /// строке (риск «локализация в SPM»: неизвестный язык у пользователя).
+    /// A language without a table falls back to the base locale en, not to the key or an empty
+    /// string (the "SPM localization" risk: an unknown user language).
     func testUnsupportedLanguageFallsBackToBaseLocalization() {
         for language in ["de", "de-DE", "fr", "zh-Hans"] {
             XCTAssertEqual(
                 TesseraStartScreenStrings.string(.folderScreenDone, language: language),
                 "Done",
-                "Для \(language) ожидался fallback на базовую локаль en"
+                "Expected a fallback to the base locale en for \(language)"
             )
         }
         XCTAssertEqual(TesseraStartScreenStrings.baseLanguage, "en")
     }
 
-    /// Язык системы резолвится в одну из поддержанных таблиц, и строки по
-    /// умолчанию совпадает с явным резолвом этого языка.
+    /// The system language resolves to one of the supported tables, and the default
+    /// strings match an explicit resolution of that language.
     func testSystemLanguageResolvesToAvailableTable() {
         let language = TesseraStartScreenStrings.resolvedLanguage()
 
         XCTAssertTrue(
             TesseraStartScreenStrings.supportedLanguages.contains(language),
-            "Системный язык \(language) не имеет таблицы"
+            "The system language \(language) has no table"
         )
         XCTAssertEqual(
             TesseraStartScreenStrings.string(.a11yEditingEntered),
@@ -267,10 +241,10 @@ final class LocalizationTests: XCTestCase {
         )
     }
 
-    // MARK: - Дефолты списка приложений (AppsListPage)
+    // MARK: - Apps list defaults (AppsListPage)
 
-    /// `TesseraAppsListTexts()` резолвится в таблицу языка системы, все поля
-    /// непустые, а явная замена хоста по-прежнему работает.
+    /// `TesseraAppsListTexts()` resolves to the system language table, all fields are
+    /// non-empty, and an explicit host override still works.
     func testAppsListDefaultTextsAreLocalizedAndNonEmpty() {
         let defaults = TesseraAppsListTexts()
         let language = TesseraStartScreenStrings.resolvedLanguage()
@@ -283,11 +257,11 @@ final class LocalizationTests: XCTestCase {
             (defaults.pinnedValue, .appsListPinnedValue),
         ]
         for (value, key) in fields {
-            XCTAssertFalse(value.isEmpty, "Пустой дефолт \(key.rawValue)")
+            XCTAssertFalse(value.isEmpty, "Empty default \(key.rawValue)")
             XCTAssertEqual(
                 value,
                 TesseraStartScreenStrings.string(key, language: language),
-                "Дефолт \(key.rawValue) не совпадает с таблицей \(language)"
+                "Default \(key.rawValue) does not match the \(language) table"
             )
         }
 
@@ -296,7 +270,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(custom.emptyTitle, defaults.emptyTitle)
     }
 
-    /// Ожидаемо переводимые дефолты списка различаются в en и ru.
+    /// The defaults of the apps list that are expected to be translated differ between en and ru.
     func testAppsListDefaultTitlesDifferBetweenEnglishAndRussian() {
         let keys: [TesseraStartScreenStrings.Key] = [
             .appsListSettingsSectionTitle,
@@ -308,29 +282,28 @@ final class LocalizationTests: XCTestCase {
         for key in keys {
             let en = TesseraStartScreenStrings.string(key, language: "en")
             let ru = TesseraStartScreenStrings.string(key, language: "ru")
-            XCTAssertNotEqual(en, ru, "Дефолт \(key.rawValue) не переведён: \(en)")
+            XCTAssertNotEqual(en, ru, "Default \(key.rawValue) is not translated: \(en)")
         }
     }
 
-    // MARK: - Статическая проверка литералов
+    // MARK: - Static literal check
 
-    /// В исходниках компонента не осталось кириллических string-литералов вне
-    /// allowlist developer-facing строк.
-    func testSourcesContainNoCyrillicStringLiteralsOutsideAllowlist() throws {
+    /// The component sources contain no Cyrillic string literals at all: user-facing
+    /// text lives in the localization tables, developer-facing messages are in English.
+    func testSourcesContainNoCyrillicStringLiterals() throws {
         let directory = try sourcesDirectory()
         let files = try FileManager.default
             .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "swift" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
-        XCTAssertFalse(files.isEmpty, "Не найдено ни одного .swift в \(directory.path)")
+        XCTAssertFalse(files.isEmpty, "No .swift files found in \(directory.path)")
 
         var findings: [String] = []
         for file in files {
             let source = try String(contentsOf: file, encoding: .utf8)
             for literal in SwiftSourceScanner.stringLiterals(in: source) {
                 guard SwiftSourceScanner.containsCyrillic(literal.value) else { continue }
-                guard !Self.developerFacingAllowlist.contains(literal.value) else { continue }
                 findings.append(
                     "\(file.lastPathComponent):\(literal.line): \"\(literal.value)\""
                 )
@@ -339,17 +312,18 @@ final class LocalizationTests: XCTestCase {
 
         XCTAssertTrue(
             findings.isEmpty,
-            "Кириллические литералы вне allowlist: пользовательские строки должны "
-                + "идти через TesseraStartScreenStrings и таблицы en/ru (E9.8г):\n"
+            "Cyrillic string literals found in sources: user-facing strings must "
+                + "go through TesseraStartScreenStrings and the en/ru tables, "
+                + "developer-facing messages must be in English:\n"
                 + findings.joined(separator: "\n")
         )
     }
 
-    // MARK: - Склонение числа ярлыков
+    // MARK: - Tile count declension
 
-    /// Русские словоформы подзаголовка экрана папки: 1/2/5/11/21.
+    /// Russian word forms of the folder screen subtitle: 1/2/5/11/21.
     ///
-    /// Язык задаётся явно: тест не должен зависеть от локали симулятора.
+    /// The language is set explicitly: the test must not depend on the simulator locale.
     func testRussianTilesCountUsesPluralForms() {
         let language = "ru"
         XCTAssertEqual(
@@ -374,7 +348,7 @@ final class LocalizationTests: XCTestCase {
         )
     }
 
-    /// Английские словоформы подзаголовка: одна/множественная.
+    /// English word forms of the subtitle: singular/plural.
     func testEnglishTilesCountUsesSingularAndPlural() {
         let language = "en"
         XCTAssertEqual(
@@ -392,16 +366,16 @@ final class LocalizationTests: XCTestCase {
     }
 }
 
-// MARK: - Сканер строковых литералов
+// MARK: - String literal scanner
 
-/// Минимальный сканер Swift-исходника: отбрасывает комментарии (включая
-/// вложенные блочные) и собирает содержимое строковых литералов с номерами
-/// строк.
+/// A minimal Swift source scanner: it drops comments (including
+/// nested block comments) and collects the contents of string literals with line
+/// numbers.
 ///
-/// Интерполяция (`\(...)`) остаётся частью содержимого литерала: статической
-/// проверке важно лишь, есть ли кириллица в тексте литерала, а не в
-/// подставленном выражении. Вложенные литералы внутри интерполяции
-/// пропускаются балансировкой скобок, чтобы не оборвать внешний литерал.
+/// Interpolation (`\(...)`) stays part of the literal's contents: the static
+/// check only cares whether the literal text contains Cyrillic, not the
+/// interpolated expression. Nested literals inside an interpolation
+/// are skipped by balancing parentheses, so they do not terminate the outer literal.
 private enum SwiftSourceScanner {
 
     static func stringLiterals(in source: String) -> [FoundLiteral] {
@@ -412,7 +386,7 @@ private enum SwiftSourceScanner {
         text.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }
     }
 
-    // MARK: Сканирование
+    // MARK: Scanning
 
     private static func scan(_ source: String) -> [FoundLiteral] {
         let characters = Array(source)
@@ -491,9 +465,9 @@ private enum SwiftSourceScanner {
                                 break
                             }
                             if next == "(" {
-                                // Интерполяция остаётся частью содержимого
-                                // литерала: проверке важно, есть ли кириллица в
-                                // исходном тексте, а не в подставленном коде.
+                                // Interpolation stays part of the literal
+                                // contents: the check cares whether the source text contains
+                                // Cyrillic, not the interpolated code.
                                 let end = skipInterpolation(
                                     characters: characters,
                                     from: index + 2
@@ -557,9 +531,9 @@ private enum SwiftSourceScanner {
         return literals
     }
 
-    // MARK: Интерполяция
+    // MARK: Interpolation
 
-    /// Возвращает индекс после закрывающей скобки интерполяции `\(...)`.
+    /// Returns the index after the closing parenthesis of an interpolation `\(...)`.
     private static func skipInterpolation(
         characters: [Character],
         from start: Int
@@ -573,7 +547,7 @@ private enum SwiftSourceScanner {
                 continue
             }
             if character == "\"" {
-                // Вложенный строковый литерал внутри интерполяции.
+                // A nested string literal inside an interpolation.
                 index += 1
                 while index < characters.count {
                     if characters[index] == "\\" {
@@ -601,7 +575,7 @@ private enum SwiftSourceScanner {
         return index
     }
 
-    // MARK: Служебные
+    // MARK: Helpers
 
     private enum State {
         case code

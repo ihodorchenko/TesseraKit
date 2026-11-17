@@ -2,16 +2,16 @@
 //  PivotHeaderIndicatorTests.swift
 //  TesseraPivotTests
 //
-//  Контрактные тесты математики индикатора пивота (задача E2.7).
-//  Проектный документ: docs/PIVOT-IOS-DESIGN.md §4 «Математика ядра»
-//  (`indicatorCenter = lerp(center[i], center[i + 1], frac(t))`; окраска —
-//  по расстоянию заголовка от `t`), §7 «Производительность» (индикатор
-//  гоняется только трансформом), §11 «Риски» (интерполяция при разных
-//  ширинах заголовков — самая вероятная зона визуальных багов, лечится
-//  тестами на случайных наборах).
+//  Contract tests for the pivot indicator math.
+//  Design document: docs/PIVOT-IOS-DESIGN.md §4 (core math:
+//  `indicatorCenter = lerp(center[i], center[i + 1], frac(t))`; coloring is
+//  by the header's distance from `t`), §7 (performance: the indicator
+//  is driven by a transform only), §11 (risks: interpolation with different
+//  header widths is the most likely area of visual bugs, mitigated
+//  by tests on random sets).
 //
-//  Обе проверяемые функции статические и не читают состояние — UI-цикл,
-//  окно и главный поток для них не нужны.
+//  Both functions under test are static and read no state, so no UI run loop,
+//  window, or main thread is needed for them.
 //
 
 #if canImport(UIKit)
@@ -22,10 +22,10 @@ import UIKit
 
 final class PivotHeaderIndicatorTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Детерминированный генератор (SplitMix64): случайные наборы должны
-    /// воспроизводиться при падении теста, иначе баг не локализовать.
+    /// A deterministic generator (SplitMix64): random sets must be
+    /// reproducible when a test fails, otherwise the bug cannot be localized.
     private struct SeededGenerator: RandomNumberGenerator {
         private var state: UInt64
 
@@ -42,8 +42,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         }
     }
 
-    /// Центры заголовков разной ширины в координатах контента ленты (§4):
-    /// ширина ячейки плюс промежутки и внешние отступы.
+    /// Header centers of varying widths in strip content coordinates (§4):
+    /// the cell width plus gaps and outer insets.
     private func makeCenters(
         widths: [CGFloat],
         inset: CGFloat = 16,
@@ -60,9 +60,9 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         return centers
     }
 
-    // MARK: - indicatorCenter: границы (t = 0, t = count - 1, за пределами)
+    // MARK: - indicatorCenter: boundaries (t = 0, t = count - 1, out of range)
 
-    /// Пустой набор центров — ленты нет, индикатор скрыт и стоит в нуле.
+    /// An empty set of centers: there is no strip, the indicator is hidden and sits at zero.
     func testEmptyCentersReturnZero() {
         XCTAssertEqual(
             TesseraPivotHeaderIndicator.indicatorCenter(centers: [], progress: 0),
@@ -74,8 +74,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         )
     }
 
-    /// Один заголовок (`count < 2`) — интерполировать не с чем: всегда его центр,
-    /// даже на прогрессах за пределами диапазона и на `NaN`.
+    /// A single header (`count < 2`): there is nothing to interpolate with, so it is always its center,
+    /// even for progress out of range and for `NaN`.
     func testSingleCenterIsReturnedForAnyProgress() {
         let centers: [CGFloat] = [123.5]
 
@@ -83,12 +83,12 @@ final class PivotHeaderIndicatorTests: XCTestCase {
             XCTAssertEqual(
                 TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
                 123.5,
-                "единственный центр должен возвращаться при t=\(progress)"
+                "the only center must be returned at t=\(progress)"
             )
         }
     }
 
-    /// `t = 0` — первый центр, `t = count - 1` — последний (§4).
+    /// `t = 0` is the first center, `t = count - 1` is the last (§4).
     func testFirstAndLastCentersAtBounds() {
         let centers = makeCenters(widths: [40, 120, 64])
 
@@ -102,8 +102,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         )
     }
 
-    /// При bounce прогресс уходит за диапазон, но индикатор не должен уезжать
-    /// за крайние заголовки — кламп в `0...count - 1` (§4).
+    /// During a bounce the progress goes out of range, but the indicator must not move
+    /// past the edge headers: a clamp to `0...count - 1` (§4).
     func testOutOfRangeProgressClampsToEdgeCenters() {
         let centers = makeCenters(widths: [40, 120, 64, 200])
 
@@ -111,7 +111,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
             XCTAssertEqual(
                 TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
                 centers[0],
-                "t=\(progress) должен зажиматься к первому центру"
+                "t=\(progress) must clamp to the first center"
             )
         }
 
@@ -119,12 +119,12 @@ final class PivotHeaderIndicatorTests: XCTestCase {
             XCTAssertEqual(
                 TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: progress),
                 centers[3],
-                "t=\(progress) должен зажиматься к последнему центру"
+                "t=\(progress) must clamp to the last center"
             )
         }
     }
 
-    /// `NaN` — неопределённый прогресс трактуется как начало ленты.
+    /// `NaN`: undefined progress is treated as the start of the strip.
     func testNaNProgressReturnsFirstCenter() {
         let centers = makeCenters(widths: [40, 120, 64])
         XCTAssertEqual(
@@ -133,7 +133,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         )
     }
 
-    /// Бесконечности зажимаются границами (и не переполняют приведение к `Int`).
+    /// Infinities are clamped to the bounds (and do not overflow the conversion to `Int`).
     func testInfiniteProgressClampsToEdgeCenters() {
         let centers = makeCenters(widths: [40, 120, 64, 200])
         XCTAssertEqual(
@@ -146,10 +146,10 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         )
     }
 
-    // MARK: - indicatorCenter: интерполяция между центрами разной ширины
+    // MARK: - indicatorCenter: interpolation between centers of different widths
 
-    /// На целых `t` индикатор стоит ровно на центре соответствующего заголовка:
-    /// важна «тонкость» §4 — интерполируются центры, а не `t × constWidth`.
+    /// At whole `t` the indicator sits exactly at the corresponding header's center:
+    /// the §4 subtlety matters: centers are interpolated, not `t × constWidth`.
     func testIntegerProgressReturnsExactCenter() {
         let centers = makeCenters(widths: [36, 120, 64, 200, 88])
 
@@ -161,13 +161,13 @@ final class PivotHeaderIndicatorTests: XCTestCase {
                 ),
                 centers[index],
                 accuracy: 0.000_001,
-                "t=\(index) должен давать центр заголовка \(index)"
+                "t=\(index) must give the center of header \(index)"
             )
         }
     }
 
-    /// Половина перехода между заголовками разной ширины — ровно середина
-    /// отрезка между их центрами, а не точка «t × средняя ширина» (§4).
+    /// Half a transition between headers of different widths is exactly the midpoint
+    /// of the segment between their centers, not the point "t × average width" (§4).
     func testInterpolationFollowsCentersNotConstantWidthSteps() {
         let widths: [CGFloat] = [40, 160, 60, 220]
         let centers = makeCenters(widths: widths)
@@ -175,20 +175,20 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         let midpoint = TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 0.5)
         XCTAssertEqual(midpoint, (centers[0] + centers[1]) / 2, accuracy: 0.000_001)
 
-        // Ложная модель «равные шаги» дала бы на этих ширинах заметно другое
-        // значение — индикатор «уплыл» бы от текста на середине свайпа.
+        // The false "equal steps" model would give a noticeably different value
+        // at these widths: the indicator would "drift" away from the text in the middle of a swipe.
         let averageStep = (centers[centers.count - 1] - centers[0]) / CGFloat(centers.count - 1)
         let constantStepMidpoint = centers[0] + averageStep * 0.5
         XCTAssertGreaterThan(
             abs(midpoint - constantStepMidpoint),
             1,
-            "интерполяция центров должна отличаться от линейного шага при разных ширинах"
+            "the centers interpolation must differ from a linear step at different widths"
         )
     }
 
-    /// Дробный прогресс даёт `lerp(center[i], center[i + 1], frac(t))`, где
-    /// `i = floor(t)`, а на последнем переходе дробная часть берётся от
-    /// зажатого прогресса (иначе индикатор уехал бы за последний заголовок).
+    /// Fractional progress gives `lerp(center[i], center[i + 1], frac(t))`, where
+    /// `i = floor(t)`, and on the last transition the fractional part is taken from
+    /// the clamped progress (otherwise the indicator would go past the last header).
     func testInterpolationUsesFractionOfClampedProgress() {
         let centers = makeCenters(widths: [40, 120, 64])
 
@@ -207,8 +207,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
             centers[1] + (centers[2] - centers[1]) * 0.75,
             accuracy: 0.000_001
         )
-        // t = count - 1 + 0.5 зажимается в последний центр, а не интерполирует
-        // ещё раз от последней пары с дробной частью 1.5.
+        // t = count - 1 + 0.5 clamps to the last center and does not interpolate
+        // again from the last pair with a fractional part of 1.5.
         XCTAssertEqual(
             TesseraPivotHeaderIndicator.indicatorCenter(centers: centers, progress: 2.5),
             centers[2],
@@ -216,8 +216,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         )
     }
 
-    /// На границе целого индекса функция непрерывна: слева и справа от `t = i`
-    /// значения совпадают в пределах малой окрестности.
+    /// At an integer index boundary the function is continuous: to the left and right of `t = i`
+    /// the values coincide within a small neighborhood.
     func testIndicatorCenterIsContinuousAcrossIntegerBoundary() {
         let centers = makeCenters(widths: [50, 140, 70, 210])
 
@@ -237,9 +237,9 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         }
     }
 
-    /// Случайные наборы центров с произвольными ширинами и промежутками:
-    /// результат обязан совпасть с независимым расчётом `lerp(frac)`, где `t`
-    /// строится как `i + frac`, а не наоборот.
+    /// Random sets of centers with arbitrary widths and gaps:
+    /// the result must match an independent `lerp(frac)` computation, where `t`
+    /// is built as `i + frac`, not the other way around.
     func testRandomUnevenCenterSetsFollowLerp() {
         var generator = SeededGenerator(seed: 0x5EED_1234)
 
@@ -271,10 +271,10 @@ final class PivotHeaderIndicatorTests: XCTestCase {
                     actual,
                     expected,
                     accuracy: 0.000_001,
-                    "lerp на случайных центрах \(centers), t=\(progress)"
+                    "lerp on random centers \(centers), t=\(progress)"
                 )
 
-                // Индикатор не выходит за отрезок между соседними центрами.
+                // The indicator does not leave the segment between adjacent centers.
                 let lowerCenter = min(centers[lowerIndex], centers[lowerIndex + 1])
                 let upperCenter = max(centers[lowerIndex], centers[lowerIndex + 1])
                 XCTAssertGreaterThanOrEqual(actual, lowerCenter - 0.000_001)
@@ -283,8 +283,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         }
     }
 
-    /// Случайные прогрессы за пределами диапазона на случайных наборах
-    /// зажимаются к крайним центрам.
+    /// Random progress values out of range on random sets
+    /// clamp to the edge centers.
     func testRandomOutOfRangeProgressClamps() {
         var generator = SeededGenerator(seed: 0xC0FF_EE01)
 
@@ -314,8 +314,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         }
     }
 
-    /// На возрастающих наборах центров индикатор монотонно едет слева направо:
-    /// ни рывков назад, ни «телепортов» через заголовки (§4).
+    /// On ascending sets of centers the indicator moves monotonically left to right:
+    /// no jerks backward and no "teleports" over headers (§4).
     func testRandomSortedCentersProduceMonotonicPositions() {
         var generator = SeededGenerator(seed: 0xB16_5EED)
 
@@ -344,26 +344,26 @@ final class PivotHeaderIndicatorTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(
                     center,
                     previous - 0.000_001,
-                    "индикатор поехал назад на t=\(progress), центры \(centers)"
+                    "the indicator moved backward at t=\(progress), centers \(centers)"
                 )
                 previous = center
             }
         }
     }
 
-    // MARK: - blendFactor: окраска по расстоянию от t (§4)
+    // MARK: - blendFactor: coloring by distance from t (§4)
 
-    /// В точке `t` заголовок полностью активен: коэффициент `1` означает
-    /// полный акцентный цвет (§4, «Окраска текста»). Контракт инвертирован
-    /// относительно формулировки «0 на расстоянии 0»: в коде и документе
-    /// `1` — акцент, `0` — неактивное состояние.
+    /// At the point `t` the header is fully active: a factor of `1` means
+    /// the full accent color (§4, text coloring). The contract is inverted
+    /// relative to the wording "0 at distance 0": in code and in the document
+    /// `1` is the accent and `0` is the inactive state.
     func testBlendFactorIsFullAccentAtZeroDistance() {
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0), 1)
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -0), 1)
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0, span: 3), 1)
     }
 
-    /// На расстоянии `span` и дальше подсветки нет: коэффициент `0`.
+    /// At a distance of `span` and beyond there is no highlight: the factor is `0`.
     func testBlendFactorReachesZeroAtSpan() {
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 1), 0)
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -1), 0)
@@ -372,7 +372,7 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 2, span: 2), 0)
     }
 
-    /// Внутри `span` коэффициент линеен и симметричен по знаку расстояния.
+    /// Within `span` the factor is linear and symmetric in the sign of the distance.
     func testBlendFactorIsSymmetricAndLinearWithinSpan() {
         for distance: CGFloat in [0.1, 0.25, 0.5, 0.75, 0.9] {
             let expected = 1 - distance
@@ -389,8 +389,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         }
     }
 
-    /// Коэффициент монотонно убывает с расстоянием и остаётся в `0...1`:
-    /// акцент плавно «передаётся» от уходящего заголовка приходящему.
+    /// The factor decreases monotonically with distance and stays in `0...1`:
+    /// the accent smoothly "passes" from the outgoing header to the incoming one.
     func testBlendFactorIsMonotonicallyDecreasing() {
         var previous = TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0)
 
@@ -405,8 +405,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         }
     }
 
-    /// Радиус подсветки масштабирует расстояние: при `span = 2` половина
-    /// акцента — на расстоянии `1`.
+    /// The highlight radius scales the distance: with `span = 2` half the
+    /// accent is at a distance of `1`.
     func testBlendFactorHonoursCustomSpan() {
         XCTAssertEqual(
             TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: 0.5, span: 2),
@@ -430,8 +430,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         )
     }
 
-    /// `span <= 0` — «размывать нечего»: `1` ровно в точке и `0` в остальных
-    /// случаях (защитный контракт документирован у метода).
+    /// `span <= 0` means "nothing to blur": `1` exactly at the point and `0` in all other
+    /// cases (the defensive contract is documented on the method).
     func testBlendFactorWithNonPositiveSpanDegradesToBinary() {
         for span: CGFloat in [0, -1, -0.5] {
             XCTAssertEqual(
@@ -449,8 +449,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         }
     }
 
-    /// `NaN` и бесконечное расстояние — неизвестный заголовок считается
-    /// неактивным (`0`), без падения и без «отравления» цвета.
+    /// `NaN` and an infinite distance: an unknown header is treated as
+    /// inactive (`0`), without crashing and without "poisoning" the color.
     func testBlendFactorRejectsNaNAndInfiniteDistance() {
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: .nan), 0)
         XCTAssertEqual(
@@ -461,10 +461,10 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         XCTAssertEqual(TesseraPivotHeaderIndicator.blendFactor(distanceFromProgress: -.infinity), 0)
     }
 
-    // MARK: - Вид индикатора (§3, §7, §8)
+    // MARK: - Indicator view (§3, §7, §8)
 
-    /// Дефолты вида: подчёркивание 24×3 pt, акцентный цвет, декоративность —
-    /// индикатор не ловит события и не попадает в accessibility-дерево (§8).
+    /// View defaults: a 24×3 pt underline, the accent color, decorative:
+    /// the indicator does not catch events and is not in the accessibility tree (§8).
     func testViewDefaults() {
         let indicator = TesseraPivotHeaderIndicator()
 
@@ -477,8 +477,8 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         XCTAssertTrue(indicator.isHidden)
     }
 
-    /// `placeBar(inStripBounds:)` — единственное место, где задаются
-    /// `bounds`/`center` индикатора; позиция прижата к нижней кромке ленты.
+    /// `placeBar(inStripBounds:)` is the only place where the indicator's
+    /// `bounds`/`center` are set; the position is pinned to the strip's bottom edge.
     func testPlaceBarSetsBaseGeometry() {
         let indicator = TesseraPivotHeaderIndicator()
         indicator.placeBar(inStripBounds: CGRect(x: 10, y: 20, width: 320, height: 48))
@@ -486,14 +486,14 @@ final class PivotHeaderIndicatorTests: XCTestCase {
         XCTAssertEqual(indicator.bounds.width, 24)
         XCTAssertEqual(indicator.bounds.height, 3)
         XCTAssertEqual(indicator.center.x, 12)
-        // Нижняя кромка ленты: maxY - barHeight / 2.
+        // The strip's bottom edge: maxY - barHeight / 2.
         XCTAssertEqual(indicator.center.y, 66.5, accuracy: 0.000_001)
         XCTAssertEqual(indicator.layer.cornerRadius, 1.5)
         XCTAssertEqual(indicator.transform, .identity)
     }
 
-    /// Горячий путь (§4, §7): `move(toCenterX:)` меняет только `transform`,
-    /// не трогая `bounds`/`center` и не запуская layout.
+    /// The hot path (§4, §7): `move(toCenterX:)` changes only `transform`,
+    /// leaving `bounds`/`center` alone and not triggering layout.
     func testMoveChangesOnlyTransform() {
         let indicator = TesseraPivotHeaderIndicator()
         indicator.placeBar(inStripBounds: CGRect(x: 0, y: 0, width: 320, height: 48))

@@ -2,16 +2,16 @@
 //  StartWallpaperParallaxTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты обоев START-страницы под вертикальный параллакс (задача E10.7б).
-//  Проектные документы: docs/STARTSCREEN-IOS-DESIGN.md §8 «Параллакс обоев»,
-//  docs/CORE-IOS-DESIGN.md §2 («Параллакс: backgroundOffset = offset × factor;
-//  слой заведомо больше contentSize»).
+//  Tests of the START page wallpaper under vertical parallax.
+//  Design documents: docs/STARTSCREEN-IOS-DESIGN.md §8 "Wallpaper parallax",
+//  docs/CORE-IOS-DESIGN.md §2 ("Parallax: backgroundOffset = offset × factor;
+//  the layer is deliberately larger than contentSize").
 //
-//  Слой обоев — сосед скролла сетки (лежит в виде страницы, а не в коллекции),
-//  и Core проецирует смещение фона на экран со знаком минус: `transform =
-//  −offset × factor`. Проверяются направление (обои уезжают вверх вместе с
-//  плитками, но медленнее) и покрытие: картинка закрывает страницу в начале и
-//  в конце прокрутки, а также на «резине» за обоими краями.
+//  The wallpaper layer is a sibling of the grid scroll (it lives in the page view, not in the collection),
+//  and Core projects the background offset onto the screen with a minus sign: `transform =
+//  −offset × factor`. The tests check direction (the wallpaper moves up together with the
+//  tiles, but slower) and coverage: the image covers the page at the start and at the
+//  end of scrolling, and during the bounce past both edges.
 //
 
 #if canImport(UIKit)
@@ -23,27 +23,27 @@ import TesseraCore
 
 final class StartWallpaperParallaxTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Множитель параллакса: верхняя граница клампа (0.4...0.6), при ней ход
-    /// обоев максимален.
+    /// Parallax factor: the upper clamp bound (0.4...0.6), at which the wallpaper
+    /// travel is maximal.
     private let factor: CGFloat = 0.6
 
-    /// Собранная START-страница: экран, слой обоев, вид страницы и коллекция.
+    /// The assembled START page: screen, wallpaper layer, page view and collection.
     private struct Scene {
         let screen: TesseraStartScreenViewController
         let layer: TesseraParallaxLayer
         let page: UIView
         let collectionView: UICollectionView
 
-        /// Максимальный offset сетки — тем же расчётом, что и раскладка обоев.
+        /// Maximum grid offset, computed the same way as the wallpaper layout.
         var maximumOffset: CGFloat {
             let height = page.bounds.height
             return max(0, max(screen.gridView.contentSize.height, height) - height)
         }
     }
 
-    /// Ищет первый вид заданного типа в поддереве.
+    /// Finds the first view of the given type in the subtree.
     private func firstSubview<T: UIView>(of type: T.Type, in root: UIView) -> T? {
         if let match = root as? T { return match }
         for subview in root.subviews {
@@ -52,7 +52,7 @@ final class StartWallpaperParallaxTests: XCTestCase {
         return nil
     }
 
-    /// Экран с высокой сеткой (заведомо больше вьюпорта) и картинкой обоев.
+    /// A screen with a tall grid (deliberately taller than the viewport) and a wallpaper image.
     private func makeScene() throws -> Scene {
         let screen = TesseraStartScreenViewController()
         screen.wallpaperParallaxFactor = factor
@@ -64,53 +64,53 @@ final class StartWallpaperParallaxTests: XCTestCase {
         screen.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         screen.view.layoutIfNeeded()
 
-        // Без окна пейджер мог ещё не разложить страницы — доводим вручную,
-        // как в `PagerPagesTests`.
+        // Without a window the pager may not have laid out its pages yet, so lay them out
+        // manually, as in `PagerPagesTests`.
         let pager = try XCTUnwrap(
             screen.children.compactMap { $0 as? TesseraPagerViewController }.first,
-            "Экран обязан содержать пейджер Core"
+            "The screen must contain the Core pager"
         )
         pager.view.frame = screen.view.bounds
         pager.view.layoutIfNeeded()
 
         let layer = try XCTUnwrap(
             firstSubview(of: TesseraParallaxLayer.self, in: screen.view),
-            "START-страница держит слой обоев"
+            "The START page holds the wallpaper layer"
         )
-        let page = try XCTUnwrap(layer.superview, "Слой обоев лежит в виде страницы")
+        let page = try XCTUnwrap(layer.superview, "The wallpaper layer lives in the page view")
         page.layoutIfNeeded()
 
         let collectionView = try XCTUnwrap(
             screen.gridView.subviews.compactMap { $0 as? UICollectionView }.first,
-            "Сетка держит коллекцию"
+            "The grid holds the collection"
         )
-        // Системный Reduce Motion симулятора не должен влиять на геометрию теста.
+        // The simulator's system Reduce Motion must not affect the test geometry.
         layer.respectsReduceMotion = false
 
         return Scene(screen: screen, layer: layer, page: page, collectionView: collectionView)
     }
 
-    /// Картинка обоев внутри слоя.
+    /// The wallpaper image inside the layer.
     private func wallpaperView(in scene: Scene) throws -> UIImageView {
         try XCTUnwrap(
             scene.layer.subviews.compactMap { $0 as? UIImageView }.first,
-            "Обои — картинка внутри слоя параллакса"
+            "The wallpaper is an image inside the parallax layer"
         )
     }
 
-    /// Прямоугольник обоев в координатах страницы с учётом `transform` слоя.
+    /// The wallpaper rectangle in page coordinates, taking the layer's `transform` into account.
     private func screenRectOfWallpaper(in scene: Scene) throws -> CGRect {
         let imageView = try wallpaperView(in: scene)
         return imageView.convert(imageView.bounds, to: scene.page)
     }
 
-    /// Пишет offset в коллекцию; трансляцию в слой делает колбэк сетки
-    /// `onScrollOffsetChanged` из `scrollViewDidScroll`.
+    /// Writes the offset into the collection; translating it into the layer is done by the grid's
+    /// `onScrollOffsetChanged` callback from `scrollViewDidScroll`.
     private func scroll(_ scene: Scene, toY y: CGFloat) {
         scene.collectionView.contentOffset = CGPoint(x: 0, y: y)
     }
 
-    /// Проверяет, что обои закрывают всю страницу.
+    /// Checks that the wallpaper covers the whole page.
     private func assertWallpaperCoversPage(
         _ scene: Scene,
         _ message: String,
@@ -120,20 +120,20 @@ final class StartWallpaperParallaxTests: XCTestCase {
         let rect = try screenRectOfWallpaper(in: scene)
         let page = scene.page.bounds
         let tolerance: CGFloat = 0.001
-        XCTAssertLessThanOrEqual(rect.minX, page.minX + tolerance, "\(message): полоса слева", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(rect.maxX, page.maxX - tolerance, "\(message): полоса справа", file: file, line: line)
-        XCTAssertLessThanOrEqual(rect.minY, page.minY + tolerance, "\(message): полоса сверху", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(rect.maxY, page.maxY - tolerance, "\(message): полоса снизу", file: file, line: line)
+        XCTAssertLessThanOrEqual(rect.minX, page.minX + tolerance, "\(message): strip on the left", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(rect.maxX, page.maxX - tolerance, "\(message): strip on the right", file: file, line: line)
+        XCTAssertLessThanOrEqual(rect.minY, page.minY + tolerance, "\(message): strip at the top", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(rect.maxY, page.maxY - tolerance, "\(message): strip at the bottom", file: file, line: line)
     }
 
-    // MARK: - Направление (E10.7)
+    // MARK: - Direction
 
-    /// Прокрутка вниз на Δ уводит обои на экране на −Δ × factor: вверх, как и
-    /// плитки, но медленнее. До E10.7 обои ехали вниз — против контента.
+    /// Scrolling down by Δ moves the wallpaper on screen by −Δ × factor: up, like the
+    /// tiles, but slower. Previously the wallpaper moved down, against the content.
     func testWallpaperMovesWithTilesButSlower() throws {
         let scene = try makeScene()
         let maximum = scene.maximumOffset
-        XCTAssertGreaterThan(maximum, 0, "Сорок плиток обязаны давать вертикальный ход")
+        XCTAssertGreaterThan(maximum, 0, "Forty tiles must produce vertical travel")
 
         scroll(scene, toY: 0)
         let before = try screenRectOfWallpaper(in: scene)
@@ -143,37 +143,37 @@ final class StartWallpaperParallaxTests: XCTestCase {
         let after = try screenRectOfWallpaper(in: scene)
 
         XCTAssertEqual(after.minY - before.minY, -delta * factor, accuracy: 0.001)
-        XCTAssertEqual(after.minX, before.minX, accuracy: 0.001, "Горизонтали у обоев нет")
+        XCTAssertEqual(after.minX, before.minX, accuracy: 0.001, "The wallpaper has no horizontal movement")
         XCTAssertEqual(scene.layer.transform.ty, -delta * factor, accuracy: 0.001)
     }
 
-    // MARK: - Покрытие страницы
+    // MARK: - Page coverage
 
-    /// В начале прокрутки (offset 0) обои закрывают страницу.
+    /// At the start of scrolling (offset 0) the wallpaper covers the page.
     func testWallpaperCoversPageAtTop() throws {
         let scene = try makeScene()
         scroll(scene, toY: 0)
         try assertWallpaperCoversPage(scene, "offset 0")
     }
 
-    /// В конце прокрутки (максимальный offset) обои закрывают страницу: ход
-    /// обоев `maximumOffset × factor` лежит ниже вьюпорта.
+    /// At the end of scrolling (maximum offset) the wallpaper covers the page: the wallpaper
+    /// travel `maximumOffset × factor` lies below the viewport.
     func testWallpaperCoversPageAtBottom() throws {
         let scene = try makeScene()
         scroll(scene, toY: scene.maximumOffset)
-        try assertWallpaperCoversPage(scene, "максимальный offset")
+        try assertWallpaperCoversPage(scene, "maximum offset")
     }
 
-    /// «Резина» за обоими краями прокрутки не обнажает краёв обоев.
+    /// The bounce past both scroll edges does not expose the wallpaper's edges.
     func testWallpaperCoversPageOnBounceAtBothEdges() throws {
         let scene = try makeScene()
         let bounce = scene.page.bounds.height / 3
 
         scroll(scene, toY: -bounce)
-        try assertWallpaperCoversPage(scene, "bounce над верхом")
+        try assertWallpaperCoversPage(scene, "bounce above the top")
 
         scroll(scene, toY: scene.maximumOffset + bounce)
-        try assertWallpaperCoversPage(scene, "bounce под низом")
+        try assertWallpaperCoversPage(scene, "bounce below the bottom")
     }
 }
 

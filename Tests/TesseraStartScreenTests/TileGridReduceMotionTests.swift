@@ -2,19 +2,19 @@
 //  TileGridReduceMotionTests.swift
 //  TesseraStartScreenTests
 //
-//  Reduce Motion при применении снимка сетки (E9.4 и подтверждение E10.14,
-//  волна W3 плана E9/E10).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §9 «Accessibility»
-//  (Reduce Motion: нет флипов, «желе», параллакса; анимации не проигрываются);
-//  STATE.md, решение по E9.4: кроссфейд смены состава сетки учитывает
-//  настройку.
+//  Reduce Motion when a grid snapshot is applied.
 //
-//  E10.14: ветка кроссфейда с `animated: true` достижима только после
-//  `guard shouldAnimate`, потому что `shouldAnimate` включает
-//  `!isReduceMotionEnabled()`. Тесты подтверждают, что при Reduce Motion
-//  снимок применяется без кроссфейда (и сразу — состав уже новый), а без
-//  Reduce Motion кроссфейд выполняется. Провайдер Reduce Motion — внутренний
-//  шов сетки (`isReduceMotionEnabled`), системная настройка не меняется.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §9 "Accessibility"
+//  (Reduce Motion: no flips, jiggle or parallax; animations are not played);
+//  STATE.md: the crossfade of a grid composition change honors
+//  the setting.
+//
+//  The crossfade branch with `animated: true` is reachable only after
+//  `guard shouldAnimate`, because `shouldAnimate` includes
+//  `!isReduceMotionEnabled()`. The tests confirm that with Reduce Motion
+//  the snapshot is applied without a crossfade (and immediately: the composition is already new), while without
+//  Reduce Motion the crossfade runs. The Reduce Motion provider is an internal
+//  seam of the grid (`isReduceMotionEnabled`); the system setting is not changed.
 //
 
 #if canImport(UIKit)
@@ -25,9 +25,9 @@ import XCTest
 
 final class TileGridReduceMotionTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Сетка с составом `[a, b]` в окне: кроссфейд возможен только на экране.
+    /// A grid with the composition `[a, b]` in a window: a crossfade is possible only on screen.
     private func makeHost() -> TesseraTestWindowedGrid {
         let host = TesseraTestWindowedGrid(
             items: [.tile(tesseraTestTile("a", size: .small)),
@@ -37,7 +37,7 @@ final class TileGridReduceMotionTests: XCTestCase {
         return host
     }
 
-    /// Снимок с добавленным ярлыком `c` (смена состава).
+    /// A snapshot with the tile `c` added (a composition change).
     private func snapshotWithExtraTile() -> TesseraTileGridSnapshot {
         TesseraTileGridSnapshot(
             items: [
@@ -49,10 +49,10 @@ final class TileGridReduceMotionTests: XCTestCase {
         )
     }
 
-    // MARK: - Кроссфейд смены состава (E9.4, E10.14)
+    // MARK: - Composition change crossfade
 
-    /// Без Reduce Motion смена состава применяется кроссфейдом: снимок
-    /// действительно анимируется, а не подменяется молча.
+    /// Without Reduce Motion a composition change is applied with a crossfade: the snapshot
+    /// is really animated and not swapped silently.
     func testCompositionChangeCrossfadesWithoutReduceMotion() {
         let host = makeHost()
         host.grid.isReduceMotionEnabled = { false }
@@ -62,7 +62,7 @@ final class TileGridReduceMotionTests: XCTestCase {
 
         XCTAssertTrue(
             host.grid.didApplyLastSnapshotWithCrossfade,
-            "Без Reduce Motion кроссфейд выполняется"
+            "Without Reduce Motion the crossfade runs"
         )
         XCTAssertEqual(host.grid.items.count, 3)
         XCTAssertEqual(
@@ -71,8 +71,8 @@ final class TileGridReduceMotionTests: XCTestCase {
         )
     }
 
-    /// При Reduce Motion тот же вызов идёт без кроссфейда: снимок применяется
-    /// сразу, состав уже новый к моменту возврата из `update`.
+    /// With Reduce Motion the same call runs without a crossfade: the snapshot is applied
+    /// immediately, and the composition is already new by the time `update` returns.
     func testCompositionChangeSkipsCrossfadeUnderReduceMotion() {
         let host = makeHost()
         host.grid.isReduceMotionEnabled = { true }
@@ -82,7 +82,7 @@ final class TileGridReduceMotionTests: XCTestCase {
 
         XCTAssertFalse(
             host.grid.didApplyLastSnapshotWithCrossfade,
-            "Reduce Motion отключает кроссфейд"
+            "Reduce Motion disables the crossfade"
         )
         XCTAssertEqual(host.grid.items.count, 3)
         XCTAssertEqual(
@@ -91,8 +91,8 @@ final class TileGridReduceMotionTests: XCTestCase {
         )
     }
 
-    /// «Без анимации» (animated: false) не включает кроссфейд независимо от
-    /// настройки: ветка выбирается вызывающим кодом.
+    /// "Without animation" (animated: false) does not enable a crossfade regardless of
+    /// the setting: the branch is chosen by the calling code.
     func testNonAnimatedUpdateNeverCrossfades() {
         let host = makeHost()
         host.grid.isReduceMotionEnabled = { false }
@@ -104,8 +104,8 @@ final class TileGridReduceMotionTests: XCTestCase {
         XCTAssertEqual(host.grid.items.count, 3)
     }
 
-    /// Перезагрузка снимка (`reload(snapshot:)`) всегда без кроссфейда: это
-    /// первый показ/полная замена данных, а не анимированное изменение.
+    /// A snapshot reload (`reload(snapshot:)`) never crossfades: it is the
+    /// first display or a full data replacement, not an animated change.
     func testReloadNeverCrossfades() {
         let host = makeHost()
         host.grid.isReduceMotionEnabled = { false }
@@ -117,10 +117,10 @@ final class TileGridReduceMotionTests: XCTestCase {
         XCTAssertEqual(host.grid.items.count, 3)
     }
 
-    // MARK: - Reduce Motion и панель папки (E10.2)
+    // MARK: - Reduce Motion and the folder panel
 
-    /// При Reduce Motion раскрытие панели идёт неанимированной веткой сетки:
-    /// состояние применяется сразу, без `isFolderChangeAnimating`.
+    /// With Reduce Motion the panel expands through the grid's non-animated branch:
+    /// the state is applied immediately, without `isFolderChangeAnimating`.
     func testFolderExpansionAppliesImmediatelyUnderReduceMotion() {
         let folder = tesseraTestFolder("folder", tileCount: 3)
         let host = TesseraTestWindowedGrid(items: [.folder(folder)])
@@ -132,9 +132,9 @@ final class TileGridReduceMotionTests: XCTestCase {
         XCTAssertEqual(host.grid.expandedFolderID, folder.id)
         XCTAssertFalse(
             host.grid.isFolderChangeAnimating,
-            "Reduce Motion не запускает анимацию панели"
+            "Reduce Motion does not start the panel animation"
         )
-        XCTAssertTrue(host.grid.isScrollEnabled, "Прокрутка не блокируется")
+        XCTAssertTrue(host.grid.isScrollEnabled, "Scrolling is not blocked")
     }
 }
 

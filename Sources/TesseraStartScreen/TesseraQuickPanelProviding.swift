@@ -1,73 +1,69 @@
-// Левая страница-хук рабочего стола.
+// The left hook page of the start screen.
 //
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §1 «Ключевая
-// архитектурная идея: три страницы» (левая страница — хук вызова чего угодно),
-// §7 «Страница слева: хук» (контейнер с протоколом `TesseraQuickPanelProviding`,
-// по умолчанию пустая заглушка, колбэки появления/скрытия для ленивой загрузки)
-// и §14 «Уточнения MVP», п. 2 (D13 в docs/STATE.md: обе боковые страницы
-// опциональны, пейджер — от 1 до 3 страниц).
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md, §1 (three pages: the left page is a hook for
+// calling anything), §7 (the left page: a container with the `TesseraQuickPanelProviding` protocol,
+// an empty placeholder by default, appear/disappear callbacks for lazy loading) and §14 (MVP
+// clarifications; D13 in docs/STATE.md: both side pages are optional, the pager has 1 to 3 pages).
 //
-// Ключевое решение D13: нет поставщика — нет страницы. Пейджер не подставляет
-// «пустую заглушку» молча, а просто не создаёт левую страницу; хост, которому
-// нужен пустой хук (например, чтобы оставить жест), передаёт свою заглушку.
+// Decision D13: no provider, no page. The pager does not silently substitute an empty placeholder;
+// it simply does not create the left page. A host that needs an empty hook (for example, to keep
+// the gesture) passes its own placeholder.
 //
-// Импорт UIKit обязателен: поставщик отдаёт UIViewController, которым владеет
-// пейджер через TesseraContentHosting (docs/CORE-IOS-DESIGN.md §3).
+// The UIKit import is required: the provider returns a UIViewController, which the pager owns
+// through TesseraContentHosting (docs/CORE-IOS-DESIGN.md §3).
 
 #if canImport(UIKit)
 import UIKit
 
-/// Поставщик левой страницы-хука (docs/STARTSCREEN-IOS-DESIGN.md §7; D13).
+/// Provider of the left hook page (docs/STARTSCREEN-IOS-DESIGN.md §7; D13).
 ///
-/// Хук — это полноэкранная страница пейджера слева от START; её содержимое
-/// целиком определяет приложение-хост: быстрые настройки, поиск, профиль,
-/// недавние приложения. Компонент рабочий стол не знает о содержимом и не
-/// вмешивается в него — пейджеру важно только то, что страница существует.
+/// The hook is a full-screen pager page to the left of START; its content is entirely defined by
+/// the host app: quick settings, search, profile, recent apps. The start screen component knows
+/// nothing about the content and does not interfere with it; the pager only cares that the page
+/// exists.
 ///
-/// Соответствие D13: если хост не передал поставщика (передал `nil` или не
-/// передал вовсе), левой страницы нет и пейджер масштабируется до одной-двух
-/// страниц. Свойство `nil` — это нормальный режим, а не ошибка конфигурации.
+/// Per D13: if the host does not pass a provider (passes `nil` or nothing at all), there is no left
+/// page and the pager scales down to one or two pages. A `nil` property is a normal mode, not a
+/// configuration error.
 ///
-/// Поток: все методы вызываются на главном потоке. ``makeQuickPanelViewController()``
-/// вызывается лениво — при первом показе страницы (пейджер грузит страницы ±1,
-/// docs/CORE-IOS-DESIGN.md §3), поэтому контроллер не должен создаваться на
-/// старте приложения.
+/// Threading: all methods are called on the main thread. ``makeQuickPanelViewController()`` is
+/// called lazily, on the first appearance of the page (the pager loads pages ±1,
+/// docs/CORE-IOS-DESIGN.md §3), so the controller must not be created at app launch.
 public protocol TesseraQuickPanelProviding {
 
-    /// Создаёт контроллер левой страницы.
+    /// Creates the controller of the left page.
     ///
-    /// Вызывается лениво, когда пейджер впервые собирается показать страницу.
-    /// Контроллером владеет пейджер: он встраивает его ребёнком (child view
-    /// controller) и вызывает `willMove/didMove`-жизненный цикл сам.
+    /// Called lazily, when the pager is about to show the page for the first time. The pager owns the
+    /// controller: it embeds it as a child view controller and drives the `willMove/didMove`
+    /// lifecycle itself.
     ///
-    /// - Returns: Контроллер страницы-хука.
+    /// - Returns: The hook page controller.
     func makeQuickPanelViewController() -> UIViewController
 
-    /// Страница вот-вот появится на экране.
+    /// The page is about to appear on screen.
     ///
-    /// Удобно для ленивой подгрузки контента (§7): сеть, обновление данных,
-    /// запуск таймеров. Реализация по умолчанию пустая.
+    /// Useful for lazy content loading (§7): network, data refresh, starting timers. The default
+    /// implementation does nothing.
     func quickPanelWillAppear()
 
-    /// Страница скрылась с экрана.
+    /// The page has disappeared from the screen.
     ///
-    /// Удобно, чтобы остановить таймеры и снять нагрузку. Реализация по
-    /// умолчанию пустая.
+    /// Useful for stopping timers and releasing load. The default implementation does nothing.
     func quickPanelDidDisappear()
 }
 
 public extension TesseraQuickPanelProviding {
 
-    /// По умолчанию хук не реагирует на появление: контент грузится сразу.
+    /// By default the hook does not react to appearing: the content loads immediately.
     func quickPanelWillAppear() {}
 
-    /// По умолчанию хук не реагирует на скрытие.
+    /// By default the hook does not react to disappearing.
     func quickPanelDidDisappear() {}
 }
 
-/// Поставщик страницы-хука из замыкания (§7: «протокол или замыкание»).
+/// A hook page provider built from a closure (§7: "protocol or closure").
 ///
-/// Нужен, когда заводить отдельный тип ради одной страницы не хочется:
+/// Use it when a separate type for a single page is not worth it:
 ///
 /// ```swift
 /// let panel = TesseraQuickPanelProvider {
@@ -75,26 +71,25 @@ public extension TesseraQuickPanelProviding {
 /// }
 /// ```
 ///
-/// - Note: Если контроллер должен переиспользоваться между показами,
-///   кэшируйте его в замыкании — пейджер имеет право пересоздать страницу
-///   после выгрузки.
+/// - Note: If the controller should be reused between appearances, cache it in the closure: the
+///   pager may recreate the page after it is unloaded.
 public final class TesseraQuickPanelProvider: TesseraQuickPanelProviding {
 
-    /// Фабрика контроллера страницы.
+    /// Page controller factory.
     private let makeViewController: () -> UIViewController
 
-    /// Колбэк появления страницы, если задан.
+    /// Page appear callback, if set.
     private let onAppear: (() -> Void)?
 
-    /// Колбэк скрытия страницы, если задан.
+    /// Page disappear callback, if set.
     private let onDisappear: (() -> Void)?
 
-    /// Создаёт поставщика из замыкания.
+    /// Creates a provider from a closure.
     ///
     /// - Parameters:
-    ///   - makeViewController: Фабрика контроллера; вызывается лениво.
-    ///   - onAppear: Колбэк появления; по умолчанию нет.
-    ///   - onDisappear: Колбэк скрытия; по умолчанию нет.
+    ///   - makeViewController: Controller factory; called lazily.
+    ///   - onAppear: Appear callback; none by default.
+    ///   - onDisappear: Disappear callback; none by default.
     public init(
         makeViewController: @escaping () -> UIViewController,
         onAppear: (() -> Void)? = nil,
@@ -105,17 +100,17 @@ public final class TesseraQuickPanelProvider: TesseraQuickPanelProviding {
         self.onDisappear = onDisappear
     }
 
-    /// Создаёт контроллер страницы.
+    /// Creates the page controller.
     public func makeQuickPanelViewController() -> UIViewController {
         makeViewController()
     }
 
-    /// Сообщает о появлении страницы.
+    /// Reports that the page is appearing.
     public func quickPanelWillAppear() {
         onAppear?()
     }
 
-    /// Сообщает о скрытии страницы.
+    /// Reports that the page has disappeared.
     public func quickPanelDidDisappear() {
         onDisappear?()
     }

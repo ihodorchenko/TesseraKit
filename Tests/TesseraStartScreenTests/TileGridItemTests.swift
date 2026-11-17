@@ -2,14 +2,14 @@
 //  TileGridItemTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты элемента сетки рабочего стола (задача E7.4, решение D17).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»;
-//  D17 в docs/STATE.md — панель раскрытой папки `folderContent` живёт в том же
-//  перечислении, что ярлык и папка, но не является элементом данных.
+//  Tests of the desktop grid item (decision D17).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid";
+//  D17 in docs/STATE.md — the panel of an opened folder, `folderContent`, lives in the same
+//  enumeration as the tile and the folder, but is not a data item.
 //
-//  Проверяются идентичность, размер, «видовые» свойства и switch по всем трём
-//  случаям: добавление нового case не должно ломать обработчики хоста. Модель —
-//  чистое значение, поэтому UIKit-цикл не нужен.
+//  The tests check identity, size, "view" properties and a switch over all three
+//  cases: adding a new case must not break host handlers. The model is a
+//  pure value, so no UIKit loop is needed.
 //
 
 #if canImport(UIKit)
@@ -20,26 +20,26 @@ import XCTest
 
 final class TileGridItemTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Папка с двумя ярлыками для проверок идентичности и содержимого.
+    /// A folder with two tiles for identity and content checks.
     ///
-    /// - Returns: Модель папки «f» с ярлыками «a» и «b».
+    /// - Returns: The model of folder "f" with tiles "a" and "b".
     private func makeFolder() -> TesseraTileFolder {
         TesseraTileFolder(
             id: "f",
-            title: "Папка",
+            title: "Folder",
             tiles: [tesseraTestTile("a"), tesseraTestTile("b")]
         )
     }
 
-    /// Человекочитаемое имя случая — ровно то, что делает хост в switch.
+    /// A human-readable case name — exactly what a host does in a switch.
     ///
-    /// Если у `TesseraTileGridItem` появится четвёртый case, этот switch перестанет
-    /// компилироваться: тест ловит несовместимость на этапе сборки.
+    /// If `TesseraTileGridItem` gains a fourth case, this switch stops
+    /// compiling: the test catches the incompatibility at build time.
     ///
-    /// - Parameter item: Элемент сетки.
-    /// - Returns: Имя случая.
+    /// - Parameter item: A grid item.
+    /// - Returns: The case name.
     private func describe(_ item: TesseraTileGridItem) -> String {
         switch item {
         case .tile:
@@ -51,10 +51,10 @@ final class TileGridItemTests: XCTestCase {
         }
     }
 
-    // MARK: - Новый case folderContent (D17)
+    // MARK: - New case folderContent (D17)
 
-    /// Панель наследует идентификатор папки: по нему раскладка находит строку
-    /// папки, после которой встаёт панель (D17: панель вставляется под плитку).
+    /// The panel inherits the folder identifier: the layout uses it to find the folder
+    /// row after which the panel is placed (D17: the panel is inserted below the tile).
     func testFolderContentSharesIdentityWithFolder() {
         let folder = makeFolder()
         let panel = TesseraTileGridItem.folderContent(folder)
@@ -67,7 +67,7 @@ final class TileGridItemTests: XCTestCase {
         )
     }
 
-    /// Панель — не ярлык и не плитка-папка: только `panelFolder`.
+    /// The panel is neither a tile nor a folder tile: only `panelFolder`.
     func testFolderContentIsNeitherTileNorFolder() {
         let folder = makeFolder()
         let panel = TesseraTileGridItem.folderContent(folder)
@@ -77,9 +77,9 @@ final class TileGridItemTests: XCTestCase {
         XCTAssertNotNil(panel.panelFolder)
     }
 
-    /// Собственного размера у панели нет: `.wide` — метка «полная ширина».
-    /// Раскладка не упаковывает панель по этой метке: панель — отдельная
-    /// полноширинная строка под папкой, а не плитка.
+    /// The panel has no size of its own: `.wide` is a "full width" marker.
+    /// The layout does not pack the panel by this marker: the panel is a separate
+    /// full-width row below the folder, not a tile.
     func testFolderContentUsesWideSizeAsFullWidthMarker() {
         let panel = TesseraTileGridItem.folderContent(makeFolder())
 
@@ -88,8 +88,8 @@ final class TileGridItemTests: XCTestCase {
         XCTAssertEqual(panel.size.unitRows, 2)
     }
 
-    /// `folderTiles` панели пуст: содержимое доступно через `panelFolder`,
-    /// чтобы одна папка не считалась дважды при обходе снимка.
+    /// The panel's `folderTiles` is empty: the contents are available through `panelFolder`,
+    /// so one folder is not counted twice when walking the snapshot.
     func testFolderContentExposesNoTilesOfItsOwn() {
         let panel = TesseraTileGridItem.folderContent(makeFolder())
 
@@ -97,7 +97,7 @@ final class TileGridItemTests: XCTestCase {
         XCTAssertEqual(panel.panelFolder?.tiles.count, 2)
     }
 
-    /// Признак панели отличает её от плитки-папки с тем же идентификатором.
+    /// The panel flag distinguishes it from a folder tile with the same identifier.
     func testIsFolderPanelDistinguishesPanelFromFolder() {
         let folder = makeFolder()
 
@@ -106,9 +106,9 @@ final class TileGridItemTests: XCTestCase {
         XCTAssertFalse(TesseraTileGridItem.tile(tesseraTestTile("a")).isFolderPanel)
     }
 
-    /// Папка и панель делят идентификатор, но остаются разными случаями: в
-    /// наборе они стоят рядом (панель после плитки), а сравнение по `id` не
-    /// путает данные с UI-состоянием.
+    /// A folder and a panel share an identifier but remain distinct cases: in
+    /// a set they sit next to each other (the panel after the tile), and comparing by `id` does not
+    /// confuse data with UI state.
     func testFolderAndPanelShareIDButRemainDistinctCases() {
         let folder = makeFolder()
         let panel = TesseraTileGridItem.folderContent(folder)
@@ -116,14 +116,14 @@ final class TileGridItemTests: XCTestCase {
 
         XCTAssertEqual(panel.id, item.id)
 
-        // Сравнение по идентификатору не должно означать «тот же элемент»:
-        // у панели `folder` = nil, у плитки-папки `panelFolder` = nil.
+        // Comparing by identifier must not mean "the same item":
+        // for a panel `folder` is nil, for a folder tile `panelFolder` is nil.
         XCTAssertNotEqual(panel.id, AnyHashable("other"))
         XCTAssertNil(panel.folder)
         XCTAssertNil(item.panelFolder)
     }
 
-    /// Существующие случаи сохраняют прежнюю семантику (совместимость API).
+    /// Existing cases keep their former semantics (API compatibility).
     func testFolderAndTileCasesKeepTheirPayload() {
         let folder = makeFolder()
         let item = TesseraTileGridItem.folder(folder)
@@ -142,7 +142,7 @@ final class TileGridItemTests: XCTestCase {
         XCTAssertNil(tileItem.folder)
     }
 
-    /// Switch по трём случаям исчерпывающий и различает все три вида.
+    /// The switch over the three cases is exhaustive and distinguishes all three kinds.
     func testSwitchCoversAllCases() {
         let folder = makeFolder()
         let items: [TesseraTileGridItem] = [
@@ -154,12 +154,12 @@ final class TileGridItemTests: XCTestCase {
         XCTAssertEqual(items.map(describe), ["tile", "folder", "folderContent"])
     }
 
-    // MARK: - Панель в снимке
+    // MARK: - Panel in a snapshot
 
-    /// Снимок не считает панель данными: `layoutItems` и `folders` её
-    /// пропускают, а `item(withID:)` возвращает первую запись с этим
-    /// идентификатором. На практике снимок `TesseraTileStore` панель не содержит —
-    /// тест страхует хосты, которые всё же положат её в набор.
+    /// The snapshot does not treat the panel as data: `layoutItems` and `folders` skip
+    /// it, and `item(withID:)` returns the first entry with that
+    /// identifier. In practice a `TesseraTileStore` snapshot does not contain the panel —
+    /// the test guards hosts that put it into the set anyway.
     func testSnapshotExcludesPanelFromLayoutAndFolders() {
         let folder = makeFolder()
         let snapshot = TesseraTileGridSnapshot(

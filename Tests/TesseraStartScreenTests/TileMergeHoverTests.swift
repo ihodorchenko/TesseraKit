@@ -2,16 +2,16 @@
 //  TileMergeHoverTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты слияния в папку по удержанию (задача E8.6).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим редактирования»
-//  и docs/PLAN.md E8.6/E9.8а: папка из двух ярлыков создаётся не мгновенно по
-//  drop на центр плитки-цели, а после удержания **строго больше** 600 мс при
-//  смещении пальца **строго меньше** 10 pt.
+//  Tests for merging into a folder by hold.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode"
+//  and docs/PLAN.md: a folder of two tiles is not created instantly on
+//  a drop on the center of the target tile, but after a hold of **strictly more than** 600 ms with
+//  a finger displacement **strictly less than** 10 pt.
 //
-//  Проверяется чистая state-машина `TesseraMergeHoverTracker` (никакого UI):
-//  строгие границы допуска и времени, перенос якоря и перевзвод по последней
-//  точке при смещении на допуск (E12.3, заменил E10.5-A3), сбросы, готовность к drop. Часы и таймер инжектируются,
-//  поэтому тесты не спят и не флакуют.
+//  The pure state machine `TesseraMergeHoverTracker` is tested (no UI):
+//  strict tolerance and time boundaries, moving the anchor and rearming at the last
+//  point on a displacement at the tolerance, resets, drop readiness. The clock and timer are injected,
+//  so the tests neither sleep nor flake.
 //
 
 #if canImport(UIKit)
@@ -21,29 +21,29 @@ import XCTest
 
 final class TileMergeHoverTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Управляемые часы state-машины: время двигает тест, а не runloop.
+    /// A controllable clock for the state machine: the test advances time, not the run loop.
     private final class TestClock {
 
-        /// Текущее «монотонное» время в секундах.
+        /// The current "monotonic" time in seconds.
         var time: TimeInterval = 0
 
-        /// Продвигает часы.
+        /// Advances the clock.
         ///
-        /// - Parameter interval: Приращение в секундах.
+        /// - Parameter interval: Increment in seconds.
         func advance(_ interval: TimeInterval) {
             time += interval
         }
     }
 
-    /// Трекер на управляемых часах с параметрами из конфигурации.
+    /// A tracker on a controllable clock with parameters from the configuration.
     ///
     /// - Parameters:
-    ///   - clock: Часы теста.
-    ///   - configuration: Конфигурация редактирования (по умолчанию — боевые
-    ///     значения: 600 мс и 10 pt).
-    /// - Returns: Машина удержания, читающая время из `clock`.
+    ///   - clock: The test clock.
+    ///   - configuration: Edit configuration (by default the production
+    ///     values: 600 ms and 10 pt).
+    /// - Returns: A hold machine that reads time from `clock`.
     private func makeTracker(
         _ clock: TestClock,
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration()
@@ -55,19 +55,19 @@ final class TileMergeHoverTests: XCTestCase {
         )
     }
 
-    /// Взводит удержание над ярлыком «a» в заданной точке.
+    /// Arms the hold over tile "a" at the given point.
     ///
     /// - Parameters:
-    ///   - tracker: Машина удержания.
-    ///   - point: Точка пальца (якорь допуска).
+    ///   - tracker: The hold machine.
+    ///   - point: The finger point (the tolerance anchor).
     private func arm(_ tracker: inout TesseraMergeHoverTracker, at point: CGPoint = .zero) {
         tracker.beginHover(targetID: "a", point: point)
     }
 
-    // MARK: - Конфигурация
+    // MARK: - Configuration
 
-    /// Значения по умолчанию: 600 мс удержания, 10 pt допуска и подсветка
-    /// «впитывания» ~0,2 с в диапазоне 1.06–1.1.
+    /// Default values: a 600 ms hold, a 10 pt tolerance and an "absorb"
+    /// highlight of ~0.2 s in the 1.06–1.1 range.
     func testConfigurationDefaultsMatchSpec() {
         let configuration = TesseraTileEditConfiguration()
 
@@ -78,7 +78,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertLessThanOrEqual(configuration.mergeHighlightScale, 1.1)
     }
 
-    /// Пороги из конфигурации доходят до машины удержания без искажений.
+    /// Thresholds from the configuration reach the hold machine without distortion.
     func testConfigurationThresholdsAreRespected() {
         let clock = TestClock()
         var configuration = TesseraTileEditConfiguration()
@@ -88,22 +88,22 @@ final class TileMergeHoverTests: XCTestCase {
 
         arm(&tracker)
 
-        // 3 pt — внутри допуска (`<4 pt` в этом тесте): удержание продолжается.
+        // 3 pt is within the tolerance (`<4 pt` in this test): the hold continues.
         tracker.update(point: CGPoint(x: 3, y: 0))
         XCTAssertEqual(tracker.state, .armed)
 
-        // 4 pt — ровно допуск: строгая граница E9.8а, удержание отменено и
-        // перевзведено с якорем в новой точке (E12.3).
+        // 4 pt is exactly the tolerance: a strict boundary, the hold is cancelled and
+        // rearmed with the anchor at the new point.
         XCTAssertTrue(tracker.update(point: CGPoint(x: 4, y: 0)))
         XCTAssertEqual(tracker.anchor, CGPoint(x: 4, y: 0))
 
-        // Возврат в исходное состояние и проверка укороченного таймера.
+        // Return to the initial state and a check of the shortened timer.
         tracker.reset()
         arm(&tracker)
         clock.advance(0.05)
         XCTAssertFalse(tracker.timerFired())
         XCTAssertEqual(tracker.state, .armed)
-        // Ровно порог (0,1 с) — ещё не готовность: сравнение строгое.
+        // Exactly the threshold (0.1 s) is not yet readiness: the comparison is strict.
         clock.advance(0.05)
         XCTAssertFalse(tracker.timerFired())
         clock.advance(0.01)
@@ -111,9 +111,9 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.state, .fired)
     }
 
-    // MARK: - Порог смещения (10 px)
+    // MARK: - Displacement threshold (10 px)
 
-    /// Смещение внутри допуска удержание не отменяет.
+    /// A displacement within the tolerance does not cancel the hold.
     func testSmallDisplacementKeepsArmed() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -122,30 +122,30 @@ final class TileMergeHoverTests: XCTestCase {
 
         for offset in [CGPoint(x: 3, y: 0), CGPoint(x: 0, y: 9), CGPoint(x: -7, y: 6)] {
             tracker.update(point: offset)
-            XCTAssertEqual(tracker.state, .armed, "Смещение \(offset) должно оставаться в допуске")
+            XCTAssertEqual(tracker.state, .armed, "Displacement \(offset) must stay within the tolerance")
         }
     }
 
-    /// Ровно 10 pt — граница допуска; E9.8а требует смещения строго меньше,
-    /// поэтому ровно на допуске удержание отменяется и перевзводится с новым
-    /// якорем (E12.3).
+    /// Exactly 10 pt is the tolerance boundary; the requirement is a displacement strictly less,
+    /// so exactly at the tolerance the hold is cancelled and rearmed with a new
+    /// anchor.
     func testDisplacementExactlyAtThresholdCancels() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
 
         arm(&tracker)
-        // Пифагорова тройка 6–8–10: смещение ровно 10 pt.
+        // The 6-8-10 Pythagorean triple: the displacement is exactly 10 pt.
         clock.advance(0.5)
         XCTAssertTrue(tracker.update(point: CGPoint(x: 6, y: 8)))
 
-        // Прежний отсчёт сброшен, якорь перенесён, новый отсчёт с полным порогом.
+        // The previous countdown is reset, the anchor moved, a new countdown with the full threshold.
         XCTAssertEqual(tracker.state, .armed)
         XCTAssertEqual(tracker.anchor, CGPoint(x: 6, y: 8))
         XCTAssertEqual(tracker.remainingDuration, 0.6, accuracy: 0.0001)
         XCTAssertFalse(tracker.isMergeReady)
     }
 
-    /// Чуть меньше 10 pt — удержание ещё в силе (граница строгая).
+    /// Slightly less than 10 pt: the hold is still in force (the boundary is strict).
     func testDisplacementJustInsideThresholdKeepsArmed() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -156,8 +156,8 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.state, .armed)
     }
 
-    /// Смещение больше 10 pt отменяет прежнее удержание и перевзводит его с
-    /// якорем в текущей точке (E12.3).
+    /// A displacement greater than 10 pt cancels the previous hold and rearms it with
+    /// the anchor at the current point.
     func testLargeDisplacementCancels() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -170,8 +170,8 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.anchor, CGPoint(x: 11, y: 0))
     }
 
-    /// Якорь — точка начала удержания, а не предыдущий шаг: несколько мелких
-    /// шагов в одну сторону суммируются.
+    /// The anchor is the point where the hold began, not the previous step: several small
+    /// steps in one direction add up.
     func testDisplacementIsMeasuredFromAnchorNotFromLastStep() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -181,15 +181,15 @@ final class TileMergeHoverTests: XCTestCase {
             tracker.update(point: CGPoint(x: CGFloat(step) * 5, y: 0))
         }
 
-        // Каждый шаг по 5 pt: на втором шаге от якоря уже 10 pt — строгий
-        // допуск E9.8а отменяет удержание и переносит якорь в (10, 0); третий
-        // шаг (15, 0) — лишь 5 pt от нового якоря, удержание живёт (E12.3).
+        // Each step is 5 pt: at the second step the distance from the anchor is already 10 pt, so the strict
+        // tolerance cancels the hold and moves the anchor to (10, 0); the third
+        // step (15, 0) is only 5 pt from the new anchor, so the hold lives.
         XCTAssertEqual(tracker.state, .armed)
         XCTAssertEqual(tracker.anchor, CGPoint(x: 10, y: 0))
     }
 
-    /// После перевзвода старый отсчёт не «воскрешает» готовность: порог
-    /// считается от последнего заметного движения (E12.3).
+    /// After rearming, the old countdown does not "resurrect" readiness: the threshold
+    /// is counted from the last noticeable movement.
     func testTimerAfterRearmCountsFromLastMove() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -199,15 +199,15 @@ final class TileMergeHoverTests: XCTestCase {
         tracker.update(point: CGPoint(x: 12, y: 0))
         clock.advance(0.5)
 
-        // С начала удержания прошло 1 с, но с последнего движения — 0,5 с.
+        // 1 s has passed since the hold began, but 0.5 s since the last movement.
         XCTAssertFalse(tracker.timerFired())
         XCTAssertEqual(tracker.state, .armed)
         clock.advance(0.11)
         XCTAssertTrue(tracker.timerFired())
     }
 
-    /// E12.3: палец дошёл до центра цели несколькими шагами и остановился —
-    /// готовность через >600 мс от **остановки**, а не от входа в зону.
+    /// The finger reached the target center in several steps and stopped:
+    /// readiness comes >600 ms after the **stop**, not after entering the zone.
     func testStopAfterMovingBeyondToleranceBecomesReadyFromNewAnchor() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -217,14 +217,14 @@ final class TileMergeHoverTests: XCTestCase {
         tracker.update(point: CGPoint(x: 15, y: 0))
 
         clock.advance(0.6)
-        XCTAssertFalse(tracker.timerFired(), "Ровно 600 мс от нового якоря — ещё не готово")
+        XCTAssertFalse(tracker.timerFired(), "Exactly 600 ms from the new anchor is not ready yet")
         clock.advance(0.01)
         XCTAssertTrue(tracker.timerFired())
         XCTAssertTrue(tracker.isMergeReady)
     }
 
-    /// E12.3: постоянное движение (каждый шаг ≥10 pt) перевзводит удержание
-    /// на каждом шаге — готовность не наступает.
+    /// Constant movement (every step ≥10 pt) rearms the hold
+    /// on every step: readiness never comes.
     func testContinuousMovementNeverBecomesReady() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -233,13 +233,13 @@ final class TileMergeHoverTests: XCTestCase {
         for step in 1...20 {
             clock.advance(0.2)
             tracker.update(point: CGPoint(x: CGFloat(step) * 12, y: 0))
-            XCTAssertFalse(tracker.timerFired(), "шаг \(step)")
-            XCTAssertFalse(tracker.isMergeReady, "шаг \(step)")
+            XCTAssertFalse(tracker.timerFired(), "step \(step)")
+            XCTAssertFalse(tracker.isMergeReady, "step \(step)")
         }
     }
 
-    /// E12.3: возврат к старому якорю не даёт преимущества — отсчёт идёт от
-    /// последнего перевзвода (с учётом нового якоря).
+    /// Returning to the old anchor gives no advantage: the countdown runs from
+    /// the last rearm (with the new anchor).
     func testReturnToOldAnchorDoesNotShortenCountdown() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -248,7 +248,7 @@ final class TileMergeHoverTests: XCTestCase {
         clock.advance(0.3)
         tracker.update(point: CGPoint(x: 15, y: 0))
         clock.advance(0.5)
-        // Возврат к старому якорю: 15 pt от нового — снова перевзвод.
+        // Return to the old anchor: 15 pt from the new one, a rearm again.
         XCTAssertTrue(tracker.update(point: .zero))
         XCTAssertEqual(tracker.anchor, .zero)
         XCTAssertEqual(tracker.remainingDuration, 0.6, accuracy: 0.0001)
@@ -259,7 +259,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertTrue(tracker.timerFired())
     }
 
-    /// Возврат в допуск нового якоря удержание не сбрасывает.
+    /// Returning within the tolerance of the new anchor does not reset the hold.
     func testMovementWithinNewAnchorToleranceKeepsCountdown() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -271,8 +271,8 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.remainingDuration, 0.2, accuracy: 0.0001)
     }
 
-    /// Смещение после уже показанного «впитывания» (fired) тоже начинает
-    /// новый отсчёт от текущей точки, а не воскрешает готовность.
+    /// A displacement after the "absorb" has already been shown (fired) also starts
+    /// a new countdown from the current point instead of resurrecting readiness.
     func testMoveAfterFiredStartsNewCountdownFromNewAnchor() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -287,9 +287,9 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.remainingDuration, 0.6, accuracy: 0.0001)
     }
 
-    // MARK: - Порог времени (600 мс)
+    // MARK: - Time threshold (600 ms)
 
-    /// До истечения порога таймер готовность не включает.
+    /// Before the threshold expires the timer does not enable readiness.
     func testTimerBeforeThresholdKeepsArmed() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -303,7 +303,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.remainingDuration, 0.01, accuracy: 0.0001)
     }
 
-    /// Ровно 600 мс — порог ещё не выдержан: E9.8а требует «больше 600 мс».
+    /// Exactly 600 ms: the threshold has not been held yet; the requirement is "more than 600 ms".
     func testTimerAtThresholdDoesNotFire() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -316,7 +316,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertFalse(tracker.isMergeReady)
     }
 
-    /// Чуть больше 600 мс — готовность наступает.
+    /// Slightly more than 600 ms: readiness comes.
     func testTimerJustOverThresholdFires() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -329,7 +329,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertTrue(tracker.isMergeReady)
     }
 
-    /// Удержание дольше порога тоже включает готовность.
+    /// A hold longer than the threshold enables readiness too.
     func testTimerAfterThresholdFires() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -341,8 +341,8 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertTrue(tracker.isMergeReady)
     }
 
-    /// После готовности остаток до срабатывания — 0, повторный вызов таймера
-    /// ничего не ломает.
+    /// After readiness the remainder until firing is 0; a repeated timer call
+    /// breaks nothing.
     func testRemainingDurationIsZeroAfterFire() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -356,7 +356,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.state, .fired)
     }
 
-    /// Таймер без наведения (idle) не срабатывает.
+    /// A timer without hover (idle) does not fire.
     func testTimerWithoutHoverDoesNothing() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -367,36 +367,36 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.state, .idle)
     }
 
-    // MARK: - Готовность и drop
+    // MARK: - Readiness and drop
 
-    /// Гейт drop'а: папка создаётся только при `isMergeReady`.
+    /// The drop gate: a folder is created only when `isMergeReady`.
     ///
-    /// `finishDrag(commit: true)` спрашивает ровно это свойство, поэтому тест
-    /// фиксирует: готовность включается только таймером и снимается смещением —
-    /// мгновенного слияния по drop'у (поведение до E8.6) больше нет.
+    /// `finishDrag(commit: true)` asks exactly this property, so the test
+    /// pins that readiness is enabled only by the timer and cleared by displacement:
+    /// there is no longer an instant merge on drop (the behavior before the hold was introduced).
     func testDropMergesOnlyAfterHoverFires() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
 
         arm(&tracker)
 
-        // Drop сразу после наведения — группировки нет (в центре ярлыка это
-        // no-op по E9.5).
+        // A drop right after hover gives no grouping (on a tile center this is a
+        // no-op).
         XCTAssertFalse(tracker.isMergeReady)
         XCTAssertFalse(tracker.timerFired())
 
         clock.advance(0.3)
-        // Drop на половине удержания — всё ещё обычное перетаскивание.
+        // A drop at half the hold is still an ordinary drag.
         XCTAssertFalse(tracker.timerFired())
         XCTAssertFalse(tracker.isMergeReady)
 
         clock.advance(0.31)
-        // Drop после 600 мс — слияние.
+        // A drop after 600 ms is a merge.
         XCTAssertTrue(tracker.timerFired())
         XCTAssertTrue(tracker.isMergeReady)
     }
 
-    /// Мелкое дрожание пальца после готовности не отменяет слияние.
+    /// A small finger tremor after readiness does not cancel the merge.
     func testSmallMoveAfterFireKeepsReady() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -411,8 +411,8 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.state, .fired)
     }
 
-    /// Заметное движение после готовности отменяет слияние (с перевзводом от
-    /// новой точки): подсветка «впитывания» обещает папку только пока палец стоит.
+    /// A noticeable movement after readiness cancels the merge (with a rearm from
+    /// the new point): the "absorb" highlight promises a folder only while the finger is still.
     func testLargeMoveAfterFireCancelsReady() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -427,9 +427,9 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.state, .armed)
     }
 
-    // MARK: - Сбросы и смена цели
+    // MARK: - Resets and target change
 
-    /// Смена цели начинает новый отсчёт с полным порогом.
+    /// Changing the target starts a new countdown with the full threshold.
     func testBeginHoverOnAnotherTargetRestartsCountdown() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -453,7 +453,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertTrue(tracker.timerFired())
     }
 
-    /// Покадровые повторные вызовы для того же ярлыка не перезапускают отсчёт.
+    /// Per-frame repeated calls for the same tile do not restart the countdown.
     func testRepeatedBeginHoverForSameTargetDoesNotRestart() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -461,7 +461,7 @@ final class TileMergeHoverTests: XCTestCase {
         arm(&tracker)
         clock.advance(0.4)
 
-        // Палец чуть сдвинулся, координатор снова передал ту же цель.
+        // The finger moved slightly, the coordinator passed the same target again.
         tracker.beginHover(targetID: "a", point: CGPoint(x: 3, y: 0))
         XCTAssertEqual(tracker.state, .armed)
         XCTAssertEqual(tracker.remainingDuration, 0.2, accuracy: 0.0001)
@@ -470,7 +470,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertTrue(tracker.timerFired())
     }
 
-    /// Повторный вызов для того же ярлыка в готовности не сбрасывает её.
+    /// A repeated call for the same tile while ready does not reset readiness.
     func testRepeatedBeginHoverAfterFireKeepsReady() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -485,8 +485,8 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertTrue(tracker.isMergeReady)
     }
 
-    /// Повторный `beginHover` после перевзвода для той же цели ничего не
-    /// перезапускает (якорь остаётся перенесённым, отсчёт не сбрасывается).
+    /// A repeated `beginHover` after a rearm for the same target restarts nothing
+    /// (the anchor stays moved, the countdown is not reset).
     func testBeginHoverForSameTargetAfterRearmDoesNotRestart() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -502,7 +502,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertEqual(tracker.remainingDuration, 0.4, accuracy: 0.0001)
     }
 
-    /// `reset()` возвращает машину в исходное состояние.
+    /// `reset()` returns the machine to the initial state.
     func testResetReturnsToIdle() {
         let clock = TestClock()
         var tracker = makeTracker(clock)
@@ -521,7 +521,7 @@ final class TileMergeHoverTests: XCTestCase {
         XCTAssertFalse(tracker.timerFired())
     }
 
-    /// `update` без наведения ничего не делает.
+    /// `update` without hover does nothing.
     func testUpdateWithoutHoverDoesNothing() {
         let clock = TestClock()
         var tracker = makeTracker(clock)

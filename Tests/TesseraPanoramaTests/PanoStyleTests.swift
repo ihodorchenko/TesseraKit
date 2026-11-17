@@ -2,15 +2,15 @@
 //  PanoStyleTests.swift
 //  TesseraPanoramaTests
 //
-//  Контрактные тесты конфигурации панорамы (задача E3.7).
-//  Проектный документ: docs/PANORAMA-IOS-DESIGN.md §3 «Концептуальная
-//  архитектура» (`TesseraPanoramaStyle`: ширина секции с peek, множитель параллакса,
-//  шрифты/цвета заголовков, поведение фона) и §4 «Геометрия и математика ядра»
-//  (peek 16…64 pt; `0 < parallaxFactor < 1`, типично 0.4–0.6).
+//  Contract tests for the panorama configuration.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md §3 (conceptual
+//  architecture: `TesseraPanoramaStyle`: section width with peek, parallax multiplier,
+//  header fonts/colors, background behavior) and §4 (geometry and core math
+//  (peek 16…64 pt; `0 < parallaxFactor < 1`, typically 0.4–0.6).
 //
-//  Проверяются: системные дефолты, клампы `peek` и `parallaxFactor` в
-//  инициализаторе и на каждой записи, защита от `NaN`/бесконечностей и
-//  сохранение пользовательских значений, не выходящих за диапазон.
+//  Checked: system defaults, clamps of `peek` and `parallaxFactor` in the
+//  initializer and on every write, protection against `NaN`/infinities, and
+//  preservation of custom values that stay within the range.
 //
 
 #if canImport(UIKit)
@@ -21,10 +21,10 @@ import UIKit
 
 final class PanoStyleTests: XCTestCase {
 
-    // MARK: - Дефолты
+    // MARK: - Defaults
 
-    /// Значения по умолчанию: peek 48 pt, параллакс 0.5, системный bold 34 pt,
-    /// `.label`/`.systemBlue`, фон `.none` (§3, §4).
+    /// Default values: peek 48 pt, parallax 0.5, system bold 34 pt,
+    /// `.label`/`.systemBlue`, background `.none` (§3, §4).
     func testDefaults() {
         let style = TesseraPanoramaStyle()
 
@@ -34,7 +34,7 @@ final class PanoStyleTests: XCTestCase {
         XCTAssertEqual(style.headerFont.pointSize, 34, accuracy: 0.000_001)
         XCTAssertTrue(
             style.headerFont.fontDescriptor.symbolicTraits.contains(.traitBold),
-            "дефолтный заголовок — системный bold 34 pt (§3)"
+            "the default header is system bold 34 pt (§3)"
         )
 
         XCTAssertEqual(style.headerColor, .label)
@@ -42,21 +42,21 @@ final class PanoStyleTests: XCTestCase {
         XCTAssertEqual(
             style.contentInsetAdjustmentBehavior,
             .never,
-            "§8: кадр полосы секций задаёт панорама — по умолчанию без подстройки"
+            "§8: the section strip frame is set by the panorama; no adjustment by default"
         )
 
         if case .none = style.backgroundBehavior {
-            // Ожидаемый дефолт: фон не рисуется, пока картинка не задана (§9).
+            // The expected default: no background is drawn until an image is set (§9).
         } else {
-            XCTFail("по умолчанию поведение фона должно быть .none")
+            XCTFail("the background behavior must be .none by default")
         }
     }
 
-    // MARK: - Кламп peek (16...64), §4
+    // MARK: - Clamp of peek (16...64), §4
 
-    /// `peek` зажимается в `16...64` уже в инициализаторе: наблюдатели свойств
-    /// при первой записи не вызываются, поэтому без клампа в init инвариант
-    /// диапазона нарушился бы.
+    /// `peek` is clamped to `16...64` already in the initializer: property observers
+    /// are not called on the first write, so without a clamp in init the range
+    /// invariant would be violated.
     func testPeekClampsAtInitialization() {
         let cases: [(input: CGFloat, expected: CGFloat)] = [
             (-100, 16),
@@ -74,26 +74,26 @@ final class PanoStyleTests: XCTestCase {
                 TesseraPanoramaStyle(peek: entry.input).peek,
                 entry.expected,
                 accuracy: 0.000_001,
-                "peek \(entry.input) должен зажиматься в 16...64"
+                "peek \(entry.input) must be clamped to 16...64"
             )
         }
     }
 
-    /// Нечисловые значения `peek` трактуются как дефолт 48, а не как край
-    /// диапазона: `NaN` не должен «прилипать» к 16 или 64.
+    /// Non-numeric `peek` values are treated as the default 48, not as an edge
+    /// of the range: `NaN` must not "stick" to 16 or 64.
     func testPeekFallsBackToDefaultForNonFiniteValues() {
         for value: CGFloat in [.nan, .infinity, -.infinity] {
             XCTAssertEqual(
                 TesseraPanoramaStyle(peek: value).peek,
                 48,
                 accuracy: 0.000_001,
-                "нечисловой peek \(value) — дефолт 48"
+                "non-numeric peek \(value) falls back to the default 48"
             )
         }
     }
 
-    /// Запись в существующий стиль клампится так же, как инициализация: снаружи
-    /// невозможно вывести `peek` из диапазона.
+    /// A write to an existing style is clamped the same way as initialization: from outside
+    /// it is impossible to push `peek` out of the range.
     func testPeekClampsOnAssignment() {
         var style = TesseraPanoramaStyle()
 
@@ -113,12 +113,12 @@ final class PanoStyleTests: XCTestCase {
         XCTAssertEqual(style.peek, 48, accuracy: 0.000_001)
     }
 
-    // MARK: - Кламп parallaxFactor в (0, 1), §4 (E9.7)
+    // MARK: - Clamp of parallaxFactor to (0, 1), §4
 
-    /// §4: `0 < parallaxFactor < 1`, типично 0.4–0.6. Значения внутри открытого
-    /// интервала сохраняются как есть (типичный диапазон — не граница), а
-    /// границы `0`/`1` и всё за ними зажимаются внутрь: `0.01...0.99`. Нулевой
-    /// фактор недостижим стилем — отключение параллакса прерогатива
+    /// §4: `0 < parallaxFactor < 1`, typically 0.4–0.6. Values inside the open
+    /// interval are preserved as is (the typical range is not a bound), while
+    /// the bounds `0`/`1` and everything beyond them are clamped inward: `0.01...0.99`. A zero
+    /// factor is unreachable through the style: disabling parallax is the prerogative of
     /// Reduce Motion (§7).
     func testParallaxFactorClampsAtInitialization() {
         let cases: [(input: CGFloat, expected: CGFloat)] = [
@@ -142,12 +142,12 @@ final class PanoStyleTests: XCTestCase {
                 TesseraPanoramaStyle(parallaxFactor: entry.input).parallaxFactor,
                 entry.expected,
                 accuracy: 0.000_001,
-                "parallaxFactor \(entry.input) должен лежать в (0, 1) по §4"
+                "parallaxFactor \(entry.input) must lie in (0, 1) per §4"
             )
         }
     }
 
-    /// Результат клампа всегда строго внутри `(0, 1)` — ровно условие §4.
+    /// The clamp result is always strictly inside `(0, 1)`, exactly the §4 condition.
     func testParallaxFactorStaysInsideOpenUnitInterval() {
         for value: CGFloat in [-.greatestFiniteMagnitude, -1, 0, 1e-9, 0.5, 1 - 1e-9, 1, 2, .greatestFiniteMagnitude] {
             let factor = TesseraPanoramaStyle(parallaxFactor: value).parallaxFactor
@@ -156,19 +156,19 @@ final class PanoStyleTests: XCTestCase {
         }
     }
 
-    /// Нечисловые значения `parallaxFactor` трактуются как дефолт 0.5.
+    /// Non-numeric `parallaxFactor` values are treated as the default 0.5.
     func testParallaxFactorFallsBackToDefaultForNonFiniteValues() {
         for value: CGFloat in [.nan, .infinity, -.infinity] {
             XCTAssertEqual(
                 TesseraPanoramaStyle(parallaxFactor: value).parallaxFactor,
                 0.5,
                 accuracy: 0.000_001,
-                "нечисловой parallaxFactor \(value) — дефолт 0.5"
+                "non-numeric parallaxFactor \(value) falls back to the default 0.5"
             )
         }
     }
 
-    /// Запись в существующий стиль клампится так же, как инициализация.
+    /// A write to an existing style is clamped the same way as initialization.
     func testParallaxFactorClampsOnAssignment() {
         var style = TesseraPanoramaStyle()
 
@@ -188,10 +188,10 @@ final class PanoStyleTests: XCTestCase {
         XCTAssertEqual(style.parallaxFactor, 0.5, accuracy: 0.000_001)
     }
 
-    // MARK: - Пользовательские значения и производная геометрия
+    // MARK: - Custom values and derived geometry
 
-    /// Значения внутри диапазонов сохраняются как есть, а остальные поля стиля
-    /// (шрифт, цвета, фон) не подменяются клампом (§3).
+    /// Values within the ranges are preserved as is, and the style's other fields
+    /// (font, colors, background) are not overridden by the clamp (§3).
     func testCustomValuesArePreserved() {
         let font = UIFont.systemFont(ofSize: 28, weight: .semibold)
         let style = TesseraPanoramaStyle(
@@ -210,14 +210,14 @@ final class PanoStyleTests: XCTestCase {
         XCTAssertEqual(style.headerActiveColor, .systemRed)
 
         if case .image(let image) = style.backgroundBehavior {
-            XCTAssertNil(image, "nil-картинка допустима: слой остаётся пустым (§3)")
+            XCTAssertNil(image, "a nil image is valid: the layer stays empty (§3)")
         } else {
-            XCTFail("поведение фона .image должно сохраняться в стиле")
+            XCTFail("the .image background behavior must be preserved in the style")
         }
     }
 
-    /// Кламп peek сохраняет инвариант §4: `itemWidth = width − peek` остаётся
-    /// положительным даже на компактной ширине iPhone SE (320 pt).
+    /// The peek clamp preserves the §4 invariant: `itemWidth = width − peek` stays
+    /// positive even at the compact iPhone SE width (320 pt).
     func testClampedPeekKeepsItemWidthPositive() {
         for width: CGFloat in [320, 375, 390, 430, 768] {
             for peek: CGFloat in [16, 40, 48, 64] {
@@ -227,7 +227,7 @@ final class PanoStyleTests: XCTestCase {
                 XCTAssertGreaterThan(
                     itemWidth,
                     0,
-                    "ширина \(width) и peek \(style.peek): itemWidth должен быть > 0"
+                    "width \(width) and peek \(style.peek): itemWidth must be > 0"
                 )
             }
         }

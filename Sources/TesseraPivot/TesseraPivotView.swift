@@ -2,85 +2,84 @@
 //  TesseraPivotView.swift
 //  TesseraPivot
 //
-//  SwiftUI-фасад пивота.
-//  Контракт: docs/PIVOT-IOS-DESIGN.md §2 «Выбор фундамента» (UIKit-ядро +
-//  SwiftUI-фасад через `UIViewControllerRepresentable`), §3 «Архитектура»
-//  (декларативный API: секции, стиль, делегат), §8 «Accessibility» (мост
-//  состояния — только `ObservableObject`: iOS 15 не поддерживает макрос
-//  Observable).
-//  Задача плана: E2.5.
+//  The SwiftUI facade of the pivot.
+//  Contract: docs/PIVOT-IOS-DESIGN.md (choice of foundation: a UIKit core +
+//  a SwiftUI facade via `UIViewControllerRepresentable`; architecture:
+//  a declarative API of sections, style, and delegate; accessibility: the state
+//  bridge is only an `ObservableObject`, since iOS 15 does not support the
+//  Observable macro).
 //
-//  Фасад не дублирует механику: он только создаёт и обновляет
-//  `TesseraPivotViewController`. Вся синхронизация ленты и пейджера, арбитраж жестов и
-//  accessibility живут в UIKit-ядре (§2, §5).
+//  The facade does not duplicate mechanics: it only creates and updates
+//  `TesseraPivotViewController`. All synchronization of the strip and the pager, gesture arbitration, and
+//  accessibility live in the UIKit core.
 //
 
 #if canImport(UIKit) && canImport(SwiftUI)
 import SwiftUI
 import UIKit
 
-/// SwiftUI-представление пивота (docs/PIVOT-IOS-DESIGN.md §2, §3).
+/// The SwiftUI view of the pivot (see docs/PIVOT-IOS-DESIGN.md).
 ///
-/// Обёртка над ``TesseraPivotViewController``: SwiftUI описывает состояние
-/// декларативно, а непрерывную синхронизацию ленты с `contentOffset` выполняет
-/// UIKit-ядро — на iOS 15 чистый SwiftUI не отдаёт прогресс перетаскивания
-/// страницы, поэтому индикатор не мог бы ехать за пальцем (§2).
+/// A wrapper over ``TesseraPivotViewController``: SwiftUI describes the state
+/// declaratively, while the UIKit core performs the continuous synchronization of the strip with
+/// `contentOffset`; on iOS 15, pure SwiftUI does not expose the progress of a page drag,
+/// so the indicator could not follow the finger.
 ///
 /// ```swift
 /// TesseraPivotView(
 ///     sections: [
-///         TesseraPivotSection(id: "home", title: "Главная") { HomeViewController() },
-///         TesseraPivotSection(id: "news", title: "Новости") { NewsViewController() },
+///         TesseraPivotSection(id: "home", title: "Home") { HomeViewController() },
+///         TesseraPivotSection(id: "news", title: "News") { NewsViewController() },
 ///     ],
-///     style: TesseraPivotStyle(appTitle: "Приложение")
+///     style: TesseraPivotStyle(appTitle: "My App")
 /// )
 /// ```
 ///
-/// ## Обновление
+/// ## Updates
 ///
-/// - ``TesseraPivotStyle`` применяется на каждом обновлении; сеттеры ленты в ядре
-///   сравнивают значения с прежними, поэтому лишней перезагрузки ячеек нет;
-/// - при изменении набора `id` или заголовков секции пересобираются сразу
+/// - ``TesseraPivotStyle`` is applied on every update; the strip setters in the core
+///   compare values with the previous ones, so there is no redundant cell reloading;
+/// - when the set of `id`s or titles changes, the sections are rebuilt immediately
 ///   (`reload(sections:)`);
-/// - при тех же `id` и заголовках новый контент всё равно доносится до
-///   страниц (E10.12а): сравнить поставщиков контента
-///   (`TesseraContentProviding`) нельзя, поэтому секции передаются ядру на
-///   каждом обновлении. Пейджер переиспользует контроллеры с сохранившимся
-///   `id` и обновляет `rootView` SwiftUI-страниц на месте — текущая страница,
-///   скролл и `@State` контента сохраняются. Во время жеста, инерции или
-///   анимированного перехода обновление откладывается до его завершения,
-///   чтобы не оборвать движение;
-/// - колбэк прогресса не вызывается синхронно внутри
-///   `updateUIViewController`: прогресс, изменившийся при перестройке,
-///   приходит следующим проходом главной очереди.
+///   (`reload(sections:)`);
+/// - with the same `id`s and titles, new content still reaches the
+///   pages: content providers (`TesseraContentProviding`) cannot be compared,
+///   so the sections are passed to the core on every update. The pager reuses controllers whose
+///   `id` survives and updates the `rootView` of SwiftUI pages in place, so the current page,
+///   scroll position, and `@State` of the content are preserved. During a gesture, inertia, or
+///   an animated transition, the update is deferred until it finishes
+///   so as not to cut the motion short;
+/// - the progress callback is not called synchronously inside
+///   `updateUIViewController`: progress that changed during a rebuild
+///   arrives on the next pass of the main queue.
 ///
-/// ## Делегат
+/// ## Delegate
 ///
-/// `TesseraPivotDelegate` — протокол с классовой связностью, а SwiftUI-структура не
-/// может хранить `weak`-ссылку. Поэтому фасад передаёт делегата координатору,
-/// который удерживает последнее значение `TesseraPivotView` и пробрасывает все три
-/// колбэка (§3). Делегат удерживается сильной ссылкой, пока представление
-/// установлено: если он сам держит SwiftUI-состояние, используйте промежуточный
-/// объект во избежание цикла.
+/// `TesseraPivotDelegate` is a class-bound protocol, and a SwiftUI struct cannot
+/// hold a `weak` reference. The facade therefore hands the delegate to a coordinator,
+/// which retains the latest `TesseraPivotView` value and forwards all three
+/// callbacks. The delegate is held by a strong reference while the view is
+/// installed: if it holds SwiftUI state itself, use an intermediate
+/// object to avoid a retain cycle.
 public struct TesseraPivotView: UIViewControllerRepresentable {
 
-    /// Секции в порядке чтения (docs/PIVOT-IOS-DESIGN.md §3).
+    /// The sections in reading order (see docs/PIVOT-IOS-DESIGN.md).
     private let sections: [TesseraPivotSection]
 
-    /// Внешний вид: шрифты и цвета ленты, вид индикатора, режим ширины,
-    /// крупный заголовок приложения.
+    /// The appearance: the strip fonts and colors, the indicator style, the width mode,
+    /// the large app title.
     private let style: TesseraPivotStyle
 
-    /// Наблюдатель выбора, прогресса и показа секции.
+    /// The observer of selection, progress, and section changes.
     private let delegate: TesseraPivotDelegate?
 
-    /// Создаёт фасад пивота.
+    /// Creates the pivot facade.
     ///
     /// - Parameters:
-    ///   - sections: Секции в порядке чтения; первый элемент — первая страница
-    ///     для пользователя (в RTL порядок зеркалит ядро, §8).
-    ///   - style: Внешний вид; по умолчанию системный.
-    ///   - delegate: Наблюдатель состояния; необязателен.
+    ///   - sections: The sections in reading order; the first element is the first page
+    ///     for the user (in RTL the core mirrors the order).
+    ///   - style: The appearance; the system default if omitted.
+    ///   - delegate: The state observer; optional.
     public init(
         sections: [TesseraPivotSection],
         style: TesseraPivotStyle = TesseraPivotStyle(),
@@ -93,15 +92,15 @@ public struct TesseraPivotView: UIViewControllerRepresentable {
 
     // MARK: - UIViewControllerRepresentable
 
-    /// Создаёт координатор-делегат (§3: мост колбэков UIKit в SwiftUI).
+    /// Creates the coordinator delegate (the bridge from UIKit callbacks to SwiftUI).
     public func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
     }
 
-    /// Создаёт UIKit-ядро пивота.
+    /// Creates the UIKit core of the pivot.
     ///
-    /// - Parameter context: Контекст SwiftUI.
-    /// - Returns: Настроенный ``TesseraPivotViewController``.
+    /// - Parameter context: The SwiftUI context.
+    /// - Returns: A configured ``TesseraPivotViewController``.
     public func makeUIViewController(context: Context) -> TesseraPivotViewController {
         let pivot = TesseraPivotViewController(sections: sections, style: style)
         pivot.delegate = context.coordinator
@@ -109,23 +108,23 @@ public struct TesseraPivotView: UIViewControllerRepresentable {
         return pivot
     }
 
-    /// Обновляет секции и стиль существующего контроллера.
+    /// Updates the sections and style of an existing controller.
     ///
-    /// Структурное изменение (`id` или заголовки) — немедленный `reload`; тот
-    /// же набор — обновление контента через
-    /// ``TesseraPivotViewController/refreshSectionContent(_:)`` (E10.12а, отложенное
-    /// на время движения страниц). Стиль применяется всегда — его сеттеры в
-    /// ядре идемпотентны.
+    /// A structural change (`id`s or titles) triggers an immediate `reload`; the same
+    /// set updates content through
+    /// ``TesseraPivotViewController/refreshSectionContent(_:)`` (deferred
+    /// while pages are moving). The style is always applied; its setters in
+    /// the core are idempotent.
     ///
     /// - Parameters:
-    ///   - uiViewController: Живой ``TesseraPivotViewController``.
-    ///   - context: Контекст SwiftUI с координатором.
+    ///   - uiViewController: The live ``TesseraPivotViewController``.
+    ///   - context: The SwiftUI context with the coordinator.
     public func updateUIViewController(
         _ uiViewController: TesseraPivotViewController,
         context: Context
     ) {
-        // Координатор хранит последнюю версию описания: иначе делегат видел бы
-        // устаревшее состояние после перерисовки SwiftUI.
+        // The coordinator keeps the latest version of the description: otherwise the delegate would see
+        // stale state after SwiftUI redraws.
         context.coordinator.parent = self
         context.coordinator.pivotViewController = uiViewController
 
@@ -139,17 +138,17 @@ public struct TesseraPivotView: UIViewControllerRepresentable {
         }
     }
 
-    /// Сравнивает структуру наборов секций.
+    /// Compares the structure of the section sets.
     ///
-    /// `TesseraPivotSection` не `Equatable`: поставщик контента — протокол с фабрикой,
-    /// у которой нет семантики равенства. Поэтому структура определяется парой
-    /// `id` + `title`; при совпадении контент обновляется отдельным путём
-    /// (см. документацию ``TesseraPivotView``).
+    /// `TesseraPivotSection` is not `Equatable`: a content provider is a protocol with a factory
+    /// that has no equality semantics. The structure is therefore defined by the
+    /// `id` + `title` pair; when they match, content is updated by a separate path
+    /// (see the documentation of ``TesseraPivotView``).
     ///
     /// - Parameters:
-    ///   - lhs: Текущие секции контроллера.
-    ///   - rhs: Новые секции из SwiftUI.
-    /// - Returns: `true`, если требуется `reload`.
+    ///   - lhs: The controller's current sections.
+    ///   - rhs: The new sections from SwiftUI.
+    /// - Returns: `true` if a `reload` is required.
     private static func sectionsDiffer(
         _ lhs: [TesseraPivotSection],
         _ rhs: [TesseraPivotSection]
@@ -164,53 +163,53 @@ public struct TesseraPivotView: UIViewControllerRepresentable {
         return false
     }
 
-    // MARK: - Координатор
+    // MARK: - Coordinator
 
-    /// Делегат UIKit-ядра, пробрасывающий события в `TesseraPivotDelegate` (§3).
+    /// The UIKit core's delegate that forwards events to `TesseraPivotDelegate`.
     ///
-    /// Живёт столько же, сколько представление: его удерживает SwiftUI, поэтому
-    /// слабая ссылка `TesseraPivotViewController.delegate` не теряет наблюдателя между
-    /// перерисовками.
+    /// It lives as long as the view: SwiftUI retains it, so the
+    /// weak reference `TesseraPivotViewController.delegate` does not lose the observer between
+    /// redraws.
     public final class Coordinator: NSObject, TesseraPivotDelegate {
 
-        /// Последняя версия описания из SwiftUI: источник делегата и состояния.
+        /// The latest description from SwiftUI: the source of the delegate and state.
         fileprivate var parent: TesseraPivotView
 
-        /// Ядро, к которому привязан координатор. Слабо: контроллер уже
-        /// удерживается иерархией SwiftUI.
+        /// The core this coordinator is bound to. Weak: the controller is already
+        /// retained by the SwiftUI hierarchy.
         fileprivate weak var pivotViewController: TesseraPivotViewController?
 
-        /// Создаёт координатор поверх описания пивота.
+        /// Creates a coordinator over a pivot description.
         ///
-        /// - Parameter parent: Описание из `makeCoordinator()`.
+        /// - Parameter parent: The description from `makeCoordinator()`.
         fileprivate init(parent: TesseraPivotView) {
             self.parent = parent
             super.init()
         }
 
-        /// Пробрасывает выбор секции во внешний делегат.
+        /// Forwards a section selection to the external delegate.
         ///
         /// - Parameters:
-        ///   - pivot: Пивот-источник события.
-        ///   - index: Индекс выбранной секции в порядке чтения.
+        ///   - pivot: The pivot that emitted the event.
+        ///   - index: The index of the selected section in reading order.
         public func pivot(_ pivot: TesseraPivotViewController, didSelectSectionAt index: Int) {
             parent.delegate?.pivot(pivot, didSelectSectionAt: index)
         }
 
-        /// Пробрасывает непрерывный прогресс во внешний делегат.
+        /// Forwards continuous progress to the external delegate.
         ///
         /// - Parameters:
-        ///   - pivot: Пивот-источник события.
-        ///   - t: Нормализованный прогресс в порядке чтения.
+        ///   - pivot: The pivot that emitted the event.
+        ///   - t: The normalized progress in reading order.
         public func pivot(_ pivot: TesseraPivotViewController, didChangeProgress t: CGFloat) {
             parent.delegate?.pivot(pivot, didChangeProgress: t)
         }
 
-        /// Пробрасывает завершение перехода во внешний делегат.
+        /// Forwards transition completion to the external delegate.
         ///
         /// - Parameters:
-        ///   - pivot: Пивот-источник события.
-        ///   - index: Индекс показанной секции в порядке чтения.
+        ///   - pivot: The pivot that emitted the event.
+        ///   - index: The index of the shown section in reading order.
         public func pivot(_ pivot: TesseraPivotViewController, didShowSectionAt index: Int) {
             parent.delegate?.pivot(pivot, didShowSectionAt: index)
         }

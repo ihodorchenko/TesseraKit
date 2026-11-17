@@ -2,19 +2,19 @@
 //  TileEditTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты режима редактирования (задача E4.7).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим редактирования»
-//  (resize — циклическая смена размера small → wide → medium → large → small, D28/E15.3,
-//  перетаскивание и расчёт цели drop) и §14 «Уточнения MVP» п. 4 (D15: четыре
-//  размера).
+//  Tests for edit mode.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode"
+//  (resize: a cyclic size change small → wide → medium → large → small, D28,
+//  dragging and drop target calculation) and §14 "MVP refinements" (D15: four
+//  sizes).
 //
-//  Публичного помощника «позиция drop» в координаторе нет: resize-цикл —
-//  `TesseraTileSize.cycleOrder`, число колонок сетки и `supportedSizesProvider`
-//  (подробнее — `TileSizeCycleTests`), а цель drop считается по рамкам
-//  `TesseraTileGridView` (приватный `isPointInDropCenter`). Поэтому resize-цикл
-//  проверяется через реальный `TesseraTileEditCoordinator.cycleSize(of:)`
-//  (без окна и UI-цикла), а расчёт drop — через публичную геометрию сетки,
-//  которой пользуется drag-координатор.
+//  The coordinator has no public "drop position" helper: the resize cycle is
+//  `TesseraTileSize.cycleOrder`, the grid column count and `supportedSizesProvider`
+//  (see `TileSizeCycleTests`), and the drop target is computed from the frames of
+//  `TesseraTileGridView` (the private `isPointInDropCenter`). So the resize cycle
+//  is checked through the real `TesseraTileEditCoordinator.cycleSize(of:)`
+//  (without a window or a UI cycle), and the drop calculation through the public grid geometry
+//  that the drag coordinator uses.
 //
 
 #if canImport(UIKit)
@@ -25,7 +25,7 @@ import XCTest
 
 final class TileEditTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makeStore(
         _ descriptors: [TesseraTileDescriptor],
@@ -37,7 +37,7 @@ final class TileEditTests: XCTestCase {
         return store
     }
 
-    /// Сетка, разложенная вручную: окно не нужно, коллекция получает bounds.
+    /// A grid laid out by hand: no window is needed, and the collection gets its bounds.
     private func makeGrid(store: TesseraTileStore, columns: Int = 4) -> TesseraTileGridView {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
         grid.columns = columns
@@ -49,10 +49,10 @@ final class TileEditTests: XCTestCase {
         return grid
     }
 
-    // MARK: - Модель размера (D15)
+    // MARK: - Size model (D15)
 
-    /// Набор размеров — D15 (`allCases` — порядок «по возрастанию»); порядок
-    /// resize-цикла задан отдельно и явно: small → wide → medium → large (D28).
+    /// The size set is D15 (`allCases` is the "ascending" order); the order of the
+    /// resize cycle is set separately and explicitly: small → wide → medium → large (D28).
     func testTileSizeCycleOrderMatchesD15() {
         XCTAssertEqual(TesseraTileSize.allCases, [.small, .medium, .wide, .large])
         XCTAssertEqual(TesseraTileSize.cycleOrder, [.small, .wide, .medium, .large])
@@ -62,10 +62,10 @@ final class TileEditTests: XCTestCase {
         XCTAssertEqual(TesseraTileSize.large.unitSize, CGSize(width: 4, height: 4))
     }
 
-    // MARK: - Resize-цикл
+    // MARK: - Resize cycle
 
-    /// Координатор проходит полный цикл D28 и возвращается к исходному размеру,
-    /// меняя авторитетный размер в `TesseraTileStore` (D15, §5).
+    /// The coordinator goes through the full D28 cycle and returns to the original size,
+    /// changing the authoritative size in `TesseraTileStore` (D15, §5).
     func testCycleSizeFollowsResizeOrder() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a", size: .small)], in: directory)
@@ -87,7 +87,7 @@ final class TileEditTests: XCTestCase {
         XCTAssertEqual(grid.items.first { $0.id == AnyHashable("a") }?.size, .small)
     }
 
-    /// Неизвестный идентификатор не меняет состояние.
+    /// An unknown identifier does not change state.
     func testCycleSizeRejectsUnknownItem() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a")], in: directory)
@@ -98,8 +98,8 @@ final class TileEditTests: XCTestCase {
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .medium)
     }
 
-    /// В узкой сетке (3 колонки) wide/large недоступны: цикл идёт только между
-    /// small и medium — плитка не должна вылезать за сетку (§3).
+    /// In a narrow grid (3 columns) wide/large are unavailable: the cycle goes only between
+    /// small and medium, since a tile must not stick out of the grid (§3).
     func testCycleSizeRespectsGridColumns() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a", size: .small)], in: directory)
@@ -112,8 +112,8 @@ final class TileEditTests: XCTestCase {
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .medium)
     }
 
-    /// Хост может сузить набор размеров через `supportedSizesProvider`:
-    /// цикл идёт по нему, а пустой массив означает «набор по умолчанию».
+    /// The host can narrow the size set through `supportedSizesProvider`:
+    /// the cycle follows it, and an empty array means "the default set".
     func testCycleSizeUsesSupportedSizesProvider() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a", size: .small)], in: directory)
@@ -125,11 +125,11 @@ final class TileEditTests: XCTestCase {
         XCTAssertEqual(editor.cycleSize(of: "a"), .small)
 
         editor.supportedSizesProvider = { _ in [] }
-        XCTAssertEqual(editor.cycleSize(of: "a"), .wide, "набор по умолчанию, порядок D28")
+        XCTAssertEqual(editor.cycleSize(of: "a"), .wide, "the default set, D28 order")
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .wide)
     }
 
-    /// Если доступен ровно один размер, менять нечего.
+    /// If exactly one size is available, there is nothing to change.
     func testCycleSizeReturnsNilForSingleSupportedSize() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a", size: .medium)], in: directory)
@@ -143,9 +143,9 @@ final class TileEditTests: XCTestCase {
 
     // MARK: - Reduce Motion
 
-    /// При Reduce Motion «желе» выключено, но режим редактирования работает
-    /// (§5, §9). Провайдер настройки инжектируется; «желе» включено параметром
-    /// явно (E15.6) — иначе `isJiggling` ложен независимо от Reduce Motion.
+    /// With Reduce Motion the jiggle is off, but edit mode works
+    /// (§5, §9). The setting provider is injected; the jiggle is enabled explicitly
+    /// by a parameter, otherwise `isJiggling` is false regardless of Reduce Motion.
     func testReduceMotionDisablesJiggle() {
         let directory = TesseraTestDirectory()
         let store = makeStore([tesseraTestTile("a")], in: directory)
@@ -169,11 +169,11 @@ final class TileEditTests: XCTestCase {
         XCTAssertFalse(editor.isJiggling)
     }
 
-    // MARK: - Геометрия drop
+    // MARK: - Drop geometry
 
-    /// Цель drop ищется по рамкам сетки: центр плитки принадлежит ей, а точка в
-    /// зазоре между плитками — нет. Это те же запросы, которыми пользуется
-    /// drag-координатор (`item(under:excluding:)`, `frame(forItemID:)`).
+    /// The drop target is found by the grid frames: a tile's center belongs to it, and a point in
+    /// the gap between tiles does not. These are the same queries the
+    /// drag coordinator uses (`item(under:excluding:)`, `frame(forItemID:)`).
     func testDropHitTestingUsesTileFrames() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore(
@@ -190,8 +190,8 @@ final class TileEditTests: XCTestCase {
         let center = CGPoint(x: frame.midX, y: frame.midY)
         XCTAssertEqual(grid.item(at: center)?.id, AnyHashable("b"))
 
-        // Зазор сразу справа от «b»: внешний зазор между юнитами не принадлежит
-        // ни одной плите.
+        // The gap right of "b": the outer gap between units belongs
+        // to no tile.
         let gapPoint = CGPoint(
             x: frame.maxX + grid.itemSpacing / 2,
             y: frame.midY
@@ -202,8 +202,8 @@ final class TileEditTests: XCTestCase {
         XCTAssertNil(grid.item(at: CGPoint(x: -1000, y: -1000)))
     }
 
-    /// Перенос на ячейку — модель drop'а: колонка ограничивается холстом, набор
-    /// ярлыков не теряется и не дублируется (§5, §6, E14.6).
+    /// A move to a cell is the drop model: the column is clamped to the canvas, and the set of
+    /// tiles is neither lost nor duplicated (§5, §6).
     func testDropReorderThroughStoreKeepsItemSet() {
         let directory = TesseraTestDirectory()
         let store = makeStore(
@@ -220,7 +220,7 @@ final class TileEditTests: XCTestCase {
         XCTAssertEqual(Set(store.snapshot().items.map { $0.id }), initial)
         XCTAssertEqual(store.snapshot().items.map { $0.id }, ["b", "c", "a"])
 
-        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(1, 99), columns: 4), "99 зажата до колонки 3: уже там")
+        XCTAssertFalse(store.moveItem("a", toCell: tesseraCell(1, 99), columns: 4), "99 is clamped to column 3: already there")
         XCTAssertEqual(store.snapshot().items.map { $0.id }, ["b", "c", "a"])
         XCTAssertEqual(Set(store.snapshot().items.map { $0.id }), initial)
     }

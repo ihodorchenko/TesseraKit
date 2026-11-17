@@ -2,49 +2,45 @@
 //  LiveTileView.swift
 //  TesseraStartScreen
 //
-//  Контейнер живой плитки: две стороны и независимый бэйдж.
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §4 «Live-плитки
-//  (движок)» (флип: `CATransform3D` + перспектива `m34`, поворот по Y на 90°,
-//  подмена стороны, доворот; только трансформы, layout не трогаем; бэйдж —
-//  отдельный view, не часть флипа), §9 «Accessibility» (VoiceOver, Dynamic
-//  Type, RTL) и §10 «MVP» (флип простых текстовых плиток). Уточнения — D12 и
-//  D15 в docs/STATE.md.
-//  Задача плана: E4.3 «LiveTileEngine (волна 1)».
+//  The live tile container: two faces and an independent badge.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, §4 (live tiles, the engine: the flip is a
+//  `CATransform3D` with `m34` perspective, a 90° rotation around Y, a face swap and a rotation to
+//  completion; transforms only, no layout; the badge is a separate view, not part of the flip), §9
+//  (Accessibility: VoiceOver, Dynamic Type, RTL) and §10 (MVP: flipping simple text tiles).
+//  Clarifications: D12 and D15 in docs/STATE.md.
 //
-//  Дисциплина производительности (§4, RISK.md R10): флип не меняет `frame`,
-//  `bounds` и не вызывает layout — только `layer.transform` и `isHidden` в
-//  момент подмены стороны. Текст и цвета меняются вне горячего пути: при
-//  регистрации, обновлении контента и смене стороны.
+//  Performance discipline (§4, RISK.md R10): the flip does not change `frame` or `bounds` and does
+//  not trigger layout; only `layer.transform` and `isHidden` at the moment of the face swap. Text
+//  and colors change off the hot path: on registration, on content updates and on a face change.
 //
 
 #if canImport(UIKit)
 import UIKit
 
-// MARK: - Бэйдж
+// MARK: - Badge
 
-/// Бэйдж живой плитки: красная точка или счётчик внимания (§4, «Бэйдж»;
-/// D12/D15 — бэйдж ярлыка).
+/// The live tile badge: a red dot or an attention counter (§4, "Badge"; D12/D15, the shortcut
+/// badge).
 ///
-/// Отдельный view поверх контейнера плитки, **не часть флипа**: при перевороте
-/// бэйдж остаётся на месте и не поворачивается вместе со стороной (§4).
-/// Содержимое берётся напрямую из модели ярлыка ``TesseraTileBadge`` (D12): это
-/// ровно те же три состояния, что хранит `TesseraTileDescriptor.badge`, поэтому
-/// преобразование не нужно и модель остаётся единственным источником истины.
+/// A separate view over the tile container, **not part of the flip**: when the tile flips, the badge
+/// stays in place and does not rotate with the face (§4). Its content comes directly from the
+/// shortcut model ``TesseraTileBadge`` (D12): these are exactly the same three states that
+/// `TesseraTileDescriptor.badge` stores, so no conversion is needed and the model stays the single
+/// source of truth.
 ///
-/// Вид:
-/// - ``TesseraTileBadge/dot`` — красный круг без текста (есть новое, число
-///   неизвестно);
-/// - ``TesseraTileBadge/count(_:)`` — красная капсула с числом; больше 99 показывается
-///   как «99+», чтобы бэйдж не растягивал плитку;
-/// - ``TesseraTileBadge/none`` — бэйджа нет.
+/// Appearance:
+/// - ``TesseraTileBadge/dot`` is a red circle without text (there is something new, the number is
+///   unknown);
+/// - ``TesseraTileBadge/count(_:)`` is a red capsule with a number; values above 99 are shown as
+///   "99+" so that the badge does not stretch the tile;
+/// - ``TesseraTileBadge/none`` means no badge.
 ///
-/// Бэйдж не является отдельным элементом VoiceOver: озвучивание счётчика —
-/// часть плитки (§9, «Плитка — один элемент»). Хост задаёт
-/// ``accessibilityText``, если нужно осмысленное описание («3 новых»);
-/// по умолчанию плитка озвучивает число.
+/// The badge is not a separate VoiceOver element: announcing the counter is part of the tile (§9,
+/// "a tile is a single element"). The host sets ``accessibilityText`` if a meaningful description
+/// is needed (for example, "3 new"); by default the tile announces the number.
 public final class TesseraLiveTileBadgeView: UIView {
 
-    // MARK: - Метрики
+    // MARK: - Metrics
 
     private enum Metrics {
         static let dotDiameter: CGFloat = 10
@@ -53,12 +49,12 @@ public final class TesseraLiveTileBadgeView: UIView {
         static let labelInset: CGFloat = 4
     }
 
-    // MARK: - Публичные свойства
+    // MARK: - Public properties
 
-    /// Текущий бэйдж модели ярлыка (D12). По умолчанию ``TesseraTileBadge/none``.
+    /// The current badge of the shortcut model (D12). ``TesseraTileBadge/none`` by default.
     ///
-    /// `.count(0)` и отрицательные счётчики не показываются — так же, как
-    /// ``TesseraTileBadge/isVisible`` в модели.
+    /// `.count(0)` and negative counters are not shown, the same as
+    /// ``TesseraTileBadge/isVisible`` in the model.
     public var badge: TesseraTileBadge = .none {
         didSet {
             guard badge != oldValue else { return }
@@ -66,11 +62,10 @@ public final class TesseraLiveTileBadgeView: UIView {
         }
     }
 
-    /// Текст бэйджа для VoiceOver.
+    /// The badge text for VoiceOver.
     ///
-    /// Включается в `accessibilityValue` плитки рядом с заголовком стороны
-    /// (§9). Пустая строка трактуется как «нет текста». Локализация — забота
-    /// хоста: движок не придумывает формулировок.
+    /// Included in the tile's `accessibilityValue` next to the face title (§9). An empty string is
+    /// treated as "no text". Localization is the host's concern: the engine does not invent wording.
     public var accessibilityText: String? {
         didSet {
             guard accessibilityText != oldValue else { return }
@@ -78,15 +73,15 @@ public final class TesseraLiveTileBadgeView: UIView {
         }
     }
 
-    /// Внутренние колбэки для ``TesseraLiveTileView``.
+    /// Internal callbacks for ``TesseraLiveTileView``.
     var onBadgeChange: (() -> Void)?
     var onAccessibilityTextChange: (() -> Void)?
 
-    // MARK: - Подпредставления
+    // MARK: - Subviews
 
     private let countLabel = UILabel()
 
-    /// Нормализованный бэйдж: неположительный счётчик — это отсутствие бэйджа.
+    /// The normalized badge: a non-positive counter means no badge.
     private var normalizedBadge: TesseraTileBadge {
         switch badge {
         case .count(let value):
@@ -96,7 +91,7 @@ public final class TesseraLiveTileBadgeView: UIView {
         }
     }
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -113,7 +108,7 @@ public final class TesseraLiveTileBadgeView: UIView {
     }
 
     private func commonInit() {
-        // Бэйдж — декоративная деталь: касания и фокус принадлежат плитке.
+        // The badge is a decorative detail: touches and focus belong to the tile.
         isUserInteractionEnabled = false
         isAccessibilityElement = false
 
@@ -130,7 +125,7 @@ public final class TesseraLiveTileBadgeView: UIView {
         )
         addSubview(countLabel)
 
-        // §9, Dynamic Type: капсула растёт вместе со шрифтом счётчика.
+        // §9, Dynamic Type: the capsule grows with the counter font.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(contentSizeCategoryDidChange),
@@ -141,7 +136,7 @@ public final class TesseraLiveTileBadgeView: UIView {
         applyBadge()
     }
 
-    // MARK: - Размер и отрисовка
+    // MARK: - Size and drawing
 
     public override var intrinsicContentSize: CGSize {
         switch normalizedBadge {
@@ -182,7 +177,7 @@ public final class TesseraLiveTileBadgeView: UIView {
 
         invalidateIntrinsicContentSize()
         setNeedsLayout()
-        // Позиция бэйджа считается в layout плитки: размер капсулы изменился.
+        // The badge position is computed in the tile layout: the capsule size changed.
         superview?.setNeedsLayout()
         onBadgeChange?()
     }
@@ -194,36 +189,33 @@ public final class TesseraLiveTileBadgeView: UIView {
     }
 }
 
-// MARK: - Кеш изображений плитки
+// MARK: - Tile image cache
 
-/// Кеш изображений сторон, декодированных под размер плитки (§4, «Память»).
+/// A cache of face images decoded to the tile size (§4, "Memory").
 ///
-/// Хост отдаёт иконку «как есть» — нередко 1024×1024 пикселя. Показанная в
-/// `UIImageView` 28 pt, она всё равно держит в памяти полный декодированный
-/// буфер (~4 МБ), и десяток живых плиток съедает десятки мегабайт. Кеш рисует
-/// уменьшенную копию под запрошенный бокс × scale экрана
-/// (`UIGraphicsImageRenderer`, iOS 10+) и отдаёт её повторно всем плиткам с
-/// той же иконкой и тем же размером.
+/// The host passes an icon as is, often 1024×1024 pixels. Shown in a 28 pt `UIImageView`, it still
+/// holds the full decoded buffer in memory (about 4 MB), and a dozen live tiles eat tens of
+/// megabytes. The cache draws a downscaled copy for the requested box times the screen scale
+/// (`UIGraphicsImageRenderer`, iOS 10+) and hands it out again to all tiles with the same icon and
+/// the same size.
 ///
-/// Ключ — **идентичность** объекта `UIImage` (не содержимое: сравнивать
-/// пиксели дороже, чем рисовать), размер результата в пикселях и режим
-/// отрисовки. Исходная картинка в ключе держится слабо: кеш не продлевает
-/// жизнь «сырой» иконке, а запись умершей иконки не совпадает ни с одной
-/// новой, даже если та заняла тот же адрес памяти.
+/// The key is the **identity** of the `UIImage` object (not its content: comparing pixels is more
+/// expensive than drawing), the result size in pixels and the rendering mode. The source image is
+/// held weakly in the key: the cache does not extend the life of the "raw" icon, and an entry of a
+/// dead icon does not match any new one, even if that one took the same memory address.
 ///
-/// Иконка, которая уже помещается в бокс, не перерисовывается: кеш отдаёт её
-/// с нужным режимом отрисовки (SF Symbols остаются векторными).
+/// An icon that already fits the box is not redrawn: the cache returns it with the required
+/// rendering mode (SF Symbols stay vector).
 ///
-/// - Note: Только главный поток — как и вся отрисовка плитки. Рендер
-///   выполняется при раскладке стороны (смена размера или контента), а не в
-///   горячем пути скролла/флипа: при переиспользовании ячейки с той же
-///   иконкой и размером это попадание в кеш.
+/// - Note: Main thread only, like all tile drawing. Rendering happens during face layout (a size or
+///   content change), not on the scroll/flip hot path: when a cell is reused with the same icon and
+///   size, it is a cache hit.
 final class TesseraLiveTileImageCache {
 
-    /// Общий кеш плиток.
+    /// The shared tile cache.
     static let shared = TesseraLiveTileImageCache()
 
-    /// Ключ записи: слабая ссылка на исходник + пиксельный размер + режим.
+    /// An entry key: a weak reference to the source + the pixel size + the mode.
     private final class Key: NSObject {
 
         weak var source: UIImage?
@@ -263,29 +255,28 @@ final class TesseraLiveTileImageCache {
 
     private let cache = NSCache<Key, UIImage>()
 
-    /// Число фактических перерисовок (промахов кеша с рендером) — для тестов.
+    /// The number of actual redraws (cache misses with a render), for tests.
     private(set) var renderCount = 0
 
-    /// Создаёт кеш.
+    /// Creates a cache.
     ///
     /// - Parameters:
-    ///   - countLimit: Максимум записей; по умолчанию 256.
-    ///   - totalCostLimit: Лимит памяти в байтах декодированных буферов; по
-    ///     умолчанию 32 МБ.
+    ///   - countLimit: The maximum number of entries; 256 by default.
+    ///   - totalCostLimit: The memory limit in bytes of decoded buffers; 32 MB by default.
     init(countLimit: Int = 256, totalCostLimit: Int = 32 * 1024 * 1024) {
         cache.countLimit = countLimit
         cache.totalCostLimit = totalCostLimit
     }
 
-    /// Изображение, вписанное в `box` с сохранением пропорций.
+    /// An image fitted into `box` with the aspect ratio preserved.
     ///
     /// - Parameters:
-    ///   - source: Исходная иконка.
-    ///   - box: Бокс показа в точках.
-    ///   - scale: Масштаб экрана; пиксельный размер результата ≤ `box × scale`.
-    ///   - renderingMode: Режим отрисовки результата (шаблон для глифа).
-    /// - Returns: Уменьшенная копия из кеша или новая; исходник с нужным
-    ///   режимом, если он уже помещается в бокс.
+    ///   - source: The source icon.
+    ///   - box: The display box in points.
+    ///   - scale: The screen scale; the result's pixel size is at most `box × scale`.
+    ///   - renderingMode: The rendering mode of the result (template for a glyph).
+    /// - Returns: A downscaled copy from the cache or a new one; the source with the required mode
+    ///   if it already fits the box.
     func image(
         for source: UIImage,
         fitting box: CGSize,
@@ -298,7 +289,7 @@ final class TesseraLiveTileImageCache {
             return source.withRenderingMode(renderingMode)
         }
 
-        // Вписываем с сохранением пропорций, не увеличивая исходник.
+        // Fit with the aspect ratio preserved, without enlarging the source.
         let fit = min(box.width / sourceSize.width, box.height / sourceSize.height, 1)
         let targetPoints = CGSize(width: sourceSize.width * fit, height: sourceSize.height * fit)
         let pixelWidth = max(1, Int((targetPoints.width * scale).rounded(.down)))
@@ -313,7 +304,7 @@ final class TesseraLiveTileImageCache {
         let sourcePixelWidth = sourceSize.width * source.scale
         let sourcePixelHeight = sourceSize.height * source.scale
         if sourcePixelWidth <= CGFloat(pixelWidth) + 0.5, sourcePixelHeight <= CGFloat(pixelHeight) + 0.5 {
-            // Уже в размер (в том числе векторные символы): не перерисовываем.
+            // Already the right size (including vector symbols): do not redraw.
             result = source.withRenderingMode(renderingMode)
         } else {
             let format = UIGraphicsImageRendererFormat.default()
@@ -332,23 +323,22 @@ final class TesseraLiveTileImageCache {
     }
 }
 
-// MARK: - Сторона плитки
+// MARK: - Tile face
 
-/// Внутреннее представление одной стороны: фон, иконка, заголовок, подпись.
+/// The internal view of a single face: background, icon, title, caption.
 ///
-/// Сторона не является accessibility-элементом: плитка целиком — один элемент
-/// (§9). Раскладка содержимого — обычный layout-проход при смене размера или
-/// Dynamic Type; флип её не вызывает.
+/// A face is not an accessibility element: the whole tile is a single element (§9). Content layout
+/// is an ordinary layout pass on a size or Dynamic Type change; the flip does not trigger it.
 final class TesseraLiveTileFaceView: UIView {
 
     private enum Metrics {
         static let minimumInset: CGFloat = 6
         static let maximumInset: CGFloat = 12
-        /// Высота, ниже которой плитка считается компактной (1×1).
+        /// The height below which a tile counts as compact (1×1).
         static let compactHeight: CGFloat = 96
-        /// Высота, начиная с которой показывается подпись бэка.
+        /// The height from which the back caption is shown.
         static let detailHeight: CGFloat = 112
-        /// Минимальный размер, при котором показывается иконка.
+        /// The minimum size at which the icon is shown.
         static let iconMinimumSide: CGFloat = 80
     }
 
@@ -358,8 +348,8 @@ final class TesseraLiveTileFaceView: UIView {
 
     private(set) var face: TesseraLiveTileFace?
 
-    /// Ширина, которую текст стороны отдаёт бэйджу со стороны конца строки
-    /// (D29, E15.1), pt. Бэйдж лежит в нижнем ряду, где прижат текст.
+    /// The width the face text yields to the badge on the trailing side (D29), in pt. The badge sits
+    /// in the bottom row, where the text is pressed.
     var badgeTrailingReserve: CGFloat = 0 {
         didSet {
             guard badgeTrailingReserve != oldValue else { return }
@@ -367,8 +357,8 @@ final class TesseraLiveTileFaceView: UIView {
         }
     }
 
-    /// Высота нижнего ряда, которую текст стороны отдаёт бэйджу, pt: текст
-    /// поднимается над рядом бэйджа на узкой плитке (D29, E15.1).
+    /// The height of the bottom row that the face text yields to the badge, in pt: on a narrow tile
+    /// the text rises above the badge row (D29).
     var badgeBottomReserve: CGFloat = 0 {
         didSet {
             guard badgeBottomReserve != oldValue else { return }
@@ -376,7 +366,7 @@ final class TesseraLiveTileFaceView: UIView {
         }
     }
 
-    /// Плитка малая (1×1, ``TesseraTileSize/small``), D47. Выставляет контейнер.
+    /// Whether the tile is small (1×1, ``TesseraTileSize/small``), D47. Set by the container.
     var isSmallTile = false {
         didSet {
             guard isSmallTile != oldValue else { return }
@@ -384,13 +374,12 @@ final class TesseraLiveTileFaceView: UIView {
         }
     }
 
-    /// Высота нижнего ряда бэйджа с зазором, pt; `0` — бэйджа нет (D47).
+    /// The height of the badge's bottom row including the gap, in pt; `0` means no badge (D47).
     ///
-    /// Малая плитка с бэйджем и иконкой стороны показывает иконку и бэйдж без
-    /// заголовка и подписи: иконка занимает верхнюю зону над этим рядом
-    /// (``TesseraTileBadgeLayout/smallTileIconFrame(tileSize:inset:bottomReserve:)``).
-    /// Решение принимается для каждой стороны отдельно: у стороны без иконки
-    /// текст остаётся, иначе плитка была бы пустой.
+    /// A small tile with a badge and a face icon shows the icon and the badge without a title and
+    /// caption: the icon takes the top zone above this row
+    /// (``TesseraTileBadgeLayout/smallTileIconFrame(tileSize:inset:bottomReserve:)``). The decision
+    /// is made per face: a face without an icon keeps its text, otherwise the tile would be empty.
     var badgeIconBottomReserve: CGFloat = 0 {
         didSet {
             guard badgeIconBottomReserve != oldValue else { return }
@@ -398,8 +387,8 @@ final class TesseraLiveTileFaceView: UIView {
         }
     }
 
-    /// Исходная иконка, уменьшенная копия которой сейчас показана, и её
-    /// пиксельный размер: повторная раскладка без изменений кеш не трогает.
+    /// The source icon whose downscaled copy is currently shown, and its pixel size: a repeated
+    /// layout without changes does not touch the cache.
     private weak var displayedIconSource: UIImage?
     private var displayedIconPixelSize: CGSize = .zero
 
@@ -448,8 +437,7 @@ final class TesseraLiveTileFaceView: UIView {
         addSubview(titleLabel)
         addSubview(detailLabel)
 
-        // §9, Dynamic Type: ручная раскладка текста должна пересчитаться при
-        // смене категории.
+        // §9, Dynamic Type: the manual text layout must be recomputed when the category changes.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(contentSizeCategoryDidChange),
@@ -458,8 +446,7 @@ final class TesseraLiveTileFaceView: UIView {
         )
     }
 
-    /// Применяет содержимое стороны; `nil` — сторона пустая и скрывается её
-    /// владельцем.
+    /// Applies the face content; `nil` means the face is empty and its owner hides it.
     func apply(_ face: TesseraLiveTileFace?) {
         self.face = face
 
@@ -477,10 +464,9 @@ final class TesseraLiveTileFaceView: UIView {
 
         backgroundColor = face.backgroundColor
 
-        // Иконки рисуются шаблоном в цвете текста стороны: на плитке нужен
-        // одноцветный глиф, а не цветная картинка. Саму картинку ставит
-        // раскладка (`layoutFace`): только там известен размер слота, под
-        // который иконка декодируется (§4, «Память»).
+        // Icons are drawn as a template in the face's text color: a tile needs a single-color glyph,
+        // not a colored picture. The image itself is set by the layout (`layoutFace`): only there is
+        // the slot size known that the icon is decoded for (§4, "Memory").
         iconView.tintColor = face.foregroundColor
         if face.icon !== displayedIconSource {
             iconView.image = nil
@@ -497,7 +483,7 @@ final class TesseraLiveTileFaceView: UIView {
         setNeedsLayout()
     }
 
-    /// Поле плитки по её ширине (общее у стороны и бэйджа, D29, E15.1).
+    /// The tile inset for its width (shared by the face and the badge, D29).
     static func inset(forWidth width: CGFloat) -> CGFloat {
         max(Metrics.minimumInset, min(Metrics.maximumInset, width * 0.08))
     }
@@ -520,8 +506,8 @@ final class TesseraLiveTileFaceView: UIView {
 
         let inset = TesseraLiveTileFaceView.inset(forWidth: width)
 
-        // D47: малая плитка с бэйджем и иконкой — иконка и бэйдж, без текста.
-        // Иконка рисуется и на плитке уже 80 pt (обычное правило её скрывает).
+        // D47: a small tile with a badge and an icon shows the icon and the badge, without text.
+        // The icon is drawn even on a tile narrower than 80 pt (the usual rule hides it).
         if isSmallTile, badgeIconBottomReserve > 0, let icon = face.icon {
             let frame = TesseraTileBadgeLayout.smallTileIconFrame(
                 tileSize: bounds.size,
@@ -537,8 +523,8 @@ final class TesseraLiveTileFaceView: UIView {
         }
         titleLabel.isHidden = false
 
-        // Нижний ряд делит с бэйджем текст: он уже на `badgeTrailingReserve`
-        // либо поднят на `badgeBottomReserve` (D29, E15.1).
+        // The bottom row is shared with the badge: the text is narrower by `badgeTrailingReserve`
+        // or raised by `badgeBottomReserve` (D29).
         let contentWidth = width - 2 * inset - badgeTrailingReserve
         guard contentWidth > 0 else { return }
         let textX = isRightToLeftLayout ? inset + badgeTrailingReserve : inset
@@ -567,9 +553,8 @@ final class TesseraLiveTileFaceView: UIView {
 
         let availableHeight = max(0, height - textTop - inset - badgeBottomReserve)
 
-        // Подпись резервирует не больше 40% доступной высоты; заголовок
-        // забирает остаток и усекается, если места мало (1×1, крупный
-        // Dynamic Type — §9).
+        // The caption reserves at most 40% of the available height; the title takes the rest and is
+        // truncated if there is little room (1×1, large Dynamic Type; §9).
         let detailHeight: CGFloat
         if hasDetail {
             let measured = detailLabel.sizeThatFits(
@@ -590,8 +575,8 @@ final class TesseraLiveTileFaceView: UIView {
         )
 
         let blockHeight = titleHeight + spacing + detailHeight
-        // Текст прижат к низу, как на WP; если под иконкой не помещается —
-        // начинается сразу под ней.
+        // The text is pressed to the bottom, as in Windows Phone; if it does not fit under the icon,
+        // it starts right below it.
         let blockTop = max(textTop, height - inset - badgeBottomReserve - blockHeight)
 
         titleLabel.frame = CGRect(
@@ -608,11 +593,10 @@ final class TesseraLiveTileFaceView: UIView {
         )
     }
 
-    /// Ставит иконку, декодированную под слот `side × side` × scale (§4).
+    /// Sets the icon decoded for a `side × side` slot times the scale (§4).
     ///
-    /// Повторный вызов с той же иконкой и тем же пиксельным размером ничего
-    /// не делает; иначе картинка берётся из ``TesseraLiveTileImageCache``,
-    /// так что одинаковые плитки делят один буфер.
+    /// A repeated call with the same icon and the same pixel size does nothing; otherwise the image
+    /// is taken from ``TesseraLiveTileImageCache``, so identical tiles share one buffer.
     private func applyIcon(_ icon: UIImage, side: CGFloat) {
         let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : UIScreen.main.scale
         let pixelSize = CGSize(width: (side * scale).rounded(), height: (side * scale).rounded())
@@ -636,8 +620,8 @@ final class TesseraLiveTileFaceView: UIView {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
 
-        // §9: в RTL иконка переезжает к правому краю; при смене масштаба
-        // экрана иконку нужно декодировать заново — пересчитать раскладку.
+        // §9: in RTL the icon moves to the right edge; when the screen scale changes, the icon must
+        // be decoded again, so the layout is recomputed.
         if previousTraitCollection?.layoutDirection != traitCollection.layoutDirection
             || previousTraitCollection?.displayScale != traitCollection.displayScale {
             setNeedsLayout()
@@ -645,87 +629,81 @@ final class TesseraLiveTileFaceView: UIView {
     }
 }
 
-// MARK: - Контейнер плитки
+// MARK: - Tile container
 
-/// Контейнер живой плитки с двумя сторонами и бэйджем (§4).
+/// A live tile container with two faces and a badge (§4).
 ///
-/// ## Флип
+/// ## Flip
 ///
-/// Стороны лежат друг на друге. Флип — две фазы по половине
-/// ``flipAnimationDuration``:
-/// 1. уходящая сторона поворачивается вокруг оси Y на 90° с перспективой
-///    (`m34 ≈ −1/500`) и прячется;
-/// 2. приходящая сторона появляется повёрнутой на −90° и доворачивается до 0°.
+/// The faces lie on top of each other. The flip has two phases of half of
+/// ``flipAnimationDuration`` each:
+/// 1. the outgoing face rotates around the Y axis by 90° with perspective (`m34 ≈ −1/500`) and
+///    hides;
+/// 2. the incoming face appears rotated by −90° and rotates to completion up to 0°.
 ///
-/// Подмена стороны происходит в момент, когда обе стороны повёрнуты ребром,
-/// поэтому зеркального текста не видно. Меняются только `layer.transform` и
-/// `isHidden`; `frame`/`bounds`/`layout` не трогаются — это и есть дисциплина
-/// §4 и RISK.md R10.
+/// The faces are swapped at the moment both are edge-on, so no mirrored text is visible. Only
+/// `layer.transform` and `isHidden` change; `frame`/`bounds`/layout are not touched, which is the
+/// discipline of §4 and RISK.md R10.
 ///
 /// ## Reduce Motion (§9)
 ///
-/// View не знает о настройке: политику «флипов нет, статичный фронт» держит
-/// ``TesseraLiveTileEngine``. Если вызвать ``show(_:animated:)`` с
-/// `animated: false`, сторона меняется мгновенно без анимации.
+/// The view does not know about the setting: the "no flips, a static front" policy is held by
+/// ``TesseraLiveTileEngine``. If ``show(_:animated:)`` is called with `animated: false`, the face
+/// changes instantly without animation.
 ///
-/// ## Бэйдж (§4, D15)
+/// ## Badge (§4, D15)
 ///
-/// ``badgeView`` — отдельный слой поверх обеих сторон: он не входит в
-/// анимируемые стороны и не переворачивается. Хост задаёт вид через
-/// ``badge``/``badgeView``. Для VoiceOver счётчик включается в значение
-/// плитки (``badgeAccessibilityText``).
+/// ``badgeView`` is a separate layer over both faces: it is not part of the animated faces and does
+/// not flip. The host sets its appearance through ``badge``/``badgeView``. For VoiceOver the counter
+/// is included in the tile's value (``badgeAccessibilityText``).
 ///
-/// ## Потоки
+/// ## Threading
 ///
-/// Только главный поток: UIView и Core Animation.
+/// Main thread only: UIView and Core Animation.
 ///
-/// - Note: Контейнер не содержит действия ярлыка (D12): тап обрабатывает
-///   ячейка/хост, а не движок. Контейнер — один accessibility-элемент с
-///   признаком кнопки (§9).
+/// - Note: The container holds no shortcut action (D12): the tap is handled by the cell/host, not by
+///   the engine. The container is a single accessibility element with the button trait (§9).
 public final class TesseraLiveTileView: UIView {
 
-    /// Сторона плитки.
+    /// A side of the tile.
     public enum Side: Equatable {
 
-        /// Фронт: иконка/заголовок плитки.
+        /// The front: the tile icon/title.
         case front
 
-        /// Бэк: живой контент.
+        /// The back: the live content.
         case back
     }
 
-    // MARK: - Публичные свойства
+    // MARK: - Public properties
 
-    /// Устоявшаяся сторона: сторона, которая видна, когда флип не идёт.
+    /// The settled side: the side that is visible when no flip is running.
     ///
-    /// Во время анимации значение меняется только по её завершении; отмена
-    /// флипа возвращает прежнюю сторону (``cancelFlip()``).
+    /// During an animation the value changes only when it completes; cancelling the flip restores
+    /// the previous side (``cancelFlip()``).
     public private(set) var side: Side = .front
 
-    /// Идёт ли сейчас анимация флипа.
+    /// Whether a flip animation is running.
     ///
-    /// Движок использует это свойство, чтобы не накладывать флипы друг на
-    /// друга.
+    /// The engine uses this property to avoid overlapping flips.
     public private(set) var isFlipping = false
 
-    /// Длительность полного флипа (обе половины), секунды.
+    /// The duration of a full flip (both halves), in seconds.
     ///
-    /// По умолчанию 0.45 с. Движок выставляет значение из
-    /// ``TesseraLiveTileEngine/Configuration/flipDuration`` при регистрации.
-    /// Значения `<= 0` трактуются как «без анимации»: сторона меняется
-    /// мгновенно.
+    /// 0.45 s by default. The engine sets the value from
+    /// ``TesseraLiveTileEngine/Configuration/flipDuration`` on registration. Values `<= 0` mean "no
+    /// animation": the side changes instantly.
     public var flipAnimationDuration: TimeInterval = 0.45
 
-    /// Бэйдж поверх плитки; не часть флипа (§4).
+    /// The badge over the tile; not part of the flip (§4).
     ///
-    /// View создаётся контейнером и позиционируется в нижнем углу у конца строки
-    /// (D29, E15.1; ``TesseraTileBadgeLayout``) с учётом направления чтения (§9,
-    /// RTL): в LTR — справа, в RTL — слева.
+    /// The view is created by the container and positioned in the bottom corner at the trailing end
+    /// (D29; ``TesseraTileBadgeLayout``) taking the reading direction into account (§9, RTL): on the
+    /// right in LTR, on the left in RTL.
     public let badgeView = TesseraLiveTileBadgeView()
 
-    /// Сколько нижнего угла у конца строки занимает стрелка размера режима
-    /// редактирования, pt; `0` — вне правки (D29, E15.1). Бэйдж обходит её;
-    /// выставляет ячейка сетки.
+    /// How much of the bottom trailing corner the edit-mode resize arrow takes, in pt; `0` outside
+    /// edit mode (D29). The badge avoids it; set by the grid cell.
     var badgeEditClearance: CGFloat = 0 {
         didSet {
             guard badgeEditClearance != oldValue else { return }
@@ -733,9 +711,9 @@ public final class TesseraLiveTileView: UIView {
         }
     }
 
-    /// Плитка малая (1×1, ``TesseraTileSize/small``), D47: сторона с иконкой и бэйджем
-    /// показывает их без текста. Выставляет ячейка сетки по модели ярлыка; у
-    /// самостоятельного контейнера вне сетки `false` — раскладка прежняя.
+    /// Whether the tile is small (1×1, ``TesseraTileSize/small``), D47: a face with an icon and a
+    /// badge shows them without text. Set by the grid cell from the shortcut model; for a standalone
+    /// container outside a grid it is `false` and the layout is unchanged.
     var isSmallTile = false {
         didSet {
             guard isSmallTile != oldValue else { return }
@@ -746,30 +724,30 @@ public final class TesseraLiveTileView: UIView {
         }
     }
 
-    /// Бэйдж ярлыка (D12/D15): красная точка или счётчик.
+    /// The shortcut badge (D12/D15): a red dot or a counter.
     ///
-    /// Хост передаёт ``TesseraTileDescriptor/badge`` напрямую; бэйдж не участвует во
-    /// флипе и живёт поверх обеих сторон (§4).
+    /// The host passes ``TesseraTileDescriptor/badge`` directly; the badge does not take part in the
+    /// flip and lives over both faces (§4).
     public var badge: TesseraTileBadge {
         get { badgeView.badge }
         set { badgeView.badge = newValue }
     }
 
-    /// Текст бэйджа для VoiceOver; `nil` — озвучивается число из счётчика.
+    /// The badge text for VoiceOver; `nil` means the counter number is announced.
     public var badgeAccessibilityText: String? {
         get { badgeView.accessibilityText }
         set { badgeView.accessibilityText = newValue }
     }
 
-    /// Действие ярлыка по активации VoiceOver (D12).
+    /// The shortcut action on VoiceOver activation (D12).
     ///
-    /// Тап пальцем обрабатывает хост (ячейка сетки), но VoiceOver активирует
-    /// сам accessibility-элемент плитки, минуя ячейку. Хост передаёт сюда
-    /// ``TesseraTileDescriptor/action``; если действие не задано, плитка остаётся
-    /// статичным элементом, несмотря на признак кнопки.
+    /// A finger tap is handled by the host (the grid cell), but VoiceOver activates the tile's
+    /// accessibility element itself, bypassing the cell. The host passes
+    /// ``TesseraTileDescriptor/action`` here; if no action is set, the tile stays a static element
+    /// despite the button trait.
     public var onActivate: (() -> Void)?
 
-    // MARK: - Внутреннее состояние
+    // MARK: - Internal state
 
     private let frontView = TesseraLiveTileFaceView()
     private let backView = TesseraLiveTileFaceView()
@@ -777,8 +755,7 @@ public final class TesseraLiveTileView: UIView {
     private var frontFace: TesseraLiveTileFace?
     private var backFace: TesseraLiveTileFace?
 
-    /// Поколение анимации: отменённые и устаревшие completion-блоки
-    /// игнорируются.
+    /// The animation generation: cancelled and stale completion blocks are ignored.
     private var flipGeneration: UInt64 = 0
     private var flipCompletion: (() -> Void)?
 
@@ -787,11 +764,11 @@ public final class TesseraLiveTileView: UIView {
         static let incoming = "tessera.liveTile.flip.incoming"
     }
 
-    /// Расстояние до точки схода перспективы. `m34 = −1/500` — классическое
-    /// значение для флипа плитки: заметная глубина без «рыбьего глаза».
+    /// The distance to the perspective vanishing point. `m34 = −1/500` is the classic value for a
+    /// tile flip: noticeable depth without a "fisheye".
     private static let perspectiveDistance: CGFloat = 500
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -807,8 +784,8 @@ public final class TesseraLiveTileView: UIView {
         clipsToBounds = true
         backgroundColor = .secondarySystemBackground
 
-        // §9: плитка — один элемент, действия ярлыка озвучиваются признаком
-        // кнопки. Подписи сторон отдельными элементами не являются.
+        // §9: a tile is a single element, and shortcut actions are announced by the button trait.
+        // The face captions are not separate elements.
         isAccessibilityElement = true
         accessibilityTraits = .button
 
@@ -828,18 +805,17 @@ public final class TesseraLiveTileView: UIView {
         updateAccessibility()
     }
 
-    // MARK: - Контент
+    // MARK: - Content
 
-    /// Заменяет содержимое обеих сторон.
+    /// Replaces the content of both faces.
     ///
-    /// Фронт обязателен; бэк `nil` означает «у плитки нет обратной стороны».
-    /// Если бэк исчез, пока он был показан (или показывался), плитка
-    /// возвращается на фронт без анимации — состояние не застревает между
-    /// сторонами.
+    /// The front is required; a `nil` back means "the tile has no back side". If the back disappears
+    /// while it is shown (or being shown), the tile returns to the front without animation, so the
+    /// state does not get stuck between faces.
     ///
     /// - Parameters:
-    ///   - front: Содержимое фронта.
-    ///   - back: Содержимое бэка либо `nil`.
+    ///   - front: The front content.
+    ///   - back: The back content, or `nil`.
     public func setFaces(front: TesseraLiveTileFace, back: TesseraLiveTileFace?) {
         frontFace = front
         backFace = back
@@ -860,26 +836,25 @@ public final class TesseraLiveTileView: UIView {
         setNeedsLayout()
     }
 
-    /// Содержимое стороны; `nil` — сторона не задана.
+    /// The content of a side; `nil` means the side is not set.
     ///
-    /// - Parameter side: Запрошенная сторона.
-    /// - Returns: Содержимое стороны либо `nil`.
+    /// - Parameter side: The requested side.
+    /// - Returns: The side content, or `nil`.
     public func face(for side: Side) -> TesseraLiveTileFace? {
         side == .front ? frontFace : backFace
     }
 
-    // MARK: - Флип
+    // MARK: - Flip
 
-    /// Показывает сторону `target` (§4).
+    /// Shows the `target` side (§4).
     ///
     /// - Parameters:
-    ///   - target: Сторона, которая должна стать видимой. Если бэка нет,
-    ///     запрос на `.back` игнорируется.
-    ///   - animated: `true` — флип с перспективой; `false` — мгновенная
-    ///     подмена (Reduce Motion, §9).
-    ///   - completion: Вызывается после завершения флипа или сразу, если
-    ///     показывать нечего. При отмене (``cancelFlip()``,
-    ///     ``setFaces(front:back:)`` без бэка) не вызывается.
+    ///   - target: The side that should become visible. If there is no back, a request for `.back`
+    ///     is ignored.
+    ///   - animated: `true` for a flip with perspective; `false` for an instant swap (Reduce Motion,
+    ///     §9).
+    ///   - completion: Called when the flip finishes, or immediately if there is nothing to show.
+    ///     Not called on cancellation (``cancelFlip()``, ``setFaces(front:back:)`` without a back).
     public func show(_ target: Side, animated: Bool, completion: (() -> Void)? = nil) {
         guard target != .back || backFace != nil else {
             completion?()
@@ -893,8 +868,8 @@ public final class TesseraLiveTileView: UIView {
         }
 
         if isFlipping {
-            // Незавершённый флип доводим до устоявшейся стороны без
-            // анимации: иначе половина новой анимации наложится на старую.
+            // An unfinished flip is brought to the settled side without animation: otherwise half of
+            // the new animation would overlap the old one.
             cancelFlip()
         }
 
@@ -916,7 +891,7 @@ public final class TesseraLiveTileView: UIView {
         let halfOut = Self.perspectiveRotation(by: .pi / 2)
         let halfIn = Self.perspectiveRotation(by: -.pi / 2)
 
-        // Фаза 1: уходящая сторона уходит в ребро (+90°).
+        // Phase 1: the outgoing side goes edge-on (+90°).
         let outgoingAnimation = CABasicAnimation(keyPath: "transform")
         outgoingAnimation.fromValue = NSValue(caTransform3D: Self.perspectiveRotation(by: 0))
         outgoingAnimation.toValue = NSValue(caTransform3D: halfOut)
@@ -943,10 +918,10 @@ public final class TesseraLiveTileView: UIView {
         CATransaction.commit()
     }
 
-    /// Отменяет текущий флип и возвращает устоявшуюся сторону без анимации.
+    /// Cancels the current flip and returns the settled side without animation.
     ///
-    /// Используется паузами §4 (плитка ушла с экрана, приложение в фон,
-    /// Reduce Motion) и переиспользованием ячейки.
+    /// Used by the §4 pauses (the tile left the screen, the app went to the background, Reduce
+    /// Motion) and by cell reuse.
     public func cancelFlip() {
         flipGeneration &+= 1
         isFlipping = false
@@ -954,7 +929,7 @@ public final class TesseraLiveTileView: UIView {
         resetTransforms()
     }
 
-    // MARK: - Фазы анимации
+    // MARK: - Animation phases
 
     private func beginIncomingFlip(
         incoming: UIView,
@@ -964,15 +939,15 @@ public final class TesseraLiveTileView: UIView {
         duration: TimeInterval,
         generation: UInt64
     ) {
-        // Момент подмены: обе стороны повёрнуты ребром, поэтому смена
-        // видимости незаметна. Layout не меняется — только hidden/transform.
+        // The swap moment: both sides are edge-on, so the visibility change is unnoticeable. Layout
+        // does not change, only hidden/transform.
         outgoing.isHidden = true
         outgoing.layer.transform = CATransform3DIdentity
 
         incoming.isHidden = false
         incoming.layer.transform = initialTransform
 
-        // Фаза 2: доворот приходящей стороны от −90° к 0°.
+        // Phase 2: the incoming side rotates to completion from −90° to 0°.
         let incomingAnimation = CABasicAnimation(keyPath: "transform")
         incomingAnimation.fromValue = NSValue(caTransform3D: initialTransform)
         incomingAnimation.toValue = NSValue(caTransform3D: CATransform3DIdentity)
@@ -1007,7 +982,7 @@ public final class TesseraLiveTileView: UIView {
         completion?()
     }
 
-    /// Мгновенно приводит плитку к стороне `target`.
+    /// Instantly brings the tile to the `target` side.
     private func settle(on target: Side) {
         flipGeneration &+= 1
         isFlipping = false
@@ -1016,7 +991,7 @@ public final class TesseraLiveTileView: UIView {
         resetTransforms()
     }
 
-    /// Возвращает обе стороны к устоявшейся стороне без анимации.
+    /// Returns both sides to the settled side without animation.
     private func resetTransforms() {
         for faceSide in [Side.front, .back] {
             let view = faceView(for: faceSide)
@@ -1031,26 +1006,25 @@ public final class TesseraLiveTileView: UIView {
         side == .front ? frontView : backView
     }
 
-    /// `CATransform3D` поворота вокруг оси Y с перспективой (§4).
+    /// A `CATransform3D` rotation around the Y axis with perspective (§4).
     ///
-    /// `m34` — перспективный член матрицы: без него поворот выглядит плоским
-    /// масштабированием, с ним дальняя сторона плитки уходит в глубину.
+    /// `m34` is the perspective term of the matrix: without it the rotation looks like flat scaling,
+    /// with it the far side of the tile goes into depth.
     private static func perspectiveRotation(by angle: CGFloat) -> CATransform3D {
         var transform = CATransform3DIdentity
         transform.m34 = -1 / perspectiveDistance
         return CATransform3DRotate(transform, angle, 0, 1, 0)
     }
 
-    // MARK: - Layout и доступность
+    // MARK: - Layout and accessibility
 
     public override func layoutSubviews() {
         super.layoutSubviews()
 
-        // Посреди флипа у стороны неединичный 3D-`layer.transform`, а `frame`
-        // при неединичном трансформе не определён (документация UIView):
-        // присваивание `frame` даёт значение, зависящее от реализации UIKit.
-        // Геометрию сторон задаём через `bounds` + `center` — они от
-        // трансформа не зависят, и флип продолжается с той же фазы.
+        // In the middle of a flip a face has a non-identity 3D `layer.transform`, and `frame` is
+        // undefined under a non-identity transform (UIView documentation): assigning `frame` gives
+        // a UIKit implementation-dependent value. The face geometry is set through `bounds` +
+        // `center`, which do not depend on the transform, so the flip continues from the same phase.
         let faceBounds = CGRect(origin: .zero, size: bounds.size)
         let faceCenter = CGPoint(x: bounds.midX, y: bounds.midY)
         for face in [frontView, backView] {
@@ -1062,9 +1036,9 @@ public final class TesseraLiveTileView: UIView {
             }
         }
 
-        // Бэйдж не участвует во флипе и позиционируется отдельно: в нижнем
-        // углу у конца строки (D29, E15.1) — правом в LTR и левом в RTL; в
-        // правке он обходит стрелку размера. Текст сторон уступает ему место.
+        // The badge does not take part in the flip and is positioned separately: in the bottom
+        // corner at the trailing end (D29), the right one in LTR and the left one in RTL; in edit
+        // mode it avoids the resize arrow. The face text yields room to it.
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
         let badgeLayout = TesseraTileBadgeLayout.make(
             tileSize: bounds.size,
@@ -1090,8 +1064,8 @@ public final class TesseraLiveTileView: UIView {
         }
     }
 
-    /// §9: плитка — один элемент; заголовок стороны и счётчик бэйджа —
-    /// его label и value.
+    /// §9: a tile is a single element; the face title and the badge counter are its label and
+    /// value.
     private func updateAccessibility() {
         let visibleFace = side == .front ? frontFace : (backFace ?? frontFace)
 
@@ -1110,13 +1084,13 @@ public final class TesseraLiveTileView: UIView {
         if let badgeText = badgeView.accessibilityText, !badgeText.isEmpty {
             accessibilityValue = badgeText
         } else {
-            // D34/E15.4: без текста хоста точка озвучивается строкой модуля.
+            // D34: without host text, the dot is announced with a module string.
             accessibilityValue = badgeView.badge.accessibilityValueText
         }
     }
 
-    /// VoiceOver-активация ярлыка (D12): жест двойного тапа приходит сюда, а
-    /// не в ячейку сетки, потому что плитка — самостоятельный элемент (§9).
+    /// VoiceOver activation of a shortcut (D12): the double-tap gesture arrives here, not in the grid
+    /// cell, because the tile is a standalone element (§9).
     public override func accessibilityActivate() -> Bool {
         guard let onActivate else { return super.accessibilityActivate() }
         onActivate()

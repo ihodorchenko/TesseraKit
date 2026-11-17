@@ -2,17 +2,17 @@
 //  FolderPanelInsertionTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты чистой геометрии панели раскрытой папки (задача E7.4, решение D17).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»;
-//  D17 в docs/STATE.md — панель вставляется отдельным элементом сразу после
-//  плитки папки (плитка остаётся видимой), а геометрически занимает
-//  полноширинную строку сразу после строки, в которой заканчивается папка;
-//  всё, что начинается ниже этой строки, встаёт под панелью.
+//  Tests for the pure geometry of the expanded folder panel (D17).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid";
+//  D17 in docs/STATE.md: the panel is inserted as a separate item right after
+//  the folder tile (the tile stays visible), and geometrically occupies
+//  a full-width row right after the row in which the folder ends;
+//  everything that starts below that row sits under the panel.
 //
-//  Проверяются только чистые функции `TesseraTileLayoutEngine`:
-//  `folderPanelInsertionIndex`, `rowsBelowOffset`, `panelHeight`. Ни
-//  UICollectionView, ни окно, ни layout-проход здесь не нужны: функции
-//  детерминированы и зависят только от модели и числа колонок.
+//  Only the pure functions of `TesseraTileLayoutEngine` are checked:
+//  `folderPanelInsertionIndex`, `rowsBelowOffset`, `panelHeight`. No
+//  UICollectionView, window or layout pass is needed here: the functions
+//  are deterministic and depend only on the model and the column count.
 //
 
 #if canImport(UIKit)
@@ -23,42 +23,42 @@ import XCTest
 
 final class FolderPanelInsertionTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Высота строки заголовка панели: поля 12 pt сверху и снизу + 44 pt.
+    /// Height of the panel header row: 12 pt margins above and below + 44 pt.
     private let headerHeight: CGFloat = 68
 
-    /// Допуск сравнения геометрии в точках.
+    /// Geometry comparison tolerance in points.
     private let accuracy: CGFloat = 0.0001
 
-    /// Папка для теста раскладки.
+    /// A folder for layout tests.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор папки.
-    ///   - title: Заголовок панели.
-    ///   - tiles: Ярлыки внутри папки.
-    ///   - size: Размер плитки-папки на сетке (по умолчанию 2×2).
-    /// - Returns: Готовая модель `TesseraTileFolder`.
+    ///   - id: The folder identifier.
+    ///   - title: The panel title.
+    ///   - tiles: The tiles inside the folder.
+    ///   - size: The size of the folder tile on the grid (2×2 by default).
+    /// - Returns: A ready `TesseraTileFolder` model.
     private func makeFolder(
         _ id: String,
-        title: String = "Папка",
+        title: String = "Folder",
         tiles: [TesseraTileDescriptor] = [],
         size: TesseraTileSize = .medium
     ) -> TesseraTileFolder {
         TesseraTileFolder(id: id, title: title, tiles: tiles, size: size)
     }
 
-    /// Элементы набора для наглядных проверок порядка.
+    /// Set items for readable order checks.
     ///
-    /// - Parameter items: Элементы сетки.
-    /// - Returns: Идентификаторы в порядке массива.
+    /// - Parameter items: The grid items.
+    /// - Returns: The identifiers in array order.
     private func ids(_ items: [TesseraTileGridItem]) -> [AnyHashable] {
         items.map { $0.id }
     }
 
-    // MARK: - Индекс вставки панели (folderPanelInsertionIndex)
+    // MARK: - Panel insertion index (folderPanelInsertionIndex)
 
-    /// Без раскрытой папки вставлять нечего.
+    /// With no expanded folder there is nothing to insert.
     func testInsertionIndexIsNilWithoutExpandedFolder() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [.tile(tesseraTestTile("a")), .folder(folder)]
@@ -71,7 +71,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Папки нет в наборе — вставлять нечего (идентификатор не совпал).
+    /// The folder is not in the set, so there is nothing to insert (the identifier did not match).
     func testInsertionIndexIsNilWhenFolderIsMissing() {
         let items: [TesseraTileGridItem] = [.tile(tesseraTestTile("a"))]
 
@@ -83,7 +83,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Панель уже в наборе — второй раз её не вставляют.
+    /// The panel is already in the set, so it is not inserted a second time.
     func testInsertionIndexIsNilWhenPanelIsAlreadyInserted() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -99,7 +99,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Индекс вставки — сразу после плитки-папки, а не вместо неё.
+    /// The insertion index is right after the folder tile, not in place of it.
     func testInsertionIndexPointsRightAfterFolderTile() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -117,8 +117,8 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Вставка не убирает плитку папки: число элементов растёт на один, плитка
-    /// остаётся на своём индексе, панель идёт следующей.
+    /// Insertion does not remove the folder tile: the item count grows by one, the tile
+    /// stays at its own index, and the panel comes next.
     func testInsertionKeepsFolderTileAndGrowsItemCount() {
         let folder = makeFolder("f")
         var items: [TesseraTileGridItem] = [
@@ -138,15 +138,15 @@ final class FolderPanelInsertionTests: XCTestCase {
         items.insert(.folderContent(folder), at: index)
 
         XCTAssertEqual(items.count, before.count + 1)
-        // Плитка папки осталась на прежнем индексе: [a, folder, panel, b, c].
+        // The folder tile stayed at its previous index: [a, folder, panel, b, c].
         XCTAssertEqual(ids(items), [before[0], before[1], folder.id, before[2], before[3]])
         XCTAssertEqual(items[1].folder?.id, folder.id)
         XCTAssertTrue(items[2].isFolderPanel)
         XCTAssertEqual(items[2].panelFolder?.id, folder.id)
     }
 
-    /// Индекс работает для первой и последней папки: первая даёт 1, последняя —
-    /// конец массива (вставка в конец).
+    /// The index works for the first and the last folder: the first gives 1, the last gives
+    /// the end of the array (insertion at the end).
     func testInsertionIndexWorksForFirstAndLastFolder() {
         let folder = makeFolder("f")
         let first: [TesseraTileGridItem] = [.folder(folder), .tile(tesseraTestTile("a"))]
@@ -162,8 +162,8 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Индекс не зависит от размеров соседей: это позиция в массиве, а не в
-    /// раскладке (строку панели считает уже геометрия вью-слоя).
+    /// The index does not depend on the sizes of neighbors: it is a position in the array, not in
+    /// the layout (the panel row is computed by the view layer's geometry).
     func testInsertionIndexIgnoresNeighbourSizes() {
         let folder = makeFolder("f", size: .medium)
         let items: [TesseraTileGridItem] = [
@@ -182,8 +182,8 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Папка находится по идентификатору, а не по случаю элемента: панель
-    /// вставляется после неё, даже если рядом стоят другие папки.
+    /// The folder is found by identifier, not by the case of the item: the panel
+    /// is inserted after it even when other folders stand nearby.
     func testInsertionIndexFindsFolderAmongTiles() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -202,11 +202,11 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    // MARK: - Отступ строк под панелью (rowsBelowOffset)
+    // MARK: - Offset of rows below the panel (rowsBelowOffset)
 
-    /// Сосед в той же строке, что и 2×2-папка, остаётся на месте: панель
-    /// начинается после строки, в которой заканчивается папка, а не с её
-    /// верхнего края.
+    /// A neighbor in the same row as a 2×2 folder stays in place: the panel
+    /// starts after the row in which the folder ends, not at its
+    /// top edge.
     func testRowsBelowOffsetIsZeroWhenNeighbourSharesFolderRow() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -226,8 +226,8 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Сосед в последней строке папки тоже остаётся на месте: первая строка
-    /// панели идёт ниже неё.
+    /// A neighbor in the folder's last row also stays in place: the first row
+    /// of the panel goes below it.
     func testRowsBelowOffsetIsZeroWhenNeighbourSharesFolderLastRow() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -237,7 +237,7 @@ final class FolderPanelInsertionTests: XCTestCase {
             .tile(tesseraTestTile("c", size: .small)),
         ]
 
-        // a и b — строка 0 (справа от папки), c — строка 1: все выше строки 2.
+        // a and b are row 0 (to the right of the folder), c is row 1: all above row 2.
         XCTAssertEqual(
             TesseraTileLayoutEngine.rowsBelowOffset(
                 items: items,
@@ -250,9 +250,9 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Элемент, начинающийся ниже строки папки, уходит под панель: отступ
-    /// равен её высоте плюс зазор сетки (по умолчанию 8 pt) — ровно на столько
-    /// раскладка сдвигает первый ряд под панелью (E10.1).
+    /// An item that starts below the folder's row goes under the panel: the offset
+    /// equals its height plus the grid gap (8 pt by default), exactly how far
+    /// the layout shifts the first row under the panel.
     func testRowsBelowOffsetShiftsItemsBelowFolder() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -272,7 +272,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Папка последняя: под панелью ничего нет, сдвигать нечего.
+    /// The folder is last: there is nothing under the panel, so there is nothing to shift.
     func testRowsBelowOffsetIsZeroWhenNothingIsBelowFolder() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -292,7 +292,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Элементы, заканчивающиеся выше строки папки, остаются на месте.
+    /// Items that end above the folder's row stay in place.
     func testRowsBelowOffsetIsZeroWhenAllItemsAreAboveFolderRow() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -301,7 +301,7 @@ final class FolderPanelInsertionTests: XCTestCase {
             .folder(folder),
         ]
 
-        // «wide» — строки 0–1, «below» — строки 2–3, папка — строка 4.
+        // "wide" is rows 0–1, "below" is rows 2–3, the folder is row 4.
         XCTAssertEqual(
             TesseraTileLayoutEngine.rowsBelowOffset(
                 items: items,
@@ -314,8 +314,8 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Несколько элементов под панелью не суммируются: отступ считается один
-    /// раз, на одну высоту панели (плюс зазор сетки).
+    /// Several items under the panel do not add up: the offset is counted once,
+    /// for one panel height (plus the grid gap).
     func testRowsBelowOffsetCountsPanelOnceForSeveralItemsBelow() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -338,7 +338,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Панель уже в наборе — раскладка её влияние уже учла, повторный отступ 0.
+    /// The panel is already in the set: the layout has already accounted for its effect, so a repeated offset is 0.
     func testRowsBelowOffsetIsZeroWhenPanelIsAlreadyPresent() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -359,7 +359,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Нет раскрытой папки, папки нет в наборе или сетка вырождена — отступ 0.
+    /// No expanded folder, the folder is not in the set, or the grid is degenerate: the offset is 0.
     func testRowsBelowOffsetIsZeroForDegenerateInput() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -396,7 +396,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Нулевая, отрицательная или нечисловая высота панели не сдвигает строки.
+    /// A zero, negative or non-finite panel height does not shift rows.
     func testRowsBelowOffsetIgnoresInvalidPanelHeight() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -413,13 +413,13 @@ final class FolderPanelInsertionTests: XCTestCase {
                     panelHeight: height
                 ),
                 0,
-                "Некорректная высота \(height) не должна сдвигать строки"
+                "Invalid height \(height) must not shift rows"
             )
         }
     }
 
-    /// Отступ учитывает фактический зазор сетки (E10.1): `itemSpacing = 12`
-    /// даёт `panelHeight + 12`; отрицательный и нечисловой зазор — 0.
+    /// The offset accounts for the actual grid gap: `itemSpacing = 12`
+    /// gives `panelHeight + 12`; a negative or non-finite gap gives 0.
     func testRowsBelowOffsetUsesGivenSpacing() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -453,11 +453,11 @@ final class FolderPanelInsertionTests: XCTestCase {
         }
     }
 
-    // MARK: - Полоса папки (E10.1)
+    // MARK: - Folder band
 
-    /// «Ступенька» `[папка 2×2, small, small, ярлык 2×2]`: ярлык — в строках
-    /// 1–2, полоса папки — строки 0–2. Под панелью ничего нет, ярлык остаётся
-    /// над ней, панель вставляется после ярлыка.
+    /// A "staircase" `[folder 2×2, small, small, tile 2×2]`: the tile is in rows
+    /// 1–2, and the folder band is rows 0–2. There is nothing under the panel, the tile stays
+    /// above it, and the panel is inserted after the tile.
     func testStepTileIsPartOfFolderBand() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -486,7 +486,7 @@ final class FolderPanelInsertionTests: XCTestCase {
             accuracy: accuracy
         )
 
-        // Плитка после «ступеньки» начинается ниже полосы — под панелью.
+        // The tile after the "staircase" starts below the band, so it goes under the panel.
         let withBelow = items + [.tile(tesseraTestTile("w", size: .wide))]
         XCTAssertEqual(
             TesseraTileLayoutEngine.folderPanelInsertionIndex(
@@ -508,8 +508,8 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// `[папка small, ярлык 2×2]`: 2×2 занимает строки 0–1, полоса — тоже;
-    /// панель вставляется после ярлыка.
+    /// `[folder small, tile 2×2]`: the 2×2 occupies rows 0–1, and so does the band;
+    /// the panel is inserted after the tile.
     func testTallNeighbourOfSmallFolderIsPartOfBand() {
         let folder = makeFolder("f", size: .small)
         let items: [TesseraTileGridItem] = [
@@ -539,12 +539,12 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Индекс вставки с колонками не раньше «сразу после папки» и идёт после
-    /// элементов, поднятых компактностью в строки полосы.
+    /// With columns, the insertion index is no earlier than "right after the folder" and comes after
+    /// the items that compactness lifted into the band rows.
     func testInsertionIndexWithColumnsFollowsLastBandItem() {
         let folder = makeFolder("f")
-        // Папка (0,0)–(1,1); wide не помещается справа — строка 2; small
-        // поднимается в (2,0): он в полосе, хотя в массиве после wide.
+        // The folder is (0,0)–(1,1); wide does not fit on the right, so it takes row 2; small
+        // is lifted to (2,0): it is in the band although it follows wide in the array.
         let items: [TesseraTileGridItem] = [
             .folder(folder),
             .tile(tesseraTestTile("w", size: .wide)),
@@ -559,14 +559,14 @@ final class FolderPanelInsertionTests: XCTestCase {
             ),
             3
         )
-        // Без соседей в полосе — сразу после папки, как устаревший вход.
+        // With no neighbors in the band, right after the folder, as with the legacy input.
         let alone: [TesseraTileGridItem] = [.folder(folder), .tile(tesseraTestTile("w", size: .wide))]
         XCTAssertEqual(
             TesseraTileLayoutEngine.folderPanelInsertionIndex(items: alone, columns: 4, expandedFolderID: folder.id),
             TesseraTileLayoutEngine.folderPanelInsertionIndex(items: alone, expandedFolderID: folder.id)
         )
-        // Вырожденные колонки — устаревший индекс; нет папки или панель уже
-        // есть — nil.
+        // Degenerate columns give the legacy index; no folder or the panel already
+        // present gives nil.
         XCTAssertEqual(
             TesseraTileLayoutEngine.folderPanelInsertionIndex(items: items, columns: 0, expandedFolderID: folder.id),
             1
@@ -583,24 +583,24 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Высота панели с зазором сетки (E10.1): ярлыки — юнит и зазор сетки.
+    /// Panel height with the grid gap: tiles use the grid unit and gap.
     func testPanelHeightUsesGridSpacingAndScale() {
         let five = makeFolder("f", tiles: (0..<5).map { tesseraTestTile("t\($0)") })
 
-        // 390 pt, зазор 12: юнит (390 − 36) / 4 = 88.5; 2 строки:
+        // 390 pt, gap 12: unit (390 − 36) / 4 = 88.5; 2 rows:
         // 68 + 8 + (2×88.5 + 12) = 265.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: five, width: 390, columns: 4, spacing: 12, scale: 0),
             265,
             accuracy: accuracy
         )
-        // 3×: юнит 88.5 → 88⅓; 68 + 8 + (2×88⅓ + 12) = 264⅔.
+        // 3×: unit 88.5 → 88⅓; 68 + 8 + (2×88⅓ + 12) = 264⅔.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: five, width: 390, columns: 4, spacing: 12, scale: 3),
             264 + 2.0 / 3.0,
             accuracy: accuracy
         )
-        // Устаревший вход — зазор 8 без выравнивания.
+        // Legacy input: gap 8 without alignment.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: five, width: 390, columns: 4),
             TesseraTileLayoutEngine.panelHeight(for: five, width: 390, columns: 4, spacing: 8, scale: 0),
@@ -608,9 +608,9 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    // MARK: - Высота панели (panelHeight)
+    // MARK: - Panel height (panelHeight)
 
-    /// Пустая папка: одна строка заголовка, без сетки содержимого.
+    /// An empty folder: one header row, no content grid.
     func testPanelHeightForEmptyFolderIsHeaderOnly() {
         let folder = makeFolder("f", tiles: [])
 
@@ -621,10 +621,10 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Заголовок занимает одну строку: его текст не меняет высоту панели.
+    /// The title takes one row: its text does not change the panel height.
     func testPanelHeightDoesNotDependOnFolderTitle() {
         let untitled = makeFolder("f", title: "")
-        let titled = makeFolder("f", title: "Очень длинное название папки")
+        let titled = makeFolder("f", title: "A very long folder name")
 
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: untitled, width: 390, columns: 4),
@@ -633,34 +633,34 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Одна–четыре иконки — одна строка сетки содержимого.
+    /// One to four icons make one row of the content grid.
     func testPanelHeightForSingleContentRow() {
         for count in 1...4 {
             let folder = makeFolder("f", tiles: (0..<count).map { tesseraTestTile("t\($0)") })
 
-            // 390 pt: юнит сетки (390 − 3×8) / 4 = 91.5 — та же сторона, что
-            // у плитки 1×1; высота = 68 (заголовок) + 8 (зазор) + 91.5 = 167.5.
+            // 390 pt: grid unit (390 − 3×8) / 4 = 91.5, the same side as
+            // a 1×1 tile; height = 68 (header) + 8 (gap) + 91.5 = 167.5.
             XCTAssertEqual(
                 TesseraTileLayoutEngine.panelHeight(for: folder, width: 390, columns: 4),
                 167.5,
                 accuracy: accuracy,
-                "Одна строка содержимого при \(count) ярлыках"
+                "One content row with \(count) tiles"
             )
         }
     }
 
-    /// Пятая иконка открывает вторую строку, девятая — третью.
+    /// The fifth icon opens a second row, the ninth a third.
     func testPanelHeightGrowsWithContentRows() {
         let five = makeFolder("f", tiles: (0..<5).map { tesseraTestTile("t\($0)") })
         let nine = makeFolder("f", tiles: (0..<9).map { tesseraTestTile("t\($0)") })
 
-        // 2 строки: 68 + 8 + (2×91.5 + 8) = 267.
+        // 2 rows: 68 + 8 + (2×91.5 + 8) = 267.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: five, width: 390, columns: 4),
             267,
             accuracy: accuracy
         )
-        // 3 строки: 68 + 8 + (3×91.5 + 2×8) = 366.5.
+        // 3 rows: 68 + 8 + (3×91.5 + 2×8) = 366.5.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: nine, width: 390, columns: 4),
             366.5,
@@ -668,18 +668,18 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Ширина меняет сторону ячейки, а значит и высоту панели.
+    /// Width changes the cell side and therefore the panel height.
     func testPanelHeightDependsOnWidth() {
         let four = makeFolder("f", tiles: (0..<4).map { tesseraTestTile("t\($0)") })
         let five = makeFolder("f", tiles: (0..<5).map { tesseraTestTile("t\($0)") })
 
-        // 320 pt: юнит (320 − 3×8) / 4 = 74.
+        // 320 pt: unit (320 − 3×8) / 4 = 74.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: four, width: 320, columns: 4),
             150,
             accuracy: accuracy
         )
-        // 2 строки: 68 + 8 + (2×74 + 8) = 232.
+        // 2 rows: 68 + 8 + (2×74 + 8) = 232.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: five, width: 320, columns: 4),
             232,
@@ -692,12 +692,12 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Число колонок сетки содержимого тоже меняет сторону ячейки.
+    /// The column count of the content grid also changes the cell side.
     func testPanelHeightDependsOnColumns() {
         let folder = makeFolder("f", tiles: [tesseraTestTile("a")])
 
-        // 390 pt, 2 колонки: юнит (390 − 8) / 2 = 191;
-        // высота = 68 + 8 + 191 = 267.
+        // 390 pt, 2 columns: unit (390 − 8) / 2 = 191;
+        // height = 68 + 8 + 191 = 267.
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(for: folder, width: 390, columns: 2),
             267,
@@ -705,7 +705,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Отрицательное число ярлыков трактуется как пустая панель.
+    /// A negative tile count is treated as an empty panel.
     func testPanelHeightClampsNegativeTileCount() {
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(tileCount: -3, width: 390, columns: 4),
@@ -714,7 +714,7 @@ final class FolderPanelInsertionTests: XCTestCase {
         )
     }
 
-    /// Вырожденная геометрия даёт нулевую высоту.
+    /// Degenerate geometry gives zero height.
     func testPanelHeightIsZeroForDegenerateGeometry() {
         XCTAssertEqual(
             TesseraTileLayoutEngine.panelHeight(tileCount: 4, width: 24, columns: 4),

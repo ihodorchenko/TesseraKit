@@ -2,15 +2,15 @@
 //  TileLayoutEngineFolderPlacementTests.swift
 //  TesseraStartScreenTests
 //
-//  Геометрия панели раскрытой папки на размещениях по координатам (E14.2, D17,
-//  D30). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 и «Отступления
-//  реализации» п. 5, 49.
+//  Geometry of the expanded folder panel on coordinate-based placements (D17,
+//  D30). Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 and "Implementation
+//  deviations".
 //
-//  Варианты `folderBandEndRow(forFolder:...)`, `folderPanelInsertionIndex(
-//  placements:...)` и `rowsBelowOffset(placements:...)` работают по готовым
-//  ячейкам и не делают репак: строки ниже полосы папки сохраняют дыры, а панель
-//  сдвигает их вниз на высоту панели (в точках — слой раскладки). На компактной
-//  раскладке результат обязан совпасть со старыми вариантами по `TesseraTileGridItem`.
+//  The variants `folderBandEndRow(forFolder:...)`, `folderPanelInsertionIndex(
+//  placements:...)` and `rowsBelowOffset(placements:...)` work on ready-made
+//  cells and do not repack: rows below the folder band keep their holes, and the panel
+//  pushes them down by the panel height (in points, the layout layer). On a compact
+//  layout the result must match the old variants based on `TesseraTileGridItem`.
 //
 
 #if canImport(UIKit)
@@ -25,7 +25,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
 
     // MARK: - folderBandEndRow
 
-    /// Одинокая папка 2×2 — полоса из её двух строк.
+    /// A lone 2×2 folder: the band consists of its two rows.
     func testBandEndOfLoneFolderIsItsBottom() {
         let placements = [placementItem("f", .medium, 3, 0)]
 
@@ -35,8 +35,8 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Плитка, начинающаяся в строках папки и заканчивающаяся ниже, расширяет
-    /// полосу (итеративно, до неподвижной точки).
+    /// A tile that starts in the folder rows and ends below extends
+    /// the band (iteratively, until a fixed point).
     func testBandEndExtendsOverTilesStartingInsideBand() {
         let placements = [
             placementItem("f", .medium, 0, 0),
@@ -50,7 +50,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Плитка за дырой ниже полосы полосу не расширяет.
+    /// A tile behind a hole below the band does not extend the band.
     func testBandEndIgnoresTilesBelowAHole() {
         let placements = [
             placementItem("f", .medium, 0, 0),
@@ -63,7 +63,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Папки нет в наборе — `nil`.
+    /// The folder is not in the set: `nil`.
     func testBandEndOfUnknownFolderIsNil() {
         XCTAssertNil(
             TesseraTileLayoutEngine.folderBandEndRow(
@@ -72,7 +72,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Функция по слотам и по размещениям даёт одно и то же.
+    /// The function gives the same result by slots and by placements.
     func testBandEndMatchesSlotBasedVariant() {
         let placements = [
             placementItem("f", .medium, 1, 2),
@@ -89,8 +89,8 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
 
     // MARK: - folderPanelInsertionIndex
 
-    /// Панель встаёт после последнего элемента, оставшегося над ней; дыры не
-    /// заполняются и порядок массива не пересчитывается.
+    /// The panel goes after the last item that stays above it; holes are not
+    /// filled and the array order is not recomputed.
     func testInsertionIndexAfterLastElementAbovePanelWithHoles() {
         let placements = [
             placementItem("f", .medium, 0, 0),
@@ -106,7 +106,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Без элементов рядом панель — сразу после папки.
+    /// With no items nearby the panel goes right after the folder.
     func testInsertionIndexRightAfterFolderWhenNothingElseAbove() {
         let placements = [
             placementItem("f", .medium, 0, 0),
@@ -121,7 +121,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Нет раскрытия или нет такой папки — `nil`.
+    /// No expansion or no such folder: `nil`.
     func testInsertionIndexNilWithoutExpansionOrFolder() {
         let placements = [placementItem("f", .medium, 0, 0)]
 
@@ -139,8 +139,8 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
 
     // MARK: - rowsBelowOffset
 
-    /// Есть что сдвигать (даже за дырой) — отступ `panelHeight + spacing`;
-    /// ячейки при этом остаются прежними (панель не делает репак).
+    /// There is something to shift (even behind a hole): an offset of `panelHeight + spacing`;
+    /// the cells stay as they were (the panel does not repack).
     func testRowsBelowOffsetShiftsTilesBelowBandWithoutRepacking() {
         let placements = [
             placementItem("f", .medium, 0, 0),
@@ -158,7 +158,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Всё в полосе папки или ниже ничего нет — сдвиг 0.
+    /// Everything is in the folder band or there is nothing below: a shift of 0.
     func testRowsBelowOffsetIsZeroWhenNothingBelowBand() {
         let placements = [
             placementItem("f", .medium, 0, 0),
@@ -173,7 +173,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         )
     }
 
-    /// Вырожденные входы: высота 0, нет раскрытия, нет папки.
+    /// Degenerate inputs: height 0, no expansion, no folder.
     func testRowsBelowOffsetDegenerateInputs() {
         let placements = [placementItem("f", .medium, 0, 0), placementItem("a", .small, 5, 0)]
 
@@ -188,7 +188,7 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         }
     }
 
-    /// Отрицательный/нечисловой зазор трактуется как 0.
+    /// A negative/non-numeric gap is treated as 0.
     func testRowsBelowOffsetSanitizesSpacing() {
         let placements = [placementItem("f", .medium, 0, 0), placementItem("a", .small, 5, 0)]
 
@@ -203,10 +203,10 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         }
     }
 
-    // MARK: - Совместимость со старым API на компактной раскладке
+    // MARK: - Compatibility with the old API on a compact layout
 
-    /// Для компактной упаковки новые варианты совпадают со старыми по
-    /// `TesseraTileGridItem` (индекс вставки и отступ строк под панелью).
+    /// For compact packing the new variants match the old ones by
+    /// `TesseraTileGridItem` (the insertion index and the offset of rows under the panel).
     func testPlacementVariantsMatchLegacyItemsAPIOnCompactLayout() {
         let sizes = TesseraTileSize.allCases
 
@@ -253,9 +253,9 @@ final class TileLayoutEngineFolderPlacementTests: XCTestCase {
         }
     }
 
-    /// Раскладка по слотам для одной и той же модели не зависит от дыр выше
-    /// полосы: удаление плитки выше папки не меняет индекс вставки относительно
-    /// оставшихся элементов (дыра не «схлопывается» панелью).
+    /// The slot-based layout for the same model does not depend on holes above
+    /// the band: removing a tile above the folder does not change the insertion index relative to
+    /// the remaining items (a hole is not "collapsed" by the panel).
     func testRemovingTileAboveFolderLeavesBandAndShiftUnchanged() {
         let placements = [
             placementItem("top", .small, 0, 0),

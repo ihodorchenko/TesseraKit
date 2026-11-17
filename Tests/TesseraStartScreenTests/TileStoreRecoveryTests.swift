@@ -2,20 +2,20 @@
 //  TileStoreRecoveryTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты восстановления состояния `TesseraTileStore` (W2: E10.3c, E10.3d).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим
-//  редактирования» (персистентность), §6 (один источник истины, pin/unpin) и
-//  «Отступления реализации»; план — docs/PLAN.md, раздел «E9–E10».
+//  Tests of `TesseraTileStore` state recovery.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit
+//  mode" (persistence), §6 (a single source of truth, pin/unpin) and
+//  "Implementation deviations"; plan — docs/PLAN.md.
 //
-//  Проверяются:
-//  - «мёртвые» папки: после `setCatalog` → `load()` папка без единого ярлыка
-//    каталога распускается, неизвестные ярлыки из папок убираются; результат
-//    не зависит от порядка вызовов `setCatalog`/`load` (E10.3c);
-//  - «сиротские» папки (есть в `folders` файла, нет в `items`) встают в конец
-//    сетки, их ярлыки не теряются; инварианты «ярлык в одном месте» и
-//    согласованность `isPinned`/`pin`/`unpinned` (E10.3c);
-//  - повреждённый файл и файл более новой схемы откладываются в резервную
-//    копию до первой записи, а автосохранение пишет новый файл (E10.3d).
+//  What is checked:
+//  - "dead" folders: after `setCatalog` → `load()` a folder without a single tile
+//  of the catalog is dissolved, and unknown tiles are removed from folders; the result
+//  does not depend on the order of the `setCatalog`/`load` calls;
+//  - "orphan" folders (present in the file's `folders` but absent from `items`) go to the end
+//  of the grid, and their tiles are not lost; the "a tile lives in one place" invariants and
+//  consistency of `isPinned`/`pin`/`unpinned`;
+//  - a corrupted file and a file of a newer schema are set aside as a backup
+//  before the first write, and autosave writes a new file.
 //
 
 #if canImport(UIKit)
@@ -25,7 +25,7 @@ import XCTest
 
 final class TileStoreRecoveryTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func catalog(_ ids: [String]) -> [TesseraTileDescriptor] {
         ids.map { tesseraTestTile($0, size: .small) }
@@ -46,7 +46,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         store.snapshot().items.map { $0.id }
     }
 
-    /// Файлы резервных копий в каталоге хранилища.
+    /// Backup files in the store directory.
     private func backupFiles(in directory: TesseraTestDirectory) throws -> [URL] {
         try FileManager.default
             .contentsOfDirectory(at: directory.url, includingPropertiesForKeys: nil)
@@ -54,10 +54,10 @@ final class TileStoreRecoveryTests: XCTestCase {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    /// Инварианты модели: идентификаторы элементов уникальны; каждый ярлык
-    /// каталога ровно в одном месте (сетка, одна папка или список
-    /// откреплённых); `isPinned` согласован с `unpinned`; ни одна папка в
-    /// снимке не пуста.
+    /// Model invariants: item identifiers are unique; every catalog
+    /// tile is in exactly one place (the grid, one folder or the list of
+    /// unpinned tiles); `isPinned` is consistent with `unpinned`; no folder in the
+    /// snapshot is empty.
     private func assertInvariants(
         _ store: TesseraTileStore,
         catalogIDs: [AnyHashable],
@@ -66,7 +66,7 @@ final class TileStoreRecoveryTests: XCTestCase {
     ) {
         let snapshot = store.snapshot()
         let itemIDs = snapshot.items.map { $0.id }
-        XCTAssertEqual(Set(itemIDs).count, itemIDs.count, "дубликаты на сетке", file: file, line: line)
+        XCTAssertEqual(Set(itemIDs).count, itemIDs.count, "duplicates on the grid", file: file, line: line)
 
         var places: [AnyHashable: Int] = [:]
         for item in snapshot.items {
@@ -75,7 +75,7 @@ final class TileStoreRecoveryTests: XCTestCase {
         }
         for tile in snapshot.unpinned { places[tile.id, default: 0] += 1 }
         for id in catalogIDs {
-            XCTAssertEqual(places[id], 1, "ярлык \(id) должен быть ровно в одном месте", file: file, line: line)
+            XCTAssertEqual(places[id], 1, "tile \(id) must be in exactly one place", file: file, line: line)
         }
 
         let unpinned = Set(snapshot.unpinned.map { $0.id })
@@ -83,11 +83,11 @@ final class TileStoreRecoveryTests: XCTestCase {
             XCTAssertEqual(store.isPinned(id), !unpinned.contains(id), "isPinned(\(id))", file: file, line: line)
         }
         for folder in snapshot.folders {
-            XCTAssertFalse(folder.tiles.isEmpty, "пустая папка \(folder.id) на сетке", file: file, line: line)
+            XCTAssertFalse(folder.tiles.isEmpty, "empty folder \(folder.id) on the grid", file: file, line: line)
         }
     }
 
-    /// Сохраняет файл с папкой [B, C] на месте B: порядок [A, папка, D].
+    /// Saves a file with the folder [B, C] in B's place: order [A, folder, D].
     private func saveLayoutWithFolder(in directory: TesseraTestDirectory) throws -> AnyHashable {
         let store = makeStore(catalog(["a", "b", "c", "d"]), in: directory)
         let folder = try XCTUnwrap(store.createFolder(withTile: "b", title: "F", columns: 6))
@@ -96,10 +96,10 @@ final class TileStoreRecoveryTests: XCTestCase {
         return folder.id
     }
 
-    // MARK: - E10.3c: «мёртвые» папки
+    // MARK: - Dead folders
 
-    /// Все ярлыки папки пропали из каталога: после `setCatalog` → `load()`
-    /// папка распускается, а не остаётся пустой плиткой.
+    /// All of a folder's tiles are gone from the catalog: after `setCatalog` → `load()`
+    /// the folder is dissolved rather than remaining an empty tile.
     func testLoadDissolvesFolderWithoutCatalogTiles() throws {
         let directory = TesseraTestDirectory()
         _ = try saveLayoutWithFolder(in: directory)
@@ -112,9 +112,9 @@ final class TileStoreRecoveryTests: XCTestCase {
         assertInvariants(store, catalogIDs: ["a", "d"])
     }
 
-    /// Часть ярлыков папки осталась в каталоге. D45: в папке остался один ярлык —
-    /// она распускается, ярлык «c» встаёт на её место (раньше папка оставалась с
-    /// одним ярлыком).
+    /// Some of a folder's tiles remain in the catalog. D45: one tile is left in the folder,
+    /// so it is dissolved and tile "c" takes its place (previously the folder remained with
+    /// a single tile).
     func testLoadPrunesUnknownTilesFromFolder() throws {
         let directory = TesseraTestDirectory()
         _ = try saveLayoutWithFolder(in: directory)
@@ -127,8 +127,8 @@ final class TileStoreRecoveryTests: XCTestCase {
         assertInvariants(store, catalogIDs: ["a", "c", "d"])
     }
 
-    /// Порядок вызовов не влияет на папки: `load()` до `setCatalog` даёт тот
-    /// же результат.
+    /// The call order does not affect folders: `load()` before `setCatalog` gives the same
+    /// result.
     func testLoadBeforeCatalogGivesSameResult() throws {
         let directory = TesseraTestDirectory()
         _ = try saveLayoutWithFolder(in: directory)
@@ -143,11 +143,11 @@ final class TileStoreRecoveryTests: XCTestCase {
         assertInvariants(store, catalogIDs: ["a", "d"])
     }
 
-    // MARK: - E10.3c: «сиротские» папки
+    // MARK: - Orphan folders
 
-    /// Папка есть в `folders`, но не в `items`: она встаёт в конец сетки, её
-    /// ярлыки остаются в ней, а не «висят» откреплёнными, которых нельзя
-    /// закрепить.
+    /// A folder is in `folders` but not in `items`: it goes to the end of the grid, and its
+    /// tiles stay in it rather than "hanging" as unpinned ones that cannot be
+    /// pinned.
     func testOrphanFolderIsAppendedToGrid() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -171,12 +171,12 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(store.snapshot().folders.first?.tiles.map { $0.id }, ["b", "c"])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["d"])
         XCTAssertTrue(store.isPinned("b"))
-        XCTAssertFalse(store.pinTile("b", columns: 6), "ярлык из папки не закрепляется второй раз")
+        XCTAssertFalse(store.pinTile("b", columns: 6), "a tile from a folder cannot be pinned a second time")
         assertInvariants(store, catalogIDs: ["a", "b", "c", "d"])
     }
 
-    /// Испорченные ссылки в файле: ярлык и на сетке, и в папке; папка в
-    /// папке; дубликаты — модель всё равно согласована.
+    /// Broken references in the file: a tile both on the grid and in a folder; a folder inside
+    /// a folder; duplicates — the model is still consistent.
     func testLoadRepairsInconsistentFolderReferences() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -202,28 +202,28 @@ final class TileStoreRecoveryTests: XCTestCase {
         store.setCatalog(catalog(["a", "b", "c", "d", "e"]))
         try store.load()
 
-        // D45: у «f2» после чистки дубликата остался один ярлык «d» — папка
-        // распускается, «d» встаёт на её место.
+        // D45: after the duplicate is cleaned up, "f2" is left with a single tile "d" — the folder
+        // is dissolved and "d" takes its place.
         XCTAssertEqual(ids(store), ["a", "f1", "d"])
         XCTAssertEqual(store.snapshot().folders.map { $0.tiles.map { $0.id } }, [["b", "c"]])
         XCTAssertEqual(store.snapshot().unpinned.map { $0.id }, ["e"])
         assertInvariants(store, catalogIDs: ["a", "b", "c", "d", "e"])
     }
 
-    // MARK: - E10.3d: нечитаемый файл
+    // MARK: - Unreadable file
 
-    /// Повреждённый JSON: `load()` бросает ошибку, файл до любой записи
-    /// отложен в резервную копию с исходными байтами, а автосохранение пишет
-    /// новый читаемый файл.
+    /// Corrupted JSON: `load()` throws, the file is set aside as a backup with
+    /// the original bytes before any write, and autosave writes
+    /// a new readable file.
     func testCorruptedFileIsBackedUpBeforeAutosave() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        let original = Data("{ это не JSON".utf8)
+        let original = Data("{ this is not JSON".utf8)
         let store = makeStore(catalog(["a", "b", "c"]), in: directory, autosaves: true)
         try original.write(to: store.fileURL)
 
         XCTAssertThrowsError(try store.load())
-        XCTAssertEqual(ids(store), ["a", "b", "c"], "приложение работает с текущим состоянием")
+        XCTAssertEqual(ids(store), ["a", "b", "c"], "The app works with the current state")
 
         let backups = try backupFiles(in: directory)
         XCTAssertEqual(backups.count, 1)
@@ -238,18 +238,18 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), original)
     }
 
-    /// Файл более новой схемы (версия текущей + 1) не затирается схемой v2.
+    /// A file of a newer schema (current version + 1) is not overwritten with the v2 schema.
     func testNewerSchemaFileIsBackedUpBeforeAutosave() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
-        // Текущая схема — 2 (`TesseraTileStore.schemaVersion`, E14.1), файл записан версией 3.
+        // The current schema is 2 (`TesseraTileStore.schemaVersion`); the file was written as version 3.
         let original = Data(#"{"version":3,"items":[],"sizes":{},"folders":[],"future":true}"#.utf8)
         let store = makeStore(catalog(["a", "b"]), in: directory, autosaves: true)
         try original.write(to: store.fileURL)
 
         XCTAssertThrowsError(try store.load()) { error in
             guard case TesseraTileStoreError.unsupportedSchemaVersion(let version)? = error as? TesseraTileStoreError else {
-                return XCTFail("Ожидалась unsupportedSchemaVersion, пришло: \(error)")
+                return XCTFail("Expected unsupportedSchemaVersion, got: \(error)")
             }
             XCTAssertEqual(version, 3)
         }
@@ -266,8 +266,8 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(reloaded.descriptor(withID: "a")?.size, .wide)
     }
 
-    /// Существующая резервная копия не перезаписывается: новая получает
-    /// суффикс; имя — `<имя>.unreadable-<ISO-дата>.json`.
+    /// An existing backup is not overwritten: the new one gets
+    /// a suffix; the name is `<name>.unreadable-<ISO date>.json`.
     func testBackupDoesNotOverwriteExistingCopy() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -288,8 +288,8 @@ final class TileStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: existing), older)
     }
 
-    /// Ошибка ввода-вывода не является «нечитаемым содержимым»: отсутствующий
-    /// файл — первый запуск, копия не создаётся.
+    /// An I/O error is not "unreadable content": a missing
+    /// file is a first launch, and no backup is created.
     func testMissingFileCreatesNoBackup() throws {
         let directory = TesseraTestDirectory()
         try directory.create()

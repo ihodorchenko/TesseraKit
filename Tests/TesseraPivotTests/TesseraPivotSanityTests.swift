@@ -1,7 +1,7 @@
 import XCTest
 @testable import TesseraPivot
 
-/// Санити-тест скелета пакета (E0). Заменяется/дополняется тестами E2.7.
+/// Sanity test for the package skeleton. Complemented by the component tests.
 final class TesseraPivotSanityTests: XCTestCase {
     func testModuleSkeletonExists() {
         _ = TesseraPivot.self

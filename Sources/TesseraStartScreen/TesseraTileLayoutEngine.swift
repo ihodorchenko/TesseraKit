@@ -1,78 +1,78 @@
-// Раскладка плиточной сетки рабочего стола в юнитных координатах.
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §3 «Плиточная сетка»
-// (формула юнита, юнитные координаты, дыры допускаются) и §14 «Уточнения MVP»
-// п. 4 (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
+// Layout of the start screen tile grid in unit coordinates.
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md — §3 "Tile grid"
+// (the unit formula, unit coordinates, holes are allowed) and §14 "MVP clarifications"
+// (D15: four sizes — 1×1, 2×2, 4×2, 4×4).
 //
-// Упаковка по порядку (E8.5) строго компактна: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
-// (реализация — ``TesseraTileLayoutEngine/packCompact(items:columns:unit:)``) ставит
-// плитки в самую верхнюю-левую позицию и схлопывает раскладку вверх-влево. С E14
-// (D30) это **не** основная раскладка рабочего стола, а запасной путь (см. ниже):
-// штатно плитки стоят на явных ячейках, дыры сохраняются.
+// Order-based packing is strictly compact: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
+// (implemented by ``TesseraTileLayoutEngine/packCompact(items:columns:unit:)``) puts
+// tiles at the topmost-leftmost position and collapses the layout up and to the left. Since
+// D30 this is **not** the main start screen layout but a fallback path (see below):
+// normally tiles sit at explicit cells and holes are preserved.
 //
-// D17 (docs/STATE.md) — панель раскрытой папки: чистые функции индекса вставки
-// панели после полосы папки (E10.1), отступа строк под панелью и её высоты — в
-// конце файла. E10.1 — пиксельное выравнивание юнита и геометрия сетки
+// D17 (docs/STATE.md) — the expanded folder panel: pure functions for the panel insertion index
+// after the folder band, for the row offset below the panel, and for its height — at the
+// end of the file. Also here: the pixel alignment of the unit and the grid geometry
 // (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
-// Основная часть движка остаётся без UIKit и без состояния.
+// The main part of the engine stays free of UIKit and state.
 //
-// E14 — размещение по координатам (`TesseraTileLayoutEngine+Placement.swift`): превью
-// drag, resize, вставка, схлопывание пустых строк работают над набором
-// `TesseraTilePlacedItem` (идентификатор, размер, ячейка). ``pack(items:columns:unit:)``
-// остаётся упаковкой по порядку: откат раскладки сетки без таблицы ячеек (E14.3),
-// миграция v1 → v2, проекция при другой ширине холста (D32) и раскладка первого
-// запуска (`packCompact`).
+// Placement by coordinates (`TesseraTileLayoutEngine+Placement.swift`): the drag
+// preview, resize, insertion, and collapsing of empty rows work over a set of
+// `TesseraTilePlacedItem` (identifier, size, cell). ``pack(items:columns:unit:)``
+// remains order-based packing: a fallback for the grid layout without a cell table,
+// the v1 → v2 migration, projection onto a different canvas width (D32), and the first-launch layout
+// (`packCompact`).
 //
-// Модуль намеренно чистый: только CoreGraphics (`CGFloat`, `CGSize`, `CGRect`),
-// модель `TesseraTileSize` и элементы снимка сетки. Никакого UIKit, layout-контекста и
-// состояния — все функции детерминированы и тестируются без UI (E4.7).
+// The module is intentionally pure: only CoreGraphics (`CGFloat`, `CGSize`, `CGRect`),
+// the `TesseraTileSize` model, and the grid snapshot elements. No UIKit, layout context, or
+// state — all functions are deterministic and testable without UI.
 
 import CoreGraphics
 
-/// Позиция ярлыка на сетке в юнитных координатах
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Модель раскладки»).
+/// A tile position on the grid in unit coordinates
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3, "Layout model").
 ///
-/// Положение хранится парой ``column``/``row`` в юнитах, а не в точках: при
-/// повороте экрана или смене ширины меняется только ``unit``, а юнитные
-/// координаты остаются прежними. ``size`` описывает запрошенный размер плитки
-/// (D15), ``unitColumns``/``unitRows`` — её фактический след на сетке.
+/// The position is stored as a ``column``/``row`` pair in units, not in points: on
+/// screen rotation or a width change only ``unit`` changes, while unit
+/// coordinates stay the same. ``size`` describes the requested tile size
+/// (D15), ``unitColumns``/``unitRows`` — its actual footprint on the grid.
 ///
-/// ``frame`` — «сырая» рамка в точках без промежутков (unit × юнитные
-/// координаты). Итоговая геометрия с зазорами между юнитами и началом координат
-/// контента считается через ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``.
+/// ``frame`` is a "raw" frame in points without gaps (unit × unit
+/// coordinates). The final geometry with gaps between units and the content
+/// origin is computed with ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``.
 public struct TesseraTileLayoutSlot: Equatable {
-    /// Идентификатор ярлыка, к которому относится слот.
+    /// The identifier of the tile the slot belongs to.
     public let id: AnyHashable
 
-    /// Запрошенный размер плитки (D15).
+    /// The requested tile size (D15).
     public let size: TesseraTileSize
 
-    /// Колонка левого верхнего угла в юнитах (отсчёт от 0, слева направо).
+    /// The top-left corner column in units (zero-based, left to right).
     public let column: Int
 
-    /// Строка левого верхнего угла в юнитах (отсчёт от 0, сверху вниз).
+    /// The top-left corner row in units (zero-based, top to bottom).
     public let row: Int
 
-    /// Размер одного юнита в точках, с которым считалась эта раскладка.
+    /// The size of one unit in points that this layout was computed with.
     ///
-    /// Хранится снимком, чтобы ``frame`` и
-    /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)`` могли работать без
-    /// повторной передачи геометрии. При повороте/смене ширины раскладку
-    /// пересобирают через ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` с новым
-    /// юнитом — юнитные координаты при этом не меняются.
+    /// Stored as a snapshot so that ``frame`` and
+    /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)`` can work without
+    /// the geometry being passed again. On rotation or a width change the layout
+    /// is rebuilt with ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` and the new
+    /// unit — unit coordinates do not change.
     public let unit: CGFloat
 
-    /// Создаёт слот раскладки.
+    /// Creates a layout slot.
     ///
-    /// Обычно слоты создаёт ``TesseraTileLayoutEngine/pack(items:columns:unit:)``;
-    /// инициализатор публичный, чтобы тесты и потребители могли собрать
-    /// ожидаемое значение без запуска упаковки.
+    /// Slots are usually created by ``TesseraTileLayoutEngine/pack(items:columns:unit:)``;
+    /// the initializer is public so that tests and consumers can build
+    /// an expected value without running packing.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор ярлыка.
-    ///   - size: Размер плитки в юнитах.
-    ///   - column: Колонка левого верхнего угла в юнитах.
-    ///   - row: Строка левого верхнего угла в юнитах.
-    ///   - unit: Размер юнита в точках.
+    ///   - id: The tile identifier.
+    ///   - size: The tile size in units.
+    ///   - column: The top-left corner column in units.
+    ///   - row: The top-left corner row in units.
+    ///   - unit: The unit size in points.
     public init(id: AnyHashable, size: TesseraTileSize, column: Int, row: Int, unit: CGFloat) {
         self.id = id
         self.size = size
@@ -81,20 +81,20 @@ public struct TesseraTileLayoutSlot: Equatable {
         self.unit = unit
     }
 
-    /// Ширина следа плитки в юнитах.
+    /// The footprint width of the tile in units.
     public var unitColumns: Int {
         size.unitColumns
     }
 
-    /// Высота следа плитки в юнитах.
+    /// The footprint height of the tile in units.
     public var unitRows: Int {
         size.unitRows
     }
 
-    /// Прямоугольник слота в юнитных координатах: `x = column`, `y = row`,
+    /// The slot rectangle in unit coordinates: `x = column`, `y = row`,
     /// `width = unitColumns`, `height = unitRows`.
     ///
-    /// Удобен для проверок и отладки; для точек используйте ``frame`` или
+    /// Handy for checks and debugging; for points use ``frame`` or
     /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``.
     public var unitFrame: CGRect {
         CGRect(
@@ -105,14 +105,14 @@ public struct TesseraTileLayoutSlot: Equatable {
         )
     }
 
-    /// Рамка слота в точках без промежутков между юнитами.
+    /// The slot frame in points without gaps between units.
     ///
-    /// Это `unit × unitFrame`. Реальная сетка добавляет зазоры между соседними
-    /// юнитами, поэтому для отрисовки нужен
-    /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``: он же учитывает
-    /// внутренние зазоры широких и больших плиток.
+    /// This is `unit × unitFrame`. The real grid adds gaps between adjacent
+    /// units, so drawing needs
+    /// ``TesseraTileLayoutEngine/rect(for:unit:gap:origin:)``: it also accounts for
+    /// the inner gaps of wide and large tiles.
     ///
-    /// При нечисловом или неположительном ``unit`` возвращается `.zero`.
+    /// For a non-finite or non-positive ``unit`` it returns `.zero`.
     public var frame: CGRect {
         guard unit.isFinite, unit > 0 else { return .zero }
 
@@ -125,51 +125,51 @@ public struct TesseraTileLayoutSlot: Equatable {
     }
 }
 
-/// Чистые функции раскладки плиточной сетки
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Плиточная сетка»; D15 в docs/STATE.md).
+/// Pure layout functions of the tile grid
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3, "Tile grid"; D15 in docs/STATE.md).
 ///
-/// Сетка описывается числом колонок и размером юнита в точках. Упаковка по
-/// порядку (`pack`/`packCompact`) строго компактна: каждая плитка встаёт в
-/// самую верхнюю-левую позицию, где помещается целиком, а после размещения всю
-/// раскладку можно «схлопнуть» вверх-влево до неподвижной точки. Это запасной
-/// путь (сетка без применимой таблицы ячеек), миграция файла v1 → v2, проекция
-/// под другую ширину холста (D32) и раскладка первого запуска. Основная
-/// раскладка — по явным ячейкам (`TesseraTileLayoutEngine+Placement.swift`, E14, D30):
-/// дыры сохраняются, коллизии выталкивают плитки вниз (D31). История отказа от
-/// «честных дыр» и возврата к ним — «Отступления реализации» (п. 5 и E14)
+/// The grid is described by the number of columns and the unit size in points. Order-based
+/// packing (`pack`/`packCompact`) is strictly compact: every tile goes to the
+/// topmost-leftmost position where it fits entirely, and after placement the whole
+/// layout can be "collapsed" up and to the left to a fixed point. This is the fallback
+/// path (a grid without a usable cell table), the v1 → v2 file migration, projection
+/// onto a different canvas width (D32), and the first-launch layout. The main
+/// layout is by explicit cells (`TesseraTileLayoutEngine+Placement.swift`, D30):
+/// holes are preserved, collisions push tiles down (D31). The history of abandoning
+/// "honest holes" and returning to them is in "Implementation deviations" of
 /// docs/STARTSCREEN-IOS-DESIGN.md.
 ///
-/// Все функции — `static` и не хранят состояние: результат зависит только от
-/// аргументов. Направление чтения (RTL) здесь не учитывается — зеркалирование
-/// сетки выполняет вью-слой (документ §9, «RTL»), а движок работает в
-/// LTR-координатах.
+/// All functions are `static` and hold no state: the result depends only on
+/// the arguments. The reading direction (RTL) is not taken into account here — grid
+/// mirroring is done by the view layer (document §9, "RTL"), and the engine works in
+/// LTR coordinates.
 public enum TesseraTileLayoutEngine {
 
-    /// Число колонок сетки по умолчанию — 6 малых колонок (D26).
+    /// The default number of grid columns — 6 small columns (D26).
     ///
-    /// Как в Windows 10 Mobile (docs/W10M-STARTSCREEN.md §2): три средние плитки
-    /// в ряд, широкая занимает 4 колонки из 6, большая — 4×4. Единственный
-    /// источник умолчания для ``TesseraTileGridView/columns`` и для методов
-    /// ``TesseraTileStore`` без сетки; хост может задать своё `columns`.
+    /// As in Windows 10 Mobile (docs/W10M-STARTSCREEN.md §2): three medium tiles
+    /// in a row, a wide one takes 4 columns of 6, a large one is 4×4. The single
+    /// source of the default for ``TesseraTileGridView/columns`` and for the
+    /// ``TesseraTileStore`` methods without a grid; the host may set its own `columns`.
     public static let defaultColumns = 6
 
-    /// Размер одного юнита сетки в точках
-    /// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Модель раскладки»).
+    /// The size of one grid unit in points
+    /// (docs/STARTSCREEN-IOS-DESIGN.md §3, "Layout model").
     ///
-    /// Формула документа: `unit = (screenWidth − margins − gaps × (N − 1)) / N`.
-    /// В сигнатуре нет отдельного `margins` (по заданию E4.2), поэтому
-    /// `screenWidth` — уже доступная ширина контента: хост вычитает внешние
-    /// поля сам, а параметр `gaps` — зазор между двумя соседними колонками.
+    /// The document formula: `unit = (screenWidth − margins − gaps × (N − 1)) / N`.
+    /// The signature has no separate `margins`, so
+    /// `screenWidth` is the already available content width: the host subtracts the outer
+    /// margins itself, and the `gaps` parameter is the gap between two adjacent columns.
     ///
-    /// Защитные случаи: `columns <= 0`, нечисловые `screenWidth`/`gaps`,
-    /// отрицательный зазор (трактуется как 0) и ситуация, когда зазоры съедают
-    /// всю ширину, дают `0`. Отрицательный результат невозможен.
+    /// Defensive cases: `columns <= 0`, non-finite `screenWidth`/`gaps`,
+    /// a negative gap (treated as 0), and the situation when the gaps eat
+    /// the whole width give `0`. A negative result is impossible.
     ///
     /// - Parameters:
-    ///   - screenWidth: Доступная ширина сетки в точках (без внешних полей).
-    ///   - columns: Число колонок, больше нуля.
-    ///   - gaps: Зазор между соседними колонками в точках.
-    /// - Returns: Размер юнита в точках или `0` для вырожденной геометрии.
+    ///   - screenWidth: The available grid width in points (without outer margins).
+    ///   - columns: The number of columns, greater than zero.
+    ///   - gaps: The gap between adjacent columns in points.
+    /// - Returns: The unit size in points, or `0` for degenerate geometry.
     public static func unit(screenWidth: CGFloat, columns: Int, gaps: CGFloat) -> CGFloat {
         guard columns > 0, screenWidth.isFinite, gaps.isFinite else { return 0 }
 
@@ -181,27 +181,27 @@ public enum TesseraTileLayoutEngine {
         return available / CGFloat(columns)
     }
 
-    // MARK: - Пиксельное выравнивание (E10.1)
+    // MARK: - Pixel alignment
 
-    /// Размер юнита, выровненный вниз по пиксельной сетке экрана (E10.1).
+    /// The unit size rounded down to the screen's pixel grid.
     ///
-    /// Формула та же, что у ``unit(screenWidth:columns:gaps:)``, но результат
-    /// округляется **вниз** до кратного `1 / scale`: при ширине 393 pt
-    /// (контент 361 pt, зазор 8) «сырой» юнит 84.25 pt даёт дробные пиксели и
-    /// размытые края плиток, выровненный — 84 pt на 3× и 84 pt на 2×. Остаток
-    /// ширины раскладка делит поровну на поля (сетка центрируется, см.
+    /// The formula is the same as in ``unit(screenWidth:columns:gaps:)``, but the result
+    /// is rounded **down** to a multiple of `1 / scale`: at a width of 393 pt
+    /// (content 361 pt, gap 8) the "raw" unit of 84.25 pt gives fractional pixels and
+    /// blurry tile edges, while the aligned one is 84 pt at 3× and 84 pt at 2×. The width
+    /// remainder is split equally into margins by the layout (the grid is centered, see
     /// ``gridMetrics(contentWidth:columns:spacing:scale:)``).
     ///
-    /// `scale <= 0` или нечисловой масштаб — выравнивания нет, результат равен
+    /// For `scale <= 0` or a non-finite scale there is no alignment, and the result equals
     /// ``unit(screenWidth:columns:gaps:)``.
     ///
     /// - Parameters:
-    ///   - screenWidth: Доступная ширина сетки в точках (без внешних полей).
-    ///   - columns: Число колонок, больше нуля.
-    ///   - gaps: Зазор между соседними колонками в точках.
-    ///   - scale: Масштаб экрана (`displayScale`): пикселей в точке.
-    /// - Returns: Юнит в точках, кратный `1 / scale`, или `0` для вырожденной
-    ///   геометрии.
+    ///   - screenWidth: The available grid width in points (without outer margins).
+    ///   - columns: The number of columns, greater than zero.
+    ///   - gaps: The gap between adjacent columns in points.
+    ///   - scale: The screen scale (`displayScale`): pixels per point.
+    /// - Returns: The unit in points, a multiple of `1 / scale`, or `0` for degenerate
+    ///   geometry.
     public static func unit(
         screenWidth: CGFloat,
         columns: Int,
@@ -211,92 +211,91 @@ public enum TesseraTileLayoutEngine {
         pixelFloor(unit(screenWidth: screenWidth, columns: columns, gaps: gaps), scale: scale)
     }
 
-    /// Допуск округления по пиксельной сетке: гасит ошибку плавающей точки
-    /// (`84 × 3` может прийти как `251.99999999`).
+    /// The pixel grid rounding tolerance: absorbs floating-point error
+    /// (`84 × 3` may come out as `251.99999999`).
     private static let pixelEpsilon: CGFloat = 1e-6
 
-    /// Выравнивает масштаб: положительный и конечный — как есть, иначе `0`
-    /// («не выравнивать»).
+    /// Normalizes the scale: a positive finite one is kept as is, otherwise `0`
+    /// ("do not align").
     private static func alignmentScale(_ scale: CGFloat) -> CGFloat {
         scale.isFinite && scale > 0 ? scale : 0
     }
 
-    /// Округляет значение вниз до кратного `1 / scale` (E10.1).
+    /// Rounds a value down to a multiple of `1 / scale`.
     ///
     /// - Parameters:
-    ///   - value: Длина в точках.
-    ///   - scale: Масштаб экрана; `<= 0` — значение не меняется.
-    /// - Returns: Выровненная длина.
+    ///   - value: The length in points.
+    ///   - scale: The screen scale; `<= 0` leaves the value unchanged.
+    /// - Returns: The aligned length.
     static func pixelFloor(_ value: CGFloat, scale: CGFloat) -> CGFloat {
         let scale = alignmentScale(scale)
         guard scale > 0, value.isFinite else { return value }
         return (value * scale + pixelEpsilon).rounded(.down) / scale
     }
 
-    /// Округляет значение к ближайшему кратному `1 / scale` (E10.1).
+    /// Rounds a value to the nearest multiple of `1 / scale`.
     ///
     /// - Parameters:
-    ///   - value: Длина или координата в точках.
-    ///   - scale: Масштаб экрана; `<= 0` — значение не меняется.
-    /// - Returns: Выровненное значение.
+    ///   - value: A length or coordinate in points.
+    ///   - scale: The screen scale; `<= 0` leaves the value unchanged.
+    /// - Returns: The aligned value.
     static func pixelRound(_ value: CGFloat, scale: CGFloat) -> CGFloat {
         let scale = alignmentScale(scale)
         guard scale > 0, value.isFinite else { return value }
         return (value * scale).rounded(.toNearestOrAwayFromZero) / scale
     }
 
-    /// Горизонтальная геометрия сетки в точках (E10.1).
+    /// The horizontal grid geometry in points.
     ///
-    /// Одна и та же для плиток рабочего стола и для ярлыков панели раскрытой
-    /// папки: обе стороны считают её по ширине контента, зазору и масштабу,
-    /// поэтому колонки совпадают до пикселя.
+    /// The same for desktop tiles and for the tiles of an expanded folder's
+    /// panel: both sides compute it from the content width, gap, and scale,
+    /// so the columns match to the pixel.
     struct GridMetrics: Equatable {
 
-        /// Число колонок.
+        /// The number of columns.
         var columns: Int
 
-        /// Юнит в точках (выровнен по пикселям, если масштаб задан).
+        /// The unit in points (pixel-aligned if a scale is given).
         var unit: CGFloat
 
-        /// Зазор между юнитами в точках (санитизирован и выровнен).
+        /// The gap between units in points (sanitized and aligned).
         var spacing: CGFloat
 
-        /// Отступ сетки от начала ширины контента: половина остатка после
-        /// выравнивания юнита (сетка центрируется).
+        /// The grid offset from the start of the content width: half of the remainder after
+        /// aligning the unit (the grid is centered).
         var leading: CGFloat
 
-        /// Ширина, которую занимают `columns` юнитов с зазорами.
+        /// The width taken by `columns` units with gaps.
         var width: CGFloat
 
-        /// Смещение колонки от начала ширины контента в LTR-координатах.
+        /// The column offset from the start of the content width in LTR coordinates.
         ///
-        /// - Parameter column: Номер колонки, с нуля.
-        /// - Returns: Левый край колонки в точках.
+        /// - Parameter column: The zero-based column number.
+        /// - Returns: The left edge of the column in points.
         func columnOffset(_ column: Int) -> CGFloat {
             leading + CGFloat(column) * (unit + spacing)
         }
     }
 
-    /// Считает горизонтальную геометрию сетки с пиксельным выравниванием
-    /// (E10.1).
+    /// Computes the horizontal grid geometry with pixel alignment.
     ///
-    /// 1. Зазор санитизируется (отрицательный и нечисловой — 0) и округляется
-    ///    к ближайшему пикселю.
-    /// 2. Юнит — ``unit(screenWidth:columns:gaps:scale:)``: формула §3 с
-    ///    округлением вниз до пикселя.
-    /// 3. Остаток ширины (`contentWidth − columns × юнит − зазоры`) делится
-    ///    поровну на поля: левому полю — половина, округлённая вниз до пикселя,
-    ///    правому — всё остальное.
+    /// 1. The gap is sanitized (negative and non-finite become 0) and rounded
+    ///    to the nearest pixel.
+    /// 2. The unit is ``unit(screenWidth:columns:gaps:scale:)``: the §3 formula with
+    ///    rounding down to a pixel.
+    /// 3. The width remainder (`contentWidth − columns × unit − gaps`) is divided
+    ///    equally into margins: the left margin gets half, rounded down to a pixel,
+    ///    and the right one gets all the rest.
     ///
-    /// Без масштаба (`scale <= 0`) выравнивания нет: юнит — точная формула §3,
-    /// остаток нулевой, `leading == 0`.
+    /// Without a scale (`scale <= 0`) there is no alignment: the unit is the exact §3 formula,
+    /// the remainder is zero, `leading == 0`.
     ///
     /// - Parameters:
-    ///   - contentWidth: Ширина контента сетки (без внешних полей).
-    ///   - columns: Число колонок, больше нуля.
-    ///   - spacing: Зазор между юнитами в точках.
-    ///   - scale: Масштаб экрана; `<= 0` — не выравнивать.
-    /// - Returns: Геометрия или `nil` для вырожденной ширины/колонок.
+    ///   - contentWidth: The grid content width (without outer margins).
+    ///   - columns: The number of columns, greater than zero.
+    ///   - spacing: The gap between units in points.
+    ///   - scale: The screen scale; `<= 0` means do not align.
+    /// - Returns: The geometry, or `nil` for a degenerate width/columns.
     static func gridMetrics(
         contentWidth: CGFloat,
         columns: Int,
@@ -331,28 +330,28 @@ public enum TesseraTileLayoutEngine {
         )
     }
 
-    // MARK: - Полоса раскрытой папки (E10.1)
+    // MARK: - Expanded folder band
 
-    /// Нижняя граница «полосы папки» в юнитных строках (E10.1, D17).
+    /// The bottom edge of the "folder band" in unit rows (D17).
     ///
-    /// Панель раскрытой папки — полноширинная строка, поэтому она не может
-    /// встать сразу под последней строкой папки, если рядом стоит плитка,
-    /// которая начинается в строках папки, а заканчивается ниже (например,
-    /// 2×2-ярлык со строки 1 при 2×2-папке в строках 0–1): панель перекрыла бы
-    /// её нижнюю половину. Полоса начинается с `[folder.row, folder.row +
-    /// unitRows)` и расширяет нижнюю границу до `max(row + unitRows)` всех
-    /// плиток, пересекающих полосу, итеративно до неподвижной точки (расширение
-    /// может зацепить следующую плитку).
+    /// The expanded folder panel is a full-width row, so it cannot
+    /// sit right below the folder's last row if next to it stands a tile
+    /// that starts in the folder's rows and ends lower (for example,
+    /// a 2×2 tile from row 1 with a 2×2 folder in rows 0–1): the panel would cover
+    /// its lower half. The band starts as `[folder.row, folder.row +
+    /// unitRows)` and extends the bottom edge to `max(row + unitRows)` of all
+    /// tiles intersecting the band, iteratively to a fixed point (an extension
+    /// may catch the next tile).
     ///
-    /// На неподвижной точке разбиение «остаётся / уходит под панель» по
-    /// верхней строке `slot.row < bandEnd` точное: плитка с `row < bandEnd`
-    /// либо целиком выше полосы, либо пересекает её — и тогда уже целиком в
-    /// ней.
+    /// At the fixed point the split "stays / goes under the panel" by the
+    /// top row `slot.row < bandEnd` is exact: a tile with `row < bandEnd`
+    /// is either entirely above the band or intersects it — and then it is entirely
+    /// inside it.
     ///
     /// - Parameters:
-    ///   - folderSlot: Слот плитки раскрытой папки.
-    ///   - slots: Слоты всех плиток раскладки (папка может входить).
-    /// - Returns: Первая строка после полосы: с неё начинается панель.
+    ///   - folderSlot: The slot of the expanded folder's tile.
+    ///   - slots: The slots of all layout tiles (the folder may be included).
+    /// - Returns: The first row after the band: the panel starts from it.
     static func folderBandEndRow(for folderSlot: TesseraTileLayoutSlot, in slots: [TesseraTileLayoutSlot]) -> Int {
         let start = folderSlot.row
         var end = folderSlot.row + folderSlot.unitRows
@@ -371,33 +370,33 @@ public enum TesseraTileLayoutEngine {
         return end
     }
 
-    /// Упаковывает плитки строго компактно
-    /// (docs/STARTSCREEN-IOS-DESIGN.md §3; E8.5).
+    /// Packs tiles strictly compactly
+    /// (docs/STARTSCREEN-IOS-DESIGN.md §3).
     ///
-    /// Упаковка **по порядку** — запасной путь с E14 (D30): штатная раскладка
-    /// сетки идёт по явным ячейкам и сохраняет дыры, а эта функция нужна для
-    /// отката, миграции v1 → v2, проекции при другой ширине холста и первого
-    /// запуска. Работает как
-    /// ``packCompact(items:columns:unit:)``: каждая плитка встаёт в самую
-    /// верхнюю-левую позицию, где помещается целиком, затем раскладка
-    /// схлопывается вверх-влево до неподвижной точки. Пустые юниты остаются
-    /// только там, куда не помещается ни одна из **текущих** плиток; «честных
-    /// дыр» §3 эта функция не допускает (E8.5).
+    /// **Order-based** packing is a fallback path (D30): the normal grid layout
+    /// is by explicit cells and preserves holes, while this function is needed for
+    /// rollback, the v1 → v2 migration, projection onto a different canvas width, and first
+    /// launch. It works like
+    /// ``packCompact(items:columns:unit:)``: each tile goes to the topmost-leftmost
+    /// position where it fits entirely, then the layout
+    /// collapses up and to the left to a fixed point. Empty units remain
+    /// only where none of the **current** tiles fits; the "honest
+    /// holes" of §3 are not allowed by this function.
     ///
-    /// Строгая компактность — свойство именно этой функции: раскладка по
-    /// явным ячейкам (E14) её не применяет.
+    /// Strict compactness is a property of this function specifically: the layout by
+    /// explicit cells does not apply it.
     ///
-    /// Возвращаемые слоты идут **в порядке входного массива**, а не в порядке
-    /// обхода сетки: по индексу слота можно сопоставить его с ярлыком. Если
-    /// ширина плитки больше числа колонок (например, `.wide` при `columns == 3`),
-    /// плитка пропускается: сетка не может изобразить её без искажения размера.
+    /// The returned slots follow **the order of the input array**, not the grid
+    /// traversal order: a slot can be matched to its tile by index. If
+    /// a tile's width is greater than the column count (for example, `.wide` with `columns == 3`),
+    /// the tile is skipped: the grid cannot draw it without distorting the size.
     ///
     /// - Parameters:
-    ///   - items: Пары «идентификатор ярлыка — размер плитки» в порядке сетки.
-    ///   - columns: Число колонок, больше нуля (для всех размеров D15 нужно ≥ 4; по умолчанию — ``defaultColumns``).
-    ///   - unit: Размер юнита в точках, больше нуля.
-    /// - Returns: Слоты в порядке `items`; пустой массив для вырожденной
-    ///   геометрии или пустого входа.
+    ///   - items: "Tile identifier — tile size" pairs in grid order.
+    ///   - columns: The number of columns, greater than zero (all D15 sizes need ≥ 4; the default is ``defaultColumns``).
+    ///   - unit: The unit size in points, greater than zero.
+    /// - Returns: Slots in the order of `items`; an empty array for degenerate
+    ///   geometry or empty input.
     public static func pack(
         items: [(id: AnyHashable, size: TesseraTileSize)],
         columns: Int,
@@ -406,35 +405,35 @@ public enum TesseraTileLayoutEngine {
         packCompact(items: items, columns: columns, unit: unit)
     }
 
-    // MARK: - Строгая компактность (E8.5)
+    // MARK: - Strict compactness
 
-    /// Строго компактная упаковка: якорь + схлопывание (E8.5).
+    /// Strictly compact packing: anchor + collapse.
     ///
-    /// Алгоритм из двух фаз:
+    /// An algorithm in two phases:
     ///
-    /// 1. **Якорь.** Для каждой плитки в порядке массива перебираются строки
-    ///    сверху вниз и колонки слева направо; выбирается первая позиция, где
-    ///    весь прямоугольник `unitColumns × unitRows` свободен. Более поздняя
-    ///    плитка поэтому всегда занимает свободное место выше, если оно есть.
-    /// 2. **Схлопывание.** ``stabilize(_:columns:)`` снимает каждую плитку с
-    ///    сетки и ищет для неё более раннюю позицию (выше или левее в той же
-    ///    строке); проход повторяется до неподвижной точки. Якорная фаза уже
-    ///    даёт неподвижную точку для текущего порядка, поэтому на практике
-    ///    схлопывание ничего не двигает — оно гарантирует инвариант и подстрахует
-    ///    будущие изменения якорной стратегии.
+    /// 1. **Anchor.** For each tile in array order, rows are scanned
+    ///    top to bottom and columns left to right; the first position is chosen where
+    ///    the whole `unitColumns × unitRows` rectangle is free. A later
+    ///    tile therefore always takes a free place higher up, if there is one.
+    /// 2. **Collapse.** ``stabilize(_:columns:)`` takes each tile off the
+    ///    grid and looks for an earlier position for it (higher or further left in the same
+    ///    row); the pass repeats to a fixed point. The anchor phase already
+    ///    gives a fixed point for the current order, so in practice
+    ///    the collapse moves nothing — it guarantees the invariant and insures
+    ///    against future changes of the anchor strategy.
     ///
-    /// Дыра остаётся только там, куда не помещается ни одна из текущих плиток
-    /// (например, справа от 2×2, если следующая плитка — 4×2). Это не «честная
-    /// дыра» §3, а след размеров: сдвигать в неё нечего. Если позже появится
-    /// плитка подходящего размера, она займёт это место при переупаковке; если
-    /// плитку утащили, нижние поднимаются вверх.
+    /// A hole remains only where none of the current tiles fits
+    /// (for example, to the right of a 2×2 if the next tile is 4×2). This is not an "honest
+    /// hole" of §3 but a footprint of sizes: there is nothing to move into it. If a tile of
+    /// a suitable size appears later, it takes this place on repacking; if
+    /// a tile was dragged away, the lower ones move up.
     ///
     /// - Parameters:
-    ///   - items: Пары «идентификатор ярлыка — размер плитки» в порядке сетки.
-    ///   - columns: Число колонок, больше нуля.
-    ///   - unit: Размер юнита в точках, больше нуля.
-    /// - Returns: Слоты в порядке `items`; пустой массив для вырожденной
-    ///   геометрии или пустого входа.
+    ///   - items: "Tile identifier — tile size" pairs in grid order.
+    ///   - columns: The number of columns, greater than zero.
+    ///   - unit: The unit size in points, greater than zero.
+    /// - Returns: Slots in the order of `items`; an empty array for degenerate
+    ///   geometry or empty input.
     static func packCompact(
         items: [(id: AnyHashable, size: TesseraTileSize)],
         columns: Int,
@@ -442,8 +441,8 @@ public enum TesseraTileLayoutEngine {
     ) -> [TesseraTileLayoutSlot] {
         guard columns > 0, unit.isFinite, unit > 0 else { return [] }
 
-        // Фаза 1 «якорь»: занятость сетки — матрица, потому что перебор идёт
-        // построчно и подряд; строки добавляются по мере роста упаковки.
+        // Phase 1 "anchor": grid occupancy is a matrix, because the scan goes
+        // row by row and consecutively; rows are added as the packing grows.
         var occupied: [[Bool]] = []
         var slots: [TesseraTileLayoutSlot] = []
         slots.reserveCapacity(items.count)
@@ -452,7 +451,7 @@ public enum TesseraTileLayoutEngine {
             let width = item.size.unitColumns
             let height = item.size.unitRows
 
-            // Плитка шире сетки не помещается без искажения размера.
+            // A tile wider than the grid does not fit without distorting the size.
             guard width > 0, height > 0, width <= columns else { continue }
 
             var row = 0
@@ -489,34 +488,34 @@ public enum TesseraTileLayoutEngine {
             }
         }
 
-        // Фаза 2 «схлопывание»: дыры, в которые можно сдвинуть плитку вверх или
-        // влево, не остаются.
+        // Phase 2 "collapse": holes into which a tile can be moved up or
+        // left do not remain.
         return stabilize(slots, columns: columns)
     }
 
-    /// Схлопывает раскладку вверх-влево до неподвижной точки (E8.5).
+    /// Collapses the layout up and to the left to a fixed point.
     ///
-    /// Каждая плитка по очереди снимается с сетки и ставится в самую раннюю
-    /// свободную позицию: сначала строки выше, затем — в своей строке левее
-    /// текущей колонки. Позиция «правее в той же строке» или «ниже» не
-    /// считается улучшением, поэтому порядок массива слотов не меняется —
-    /// двигаются только координаты.
+    /// Each tile in turn is taken off the grid and put at the earliest
+    /// free position: first the rows above, then — in its own row — to the left of
+    /// the current column. A position "to the right in the same row" or "below" is not
+    /// considered an improvement, so the order of the slot array does not change —
+    /// only the coordinates move.
     ///
-    /// Проход повторяется, пока хоть одна плитка сдвинулась: сдвиг верхней
-    /// плитки освобождает место нижней. Каждый сдвиг строго уменьшает
-    /// лексикографический ключ `(row, column)` одной плитки, поэтому цикл
-    /// конечен (ключей конечное число, сумма ключей убывает).
+    /// The pass repeats while at least one tile moved: moving an upper
+    /// tile frees space for a lower one. Each move strictly decreases the
+    /// lexicographic key `(row, column)` of one tile, so the loop
+    /// is finite (there is a finite number of keys, and the sum of keys decreases).
     ///
-    /// Функция внутренняя: публичная упаковка — ``pack(items:columns:unit:)``.
-    /// Отдельно от неё тестируется искусственно «подвешенная» плитка, которую
-    /// нужно поднять.
+    /// The function is internal: the public packing is ``pack(items:columns:unit:)``.
+    /// An artificially "hanging" tile that has to be lifted
+    /// is tested separately.
     ///
     /// - Parameters:
-    ///   - slots: Слоты в любом порядке; координаты неотрицательны.
-    ///   - columns: Число колонок, больше нуля.
-    /// - Returns: Слоты в прежнем порядке с компактными координатами; при
-    ///   вырожденных аргументах (неположительные координаты, плитка шире сетки)
-    ///   — входной массив без изменений.
+    ///   - slots: Slots in any order; coordinates are non-negative.
+    ///   - columns: The number of columns, greater than zero.
+    /// - Returns: Slots in the original order with compact coordinates; for
+    ///   degenerate arguments (non-positive coordinates, a tile wider than the grid)
+    ///   — the input array unchanged.
     static func stabilize(_ slots: [TesseraTileLayoutSlot], columns: Int) -> [TesseraTileLayoutSlot] {
         guard columns > 0, !slots.isEmpty else { return slots }
         guard slots.allSatisfy({
@@ -531,7 +530,7 @@ public enum TesseraTileLayoutEngine {
 
         var working = slots
 
-        // Матрица занятости всей раскладки: высота — до последней занятой строки.
+        // The occupancy matrix of the whole layout: the height reaches the last occupied row.
         var height = 0
         for slot in working {
             height = max(height, slot.row + slot.unitRows)
@@ -554,8 +553,8 @@ public enum TesseraTileLayoutEngine {
         while didMove {
             didMove = false
 
-            // Обход сверху вниз и слева направо: сдвиг верхней плитки
-            // освобождает место нижней в том же проходе.
+            // Traversal top to bottom and left to right: moving an upper tile
+            // frees space for a lower one in the same pass.
             let order = working.indices.sorted { lhs, rhs in
                 let left = working[lhs]
                 let right = working[rhs]
@@ -568,7 +567,7 @@ public enum TesseraTileLayoutEngine {
             for index in order {
                 let slot = working[index]
 
-                // Снимаем плитку: её собственные юниты не мешают поиску.
+                // We take the tile off: its own units do not interfere with the search.
                 unmarkOccupied(
                     &occupied,
                     column: slot.column,
@@ -615,27 +614,27 @@ public enum TesseraTileLayoutEngine {
         return working
     }
 
-    /// Переводит слот из юнитных координат в рамку в точках
-    /// (docs/STARTSCREEN-IOS-DESIGN.md §3, «Модель раскладки»).
+    /// Converts a slot from unit coordinates to a frame in points
+    /// (docs/STARTSCREEN-IOS-DESIGN.md §3, "Layout model").
     ///
-    /// Координаты:
+    /// Coordinates:
     /// - `x = origin.x + column × (unit + gap)`,
     /// - `y = origin.y + row × (unit + gap)`,
     /// - `width = unitColumns × unit + (unitColumns − 1) × gap`,
     /// - `height = unitRows × unit + (unitRows − 1) × gap`.
     ///
-    /// Внутренние зазоры входят в рамку широкой/большой плитки: плитка 2×2
-    /// занимает два юнита и зазор между ними, а не «съедает» его.
+    /// Inner gaps are part of the frame of a wide/large tile: a 2×2 tile
+    /// takes two units and the gap between them, rather than "eating" it.
     ///
     /// - Parameters:
-    ///   - slot: Слот в юнитных координатах.
-    ///   - unit: Размер юнита в точках; `nil` — использовать
-    ///     ``TesseraTileLayoutSlot/unit``, с которым считался слот.
-    ///   - gap: Зазор между соседними юнитами в точках; отрицательный
-    ///     трактуется как 0.
-    ///   - origin: Начало координат контента сетки (например, `contentInset`).
-    /// - Returns: Рамка в точках; `.zero` для нечислового/неположительного
-    ///   юнита или пустого следа плитки.
+    ///   - slot: The slot in unit coordinates.
+    ///   - unit: The unit size in points; `nil` means use
+    ///     ``TesseraTileLayoutSlot/unit``, which the slot was computed with.
+    ///   - gap: The gap between adjacent units in points; negative
+    ///     is treated as 0.
+    ///   - origin: The content origin of the grid (for example, `contentInset`).
+    /// - Returns: A frame in points; `.zero` for a non-finite/non-positive
+    ///   unit or an empty tile footprint.
     public static func rect(
         for slot: TesseraTileLayoutSlot,
         unit: CGFloat? = nil,
@@ -659,43 +658,43 @@ public enum TesseraTileLayoutEngine {
         )
     }
 
-    // MARK: - Панель раскрытой папки (D17)
+    // MARK: - Expanded folder panel (D17)
 
-    /// Внутренние поля панели по вертикали, в точках.
+    /// The panel's vertical inner padding, in points.
     ///
-    /// Горизонтально содержимое панели полей не добавляет: ярлыки встают в те
-    /// же колонки, что и плитки рабочего стола (панель уже ограничена полями
-    /// раскладки). Поля заголовка — по ``panelPadding`` с каждой стороны.
+    /// Horizontally the panel content adds no padding: tiles go into the same
+    /// columns as the desktop tiles (the panel is already bounded by the layout margins).
+    /// The header padding is ``panelPadding`` on each side.
     static let panelPadding: CGFloat = 12
 
-    /// Высота строки заголовка панели в точках (одна строка Dynamic Type).
+    /// The panel header row height in points (one Dynamic Type line).
     static let panelHeaderHeight: CGFloat = 44
 
-    /// Зазор между заголовком и сеткой содержимого панели в точках.
+    /// The gap between the header and the panel content grid in points.
     static let panelHeaderSpacing: CGFloat = 8
 
-    /// Зазор между ячейками сетки содержимого панели по умолчанию, в точках.
+    /// The default gap between the panel content grid cells, in points.
     ///
-    /// Совпадает с `itemSpacing` раскладки по умолчанию. Раскладка и ячейка
-    /// панели (E10.1) берут фактический зазор сетки (`itemSpacing`), чтобы
-    /// ярлыки панели вставали в те же колонки, что и плитки под панелью; это
-    /// значение — только для устаревших входов без зазора
+    /// Matches the default layout `itemSpacing`. The panel layout and cell
+    /// take the actual grid gap (`itemSpacing`) so that
+    /// the panel tiles land in the same columns as the tiles under the panel; this
+    /// value is only for legacy inputs without a gap
     /// (``panelHeight(for:width:columns:)``, ``panelHeight(tileCount:width:columns:)``).
     static let panelContentSpacing: CGFloat = 8
 
-    /// Высота полноширинной панели раскрытой папки в точках с зазором по
-    /// умолчанию и без пиксельного выравнивания (D17, E7.1).
+    /// The height of the full-width expanded folder panel in points with the default gap
+    /// and without pixel alignment (D17).
     ///
-    /// Устаревший вход: равен
-    /// ``panelHeight(tileCount:width:columns:spacing:scale:)`` с зазором
-    /// ``panelContentSpacing`` и `scale == 0`.
+    /// A legacy input: equal to
+    /// ``panelHeight(tileCount:width:columns:spacing:scale:)`` with the gap
+    /// ``panelContentSpacing`` and `scale == 0`.
     ///
     /// - Parameters:
-    ///   - tileCount: Число ярлыков в сетке содержимого панели; отрицательное
-    ///     трактуется как 0.
-    ///   - width: Полная ширина панели в точках (ширина контента сетки).
-    ///   - columns: Число колонок сетки содержимого панели, больше нуля.
-    /// - Returns: Высота панели в точках.
+    ///   - tileCount: The number of tiles in the panel content grid; a negative value
+    ///     is treated as 0.
+    ///   - width: The full panel width in points (the grid content width).
+    ///   - columns: The number of columns of the panel content grid, greater than zero.
+    /// - Returns: The panel height in points.
     static func panelHeight(tileCount: Int, width: CGFloat, columns: Int) -> CGFloat {
         panelHeight(
             tileCount: tileCount,
@@ -706,40 +705,40 @@ public enum TesseraTileLayoutEngine {
         )
     }
 
-    /// Высота полноширинной панели раскрытой папки в точках (D17, E7.1, E10.1).
+    /// The height of the full-width expanded folder panel in points (D17).
     ///
-    /// Панель состоит из строки заголовка и квадратной сетки содержимого:
+    /// The panel consists of a header row and a square content grid:
     ///
-    /// - внешние поля сверху и снизу — по 12 pt (`panelPadding`);
-    /// - заголовок — 44 pt: высота фиксирована, потому что заголовок занимает
-    ///   ровно одну строку;
-    /// - зазор между заголовком и сеткой — 8 pt (`panelHeaderSpacing`);
-    /// - ярлыки содержимого квадратные: их сторона и зазоры между ними — юнит и
-    ///   зазор **сетки рабочего стола** с тем же пиксельным выравниванием
-    ///   (``gridMetrics(contentWidth:columns:spacing:scale:)``), поэтому ярлык
-    ///   панели — та же плитка 1×1 в тех же колонках, что и плитки под панелью.
+    /// - the outer top and bottom padding is 12 pt each (`panelPadding`);
+    /// - the header is 44 pt: the height is fixed because the header takes
+    ///   exactly one line;
+    /// - the gap between the header and the grid is 8 pt (`panelHeaderSpacing`);
+    /// - the content tiles are square: their side and the gaps between them are the unit and
+    ///   the gap of the **desktop grid** with the same pixel alignment
+    ///   (``gridMetrics(contentWidth:columns:spacing:scale:)``), so a panel
+    ///   tile is the same 1×1 tile in the same columns as the tiles under the panel.
     ///
-    /// Итоговая формула (строки — `ceil(count / columns)`):
+    /// The final formula (rows are `ceil(count / columns)`):
     ///
-    /// `высота = padding × 2 + заголовок + зазор заголовка + строки × юнит +
-    /// (строки − 1) × зазор сетки`.
+    /// `height = padding × 2 + header + header gap + rows × unit +
+    /// (rows − 1) × grid gap`.
     ///
-    /// Формула обязана совпадать с метриками `TesseraFolderPanelCell`: ячейка
-    /// раскладывает содержимое по этим же числам, поэтому высота панели точно
-    /// вмещает последнюю строку ярлыков.
+    /// The formula must match the metrics of `TesseraFolderPanelCell`: the cell
+    /// lays out its content with these same numbers, so the panel height exactly
+    /// fits the last row of tiles.
     ///
-    /// Вырожденная геометрия (нечисловая/неположительная ширина, ширина, где
-    /// зазоры съедают всё место, `columns <= 0`) даёт `0`: панель без высоты,
-    /// как и плитка без места.
+    /// Degenerate geometry (a non-finite/non-positive width, a width where the
+    /// gaps eat all the space, `columns <= 0`) gives `0`: a panel without height,
+    /// like a tile without room.
     ///
     /// - Parameters:
-    ///   - tileCount: Число ярлыков; отрицательное трактуется как 0.
-    ///   - width: Полная ширина панели в точках (ширина контента сетки без
-    ///     внешних полей раскладки).
-    ///   - columns: Число колонок сетки содержимого панели, больше нуля.
-    ///   - spacing: Зазор сетки рабочего стола (`itemSpacing`).
-    ///   - scale: Масштаб экрана; `<= 0` — без пиксельного выравнивания.
-    /// - Returns: Высота панели в точках.
+    ///   - tileCount: The number of tiles; a negative value is treated as 0.
+    ///   - width: The full panel width in points (the grid content width without
+    ///     the layout's outer margins).
+    ///   - columns: The number of columns of the panel content grid, greater than zero.
+    ///   - spacing: The desktop grid gap (`itemSpacing`).
+    ///   - scale: The screen scale; `<= 0` means no pixel alignment.
+    /// - Returns: The panel height in points.
     static func panelHeight(
         tileCount: Int,
         width: CGFloat,
@@ -766,34 +765,34 @@ public enum TesseraTileLayoutEngine {
         return pixelRound(headerHeight + panelHeaderSpacing + contentHeight, scale: scale)
     }
 
-    /// Ужимает след плитки под узкую сетку, не меняя модель (D15).
+    /// Shrinks a tile footprint for a narrow grid without changing the model (D15).
     ///
-    /// D15 рассчитан минимум на 4 колонки (по умолчанию 6, D26); при меньшем
-    /// числе колонок широкая плитка не помещается. Вместо пропуска плитки (он сдвинул бы соответствие
-    /// «индекс → элемент») берётся ближайший меньший размер: 2×2 при двух-трёх
-    /// колонках и 1×1 при одной. Это деградация геометрии, а не модели:
-    /// `TesseraTileSize` ярлыка в `TesseraTileStore` не меняется.
+    /// D15 is designed for at least 4 columns (6 by default, D26); with fewer
+    /// columns a wide tile does not fit. Instead of skipping the tile (which would break the
+    /// "index → element" correspondence) the nearest smaller size is taken: 2×2 with two or three
+    /// columns and 1×1 with one. This is a degradation of geometry, not of the model:
+    /// the tile's `TesseraTileSize` in `TesseraTileStore` does not change.
     ///
-    /// Связь с ограничением колонки (E14.2): след плитки на сетке — всегда
-    /// `fittingSize`, поэтому `column + ширина ≤ columns` достижимо для любой
-    /// ячейки: ``clamped(cell:size:columns:)`` сдвигает колонку влево именно по
-    /// ужатой ширине. При 6 колонках (D26) ужатия нет — все четыре размера D15
-    /// (максимум 4 колонки) помещаются как есть; ужатие работает только при
-    /// `columns < 4`. Функция зависит только от ширины и не меняет поведения.
+    /// Relation to the column clamp: a tile's footprint on the grid is always
+    /// `fittingSize`, so `column + width ≤ columns` is achievable for any
+    /// cell: ``clamped(cell:size:columns:)`` shifts the column left precisely by the
+    /// shrunk width. With 6 columns (D26) there is no shrinking — all four D15 sizes
+    /// (at most 4 columns) fit as is; shrinking works only with
+    /// `columns < 4`. The function depends only on the width and does not change behavior.
     ///
     /// - Parameters:
-    ///   - size: Запрошенный размер плитки.
-    ///   - columns: Число колонок сетки.
-    /// - Returns: Размер, который заведомо помещается в сетку.
+    ///   - size: The requested tile size.
+    ///   - columns: The number of grid columns.
+    /// - Returns: A size that is guaranteed to fit the grid.
     static func fittingSize(_ size: TesseraTileSize, columns: Int) -> TesseraTileSize {
         guard columns > 0 else { return size }
         guard size.unitColumns > columns else { return size }
         return columns >= 2 ? .medium : .small
     }
 
-    // MARK: - Внутренняя упаковка
+    // MARK: - Internal packing
 
-    /// Достраивает матрицу занятости до `count` строк.
+    /// Extends the occupancy matrix to `count` rows.
     private static func ensureRows(_ grid: inout [[Bool]], count: Int, columns: Int) {
         guard grid.count < count else { return }
 
@@ -804,7 +803,7 @@ public enum TesseraTileLayoutEngine {
         grid.append(contentsOf: newRows)
     }
 
-    /// Ищет первую свободную колонку в строке `row` для прямоугольника
+    /// Looks for the first free column in row `row` for a rectangle
     /// `width × height`.
     private static func firstFreeColumn(
         in grid: [[Bool]],
@@ -823,10 +822,10 @@ public enum TesseraTileLayoutEngine {
         return nil
     }
 
-    /// Проверяет, что прямоугольник целиком свободен.
+    /// Checks that a rectangle is entirely free.
     ///
-    /// Вызывающий обязан заранее достроить матрицу до `row + height` строк
-    /// (``ensureRows``), поэтому индексация здесь безопасна.
+    /// The caller must extend the matrix to `row + height` rows beforehand
+    /// (``ensureRows``), so indexing here is safe.
     private static func isFree(
         in grid: [[Bool]],
         column: Int,
@@ -842,7 +841,7 @@ public enum TesseraTileLayoutEngine {
         return true
     }
 
-    /// Помечает прямоугольник занятым.
+    /// Marks a rectangle as occupied.
     private static func markOccupied(
         _ grid: inout [[Bool]],
         column: Int,
@@ -857,10 +856,10 @@ public enum TesseraTileLayoutEngine {
         }
     }
 
-    /// Снимает отметку занятости с прямоугольника (E8.5).
+    /// Clears the occupancy mark of a rectangle.
     ///
-    /// Нужно схлопыванию: плитка временно «поднимается» с сетки, чтобы её
-    /// собственные юниты не мешали поиску более ранней позиции.
+    /// Needed by the collapse: a tile is temporarily "lifted" off the grid so that its
+    /// own units do not interfere with the search for an earlier position.
     private static func unmarkOccupied(
         _ grid: inout [[Bool]],
         column: Int,
@@ -875,26 +874,25 @@ public enum TesseraTileLayoutEngine {
         }
     }
 
-    /// Ищет самую раннюю свободную позицию, которая идёт **раньше** текущей
-    /// (E8.5).
+    /// Looks for the earliest free position that comes **before** the current one.
     ///
-    /// Обход тот же, что у якорной упаковки: сверху вниз, слева направо. Строки
-    /// выше проверяются целиком — сдвиг вверх допустим в любую колонку; в
-    /// собственной строке — только колонки левее текущей. Позиция-источник в
-    /// проверку не входит: вызывающий уже снял прямоугольник с сетки.
+    /// The traversal is the same as in anchor packing: top to bottom, left to right. Rows
+    /// above are checked entirely — a move up is allowed into any column; in
+    /// its own row — only the columns left of the current one. The source position is
+    /// not part of the check: the caller has already taken the rectangle off the grid.
     ///
-    /// Вызывающий обязан держать в матрице не меньше `row + height` строк:
-    /// схлопывание строит её по последней занятой строке раскладки, а это не
-    /// меньше любой позиции слота.
+    /// The caller must keep at least `row + height` rows in the matrix:
+    /// the collapse builds it up to the layout's last occupied row, which is
+    /// no less than any slot position.
     ///
     /// - Parameters:
-    ///   - grid: Занятость сетки без проверяемой плитки.
-    ///   - column: Текущая колонка плитки.
-    ///   - row: Текущая строка плитки.
-    ///   - width: Ширина следа плитки в юнитах.
-    ///   - height: Высота следа плитки в юнитах.
-    ///   - columns: Число колонок сетки.
-    /// - Returns: Колонка и строка более ранней позиции или `nil`.
+    ///   - grid: The grid occupancy without the tile being checked.
+    ///   - column: The tile's current column.
+    ///   - row: The tile's current row.
+    ///   - width: The tile footprint width in units.
+    ///   - height: The tile footprint height in units.
+    ///   - columns: The number of grid columns.
+    /// - Returns: The column and row of an earlier position, or `nil`.
     private static func firstEarlierFreePosition(
         in grid: [[Bool]],
         column: Int,
@@ -927,59 +925,59 @@ public enum TesseraTileLayoutEngine {
 
 #if canImport(UIKit)
 
-/// Панель раскрытой папки: чистые функции места и сдвига (D17, E7).
+/// The expanded folder panel: pure functions of position and shift (D17).
 ///
-/// Раскрытие папки в WP-стиле (D17) вставляет панель
-/// ``TesseraTileGridItem/folderContent(_:)`` **после полосы папки** — строк плитки
-/// ``TesseraTileGridItem/folder(_:)``, расширенных вниз на плитки, которые начинаются
-/// в этих строках и заканчиваются ниже (``folderBandEndRow(for:in:)``, E10.1).
-/// Сама плитка папки остаётся на своём месте и видна всё время, пока папка
-/// раскрыта: панель — отдельная полноширинная строка под полосой, а не замена
-/// плитки. Панель растягивается на всю ширину сетки и растёт вниз до
-/// ``panelHeight(for:width:columns:spacing:scale:)``; всё, что начинается ниже
-/// полосы, встаёт под панелью — визуально строки сдвигаются вниз на её высоту и
-/// зазор сетки. Саму геометрию в точках собирает
+/// Expanding a folder in the Windows Phone style (D17) inserts the panel
+/// ``TesseraTileGridItem/folderContent(_:)`` **after the folder band** — the rows of the
+/// ``TesseraTileGridItem/folder(_:)`` tile, extended down by the tiles that start
+/// in those rows and end lower (``folderBandEndRow(for:in:)``).
+/// The folder tile itself stays in place and remains visible the whole time the folder is
+/// expanded: the panel is a separate full-width row under the band, not a replacement
+/// of the tile. The panel stretches to the full grid width and grows down to
+/// ``panelHeight(for:width:columns:spacing:scale:)``; everything that starts below
+/// the band goes under the panel — visually the rows shift down by its height and
+/// the grid gap. The geometry in points itself is assembled by
 /// `TesseraTileCollectionViewLayout`.
 ///
-/// Функции этого расширения ничего не знают о UICollectionView: они по модели,
-/// числу колонок и высоте панели отвечают на вопросы — на каком индекс массива
-/// вставить панель, есть ли под панелью что сдвигать и какой высоты будет
-/// панель.
+/// The functions of this extension know nothing about UICollectionView: given the model,
+/// the column count, and the panel height, they answer questions — at which array index
+/// to insert the panel, whether there is anything under the panel to shift, and how tall
+/// the panel will be.
 ///
-/// Размещение считается той же строго компактной упаковкой (E8.5), что и
-/// обычная раскладка: функции вызывают ``pack(items:columns:unit:)`` с юнитом 1.
-/// Юнитные
-/// координаты не зависят от масштаба, поэтому единичный юнит даёт ровно те же
-/// строки и колонки, что и реальная геометрия в точках.
+/// Placement is computed by the same strictly compact packing as the
+/// regular layout: the functions call ``pack(items:columns:unit:)`` with a unit of 1.
+/// Unit
+/// coordinates do not depend on the scale, so a unit of one gives exactly the same
+/// rows and columns as the real geometry in points.
 extension TesseraTileLayoutEngine {
 
-    /// Геометрия раскрытия в юнитных координатах.
+    /// The expansion geometry in unit coordinates.
     ///
-    /// `slots` — слоты всех элементов набора, кроме самой панели (панель не
-    /// упаковывается как плитка); `bandEndRow` — первая строка после «полосы
-    /// папки» (``folderBandEndRow(for:in:)``): с неё начинается
-    /// полноширинная строка панели.
+    /// `slots` are the slots of all elements of the set except the panel itself (the panel is not
+    /// packed as a tile); `bandEndRow` is the first row after the "folder
+    /// band" (``folderBandEndRow(for:in:)``): the full-width
+    /// panel row starts from it.
     private struct FolderPanelGeometry {
 
-        /// Слоты элементов по идентификатору.
+        /// Element slots by identifier.
         var slots: [AnyHashable: TesseraTileLayoutSlot]
 
-        /// Первая строка после полосы папки (E10.1): с неё начинается панель.
-        /// Всё, что начинается выше, остаётся на месте; всё, что начинается с
-        /// неё и ниже, уходит под панель.
+        /// The first row after the folder band: the panel starts from it.
+        /// Everything that starts above stays in place; everything that starts from
+        /// it and lower goes under the panel.
         var bandEndRow: Int
 
-        /// Индекс папки в исходном массиве элементов.
+        /// The folder index in the original element array.
         var folderIndex: Int
     }
 
-    /// Считает юнитные координаты элементов и нижнюю границу полосы папки.
+    /// Computes the unit coordinates of the elements and the bottom edge of the folder band.
     ///
     /// - Parameters:
-    ///   - items: Элементы сетки в порядке отображения.
-    ///   - columns: Число колонок, больше нуля.
-    ///   - expandedFolderID: Идентификатор раскрытой папки.
-    /// - Returns: Геометрия либо `nil`, если папки в наборе нет.
+    ///   - items: The grid elements in display order.
+    ///   - columns: The number of columns, greater than zero.
+    ///   - expandedFolderID: The identifier of the expanded folder.
+    /// - Returns: The geometry, or `nil` if there is no folder in the set.
     private static func folderPanelGeometry(
         items: [TesseraTileGridItem],
         columns: Int,
@@ -994,8 +992,8 @@ extension TesseraTileLayoutEngine {
             return nil
         }
 
-        // Панель в упаковку не входит: она не плитка, а отдельная строка под
-        // папкой, высота которой считается в точках, а не в юнитах.
+        // The panel does not take part in packing: it is not a tile but a separate row under
+        // the folder, whose height is computed in points, not in units.
         let packItems: [(id: AnyHashable, size: TesseraTileSize)] = items.compactMap { item in
             guard !item.isFolderPanel else { return nil }
             return (id: item.id, size: fittingSize(item.size, columns: columns))
@@ -1017,19 +1015,19 @@ extension TesseraTileLayoutEngine {
         )
     }
 
-    /// Индекс массива для панели без учёта раскладки (D17, E7).
+    /// The array index for the panel without taking the layout into account (D17).
     ///
-    /// Устаревший вход: панель встаёт сразу после плитки папки (индекс папки
-    /// + 1), соседи по полосе папки (E10.1) не учитываются, поэтому порядок
-    /// элементов может не совпасть с визуальным. Сетка пользуется
+    /// A legacy input: the panel goes right after the folder tile (the folder index
+    /// + 1), band neighbors are not taken into account, so the order of
+    /// elements may not match the visual one. The grid uses
     /// ``folderPanelInsertionIndex(items:columns:expandedFolderID:)``.
     ///
     /// - Parameters:
-    ///   - items: Базовые элементы сетки в порядке отображения (снимок
-    ///     `TesseraTileStore`, без панели).
-    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
-    /// - Returns: Индекс плитки-папки + 1 либо `nil`, если такой папки нет или
-    ///   панель уже присутствует в наборе.
+    ///   - items: The base grid elements in display order (a snapshot of
+    ///     `TesseraTileStore`, without the panel).
+    ///   - expandedFolderID: The identifier of the expanded folder; `nil` means no expansion.
+    /// - Returns: The index of the folder tile + 1, or `nil` if there is no such folder or
+    ///   the panel is already present in the set.
     public static func folderPanelInsertionIndex(
         items: [TesseraTileGridItem],
         expandedFolderID: AnyHashable?
@@ -1045,31 +1043,31 @@ extension TesseraTileLayoutEngine {
         return folderIndex + 1
     }
 
-    /// Индекс массива, с которого панель вставляется в набор элементов
-    /// (D17, E7, E10.1).
+    /// The array index from which the panel is inserted into the element set
+    /// (D17).
     ///
-    /// Панель — отдельный элемент набора, а не замена плитки: плитка папки
-    /// остаётся на своём индексе, поэтому `displayItems.count == items.count + 1`.
-    /// Геометрически панель встаёт полноширинной строкой под **полосой папки**
-    /// (``folderBandEndRow(for:in:)``): плитки, которые начинаются в строках
-    /// папки и заканчиваются ниже, остаются над панелью вместе с папкой. Чтобы
-    /// порядок элементов совпадал с визуальным (VoiceOver, индексы коллекции),
-    /// панель вставляется после **последнего** по массиву элемента, который
-    /// остаётся над панелью (`row < bandEnd`), — но не раньше, чем сразу после
-    /// плитки папки.
+    /// The panel is a separate element of the set, not a replacement of a tile: the folder tile
+    /// stays at its index, so `displayItems.count == items.count + 1`.
+    /// Geometrically the panel sits as a full-width row under the **folder band**
+    /// (``folderBandEndRow(for:in:)``): tiles that start in the folder's rows
+    /// and end lower stay above the panel together with the folder. So that the
+    /// element order matches the visual one (VoiceOver, collection indices),
+    /// the panel is inserted after the **last** element in the array that
+    /// stays above the panel (`row < bandEnd`) — but not earlier than right after
+    /// the folder tile.
     ///
-    /// Пример (4 колонки): `[папка 2×2, small, small, ярлык 2×2]` — ярлык
-    /// стоит в строках 1–2, полоса — строки 0–2, индекс вставки 4 (после
-    /// ярлыка), а не 1.
+    /// An example (4 columns): `[folder 2×2, small, small, tile 2×2]` — the tile
+    /// sits in rows 1–2, the band is rows 0–2, the insertion index is 4 (after
+    /// the tile), not 1.
     ///
     /// - Parameters:
-    ///   - items: Базовые элементы сетки в порядке отображения (снимок
-    ///     `TesseraTileStore`, без панели).
-    ///   - columns: Число колонок сетки. При `columns <= 0` геометрии нет, и
-    ///     результат совпадает с ``folderPanelInsertionIndex(items:expandedFolderID:)``.
-    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
-    /// - Returns: Индекс для вставки `.folderContent(folder)` либо `nil`, если
-    ///   такой папки нет или панель уже присутствует в наборе.
+    ///   - items: The base grid elements in display order (a snapshot of
+    ///     `TesseraTileStore`, without the panel).
+    ///   - columns: The number of grid columns. With `columns <= 0` there is no geometry, and
+    ///     the result matches ``folderPanelInsertionIndex(items:expandedFolderID:)``.
+    ///   - expandedFolderID: The identifier of the expanded folder; `nil` means no expansion.
+    /// - Returns: The index for inserting `.folderContent(folder)`, or `nil` if
+    ///   there is no such folder or the panel is already present in the set.
     public static func folderPanelInsertionIndex(
         items: [TesseraTileGridItem],
         columns: Int,
@@ -1099,32 +1097,32 @@ extension TesseraTileLayoutEngine {
         return lastIndexAbovePanel + 1
     }
 
-    /// Отступ строк под панелью от её верхнего края в точках (D17, E7, E10.1).
+    /// The row offset under the panel from its top edge in points (D17).
     ///
-    /// Панель встаёт полноширинной строкой сразу после **полосы папки**
-    /// (``folderBandEndRow(for:in:)``) и растёт вниз. Всё, что **начинается**
-    /// с этой строки и ниже, раскладка кладёт под панель: первый ряд под
-    /// панелью начинается на `panelHeight + spacing` от её верхнего края —
-    /// ровно на столько сдвигаются вниз строки, которые до раскрытия
-    /// начинались на месте панели. Элементы полосы (например, small справа от
-    /// 2×2-папки или 2×2-ярлык, начинающийся в строках папки) остаются на
-    /// месте: панель начинается ниже них.
+    /// The panel sits as a full-width row right after the **folder band**
+    /// (``folderBandEndRow(for:in:)``) and grows down. Everything that **starts**
+    /// from this row and lower, the layout puts under the panel: the first row under
+    /// the panel starts at `panelHeight + spacing` from its top edge —
+    /// exactly by that much the rows shift down that before expansion
+    /// started where the panel is. The band elements (for example, a small tile to the right of
+    /// a 2×2 folder or a 2×2 tile starting in the folder's rows) stay in
+    /// place: the panel starts below them.
     ///
-    /// Функция нужна тестам E7.4 и хосту, который считает прокрутку: сама
-    /// раскладка кладёт элементы под панель тем же правилом. Если под панелью
-    /// ничего нет (полоса папки — последняя), сдвиг `0`; если панель уже
-    /// есть в наборе, тоже `0`: её влияние уже учтено раскладкой.
+    /// The function is needed by tests and by the host that computes scrolling: the layout
+    /// itself puts elements under the panel by the same rule. If there is
+    /// nothing under the panel (the folder band is the last), the shift is `0`; if the panel is already
+    /// in the set, it is also `0`: its effect is already accounted for by the layout.
     ///
     /// - Parameters:
-    ///   - items: Базовые элементы сетки в порядке отображения (без панели).
-    ///   - columns: Число колонок сетки, больше нуля.
-    ///   - expandedFolderID: Идентификатор раскрытой папки.
-    ///   - panelHeight: Высота панели в точках, вычисленная
+    ///   - items: The base grid elements in display order (without the panel).
+    ///   - columns: The number of grid columns, greater than zero.
+    ///   - expandedFolderID: The identifier of the expanded folder.
+    ///   - panelHeight: The panel height in points, computed
     ///     ``panelHeight(for:width:columns:spacing:scale:)``.
-    ///   - spacing: Зазор сетки (`itemSpacing`), по умолчанию 8 pt — зазор
-    ///     раскладки по умолчанию; отрицательный и нечисловой — 0.
-    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
-    ///   иначе `0`.
+    ///   - spacing: The grid gap (`itemSpacing`), 8 pt by default — the default layout
+    ///     gap; negative and non-finite mean 0.
+    /// - Returns: `panelHeight + spacing` if there is something under the panel to shift,
+    ///   otherwise `0`.
     public static func rowsBelowOffset(
         items: [TesseraTileGridItem],
         columns: Int,
@@ -1143,8 +1141,8 @@ extension TesseraTileLayoutEngine {
             return 0
         }
 
-        // Под панель уходит всё, что начинается со строки сразу после полосы
-        // папки. Саму папку не считаем: панель встаёт под ней, а не вместо неё.
+        // Everything that starts from the row right after the folder band goes under the panel.
+        // The folder itself is not counted: the panel sits under it, not in its place.
         for (index, item) in items.enumerated() where !item.isFolderPanel {
             guard index != geometry.folderIndex,
                   let slot = geometry.slots[item.id] else { continue }
@@ -1155,21 +1153,21 @@ extension TesseraTileLayoutEngine {
         return 0
     }
 
-    // MARK: Панель папки на размещениях по координатам (E14.2)
+    // MARK: Folder panel over placements by coordinates
 
-    /// Геометрия раскрытия по уже посчитанным слотам (E14.2).
+    /// The expansion geometry from already computed slots.
     ///
-    /// В отличие от ``folderPanelGeometry(items:columns:expandedFolderID:)`` ничего
-    /// не упаковывает: дыры на сетке сохраняются, панель не делает репак — строки
-    /// ниже полосы остаются на своих местах (раскладка сдвигает их вниз на высоту
-    /// панели).
+    /// Unlike ``folderPanelGeometry(items:columns:expandedFolderID:)`` it packs
+    /// nothing: holes on the grid are preserved, the panel does not repack — rows
+    /// below the band stay in their places (the layout shifts them down by the height of
+    /// the panel).
     ///
     /// - Parameters:
-    ///   - placedSlots: Слоты всех элементов набора без панели, в порядке
-    ///     отображения.
-    ///   - expandedFolderID: Идентификатор раскрытой папки.
-    /// - Returns: Геометрия либо `nil`, если папки среди слотов нет;
-    ///   `folderIndex` — индекс папки в `placedSlots`.
+    ///   - placedSlots: The slots of all elements of the set without the panel, in
+    ///     display order.
+    ///   - expandedFolderID: The identifier of the expanded folder.
+    /// - Returns: The geometry, or `nil` if there is no folder among the slots;
+    ///   `folderIndex` is the folder index in `placedSlots`.
     private static func folderPanelGeometry(
         placedSlots: [TesseraTileLayoutSlot],
         expandedFolderID: AnyHashable
@@ -1191,18 +1189,18 @@ extension TesseraTileLayoutEngine {
         )
     }
 
-    /// Нижняя граница полосы раскрытой папки по набору размещений (E14.2).
+    /// The bottom edge of the expanded folder band over a placement set.
     ///
-    /// Та же формула, что у ``folderBandEndRow(for:in:)``, но по ячейкам, а не по
-    /// упаковке: плитки считаются по ужатым под `columns` размерам, дыры не
-    /// заполняются.
+    /// The same formula as ``folderBandEndRow(for:in:)``, but over cells rather than
+    /// packing: tiles are counted with sizes shrunk to `columns`, holes are not
+    /// filled.
     ///
     /// - Parameters:
-    ///   - folderID: Идентификатор раскрытой папки.
-    ///   - placements: Набор размещений (без панели).
-    ///   - columns: Число колонок.
-    /// - Returns: Первая строка после полосы либо `nil`, если папки нет в наборе
-    ///   или она не помещается в сетку.
+    ///   - folderID: The identifier of the expanded folder.
+    ///   - placements: The placement set (without the panel).
+    ///   - columns: The number of columns.
+    /// - Returns: The first row after the band, or `nil` if the folder is not in the set
+    ///   or does not fit the grid.
     public static func folderBandEndRow(
         forFolder folderID: AnyHashable,
         in placements: [TesseraTilePlacedItem],
@@ -1213,19 +1211,19 @@ extension TesseraTileLayoutEngine {
         return folderBandEndRow(for: folderSlot, in: placed)
     }
 
-    /// Индекс вставки панели по уже посчитанным слотам (E14.2).
+    /// The panel insertion index from already computed slots.
     ///
-    /// Правило то же, что у
-    /// ``folderPanelInsertionIndex(items:columns:expandedFolderID:)``: панель
-    /// встаёт после **последнего** по массиву элемента, который остаётся над
-    /// панелью (`row < bandEnd`), но не раньше, чем сразу после папки. Размещение
-    /// не пересчитывается — слоты берутся как есть, дыры сохраняются.
+    /// The rule is the same as for
+    /// ``folderPanelInsertionIndex(items:columns:expandedFolderID:)``: the panel
+    /// goes after the **last** element in the array that stays above
+    /// the panel (`row < bandEnd`), but not earlier than right after the folder. The placement
+    /// is not recomputed — slots are taken as is, holes are preserved.
     ///
     /// - Parameters:
-    ///   - placedSlots: Слоты элементов в порядке отображения, без панели.
-    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
-    /// - Returns: Индекс для вставки панели либо `nil`, если папки среди слотов
-    ///   нет.
+    ///   - placedSlots: The slots of elements in display order, without the panel.
+    ///   - expandedFolderID: The identifier of the expanded folder; `nil` means no expansion.
+    /// - Returns: The index for inserting the panel, or `nil` if there is no folder
+    ///   among the slots.
     public static func folderPanelInsertionIndex(
         placedSlots: [TesseraTileLayoutSlot],
         expandedFolderID: AnyHashable?
@@ -1245,17 +1243,17 @@ extension TesseraTileLayoutEngine {
         return lastIndexAbovePanel + 1
     }
 
-    /// Индекс вставки панели по набору размещений (E14.2).
+    /// The panel insertion index over a placement set.
     ///
-    /// Порядок элементов — порядок массива `placements`. Обёртка над
-    /// ``folderPanelInsertionIndex(placedSlots:expandedFolderID:)``: слоты берутся
-    /// с ужатыми под `columns` размерами, репака нет.
+    /// The element order is the order of the `placements` array. A wrapper over
+    /// ``folderPanelInsertionIndex(placedSlots:expandedFolderID:)``: slots are taken
+    /// with sizes shrunk to `columns`, no repacking.
     ///
     /// - Parameters:
-    ///   - placements: Набор размещений в порядке отображения, без панели.
-    ///   - columns: Число колонок.
-    ///   - expandedFolderID: Идентификатор раскрытой папки; `nil` — раскрытия нет.
-    /// - Returns: Индекс для вставки панели либо `nil`.
+    ///   - placements: The placement set in display order, without the panel.
+    ///   - columns: The number of columns.
+    ///   - expandedFolderID: The identifier of the expanded folder; `nil` means no expansion.
+    /// - Returns: The index for inserting the panel, or `nil`.
     public static func folderPanelInsertionIndex(
         placements: [TesseraTilePlacedItem],
         columns: Int,
@@ -1267,20 +1265,20 @@ extension TesseraTileLayoutEngine {
         )
     }
 
-    /// Отступ строк под панелью по уже посчитанным слотам (E14.2).
+    /// The row offset under the panel from already computed slots.
     ///
-    /// Семантика ``rowsBelowOffset(items:columns:expandedFolderID:panelHeight:spacing:)``
-    /// сохраняется: всё, что **начинается** со строки сразу после полосы папки и
-    /// ниже, уходит под панель на `panelHeight + spacing` (дыры между строками
-    /// остаются: панель — вставка, а не репак). Если под панелью ничего нет — `0`.
+    /// The semantics of ``rowsBelowOffset(items:columns:expandedFolderID:panelHeight:spacing:)``
+    /// are kept: everything that **starts** from the row right after the folder band and
+    /// lower goes under the panel by `panelHeight + spacing` (holes between rows
+    /// stay: the panel is an insertion, not a repack). If there is nothing under the panel, `0`.
     ///
     /// - Parameters:
-    ///   - placedSlots: Слоты элементов в порядке отображения, без панели.
-    ///   - expandedFolderID: Идентификатор раскрытой папки.
-    ///   - panelHeight: Высота панели в точках.
-    ///   - spacing: Зазор сетки (`itemSpacing`); отрицательный и нечисловой — 0.
-    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
-    ///   иначе `0`.
+    ///   - placedSlots: The slots of elements in display order, without the panel.
+    ///   - expandedFolderID: The identifier of the expanded folder.
+    ///   - panelHeight: The panel height in points.
+    ///   - spacing: The grid gap (`itemSpacing`); negative and non-finite mean 0.
+    /// - Returns: `panelHeight + spacing` if there is something under the panel to shift,
+    ///   otherwise `0`.
     public static func rowsBelowOffset(
         placedSlots: [TesseraTileLayoutSlot],
         expandedFolderID: AnyHashable?,
@@ -1302,18 +1300,18 @@ extension TesseraTileLayoutEngine {
         return 0
     }
 
-    /// Отступ строк под панелью по набору размещений (E14.2).
+    /// The row offset under the panel over a placement set.
     ///
-    /// Обёртка над ``rowsBelowOffset(placedSlots:expandedFolderID:panelHeight:spacing:)``.
+    /// A wrapper over ``rowsBelowOffset(placedSlots:expandedFolderID:panelHeight:spacing:)``.
     ///
     /// - Parameters:
-    ///   - placements: Набор размещений в порядке отображения, без панели.
-    ///   - columns: Число колонок.
-    ///   - expandedFolderID: Идентификатор раскрытой папки.
-    ///   - panelHeight: Высота панели в точках.
-    ///   - spacing: Зазор сетки (`itemSpacing`).
-    /// - Returns: `panelHeight + spacing`, если под панелью есть что сдвигать,
-    ///   иначе `0`.
+    ///   - placements: The placement set in display order, without the panel.
+    ///   - columns: The number of columns.
+    ///   - expandedFolderID: The identifier of the expanded folder.
+    ///   - panelHeight: The panel height in points.
+    ///   - spacing: The grid gap (`itemSpacing`).
+    /// - Returns: `panelHeight + spacing` if there is something under the panel to shift,
+    ///   otherwise `0`.
     public static func rowsBelowOffset(
         placements: [TesseraTilePlacedItem],
         columns: Int,
@@ -1329,19 +1327,19 @@ extension TesseraTileLayoutEngine {
         )
     }
 
-    /// Высота полноширинной панели раскрытой папки в точках с зазором по
-    /// умолчанию и без пиксельного выравнивания (D17, E7.1).
+    /// The height of the full-width expanded folder panel in points with the default gap
+    /// and without pixel alignment (D17).
     ///
-    /// Устаревший вход: зазор содержимого — 8 pt (зазор раскладки по
-    /// умолчанию), юнит не выравнивается по пикселям. Раскладка сетки считает
-    /// высоту по ``panelHeight(for:width:columns:spacing:scale:)`` с
-    /// фактическим `itemSpacing` и масштабом экрана.
+    /// A legacy input: the content gap is 8 pt (the default layout gap),
+    /// the unit is not pixel-aligned. The grid layout computes the
+    /// height with ``panelHeight(for:width:columns:spacing:scale:)`` using the
+    /// actual `itemSpacing` and the screen scale.
     ///
     /// - Parameters:
-    ///   - folder: Раскрытая папка.
-    ///   - width: Полная ширина панели в точках (ширина контента сетки).
-    ///   - columns: Число колонок сетки содержимого, больше нуля.
-    /// - Returns: Высота панели в точках; `0` для вырожденной геометрии.
+    ///   - folder: The expanded folder.
+    ///   - width: The full panel width in points (the grid content width).
+    ///   - columns: The number of content grid columns, greater than zero.
+    /// - Returns: The panel height in points; `0` for degenerate geometry.
     public static func panelHeight(
         for folder: TesseraTileFolder,
         width: CGFloat,
@@ -1350,20 +1348,20 @@ extension TesseraTileLayoutEngine {
         panelHeight(tileCount: folder.tiles.count, width: width, columns: columns)
     }
 
-    /// Высота полноширинной панели раскрытой папки в точках (D17, E10.1).
+    /// The height of the full-width expanded folder panel in points (D17).
     ///
-    /// Ярлыки панели — плитки 1×1 той же сетки: сторона и зазор — юнит и
-    /// зазор сетки рабочего стола с пиксельным выравниванием; формула — в
-    /// ``panelHeight(tileCount:width:columns:spacing:scale:)``. Число колонок —
-    /// число колонок рабочего стола (по §3 — 4).
+    /// The panel tiles are 1×1 tiles of the same grid: the side and gap are the unit and
+    /// the desktop grid gap with pixel alignment; the formula is in
+    /// ``panelHeight(tileCount:width:columns:spacing:scale:)``. The number of columns is
+    /// the grid's column count (6 by default, D26).
     ///
     /// - Parameters:
-    ///   - folder: Раскрытая папка.
-    ///   - width: Полная ширина панели в точках (ширина контента сетки).
-    ///   - columns: Число колонок сетки содержимого, больше нуля.
-    ///   - spacing: Зазор сетки (`itemSpacing`).
-    ///   - scale: Масштаб экрана; `<= 0` — без пиксельного выравнивания.
-    /// - Returns: Высота панели в точках; `0` для вырожденной геометрии.
+    ///   - folder: The expanded folder.
+    ///   - width: The full panel width in points (the grid content width).
+    ///   - columns: The number of content grid columns, greater than zero.
+    ///   - spacing: The grid gap (`itemSpacing`).
+    ///   - scale: The screen scale; `<= 0` means no pixel alignment.
+    /// - Returns: The panel height in points; `0` for degenerate geometry.
     public static func panelHeight(
         for folder: TesseraTileFolder,
         width: CGFloat,

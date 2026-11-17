@@ -2,20 +2,20 @@
 //  TileStoreFolderMinTwoTests.swift
 //  TesseraStartScreenTests
 //
-//  Папка не бывает из 0–1 ярлыков: модель `TesseraTileStore` (E14.8, D45, 13.11.2026).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации
-//  (E14)», п. 56; решения D30–D33 и D45 в docs/STATE.md.
+//  A folder never has 0–1 tiles: the `TesseraTileStore` model (D45).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
+//  decisions D30–D33 and D45 in docs/STATE.md.
 //
-//  Правило: когда операция убирает ярлык из папки и там остаётся один, папка
-//  распускается — оставшийся ярлык встаёт на ячейку папки со **своим** размером
-//  через `TesseraTileLayoutEngine.inserting` (бо́льший выталкивает соседей вниз, D31,
-//  слишком правая колонка сдвигается влево, меньший оставляет дыру). Правило
-//  действует во всех операциях, убирающих ярлык из папки (вынос, вынос в новую
-//  строку, открепление, перенос в другую папку), в чистке по каталогу и при
-//  загрузке файла. Исключение — переходная папка `createFolder(withTile:)`.
+//  The rule: when an operation removes a tile from a folder and one is left, the folder
+//  is dissolved: the remaining tile takes the folder's cell with **its own** size
+//  through `TesseraTileLayoutEngine.inserting` (a larger one pushes neighbors down, D31,
+//  a column that is too far right shifts left, a smaller one leaves a hole). The rule
+//  applies to all operations that remove a tile from a folder (take-out, take-out into a new
+//  row, unpin, move to another folder), to the catalog cleanup and to
+//  file loading. The exception is the transitional folder `createFolder(withTile:)`.
 //
-//  Раскладки точные (`TileStoreCellFixture`), 6 колонок; одно уведомление и
-//  одна запись на операцию.
+//  Exact layouts (`TileStoreCellFixture`), 6 columns; one notification and
+//  one write per operation.
 //
 
 #if canImport(UIKit)
@@ -27,7 +27,7 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
     private let columns = 6
 
-    // MARK: - Помощники
+    // MARK: - Helpers
 
     private func makeStore(
         _ tiles: [CellFixtureTile],
@@ -49,14 +49,14 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         tiles.map { $0.id } + folders.flatMap { $0.contents.map { $0.id } } + unpinned.map { $0.0 }
     }
 
-    /// Считает уведомления `onChange`.
+    /// Counts `onChange` notifications.
     private func countNotifications(_ store: TesseraTileStore) -> () -> Int {
         var count = 0
         store.onChange = { _ in count += 1 }
         return { count }
     }
 
-    /// Файл содержит ровно ячейки модели: перечитанное хранилище совпадает.
+    /// The file contains exactly the model cells: a reloaded store matches.
     private func assertRoundTrip(
         _ store: TesseraTileStore,
         catalog: [String],
@@ -68,7 +68,7 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(catalog.map { tesseraTestTile($0, size: store.descriptor(withID: $0)?.size ?? .small) })
         try fresh.load()
-        XCTAssertEqual(fresh.placements, store.placements, "ячейки переживают круг записи", file: file, line: line)
+        XCTAssertEqual(fresh.placements, store.placements, "cells survive the write round trip", file: file, line: line)
         XCTAssertEqual(
             fresh.snapshot().items.map { $0.id }, store.snapshot().items.map { $0.id }, file: file, line: line
         )
@@ -78,10 +78,10 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         }
     }
 
-    // MARK: - Вынос из папки
+    // MARK: - Take-out from a folder
 
-    /// Вынос из папки в два ярлыка: папка распускается, оставшийся ярлык встаёт на
-    /// её ячейку, вынесенный — на указанную. Одно уведомление, один круг записи.
+    /// A take-out from a folder of two tiles: the folder is dissolved, the remaining tile takes
+    /// its cell, the taken-out one goes to the specified one. One notification, one write round trip.
     func testExtractLeavingOneDissolvesFolder() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 4)]
@@ -91,18 +91,18 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
         XCTAssertTrue(store.extractFromFolder("x", toCell: tesseraCell(3, 3), columns: columns))
 
-        XCTAssertEqual(notifications(), 1, "одно изменение на операцию")
+        XCTAssertEqual(notifications(), 1, "one change per operation")
         XCTAssertNil(store.placement(of: "f"))
         XCTAssertTrue(store.snapshot().folders.isEmpty)
-        XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0), "оставшийся ярлык — на ячейке папки")
-        XCTAssertEqual(store.snapshot().item(withID: "y")?.size, .small, "со своим размером")
+        XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0), "the remaining tile is on the folder's cell")
+        XCTAssertEqual(store.snapshot().item(withID: "y")?.size, .small, "with its own size")
         XCTAssertEqual(store.placement(of: "x"), tesseraCell(3, 3))
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 4))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
         try assertRoundTrip(store, catalog: ["a", "x", "y"], in: directory)
     }
 
-    /// Вынос из папки в три ярлыка: папка остаётся с двумя, ячейки не меняются.
+    /// A take-out from a folder of three tiles: the folder stays with two, cells do not change.
     func testExtractLeavingTwoKeepsFolder() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small), ("z", .small)])]
@@ -118,8 +118,8 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs([], folders: folders))
     }
 
-    /// Вынос в новую строку: оставшийся ярлык стоит на ячейке папки и входит в расчёт
-    /// «последней занятой строки» (large после распада опускает новую строку).
+    /// A take-out into a new row: the remaining tile stands on the folder's cell and counts toward
+    /// the "last occupied row" (after a dissolution a large tile lowers the new row).
     func testExtractToNewRowDissolvesAndCountsRemainingTileInNewRow() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .large)])]
@@ -129,13 +129,13 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
         XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0))
         XCTAssertEqual(store.snapshot().item(withID: "y")?.size, .large)
-        XCTAssertEqual(store.placement(of: "x"), tesseraCell(4, 0), "после large (строки 0–3)")
+        XCTAssertEqual(store.placement(of: "x"), tesseraCell(4, 0), "after large (rows 0–3)")
         XCTAssertTrue(store.snapshot().folders.isEmpty)
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs([], folders: folders))
     }
 
-    /// Вынос на саму ячейку папки: оставшийся ярлык уже стоит там, вынесенный
-    /// занимает ячейку и выталкивает его вниз (обычные правила размещения).
+    /// A take-out onto the folder's own cell: the remaining tile already stands there, the one taken out
+    /// takes the cell and pushes it down (the usual placement rules).
     func testExtractOntoFolderCellPushesRemainingTileDown() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small)])]
@@ -144,11 +144,11 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         XCTAssertTrue(store.extractFromFolder("x", toCell: tesseraCell(0, 0), columns: columns))
 
         XCTAssertEqual(store.placement(of: "x"), tesseraCell(0, 0))
-        XCTAssertEqual(store.placement(of: "y"), tesseraCell(1, 0), "y вытолкнута под x")
+        XCTAssertEqual(store.placement(of: "y"), tesseraCell(1, 0), "y is pushed below x")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs([], folders: folders))
     }
 
-    /// Хост запретил вынос — модель не меняется, папка цела, уведомлений нет.
+    /// The host forbade the take-out: the model does not change, the folder is intact, no notifications.
     func testDeniedExtractLeavesFolderIntact() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .small)])]
@@ -164,9 +164,9 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         XCTAssertEqual(store.folderContaining("x")?.tiles.map { $0.id }, ["x", "y"])
     }
 
-    // MARK: - Размер оставшегося ярлыка
+    // MARK: - Size of the remaining tile
 
-    /// Оставшийся ярлык больше папки (large) выталкивает соседей вниз каскадом.
+    /// A remaining tile larger than the folder (large) pushes neighbors down in a cascade.
     func testRemainingTileBiggerThanFolderPushesNeighborsDown() throws {
         let directory = TesseraTestDirectory()
         let tiles = [
@@ -182,14 +182,14 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
         XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0))
         XCTAssertEqual(store.snapshot().item(withID: "y")?.size, .large)
-        XCTAssertEqual(store.placement(of: "a"), tesseraCell(4, 0), "a выдавлена под large")
+        XCTAssertEqual(store.placement(of: "a"), tesseraCell(4, 0), "a is pushed out below large")
         XCTAssertEqual(store.placement(of: "b"), tesseraCell(4, 1))
-        XCTAssertEqual(store.placement(of: "d"), tesseraCell(5, 0), "каскад дошёл до d")
-        XCTAssertEqual(store.placement(of: "c"), tesseraCell(0, 4), "дыры вне области не тронуты")
+        XCTAssertEqual(store.placement(of: "d"), tesseraCell(5, 0), "the cascade reached d")
+        XCTAssertEqual(store.placement(of: "c"), tesseraCell(0, 4), "holes outside the area are untouched")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders, unpinned: []))
     }
 
-    /// Wide-ярлык у правого края: колонка сдвигается влево, чтобы он поместился.
+    /// A wide tile at the right edge: the column shifts left so that it fits.
     func testWideRemainingTileAtRightEdgeClampsLeft() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("n", .small, 0, 2)]
@@ -198,12 +198,12 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
         XCTAssertTrue(store.unpin("x", columns: columns))
 
-        XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 2), "4 колонки: влево до колонки 2")
-        XCTAssertEqual(store.placement(of: "n"), tesseraCell(2, 2), "n вытолкнута под wide")
+        XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 2), "4 columns: left to column 2")
+        XCTAssertEqual(store.placement(of: "n"), tesseraCell(2, 2), "n is pushed below wide")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs(tiles, folders: folders))
     }
 
-    /// Large у правого края при распаде тоже ужимается холстом и не выходит за него.
+    /// A large tile at the right edge on a dissolution is also clamped by the canvas and does not go beyond it.
     func testLargeRemainingTileAtRightEdgeStaysInsideCanvas() throws {
         let directory = TesseraTestDirectory()
         let valid = [CellFixtureFolder("f", .medium, 1, 4, contents: [("x", .small), ("y", .large)])]
@@ -211,12 +211,12 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
         XCTAssertTrue(store.extractFromFolderToNewRow("x", columns: columns))
 
-        XCTAssertEqual(store.placement(of: "y"), tesseraCell(1, 2), "large 4×4 в 6 колонках: правый край — колонка 2")
+        XCTAssertEqual(store.placement(of: "y"), tesseraCell(1, 2), "large 4×4 on 6 columns: the right edge is column 2")
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs([], folders: valid))
     }
 
-    /// Выбранный пользователем размер сохраняется (medium) и переживает круг записи;
-    /// меньший оставшийся ярлык оставляет дыру на ячейках папки.
+    /// The size chosen by the user is kept (medium) and survives the write round trip;
+    /// a smaller remaining tile leaves a hole on the folder's cells.
     func testRemainingTileKeepsCustomSizeAndLeavesHole() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .wide, 0, 0, contents: [("x", .small), ("y", .medium)])]
@@ -227,15 +227,15 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
 
         XCTAssertEqual(store.snapshot().item(withID: "y")?.size, .medium)
         XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0))
-        XCTAssertFalse(store.placements.values.contains(tesseraCell(0, 2)), "правая половина wide-папки — дыра")
+        XCTAssertFalse(store.placements.values.contains(tesseraCell(0, 2)), "the right half of the wide folder is a hole")
         XCTAssertEqual(store.placement(of: "n"), tesseraCell(0, 4))
         try assertRoundTrip(store, catalog: ["n", "x", "y"], in: directory)
     }
 
-    // MARK: - Открепление
+    // MARK: - Unpin
 
-    /// Открепление ярлыка из папки в два ярлыка: папка распускается; ярлык —
-    /// среди откреплённых; из трёх — папка остаётся.
+    /// Unpinning a tile from a folder of two tiles: the folder is dissolved; the tile is
+    /// among the unpinned ones; from three, the folder stays.
     func testUnpinInsideFolderLeavingOneDissolvesAndLeavingTwoKeeps() throws {
         let directory = TesseraTestDirectory()
         let folders = [
@@ -259,9 +259,9 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         try assertRoundTrip(store, catalog: ["x", "y", "p", "q", "r"], in: directory)
     }
 
-    // MARK: - Перенос между папками
+    // MARK: - Move between folders
 
-    /// Папка-источник из двух ярлыков распускается, цель получает ярлык.
+    /// A source folder of two tiles is dissolved, the target receives the tile.
     func testMoveBetweenFoldersSourceLeftWithOneDissolves() throws {
         let directory = TesseraTestDirectory()
         let folders = [
@@ -281,8 +281,8 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs([], folders: folders))
     }
 
-    /// Порядок шагов: оставшийся ярлык большого размера на месте папки-источника
-    /// выталкивает папку-цель вниз, а перенесённый ярлык при этом попадает в неё.
+    /// Step order: the remaining large tile in the place of the source folder
+    /// pushes the target folder down, and the moved tile lands in it.
     func testMoveBetweenFoldersRemainingLargeTilePushesTargetFolderDown() throws {
         let directory = TesseraTestDirectory()
         let folders = [
@@ -294,13 +294,13 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         XCTAssertTrue(store.moveBetweenFolders("x", to: "g", columns: columns))
 
         XCTAssertEqual(store.placement(of: "x2"), tesseraCell(0, 0))
-        XCTAssertEqual(store.placement(of: "g"), tesseraCell(4, 2), "папка-цель вытолкнута под large")
+        XCTAssertEqual(store.placement(of: "g"), tesseraCell(4, 2), "the target folder is pushed below large")
         XCTAssertEqual(store.folderContaining("x")?.id, AnyHashable("g"))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs([], folders: folders))
     }
 
-    /// Ярлык-остаток и перенесённый ярлык могут оказаться в одной папке следующим
-    /// шагом: после распада остаток — обычный ярлык, и `addToFolder` его принимает.
+    /// The remainder tile and the moved tile can end up in one folder in the next
+    /// step: after the dissolution the remainder is a regular tile, and `addToFolder` accepts it.
     func testRemainingTileCanBeAddedToTargetFolderAfterDissolve() throws {
         let directory = TesseraTestDirectory()
         let folders = [
@@ -317,11 +317,11 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: catalogIDs([], folders: folders))
     }
 
-    // MARK: - Чистка по каталогу
+    // MARK: - Catalog cleanup
 
-    /// Ярлык пропал из каталога: из папки в два ярлыка остаётся один — папка
-    /// распускается (его ячейка — ячейка папки); из трёх — остаётся с двумя; оба
-    /// пропали — папка исчезает. Одно уведомление за `setCatalog`.
+    /// A tile disappeared from the catalog: from a folder of two tiles one is left, so the folder
+    /// is dissolved (its cell is the folder's cell); from three it stays with two; if both
+    /// disappeared, the folder vanishes. One notification per `setCatalog`.
     func testPruneAgainstCatalogDissolvesUnderfilledFolders() throws {
         let directory = TesseraTestDirectory()
         let folders = [
@@ -337,16 +337,16 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         store.setCatalog(remaining.map { tesseraTestTile($0, size: $0 == "y" ? .wide : .small) })
 
         XCTAssertEqual(notifications(), 1)
-        XCTAssertNil(store.folderContaining("y"), "f распущена")
+        XCTAssertNil(store.folderContaining("y"), "f is dissolved")
         XCTAssertEqual(store.placement(of: "y"), tesseraCell(0, 0))
-        XCTAssertEqual(store.snapshot().item(withID: "y")?.size, .wide, "размер оставшегося ярлыка сохранён")
-        XCTAssertEqual(store.folderContaining("q")?.tiles.map { $0.id }, ["q", "r"], "g с двумя ярлыками остаётся")
-        XCTAssertNil(store.placement(of: "h"), "h опустела и исчезла")
+        XCTAssertEqual(store.snapshot().item(withID: "y")?.size, .wide, "the remaining tile's size is kept")
+        XCTAssertEqual(store.folderContaining("q")?.tiles.map { $0.id }, ["q", "r"], "g with two tiles stays")
+        XCTAssertNil(store.placement(of: "h"), "h became empty and vanished")
         XCTAssertEqual(store.snapshot().folders.count, 1)
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: remaining)
     }
 
-    /// Оставшийся при чистке ярлык большого размера выталкивает соседей вниз.
+    /// A large tile remaining after cleanup pushes neighbors down.
     func testPruneRemainingLargeTilePushesNeighborsDown() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 2, 0)]
@@ -360,8 +360,8 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: ["a", "y"])
     }
 
-    /// Папка, которой чистка не коснулась, правилом не затрагивается (переходная
-    /// папка `createFolder(withTile:)` переживает повторный `setCatalog`).
+    /// A folder that cleanup did not touch is not affected by the rule (a transitional
+    /// folder `createFolder(withTile:)` survives a repeated `setCatalog`).
     func testRepeatedSetCatalogKeepsTransientSingleTileFolder() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 1)]
@@ -374,10 +374,10 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         XCTAssertEqual(store.folderContaining("a")?.tiles.map { $0.id }, ["a"])
     }
 
-    // MARK: - Загрузка файла
+    // MARK: - File loading
 
-    /// Файл с папками из 0 и из 1 ярлыка при зарегистрированном каталоге:
-    /// пустая исчезает, одноярлычная распускается — ярлык на ячейке папки.
+    /// A file with folders of 0 and 1 tiles when a catalog is registered:
+    /// the empty one disappears, the single-tile one is dissolved: the tile is on the folder's cell.
     func testLoadRepairsZeroAndOneTileFolders() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 4)]
@@ -389,16 +389,16 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         let store = try makeStore(tiles, folders: folders, in: directory)
 
         XCTAssertEqual(store.snapshot().folders.map { $0.id }, ["ok"])
-        XCTAssertEqual(store.placement(of: "x"), tesseraCell(0, 0), "x заняла ячейку папки со своим размером")
+        XCTAssertEqual(store.placement(of: "x"), tesseraCell(0, 0), "x took the folder's cell with its own size")
         XCTAssertEqual(store.snapshot().item(withID: "x")?.size, .wide)
         XCTAssertNil(store.placement(of: "empty"))
         XCTAssertEqual(store.placement(of: "ok"), tesseraCell(4, 0))
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: ["a", "x", "p", "q"])
     }
 
-    /// Файл версии 2 читается до регистрации каталога: одноярлычная папка ждёт
-    /// каталога (какие ярлыки существуют, неизвестно) и после `setCatalog`
-    /// распускается; если её ярлыка в каталоге нет — исчезает без «призрака».
+    /// A version 2 file is read before the catalog is registered: a single-tile folder waits for
+    /// the catalog (which tiles exist is unknown) and is dissolved after `setCatalog`;
+    /// if its tile is not in the catalog, it vanishes without a "ghost".
     func testLoadBeforeCatalogDefersDissolveUntilCatalogIsKnown() throws {
         for tileInCatalog in [true, false] {
             let directory = TesseraTestDirectory()
@@ -427,14 +427,14 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
                 XCTAssertEqual(store.placement(of: "x"), tesseraCell(0, 0))
                 XCTAssertEqual(store.snapshot().item(withID: "x")?.size, .medium)
             } else {
-                XCTAssertNil(store.placement(of: "x"), "ярлыка нет в каталоге — не остаётся и невидимым ключом на сетке")
+                XCTAssertNil(store.placement(of: "x"), "the tile is not in the catalog: it does not linger even as an invisible key on the grid")
                 XCTAssertEqual(store.snapshot().items.map { $0.id }, ["a"])
             }
             tesseraAssertCellInvariants(store, columns: 6, catalogIDs: tileInCatalog ? ["a", "x"] : ["a"])
         }
     }
 
-    /// Файл версии 1 (без ячеек): одноярлычная папка заменяется ярлыком на её месте в порядке.
+    /// A version 1 file (without cells): a single-tile folder is replaced by the tile in its place in the order.
     func testLoadVersionOneFileReplacesOneTileFolderInPlace() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -460,24 +460,24 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         XCTAssertTrue(store.snapshot().folders.isEmpty)
     }
 
-    // MARK: - Переходная папка из одного ярлыка
+    // MARK: - Transitional single-tile folder
 
-    /// `createFolder(withTile:)` создаёт переходную папку: она живёт до
-    /// `addToFolder`; снятие её единственного ярлыка убирает папку (дыра), а не
-    /// распускает в никуда.
+    /// `createFolder(withTile:)` creates a transitional folder: it lives until
+    /// `addToFolder`; removing its only tile removes the folder (a hole) instead of
+    /// dissolving it into nothing.
     func testTransientSingleTileFolderLifecycle() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 3)]
         let store = try makeStore(tiles, in: directory)
 
         let folder = try XCTUnwrap(store.createFolder(withTile: "a", columns: columns))
-        XCTAssertEqual(store.snapshot().folders.map { $0.id }, [folder.id], "переходная папка живёт")
+        XCTAssertEqual(store.snapshot().folders.map { $0.id }, [folder.id], "the transitional folder lives")
 
         XCTAssertTrue(store.addToFolder("b", folderID: folder.id, columns: columns))
         XCTAssertEqual(store.folderContaining("a")?.tiles.map { $0.id }, ["a", "b"])
     }
 
-    /// Переходная папка исчезает, когда из неё уходит единственный ярлык.
+    /// A transitional folder vanishes when its only tile leaves.
     func testTransientFolderDisappearsWhenItsTileLeaves() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 0, 3)]
@@ -492,10 +492,10 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: ["a", "b"])
     }
 
-    // MARK: - Сохранение
+    // MARK: - Persistence
 
-    /// Распад — одно сохранение: файл после операции описывает ярлык на ячейке
-    /// папки и не содержит папки.
+    /// A dissolution is a single save: the file after the operation describes the tile on the folder's
+    /// cell and contains no folder.
     func testDissolveIsPersistedInOneWrite() throws {
         let directory = TesseraTestDirectory()
         let folders = [CellFixtureFolder("f", .medium, 0, 0, contents: [("x", .small), ("y", .medium)])]
@@ -515,10 +515,10 @@ final class TileStoreFolderMinTwoTests: XCTestCase {
         XCTAssertEqual((object["sizes"] as? [String: String])?["s:y"], "medium")
     }
 
-    // MARK: - Свойство: после любых операций и чистки каталога папок меньше двух нет
+    // MARK: - Property: after any operations and catalog cleanup there are no folders of fewer than two
 
-    /// Случайные папки (2–4 ярлыка) и случайные подмножества каталога: после
-    /// `setCatalog` ни одной папки из 0–1 ярлыка, ярлыки не теряются, пересечений нет.
+    /// Random folders (2–4 tiles) and random catalog subsets: after
+    /// `setCatalog` there is no folder of 0–1 tiles, tiles are not lost, there are no overlaps.
     func testRandomCatalogPruneNeverLeavesUnderfilledFolders() throws {
         for seed in 1...24 {
             var rng = TesseraTestSeededGenerator(seed: UInt64(seed))

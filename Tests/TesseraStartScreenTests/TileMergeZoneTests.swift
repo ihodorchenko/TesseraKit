@@ -2,25 +2,25 @@
 //  TileMergeZoneTests.swift
 //  TesseraStartScreenTests
 //
-//  Создание папки перетаскиванием: зона слияния, гистерезис и пауза перед
-//  превью вытеснения (E17.1, D50, 16.11.2026).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации»,
-//  п. 66; docs/W10M-STARTSCREEN.md §6.2; решения D22 (удержание 600 мс / 10 pt —
-//  не менялось), D50 в docs/STATE.md.
+//  Folder creation by dragging: the merge zone, hysteresis and the dwell before
+//  the push-down preview.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md ("Implementation deviations");
+//  docs/W10M-STARTSCREEN.md §6.2; decisions D22 (hold of 600 ms / 10 pt,
+//  unchanged), D50 in docs/STATE.md.
 //
-//  Что проверяется:
-//  - геометрия зоны (`TesseraTileMergeZone`): вход — центр рамки со стороной
-//    `max(50 %, 36 pt)` по оси, удержание — рамка без 6 pt по краям;
-//  - гистерезис: цель `.group`/`.folder` держится, пока палец в области
-//    удержания, и не мигает у границы входной зоны;
-//  - пауза перед превью вытеснения: на подходе к центру плитки её сосед не
-//    «убегает», превью появляется после паузы (и когда палец замер), смена клетки
-//    начинает отсчёт заново, пустые клетки и «новая строка» — сразу, drop паузу
-//    не учитывает, таймеры не переживают drag;
-//  - сценарий с записи: пять малых плиток в ряд, пятая тащится на третью.
+//  What is checked:
+//  - zone geometry (`TesseraTileMergeZone`): entry is the frame's center with a side of
+//    `max(50 %, 36 pt)` per axis, hold is the frame minus 6 pt at the edges;
+//  - hysteresis: the `.group`/`.folder` target holds while the finger is in the
+//    hold area and does not flicker at the border of the entry zone;
+//  - the dwell before the push-down preview: while approaching a tile's center its neighbor does not
+//    "run away", the preview appears after the dwell (and when the finger is still), a cell change
+//    restarts the countdown, empty cells and "new row" apply immediately, a drop ignores the dwell,
+//    and timers do not outlive a drag;
+//  - the recorded scenario: five small tiles in a row, the fifth is dragged onto the third.
 //
-//  Таймеры настоящие (run loop), но все «не раньше паузы» проверки делаются
-//  синхронно, до прокрутки run loop, поэтому от нагрузки не флакуют.
+//  The timers are real (run loop), but all "not earlier than the dwell" checks are made
+//  synchronously, before spinning the run loop, so they do not flake under load.
 //
 
 #if canImport(UIKit)
@@ -31,18 +31,18 @@ import XCTest
 
 final class TileMergeZoneTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Делегат-рекордер: нужны созданные папки и добавления.
+    /// A recording delegate: needs the created folders and the additions.
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
-        /// Созданные папки.
+        /// Created folders.
         var createdFolders: [TesseraTileFolder] = []
 
-        /// Добавления в папку.
+        /// Additions to a folder.
         var additions: [(id: AnyHashable, folder: AnyHashable)] = []
 
-        /// Перестановки по сетке.
+        /// Reorders on the grid.
         var moves: [(id: AnyHashable, cell: TesseraTileGridPlacement)] = []
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didCreateFolder folder: TesseraTileFolder) {
@@ -66,13 +66,13 @@ final class TileMergeZoneTests: XCTestCase {
         }
     }
 
-    /// Ячейка в короткой записи.
+    /// A cell in short notation.
     private func at(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
         TesseraTileGridPlacement(row: row, column: column)
     }
 
-    /// Конфигурация: удержание 0,3 с (D22 не менялось — значение сокращено только
-    /// ради скорости теста), пауза превью — настраиваемая, магнит выключен.
+    /// Configuration: hold of 0.3 s (D22 is unchanged; the value is shortened only
+    /// for test speed), a configurable preview dwell, magnet off.
     private func configuration(
         dwell: TimeInterval = 0.5,
         hold: TimeInterval = 0.3,
@@ -85,8 +85,8 @@ final class TileMergeZoneTests: XCTestCase {
         )
     }
 
-    /// Пять малых плиток `t1…t5` в ряду, 6 колонок (как в Example, D26): ширина
-    /// ≈ 55 pt, как на записи пользователя.
+    /// Five small tiles `t1…t5` in a row, 6 columns (as in the Example, D26): the width is
+    /// about 55 pt, as in the user's recording.
     private func makeRowHost(
         configuration: TesseraTileEditConfiguration? = nil
     ) throws -> TesseraTestDragHost {
@@ -97,7 +97,7 @@ final class TileMergeZoneTests: XCTestCase {
         )
     }
 
-    /// Ждёт завершения drop'а: сессия снята, сетка совпала с моделью.
+    /// Waits for the drop to finish: the session is gone and the grid matches the model.
     private func settle(
         _ host: TesseraTestDragHost,
         _ id: AnyHashable,
@@ -105,24 +105,24 @@ final class TileMergeZoneTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil }, "Сессия завершена", file: file, line: line)
-        XCTAssertTrue(host.waitForDragCleanup(id), "Ячейка снова видима", file: file, line: line)
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil }, "Session finished", file: file, line: line)
+        XCTAssertTrue(host.waitForDragCleanup(id), "The cell is visible again", file: file, line: line)
         XCTAssertTrue(
             host.waitUntil { host.gridCells == host.store.placements(forColumns: columns) },
-            "Сетка показывает ячейки модели",
+            "The grid shows the model cells",
             file: file,
             line: line
         )
     }
 
-    /// Точка внутри рамки на заданном расстоянии от её центра.
+    /// A point inside the frame at the given distance from its center.
     private func point(_ frame: CGRect, dx: CGFloat = 0, dy: CGFloat = 0) -> CGPoint {
         CGPoint(x: frame.midX + dx, y: frame.midY + dy)
     }
 
-    // MARK: - Геометрия зоны
+    // MARK: - Zone geometry
 
-    /// Малая плитка 55 pt: входная зона 36 pt (раньше было 27,5 pt).
+    /// A 55 pt small tile: the entry zone is 36 pt (it used to be 27.5 pt).
     func testEntryZoneOnSmallTileIsThirtySixPoints() {
         let frame = CGRect(x: 10, y: 20, width: 55, height: 55)
         let entry = TesseraTileMergeZone.entryRect(in: frame)
@@ -133,7 +133,7 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertEqual(entry.midY, frame.midY, accuracy: 0.001)
     }
 
-    /// Средняя плитка/папка 118 pt: половина стороны — 59 pt (как и раньше).
+    /// A medium tile/folder of 118 pt: half the side is 59 pt (as before).
     func testEntryZoneOnMediumTileIsHalfOfSide() {
         let frame = CGRect(x: 0, y: 0, width: 118, height: 118)
         let entry = TesseraTileMergeZone.entryRect(in: frame)
@@ -142,14 +142,14 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertEqual(entry.height, 59, accuracy: 0.001)
     }
 
-    /// Зона не выходит за рамку: у плитки меньше минимума (30 pt) она равна рамке.
+    /// The zone does not extend beyond the frame: for a tile below the minimum (30 pt) it equals the frame.
     func testEntryZoneIsClampedToTinyFrame() {
         let frame = CGRect(x: 5, y: 5, width: 30, height: 30)
         XCTAssertEqual(TesseraTileMergeZone.entryRect(in: frame), frame)
     }
 
-    /// Широкая плитка: каждая ось считается отдельно, зона не меньше прежней
-    /// половины рамки по каждой оси.
+    /// A wide tile: each axis is computed separately, and the zone is no smaller than the previous
+    /// half of the frame on each axis.
     func testEntryZoneIsComputedPerAxisForWideTile() {
         let frame = CGRect(x: 0, y: 0, width: 240, height: 118)
         let entry = TesseraTileMergeZone.entryRect(in: frame)
@@ -158,10 +158,10 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertEqual(entry.height, 59, accuracy: 0.001)
 
         let thin = CGRect(x: 0, y: 0, width: 240, height: 40)
-        XCTAssertEqual(TesseraTileMergeZone.entryRect(in: thin).height, 36, accuracy: 0.001, "Минимум 36 pt, но не больше стороны")
+        XCTAssertEqual(TesseraTileMergeZone.entryRect(in: thin).height, 36, accuracy: 0.001, "Minimum 36 pt, but no more than the side")
     }
 
-    /// Область удержания — рамка без 6 pt по краям, но не меньше входной зоны.
+    /// The hold area is the frame minus 6 pt at the edges, but no smaller than the entry zone.
     func testRetainZoneIsInsetFrameAndNeverSmallerThanEntry() {
         let frame = CGRect(x: 0, y: 0, width: 55, height: 55)
         let retain = TesseraTileMergeZone.retainRect(in: frame)
@@ -172,72 +172,72 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertEqual(
             TesseraTileMergeZone.retainRect(in: tiny),
             TesseraTileMergeZone.entryRect(in: tiny),
-            "Рамка без 6 pt (28 pt) меньше входной зоны (36 pt) — берётся входная"
+            "The frame minus 6 pt (28 pt) is smaller than the entry zone (36 pt), so the entry zone is used"
         )
     }
 
-    /// Вырожденная рамка зоны не даёт.
+    /// A degenerate frame gives no zone.
     func testDegenerateFrameHasNoZone() {
         let frame = CGRect(x: 0, y: 0, width: 0, height: 20)
         XCTAssertFalse(TesseraTileMergeZone.contains(.zero, in: frame, isEngaged: false))
         XCTAssertFalse(TesseraTileMergeZone.contains(.zero, in: frame, isEngaged: true))
     }
 
-    /// Живая геометрия: на сетке в 6 колонок входная зона малой плитки — 36 pt,
-    /// палец в 17 pt от центра по оси цель делает слиянием, в 19 pt — нет.
+    /// Live geometry: on a 6-column grid the entry zone of a small tile is 36 pt;
+    /// with the finger 17 pt from the center along the axis the target becomes a merge, at 19 pt it does not.
     func testLiveSmallTileEntryZoneIsThirtySixPoints() throws {
         let host = try makeRowHost()
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
-        XCTAssertEqual(frame.width, 55, accuracy: 6, "Малая плитка на 6 колонках ≈ 55 pt")
-        XCTAssertGreaterThanOrEqual(frame.width, 40, "Малая плитка шире минимальной зоны")
+        XCTAssertEqual(frame.width, 55, accuracy: 6, "A small tile on 6 columns is about 55 pt")
+        XCTAssertGreaterThanOrEqual(frame.width, 40, "A small tile is wider than the minimum zone")
 
         XCTAssertTrue(host.startDrag("t5"))
         host.coordinator.updateDrag(to: point(frame, dx: 17))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "17 pt от центра — внутри 36 pt")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "17 pt from the center is inside 36 pt")
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
 
         XCTAssertTrue(host.startDrag("t5"))
         host.coordinator.updateDrag(to: point(frame, dx: 19.5))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "19,5 pt от центра — вне входной зоны")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "19.5 pt from the center is outside the entry zone")
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    // MARK: - Гистерезис
+    // MARK: - Hysteresis
 
-    /// Вход — только через входную зону, удержание — почти по всей плитке:
-    /// 7 pt от края (вне входной зоны, внутри области удержания) цель не снимает,
-    /// 3 pt от края — снимает, а возврат в 7 pt снова не включает слияние.
+    /// Entry is only through the entry zone, hold is almost across the whole tile:
+    /// 7 pt from the edge (outside the entry zone, inside the hold area) does not clear the target,
+    /// 3 pt from the edge does, and returning to 7 pt does not enable the merge again.
     func testHysteresisKeepsMergeTargetUntilFingerLeavesRetainZone() throws {
         let host = try makeRowHost()
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
         let outsideEntry = CGPoint(x: frame.maxX - 7, y: frame.midY)
-        XCTAssertFalse(TesseraTileMergeZone.entryRect(in: frame).contains(outsideEntry), "Контроль: вне входной зоны")
-        XCTAssertTrue(TesseraTileMergeZone.retainRect(in: frame).contains(outsideEntry), "Контроль: в области удержания")
+        XCTAssertFalse(TesseraTileMergeZone.entryRect(in: frame).contains(outsideEntry), "Control: outside the entry zone")
+        XCTAssertTrue(TesseraTileMergeZone.retainRect(in: frame).contains(outsideEntry), "Control: inside the hold area")
 
         XCTAssertTrue(host.startDrag("t5"))
-        // Без входа в зону область удержания не работает.
+        // Without entering the zone the hold area does not work.
         host.coordinator.updateDrag(to: outsideEntry)
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Входит только через входную зону")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Entry is only through the entry zone")
 
         host.coordinator.updateDrag(to: point(frame))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"))
         host.coordinator.updateDrag(to: outsideEntry)
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "Удержание: 7 pt от края")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "Hold: 7 pt from the edge")
 
         host.coordinator.updateDrag(to: CGPoint(x: frame.maxX - 3, y: frame.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Вышел из области удержания")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Left the hold area")
         host.coordinator.updateDrag(to: outsideEntry)
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Вход снова только через входную зону")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Entry is again only through the entry zone")
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    /// Дрожание пальца у границы входной зоны не переключает цель: превью — база,
-    /// цель не сдвигается, удержание не перевзводится (смещение < 10 pt от якоря)
-    /// и в итоге выдерживается.
+    /// Finger jitter at the border of the entry zone does not switch the target: the preview is the base,
+    /// the target does not move, the hold is not re-armed (offset < 10 pt from the anchor),
+    /// and in the end it is satisfied.
     func testJitterAtZoneBoundaryKeepsHighlightAndHoldRunning() throws {
         let host = try makeRowHost()
         let baseTable = try XCTUnwrap(host.gridCells)
@@ -245,25 +245,25 @@ final class TileMergeZoneTests: XCTestCase {
         let entryHalf = TesseraTileMergeZone.entryRect(in: frame).width / 2
         XCTAssertTrue(host.startDrag("t5"))
 
-        // Якорь — точка входа внутри зоны; дальше колебания через границу
-        // входной зоны (внутри области удержания, <10 pt от якоря).
+        // The anchor is the entry point inside the zone; then oscillations across the border
+        // of the entry zone (inside the hold area, < 10 pt from the anchor).
         host.coordinator.updateDrag(to: point(frame, dx: entryHalf - 1))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"))
         let tracker = try XCTUnwrap(host.coordinator.mergeTracker)
         let anchor = tracker.anchor
 
         let retainHalf = TesseraTileMergeZone.retainRect(in: frame).width / 2
-        XCTAssertGreaterThan(retainHalf, entryHalf + 1, "Контроль: область удержания шире входной зоны")
+        XCTAssertGreaterThan(retainHalf, entryHalf + 1, "Control: the hold area is wider than the entry zone")
         for offset in [entryHalf + 1, entryHalf - 2, retainHalf - 0.5, entryHalf - 1, entryHalf + 1.5] {
             host.coordinator.updateDrag(to: point(frame, dx: offset))
             let session = try XCTUnwrap(host.coordinator.dragSession)
-            XCTAssertEqual(session.hover, .group("t3"), "Не мигает на offset \(offset)")
-            XCTAssertEqual(session.previewPlacements, session.basePlacements, "Превью — база")
-            XCTAssertEqual(host.gridCells, baseTable, "Цель под пальцем")
-            XCTAssertEqual(host.coordinator.mergeTracker?.anchor, anchor, "Удержание не перевзведено")
+            XCTAssertEqual(session.hover, .group("t3"), "Does not flicker at offset \(offset)")
+            XCTAssertEqual(session.previewPlacements, session.basePlacements, "The preview is the base")
+            XCTAssertEqual(host.gridCells, baseTable, "The target is under the finger")
+            XCTAssertEqual(host.coordinator.mergeTracker?.anchor, anchor, "The hold was not re-armed")
         }
 
-        XCTAssertTrue(host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true }, "Удержание 600 мс (в тесте 0,3 с) выдержано")
+        XCTAssertTrue(host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true }, "Hold of 600 ms (0.3 s in the test) satisfied")
         let highlight = try XCTUnwrap(
             host.host.grid.subviews.compactMap { $0 as? TesseraTileDropHighlightView }.first { !$0.isHidden }
         )
@@ -273,8 +273,8 @@ final class TileMergeZoneTests: XCTestCase {
         settle(host, "t5")
     }
 
-    /// Выход из области удержания: цель возвращается к логике края (`.cell`),
-    /// удержание и его таймер снимаются.
+    /// Leaving the hold area: the target returns to the edge logic (`.cell`),
+    /// and the hold and its timer are cleared.
     func testLeavingRetainZoneFallsBackToCellAndStopsHold() throws {
         let host = try makeRowHost()
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
@@ -294,10 +294,10 @@ final class TileMergeZoneTests: XCTestCase {
         settle(host, "t5")
     }
 
-    // MARK: - Пауза перед превью вытеснения
+    // MARK: - Dwell before the push-down preview
 
-    /// Подход к соседу сбоку: пока палец не простоял паузу на краю цели, цель не
-    /// двигается; превью появляется после паузы и вытесняет её вниз.
+    /// Approaching a neighbor from the side: until the finger has stood for the dwell at the target's edge, the target does not
+    /// move; the preview appears after the dwell and pushes it down.
     func testNeighbourDoesNotMoveBeforeDwellAndIsPushedAfter() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 0.3))
         let baseTable = try XCTUnwrap(host.gridCells)
@@ -306,23 +306,23 @@ final class TileMergeZoneTests: XCTestCase {
 
         let started = CACurrentMediaTime()
         host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 2, y: t3.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Край занятой клетки")
-        XCTAssertEqual(host.gridCells, baseTable, "До паузы превью — база: «t3» не убегает")
-        XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "Отсчёт паузы идёт")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "The edge of an occupied cell")
+        XCTAssertEqual(host.gridCells, baseTable, "Before the dwell the preview is the base: 't3' does not run away")
+        XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "The dwell countdown is running")
 
-        // Палец замер — событий касания нет: превью даёт таймер.
-        XCTAssertTrue(host.waitUntil { host.gridCells != baseTable }, "Превью после паузы")
-        XCTAssertGreaterThanOrEqual(CACurrentMediaTime() - started, 0.28, "Не раньше паузы")
-        XCTAssertEqual(host.gridCells?["t5"], at(0, 2), "Перетаскиваемая на ячейке цели")
-        XCTAssertEqual(host.gridCells?["t3"], at(1, 2), "Цель вытолкнута вниз")
-        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "Таймер отработал")
+        // The finger is still: there are no touch events, so the timer gives the preview.
+        XCTAssertTrue(host.waitUntil { host.gridCells != baseTable }, "Preview after the dwell")
+        XCTAssertGreaterThanOrEqual(CACurrentMediaTime() - started, 0.28, "Not earlier than the dwell")
+        XCTAssertEqual(host.gridCells?["t5"], at(0, 2), "The dragged item is on the target's cell")
+        XCTAssertEqual(host.gridCells?["t3"], at(1, 2), "The target is pushed down")
+        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "The timer fired")
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    /// Смена клетки перезапускает отсчёт: прошедшее на прежней клетке время не
-    /// засчитывается новой.
+    /// A cell change restarts the countdown: time spent on the previous cell is not
+    /// credited to the new one.
     func testDwellRestartsWhenCellChanges() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 0.5))
         let baseTable = try XCTUnwrap(host.gridCells)
@@ -333,22 +333,22 @@ final class TileMergeZoneTests: XCTestCase {
         host.coordinator.updateDrag(to: CGPoint(x: t2.maxX - 2, y: t2.midY))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 1)))
         host.spin(0.3)
-        XCTAssertEqual(host.gridCells, baseTable, "0,3 с < паузы 0,5 с")
+        XCTAssertEqual(host.gridCells, baseTable, "0.3 s < dwell 0.5 s")
 
         host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 2, y: t3.midY))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)))
         host.spin(0.3)
-        XCTAssertEqual(host.gridCells, baseTable, "С первой клетки прошло 0,6 с, но со второй только 0,3 с: отсчёт перезапущен")
+        XCTAssertEqual(host.gridCells, baseTable, "0.6 s passed since the first cell but only 0.3 s since the second: the countdown was restarted")
 
         XCTAssertTrue(host.waitUntil { host.gridCells != baseTable })
-        XCTAssertEqual(host.gridCells?["t3"], at(1, 2), "Вытеснена вторая клетка")
-        XCTAssertEqual(host.gridCells?["t2"], at(0, 1), "Первая не тронута")
+        XCTAssertEqual(host.gridCells?["t3"], at(1, 2), "The second cell was pushed out")
+        XCTAssertEqual(host.gridCells?["t2"], at(0, 1), "The first is untouched")
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    /// Уход с клетки до паузы отменяет превью: после возврата отсчёт идёт заново.
+    /// Leaving a cell before the dwell cancels the preview: after returning the countdown starts anew.
     func testDwellIsDroppedWhenFingerLeavesCell() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 0.3))
         let baseTable = try XCTUnwrap(host.gridCells)
@@ -359,20 +359,20 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
         host.coordinator.updateDrag(to: point(t3))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"))
-        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "Слияние снимает отсчёт паузы")
+        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "A merge clears the dwell countdown")
 
         host.spin(0.4)
-        XCTAssertEqual(host.gridCells, baseTable, "Слияние — превью база, таймер паузы не сработал")
+        XCTAssertEqual(host.gridCells, baseTable, "Merge: the preview is the base, the dwell timer did not fire")
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    /// Пустая клетка и «новая строка» никого не вытесняют — превью сразу, без
-    /// таймера паузы.
+    /// An empty cell and "new row" push nobody out, so the preview is immediate, without
+    /// a dwell timer.
     func testEmptyCellAndNewRowPreviewsAreImmediate() throws {
-        // Плитка в строке 3 держит строки 1–2 «внутри» холста: клетка (1, 3) пуста,
-        // но это не «новая строка».
+        // A tile in row 3 keeps rows 1–2 "inside" the canvas: cell (1, 3) is empty,
+        // but it is not a "new row".
         let host = try TesseraTestDragHost(
             cells: (0..<5).map { CellFixtureTile("t\($0 + 1)", .small, 0, $0) }
                 + [CellFixtureTile("z", .small, 3, 0)],
@@ -382,21 +382,21 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertTrue(host.startDrag("t5"))
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 1, column: 3)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 3)), "Пустая клетка")
-        XCTAssertEqual(host.gridCells?["t5"], at(1, 3), "Превью сразу")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 3)), "Empty cell")
+        XCTAssertEqual(host.gridCells?["t5"], at(1, 3), "Immediate preview")
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 5, column: 0)))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .newRow)
-        XCTAssertEqual(host.gridCells?["t5"], at(4, 0), "«Новая строка» — сразу")
+        XCTAssertEqual(host.gridCells?["t5"], at(4, 0), "'New row' is immediate")
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    /// Drop до паузы фиксирует ту же цель-клетку, что и без паузы: элемент на
-    /// ячейке цели, цель вытолкнута вниз; таймер снят.
+    /// A drop before the dwell fixes the same target cell as without a dwell: the item is on
+    /// the target's cell, and the target is pushed down; the timer is cleared.
     func testDropBeforeDwellCommitsSameCellMove() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 5))
         let recorder = Recorder()
@@ -406,18 +406,18 @@ final class TileMergeZoneTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("t5"))
         host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 2, y: t3.midY))
-        XCTAssertEqual(host.gridCells, baseTable, "Превью ещё не показано")
+        XCTAssertEqual(host.gridCells, baseTable, "The preview is not shown yet")
         host.coordinator.finishDrag(commit: true)
-        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "Таймер снят на drop")
+        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "The timer is cleared on drop")
         settle(host, "t5")
 
-        XCTAssertEqual(host.store.placement(of: "t5"), at(0, 2), "Ярлык на ячейке цели")
-        XCTAssertEqual(host.store.placement(of: "t3"), at(1, 2), "Цель вытолкнута вниз (D31)")
-        XCTAssertEqual(host.store.placement(of: "t4"), at(0, 3), "Остальные на местах")
+        XCTAssertEqual(host.store.placement(of: "t5"), at(0, 2), "The tile is on the target's cell")
+        XCTAssertEqual(host.store.placement(of: "t3"), at(1, 2), "The target is pushed down (D31)")
+        XCTAssertEqual(host.store.placement(of: "t4"), at(0, 3), "The rest are in place")
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("t5"))
     }
 
-    /// Нулевая пауза возвращает прежнее поведение: превью вытеснения сразу.
+    /// A zero dwell restores the previous behavior: an immediate push-down preview.
     func testZeroDwellKeepsImmediatePreview() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 0))
         let baseTable = try XCTUnwrap(host.gridCells)
@@ -433,7 +433,7 @@ final class TileMergeZoneTests: XCTestCase {
         settle(host, "t5")
     }
 
-    /// Значение по умолчанию — 0,2 с; нечисловое и отрицательное трактуются как 0.
+    /// The default value is 0.2 s; a non-finite or negative value is treated as 0.
     func testConfigurationDefaultAndSanitizing() throws {
         XCTAssertEqual(TesseraTileEditConfiguration().reorderPreviewDwell, 0.2, accuracy: 0.0001)
 
@@ -442,14 +442,14 @@ final class TileMergeZoneTests: XCTestCase {
             let t3 = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
             XCTAssertTrue(host.startDrag("t5"))
             host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 2, y: t3.midY))
-            // .infinity не конечно — это тоже «без паузы», а не бесконечное ожидание.
-            XCTAssertEqual(host.gridCells?["t3"], at(1, 2), "Пауза \(bad) = без паузы")
+            // .infinity is not finite either: that also means "no dwell", not an infinite wait.
+            XCTAssertEqual(host.gridCells?["t3"], at(1, 2), "Dwell \(bad) = no dwell")
             host.coordinator.finishDrag(commit: false)
             settle(host, "t5")
         }
     }
 
-    /// Reduce Motion паузу не отключает: она про то, чтобы не двигать плитки.
+    /// Reduce Motion does not disable the dwell: it exists so that tiles are not moved.
     func testDwellStaysWithReduceMotion() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 0.3))
         host.host.grid.isReduceMotionEnabled = { true }
@@ -459,21 +459,21 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertTrue(host.startDrag("t5"))
 
         host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 2, y: t3.midY))
-        XCTAssertEqual(host.gridCells, baseTable, "Пауза остаётся при Reduce Motion")
+        XCTAssertEqual(host.gridCells, baseTable, "The dwell stays with Reduce Motion")
         XCTAssertTrue(host.waitUntil { host.gridCells != baseTable })
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    // MARK: - Таймеры не переживают drag
+    // MARK: - Timers do not outlive a drag
 
-    /// Отмена, завершение и выход из правки снимают таймеры паузы и удержания.
+    /// Cancel, completion and leaving edit mode clear the dwell and hold timers.
     func testNoTimersLeftAfterCancelDropAndEndEditing() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 5, hold: 5))
         let t3 = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
 
-        // Отмена жеста на отсчёте паузы.
+        // Gesture cancellation during the dwell countdown.
         XCTAssertTrue(host.startDrag("t5"))
         host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 2, y: t3.midY))
         XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
@@ -481,7 +481,7 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
         settle(host, "t5")
 
-        // Drop на слиянии без выдержанного удержания.
+        // A drop on a merge without a satisfied hold.
         XCTAssertTrue(host.startDrag("t5"))
         host.coordinator.updateDrag(to: point(t3))
         XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.merge)
@@ -489,7 +489,7 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.merge)
         settle(host, "t5")
 
-        // Выход из правки посреди drag.
+        // Leaving edit mode in the middle of a drag.
         XCTAssertTrue(host.startDrag("t5"))
         host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 2, y: t3.midY))
         XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
@@ -499,8 +499,8 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.merge)
     }
 
-    /// Смена конфигурации на лету снимает отсчёт паузы; следующий шаг взводит его
-    /// заново.
+    /// Changing the configuration on the fly clears the dwell countdown; the next step arms it
+    /// again.
     func testConfigurationChangeResetsDwell() throws {
         let host = try makeRowHost(configuration: configuration(dwell: 5))
         let t3 = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
@@ -512,18 +512,18 @@ final class TileMergeZoneTests: XCTestCase {
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
 
         host.coordinator.updateDrag(to: CGPoint(x: t3.maxX - 3, y: t3.midY))
-        XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "Следующий шаг взвёл отсчёт заново")
+        XCTAssertTrue(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "The next step re-armed the countdown")
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    // MARK: - Сценарий с записи
+    // MARK: - Recorded scenario
 
-    /// Запись пользователя: ряд малых плиток, пятая тащится на третью. Подход
-    /// справа проходит над четвёртой и краем третьей: ни одна плитка не уезжает
-    /// из-под пальца, на центре третьей цель — `.group`, подсветка не мигает при
-    /// дрожании, удержание выдерживается, drop создаёт папку из двух плиток.
+    /// A user recording: a row of small tiles, the fifth is dragged onto the third. The approach
+    /// from the right passes over the fourth and the edge of the third: no tile moves
+    /// from under the finger, at the center of the third the target is `.group`, the highlight does not flicker under
+    /// jitter, the hold is satisfied, and the drop creates a folder from two tiles.
     func testRecordedScenarioDragFifthOntoThirdCreatesFolder() throws {
         let host = try makeRowHost()
         let recorder = Recorder()
@@ -533,7 +533,7 @@ final class TileMergeZoneTests: XCTestCase {
         let t5 = try XCTUnwrap(host.host.grid.frame(forItemID: "t5"))
         XCTAssertTrue(host.startDrag("t5"))
 
-        // Путь шагами по 5 pt от центра «t5» к центру «t3».
+        // The path in 5 pt steps from the center of 't5' to the center of 't3'.
         var hovers: [HoverTarget] = []
         var x = t5.midX
         while x > t3.midX {
@@ -541,23 +541,23 @@ final class TileMergeZoneTests: XCTestCase {
             host.coordinator.updateDrag(to: CGPoint(x: x, y: t3.midY))
             let session = try XCTUnwrap(host.coordinator.dragSession)
             hovers.append(session.hover)
-            // Пока шаги идут быстрее паузы, превью — база: ничто не убегает.
-            XCTAssertEqual(host.gridCells, baseTable, "x = \(x): соседи на местах")
+            // While the steps are faster than the dwell, the preview is the base: nothing runs away.
+            XCTAssertEqual(host.gridCells, baseTable, "x = \(x): neighbors in place")
         }
-        XCTAssertTrue(hovers.contains(.cell(at(0, 2))), "Палец пересёк край «t3»")
-        XCTAssertEqual(hovers.last, .group("t3"), "Центр «t3» — слияние")
+        XCTAssertTrue(hovers.contains(.cell(at(0, 2))), "The finger crossed the edge of 't3'")
+        XCTAssertEqual(hovers.last, .group("t3"), "The center of 't3' is a merge")
 
-        // Дрожание ±8 pt (< 10 pt от якоря удержания) по обеим осям внутри плитки:
-        // цель и удержание не сбиваются. Якорь — там, где удержание последний раз
-        // перевзводилось на пути (D22), а не обязательно центр.
+        // Jitter of ±8 pt (< 10 pt from the hold anchor) on both axes inside the tile:
+        // the target and the hold are not disturbed. The anchor is where the hold was last
+        // re-armed along the path (D22), not necessarily the center.
         let anchor = try XCTUnwrap(host.coordinator.mergeTracker?.anchor)
         for jitter in [CGPoint(x: 8, y: 0), CGPoint(x: -8, y: 3), CGPoint(x: 3, y: 8), CGPoint(x: -4, y: -8)] {
             host.coordinator.updateDrag(to: CGPoint(x: anchor.x + jitter.x, y: anchor.y + jitter.y))
-            XCTAssertTrue(t3.insetBy(dx: 6, dy: 6).contains(host.coordinator.dragSession?.lastPoint ?? .zero), "Контроль: точка внутри плитки")
+            XCTAssertTrue(t3.insetBy(dx: 6, dy: 6).contains(host.coordinator.dragSession?.lastPoint ?? .zero), "Control: the point is inside the tile")
             XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"))
             XCTAssertEqual(host.gridCells, baseTable)
             XCTAssertEqual(host.coordinator.mergeTracker?.targetID, AnyHashable("t3"))
-            XCTAssertEqual(host.coordinator.mergeTracker?.anchor, anchor, "Смещение < 10 pt: удержание идёт")
+            XCTAssertEqual(host.coordinator.mergeTracker?.anchor, anchor, "Offset < 10 pt: the hold continues")
         }
 
         XCTAssertTrue(host.waitUntil { host.coordinator.mergeTracker?.isMergeReady == true })
@@ -566,16 +566,16 @@ final class TileMergeZoneTests: XCTestCase {
         let folder = try XCTUnwrap(recorder.createdFolders.first)
         settle(host, folder.id)
 
-        XCTAssertEqual(Set(folder.tiles.map { $0.id }), Set<AnyHashable>(["t3", "t5"]), "Папка из двух плиток")
-        XCTAssertEqual(folder.size, .medium, "Папка 2×2 (D20)")
-        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 2), "На ячейке цели")
+        XCTAssertEqual(Set(folder.tiles.map { $0.id }), Set<AnyHashable>(["t3", "t5"]), "A folder of two tiles")
+        XCTAssertEqual(folder.size, .medium, "A 2×2 folder (D20)")
+        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 2), "On the target's cell")
         XCTAssertEqual(host.store.placement(of: "t1"), at(0, 0))
         XCTAssertEqual(host.store.placement(of: "t2"), at(0, 1))
-        XCTAssertNil(host.store.placement(of: "t5"), "Ярлык ушёл в папку")
+        XCTAssertNil(host.store.placement(of: "t5"), "The tile went into the folder")
     }
 
-    /// Тот же подход «сверху»: палец идёт к центру плитки вертикально, цель не
-    /// убегает, слияние достижимо.
+    /// The same approach "from above": the finger goes to the tile's center vertically, the target does not
+    /// run away, and the merge is reachable.
     func testApproachFromAboveReachesMergeWithoutPush() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -597,18 +597,18 @@ final class TileMergeZoneTests: XCTestCase {
             y = max(b.midY, y - 5)
             host.coordinator.updateDrag(to: CGPoint(x: b.midX, y: y))
             last = try XCTUnwrap(host.coordinator.dragSession).hover
-            XCTAssertEqual(host.gridCells?["b"], baseTable["b"], "y = \(y): «b» не убегает")
-            XCTAssertEqual(host.gridCells?["a"], baseTable["a"], "y = \(y): «a» на месте")
+            XCTAssertEqual(host.gridCells?["b"], baseTable["b"], "y = \(y): 'b' does not run away")
+            XCTAssertEqual(host.gridCells?["a"], baseTable["a"], "y = \(y): 'a' is in place")
         }
         XCTAssertEqual(last, .group("b"))
         host.coordinator.finishDrag(commit: false)
         settle(host, "c")
     }
 
-    // MARK: - Папка как цель
+    // MARK: - Folder as a target
 
-    /// Те же правила для папки: входная зона 59 pt, гистерезис, пауза перед
-    /// вытеснением папки с края.
+    /// The same rules for a folder: a 59 pt entry zone, hysteresis, a dwell before
+    /// pushing a folder out from the edge.
     func testFolderTargetUsesSameZoneHysteresisAndDwell() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 0, 5)],
@@ -621,23 +621,23 @@ final class TileMergeZoneTests: XCTestCase {
         let baseTable = try XCTUnwrap(host.gridCells)
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "F"))
         let entry = TesseraTileMergeZone.entryRect(in: frame)
-        XCTAssertEqual(entry.width, frame.width / 2, accuracy: 0.5, "Для 2×2 половина стороны, как и раньше")
+        XCTAssertEqual(entry.width, frame.width / 2, accuracy: 0.5, "For 2×2 it is half the side, as before")
 
         XCTAssertTrue(host.startDrag("a"))
-        // Край папки: пауза, потом вытеснение.
+        // The folder's edge: a dwell, then the push-down.
         host.coordinator.updateDrag(to: CGPoint(x: frame.minX + 2, y: frame.midY))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 1)))
-        XCTAssertEqual(host.gridCells, baseTable, "До паузы папка не убегает")
+        XCTAssertEqual(host.gridCells, baseTable, "The folder does not run away before the dwell")
         XCTAssertTrue(host.waitUntil { host.gridCells != baseTable })
-        XCTAssertEqual(host.gridCells?["F"], at(2, 1), "После паузы папка вытеснена")
+        XCTAssertEqual(host.gridCells?["F"], at(2, 1), "The folder is pushed out after the dwell")
 
-        // Центр: цель — папка, превью — база сразу.
+        // Center: the target is the folder, the preview is the base immediately.
         host.coordinator.updateDrag(to: point(frame))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .folder("F"))
         XCTAssertEqual(host.gridCells, baseTable)
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell)
 
-        // Гистерезис: 7 pt от края папки — всё ещё `.folder`.
+        // Hysteresis: 7 pt from the folder's edge is still `.folder`.
         host.coordinator.updateDrag(to: CGPoint(x: frame.maxX - 7, y: frame.midY))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .folder("F"))
         host.coordinator.updateDrag(to: CGPoint(x: frame.maxX - 3, y: frame.midY))
@@ -649,10 +649,10 @@ final class TileMergeZoneTests: XCTestCase {
         settle(host, "a")
     }
 
-    // MARK: - Ярлык из панели
+    // MARK: - Tile from the panel
 
-    /// Ярлык, выносимый из панели: те же правила зоны и паузы; перестановка внутри
-    /// панели (E16) пауз не взводит.
+    /// A tile taken out of the panel: the same zone and dwell rules; a reorder inside
+    /// the panel does not arm dwells.
     func testPanelTakeOutUsesDwellAndPanelReorderHasNoTimers() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("t", .small, 0, 2)],
@@ -670,7 +670,7 @@ final class TileMergeZoneTests: XCTestCase {
             host.host.panelCell(folderID: "F")?.shortcutCells.first?.accessibilityCustomActions != nil
         })
 
-        // Перестановка внутри панели: длинное нажатие по ярлыку панели, шаги по слотам.
+        // A reorder inside the panel: a long press on a panel tile, steps over the slots.
         let panelItem = try XCTUnwrap(host.host.grid.displayItems.first { $0.isFolderPanel })
         let geometry = try XCTUnwrap(host.host.grid.panelShortcutGeometry())
         let slot0 = geometry.frames[0]
@@ -678,13 +678,13 @@ final class TileMergeZoneTests: XCTestCase {
         host.coordinator.handleLongPress(on: panelItem, at: CGPoint(x: slot0.midX, y: slot0.midY))
         XCTAssertNotNil(host.coordinator.dragSession?.panelReorder)
         host.coordinator.updateDrag(to: CGPoint(x: slot2.midX, y: slot2.midY))
-        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "Перестановка в панели: пауз нет")
+        XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.reorderDwell, "Reorder in the panel: no dwells")
         XCTAssertFalse(host.coordinator.hasPendingDragTimersForTesting.merge)
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
         host.spin(0.4)
 
-        // Вынос: ярлык из панели над краем занятой клетки.
+        // Take-out: a tile from the panel over the edge of an occupied cell.
         let iconFrame = try XCTUnwrap(host.host.panelCell(folderID: "F")).shortcutCells[1].frame
         let iconCenter = try XCTUnwrap(host.host.panelCell(folderID: "F")?.shortcutCells[1].superview)
             .convert(CGPoint(x: iconFrame.midX, y: iconFrame.midY), to: host.host.grid)
@@ -696,11 +696,11 @@ final class TileMergeZoneTests: XCTestCase {
         let baseTable = try XCTUnwrap(host.gridCells)
         host.coordinator.updateDrag(to: CGPoint(x: tFrame.maxX - 2, y: tFrame.midY))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)))
-        XCTAssertEqual(host.gridCells, baseTable, "До паузы «t» не убегает")
+        XCTAssertEqual(host.gridCells, baseTable, "Before the dwell 't' does not run away")
         XCTAssertTrue(host.waitUntil { host.gridCells != baseTable })
-        XCTAssertEqual(host.gridCells?["t"], at(1, 2), "После паузы «t» вытеснена")
+        XCTAssertEqual(host.gridCells?["t"], at(1, 2), "After the dwell 't' is pushed out")
 
-        // Центр родной папки — по-прежнему `.sourceFolder` (входная зона).
+        // The center of the source folder is still `.sourceFolder` (the entry zone).
         let folderFrame = try XCTUnwrap(host.cellFrame(row: 0, column: 0, size: .medium))
         host.coordinator.updateDrag(to: point(folderFrame))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .sourceFolder)
@@ -713,8 +713,8 @@ final class TileMergeZoneTests: XCTestCase {
 
     // MARK: - RTL
 
-    /// RTL: зона и гистерезис считаются по рамке элемента, поэтому работают
-    /// зеркально; цель — логическая ячейка.
+    /// RTL: the zone and hysteresis are computed from the item's frame, so they work
+    /// mirrored; the target is a logical cell.
     func testRightToLeftZoneAndHysteresis() throws {
         let host = try makeRowHost()
         host.host.grid.semanticContentAttribute = .forceRightToLeft
@@ -722,41 +722,41 @@ final class TileMergeZoneTests: XCTestCase {
         host.host.layout()
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
         let t5 = try XCTUnwrap(host.host.grid.frame(forItemID: "t5"))
-        XCTAssertLessThan(t5.minX, frame.minX, "RTL: «t5» левее «t3»")
+        XCTAssertLessThan(t5.minX, frame.minX, "RTL: 't5' is to the left of 't3'")
 
         XCTAssertTrue(host.startDrag("t5"))
         host.coordinator.updateDrag(to: point(frame, dx: -17))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "Входная зона зеркальна")
-        // Край «t3» со стороны «t4» (в RTL — слева на 7 pt): удержание.
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "The entry zone is mirrored")
+        // The edge of 't3' on the side of 't4' (on the left by 7 pt in RTL): hold.
         host.coordinator.updateDrag(to: CGPoint(x: frame.minX + 7, y: frame.midY))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"))
         host.coordinator.updateDrag(to: CGPoint(x: frame.minX + 3, y: frame.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Логическая ячейка (0, 2)")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Logical cell (0, 2)")
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")
     }
 
-    // MARK: - Магнит
+    // MARK: - Magnet
 
-    /// Магнит не спорит с зоной: над целью слияния (в том числе в области
-    /// удержания) он выключен, снимок остаётся под пальцем.
+    /// The magnet does not contend with the zone: over a merge target (including in the hold
+    /// area) it is off, and the snapshot stays under the finger.
     func testMagnetStaysOffOverMergeTargetInsideRetainZone() throws {
         let host = try makeRowHost(configuration: configuration(magnet: 28))
         host.coordinator.isReduceMotionEnabled = { false }
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
         XCTAssertTrue(host.startDrag("t5"))
 
-        // Выход из стартовой зоны магнита, затем вход в слияние.
+        // Leaving the magnet's start zone, then entering the merge.
         host.coordinator.updateDrag(to: point(frame, dx: 40))
         host.coordinator.updateDrag(to: point(frame))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"))
-        XCTAssertNil(host.coordinator.dragMagnetTargetForTesting(at: point(frame)), "Над центром магнита нет")
+        XCTAssertNil(host.coordinator.dragMagnetTargetForTesting(at: point(frame)), "No magnet over the center")
 
         let held = CGPoint(x: frame.maxX - 7, y: frame.midY)
         host.coordinator.updateDrag(to: held)
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "Удержание")
-        XCTAssertNil(host.coordinator.dragMagnetTargetForTesting(at: held), "В области удержания магнита нет")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .group("t3"), "Hold")
+        XCTAssertNil(host.coordinator.dragMagnetTargetForTesting(at: held), "No magnet in the hold area")
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "t5")

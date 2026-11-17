@@ -1,50 +1,50 @@
-// Раскладка по явным координатам: чистый слой «размещение по ячейкам» (E14.2).
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и
-// «Отступления реализации (E14)»; решения D30–D33 в docs/STATE.md.
+// Layout by explicit coordinates: the pure "placement by cells" layer.
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 (tile grid) and
+// "Implementation deviations"; decisions D30–D33 in docs/STATE.md.
 //
-// Раньше раскладка была функцией порядка: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
-// строго компактно укладывал плитки по массиву. Вариант Б (D30) делает моделью
-// явные координаты: у каждого верхнеуровневого элемента есть ячейка
-// (``TesseraTileGridPlacement``), плитка якорится на ней, а дыры сохраняются. Этот файл —
-// чистые операции над таким набором: размещение, вставка с выталкиванием вниз
-// каскадом (D31), resize на месте, удаление без репака, схлопывание пустых строк,
-// поиск свободной ячейки и проверка корректности.
+// Layout used to be a function of order: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
+// packed tiles strictly compactly along the array. Variant B (D30) makes the model
+// explicit coordinates: every top-level element has a cell
+// (``TesseraTileGridPlacement``), a tile is anchored to it, and holes are preserved. This file holds
+// the pure operations on such a set: placement, insertion with a cascading push down
+// (D31), in-place resize, removal without repacking, collapsing empty rows,
+// finding a free cell, and validity checking.
 //
-// Слой ничего не знает о UIKit, хранилище и сетке: только `TesseraTileSize`, ячейки и
-// число колонок. Все функции — `static`, детерминированы и не хранят состояния.
-// Ячейки — **логические** (колонка 0 — начало чтения); зеркалирование RTL делает
-// вью-слой (документ §9). Слой используют операции `TesseraTileStore` по ячейкам (E14.4)
-// и drag-превью координатора (E14.5); упаковка по порядку (`pack`, `packCompact`)
-// осталась в `TesseraTileLayoutEngine.swift` для отката раскладки, миграции v1 → v2 и
-// проекции при другой ширине холста.
+// The layer knows nothing about UIKit, the store, or the grid: only `TesseraTileSize`, cells, and
+// the column count. All functions are `static`, deterministic, and stateless.
+// Cells are **logical** (column 0 is the start of reading); RTL mirroring is done by the
+// view layer (document §9). The layer is used by the cell-based `TesseraTileStore` operations
+// and by the coordinator's drag preview; order-based packing (`pack`, `packCompact`)
+// remains in `TesseraTileLayoutEngine.swift` for layout rollback, the v1 → v2 migration, and
+// projection onto a different canvas width.
 
 import CoreGraphics
 
-/// Элемент набора размещений: идентификатор, запрошенный размер и ячейка
-/// левого верхнего угла (E14.2, D30).
+/// An element of a placement set: an identifier, a requested size, and the top-left
+/// corner cell (D30).
 ///
-/// Набор размещений — массив таких элементов. Порядок массива **не модель**: он
-/// нужен только затем, чтобы сопоставлять результат со входом (как у
-/// ``TesseraTileLayoutEngine/pack(items:columns:unit:)``) и делать вывод детерминированным.
-/// Размер здесь — запрошенный (D15, как в `TesseraTileStore`); след на сетке движок
-/// считает по ``TesseraTileLayoutEngine/fittingSize(_:columns:)``.
+/// A placement set is an array of such elements. The array order is **not the model**: it
+/// exists only to match the result to the input (as in
+/// ``TesseraTileLayoutEngine/pack(items:columns:unit:)``) and to keep the output deterministic.
+/// The size here is the requested one (D15, as in `TesseraTileStore`); the footprint on the grid is
+/// computed by the engine with ``TesseraTileLayoutEngine/fittingSize(_:columns:)``.
 public struct TesseraTilePlacedItem: Equatable {
 
-    /// Идентификатор верхнеуровневого элемента (ярлыка или папки).
+    /// The identifier of a top-level element (a tile or a folder).
     public var id: AnyHashable
 
-    /// Запрошенный размер плитки (D15).
+    /// The requested tile size (D15).
     public var size: TesseraTileSize
 
-    /// Ячейка левого верхнего угла (логические координаты, в юнитах).
+    /// The top-left corner cell (logical coordinates, in units).
     public var cell: TesseraTileGridPlacement
 
-    /// Создаёт элемент набора размещений.
+    /// Creates a placement set element.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор элемента.
-    ///   - size: Запрошенный размер плитки.
-    ///   - cell: Ячейка левого верхнего угла.
+    ///   - id: The element identifier.
+    ///   - size: The requested tile size.
+    ///   - cell: The top-left corner cell.
     public init(id: AnyHashable, size: TesseraTileSize, cell: TesseraTileGridPlacement) {
         self.id = id
         self.size = size
@@ -52,7 +52,7 @@ public struct TesseraTilePlacedItem: Equatable {
     }
 }
 
-/// Прямоугольник следа плитки в юнитах — внутреннее представление движка.
+/// The rectangle of a tile footprint in units — the engine's internal representation.
 fileprivate struct PlacementRect: Equatable {
 
     var row: Int
@@ -60,42 +60,42 @@ fileprivate struct PlacementRect: Equatable {
     var width: Int
     var height: Int
 
-    /// Первая строка под прямоугольником.
+    /// The first row below the rectangle.
     var bottom: Int { row + height }
 
-    /// Первая колонка справа от прямоугольника.
+    /// The first column to the right of the rectangle.
     var trailing: Int { column + width }
 
-    /// Пересекаются ли два прямоугольника (общая граница — не пересечение).
+    /// Whether two rectangles intersect (a shared edge is not an intersection).
     func overlaps(_ other: PlacementRect) -> Bool {
         row < other.bottom && other.row < bottom
             && column < other.trailing && other.column < trailing
     }
 }
 
-// MARK: - Размещение по координатам (E14.2)
+// MARK: - Placement by coordinates (D30)
 
 extension TesseraTileLayoutEngine {
 
-    // MARK: Слоты и проверка
+    // MARK: Slots and validation
 
-    /// Слоты по явным ячейкам — без упаковки (E14.2).
+    /// Slots at explicit cells, without packing.
     ///
-    /// Каждый элемент встаёт ровно на свою ячейку; ничего не сдвигается и не
-    /// схлопывается. Слоты идут **в порядке входного массива**. Как и
-    /// ``pack(items:columns:unit:)``, при `fitting == false` плитка шире сетки
-    /// пропускается (сетка не может изобразить её без искажения размера); при
-    /// `fitting == true` размер предварительно ужимается
-    /// ``fittingSize(_:columns:)`` (деградация геометрии, как в раскладке под узкую
-    /// сетку), и пропусков нет. Слот несёт размер, по которому считался его след.
+    /// Each element lands exactly on its own cell; nothing is shifted or
+    /// collapsed. Slots follow the **order of the input array**. As with
+    /// ``pack(items:columns:unit:)``, with `fitting == false` a tile wider than the grid
+    /// is skipped (the grid cannot draw it without distorting the size); with
+    /// `fitting == true` the size is first shrunk by
+    /// ``fittingSize(_:columns:)`` (geometry degradation, as in the layout for a narrow
+    /// grid), and nothing is skipped. A slot carries the size its footprint was computed from.
     ///
     /// - Parameters:
-    ///   - placements: Набор размещений.
-    ///   - columns: Число колонок, больше нуля.
-    ///   - unit: Размер юнита в точках, больше нуля.
-    ///   - fitting: Ужимать ли размеры под узкую сетку вместо пропуска.
-    /// - Returns: Слоты в порядке `placements`; пустой массив для вырожденной
-    ///   геометрии.
+    ///   - placements: The placement set.
+    ///   - columns: The number of columns, greater than zero.
+    ///   - unit: The unit size in points, greater than zero.
+    ///   - fitting: Whether to shrink sizes to a narrow grid instead of skipping.
+    /// - Returns: Slots in the order of `placements`; an empty array for degenerate
+    ///   geometry.
     public static func slots(
         placements: [TesseraTilePlacedItem],
         columns: Int,
@@ -124,18 +124,18 @@ extension TesseraTileLayoutEngine {
         return result
     }
 
-    /// Идентификаторы элементов, нарушающих корректность набора (E14.2).
+    /// Identifiers of the elements that violate the validity of the set.
     ///
-    /// Нарушитель — элемент, чей след (по ``fittingSize(_:columns:)``) выходит за
-    /// холст `[0, columns)` по колонкам, лежит в отрицательных строке/колонке или
-    /// пересекается с другим элементом. Пустой результат — набор корректен.
-    /// Порядок — по входному массиву, без повторов. При `columns <= 0` нарушителями
-    /// считаются все элементы.
+    /// A violator is an element whose footprint (per ``fittingSize(_:columns:)``) goes beyond the
+    /// canvas `[0, columns)` by columns, lies in a negative row or column, or
+    /// intersects another element. An empty result means the set is valid.
+    /// The order follows the input array, without repeats. With `columns <= 0` all elements
+    /// are considered violators.
     ///
     /// - Parameters:
-    ///   - placements: Набор размещений.
-    ///   - columns: Число колонок.
-    /// - Returns: Идентификаторы нарушителей.
+    ///   - placements: The placement set.
+    ///   - columns: The number of columns.
+    /// - Returns: The identifiers of the violators.
     public static func validate(_ placements: [TesseraTilePlacedItem], columns: Int) -> [AnyHashable] {
         guard columns > 0 else { return placements.map(\.id) }
 
@@ -155,14 +155,14 @@ extension TesseraTileLayoutEngine {
         return offenders
     }
 
-    /// Есть ли в наборе пересекающиеся следы (E14.2).
+    /// Whether the set contains intersecting footprints.
     ///
-    /// Только пересечения: выход за холст проверяет ``validate(_:columns:)``.
+    /// Intersections only: going beyond the canvas is checked by ``validate(_:columns:)``.
     ///
     /// - Parameters:
-    ///   - placements: Набор размещений.
-    ///   - columns: Число колонок (нужно для ужатия размеров под узкую сетку).
-    /// - Returns: `true`, если хотя бы два следа пересекаются.
+    ///   - placements: The placement set.
+    ///   - columns: The number of columns (needed to shrink sizes to a narrow grid).
+    /// - Returns: `true` if at least two footprints intersect.
     public static func hasOverlaps(_ placements: [TesseraTilePlacedItem], columns: Int) -> Bool {
         guard columns > 0 else { return false }
 
@@ -175,20 +175,20 @@ extension TesseraTileLayoutEngine {
         return false
     }
 
-    // MARK: Ячейка
+    // MARK: Cell
 
-    /// Ограничивает ячейку холстом под размер плитки (E14.2, D31).
+    /// Clamps a cell to the canvas for a tile size (D31).
     ///
-    /// Строка не меньше 0; колонка ограничивается так, чтобы
-    /// `column + ширина ≤ columns`: слишком правая ячейка **сдвигается влево**,
-    /// вправо — никогда. Ширина — по ``fittingSize(_:columns:)``, поэтому на узкой
-    /// сетке плитка всегда помещается. При `columns <= 0` колонка — 0.
+    /// The row is at least 0; the column is limited so that
+    /// `column + width ≤ columns`: a cell that is too far right is **shifted left**,
+    /// never right. The width comes from ``fittingSize(_:columns:)``, so on a narrow
+    /// grid a tile always fits. With `columns <= 0` the column is 0.
     ///
     /// - Parameters:
-    ///   - cell: Желаемая ячейка.
-    ///   - size: Размер плитки.
-    ///   - columns: Число колонок.
-    /// - Returns: Допустимая ячейка.
+    ///   - cell: The desired cell.
+    ///   - size: The tile size.
+    ///   - columns: The number of columns.
+    /// - Returns: A valid cell.
     public static func clamped(cell: TesseraTileGridPlacement, size: TesseraTileSize, columns: Int) -> TesseraTileGridPlacement {
         let width = fittingSize(size, columns: columns).unitColumns
         let maxColumn = max(0, columns - width)
@@ -198,43 +198,43 @@ extension TesseraTileLayoutEngine {
         )
     }
 
-    // MARK: Вставка и resize
+    // MARK: Insertion and resize
 
-    /// Ставит элемент на ячейку; мешающие плитки выталкиваются вниз каскадом
-    /// (E14.2, D31).
+    /// Puts an element on a cell; obstructing tiles are pushed down in a cascade
+    /// (D31).
     ///
-    /// Алгоритм:
+    /// The algorithm:
     ///
-    /// 1. Ячейка приводится к холсту ``clamped(cell:size:columns:)`` — получается
-    ///    прямоугольник вставки `R`. Если элемент с таким `id` уже есть, он
-    ///    исключается из коллизий (это перенос): остальные элементы сравниваются
-    ///    только с `R`, а не с его старым местом.
-    /// 2. Остальные элементы обходятся в порядке чтения **исходных** позиций
-    ///    (строка, затем колонка, затем индекс во входном массиве).
-    /// 3. Каждый элемент проверяется на пересечение со всем уже размещённым
-    ///    (`R` и ранее обработанные, с учётом их новых позиций). Если пересечение
-    ///    есть, элемент сдвигается **вниз** в той же колонке на минимальную строку,
-    ///    очищающую все пересекающие прямоугольники (нижняя граница самого
-    ///    нижнего из них); проверка повторяется — это и есть каскад: сдвинутый
-    ///    элемент становится препятствием для следующих.
-    /// 4. Элементы без пересечений не двигаются, включая дыры выше и вокруг
-    ///    затронутой области. По горизонтали никто не двигается.
+    /// 1. The cell is clamped to the canvas with ``clamped(cell:size:columns:)``, giving the
+    ///    insertion rectangle `R`. If an element with this `id` already exists, it is
+    ///    excluded from collisions (this is a move): the other elements are compared
+    ///    only with `R`, not with its old place.
+    /// 2. The other elements are visited in the reading order of their **original**
+    ///    positions (row, then column, then index in the input array).
+    /// 3. Each element is checked for intersection with everything already placed
+    ///    (`R` and the previously processed ones, with their new positions). If there is
+    ///    an intersection, the element moves **down** in the same column to the minimal row
+    ///    that clears all intersecting rectangles (the bottom edge of the lowest
+    ///    of them); the check repeats — this is the cascade: a shifted
+    ///    element becomes an obstacle for the following ones.
+    /// 4. Elements without intersections do not move, including holes above and around
+    ///    the affected area. Nothing moves horizontally.
     ///
-    /// Результат всегда без пересечений (каждый элемент размещается с проверкой на
-    /// всех предыдущих) и конечен (один проход, строки только растут). Порядок
-    /// массива сохраняется; новый элемент добавляется в конец, существующий
-    /// остаётся на своём индексе. Идемпотентно: вставка уже корректного
-    /// размещения на его собственную ячейку набор не меняет. При `columns <= 0`
-    /// возвращается вход без изменений. Вход считается корректным (след внутри
-    /// холста); пересечения во входе разрешаются тем же проходом.
+    /// The result is always free of intersections (each element is placed with a check against
+    /// all the previous ones) and finite (a single pass, rows only grow). The array order
+    /// is preserved; a new element is appended to the end, an existing one
+    /// keeps its index. Idempotent: inserting an already valid
+    /// placement onto its own cell does not change the set. With `columns <= 0`
+    /// the input is returned unchanged. The input is assumed valid (footprint inside
+    /// the canvas); intersections in the input are resolved by the same pass.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор вставляемого или переносимого элемента.
-    ///   - size: Размер элемента (запрошенный, D15).
-    ///   - cell: Желаемая ячейка.
-    ///   - placements: Текущий набор размещений.
-    ///   - columns: Число колонок.
-    /// - Returns: Новый набор размещений.
+    ///   - id: The identifier of the element being inserted or moved.
+    ///   - size: The element size (requested, D15).
+    ///   - cell: The desired cell.
+    ///   - placements: The current placement set.
+    ///   - columns: The number of columns.
+    /// - Returns: The new placement set.
     public static func inserting(
         id: AnyHashable,
         size: TesseraTileSize,
@@ -251,7 +251,7 @@ extension TesseraTileLayoutEngine {
         )
         let insertion = placementRect(moved, columns: columns)
 
-        // Остальные элементы в порядке чтения исходных позиций.
+        // The other elements in the reading order of their original positions.
         let others = placements.indices.filter { placements[$0].id != id }
         let order = others.sorted { lhs, rhs in
             let left = placements[lhs].cell
@@ -270,16 +270,16 @@ extension TesseraTileLayoutEngine {
             while true {
                 let blockers = placed.filter { $0.overlaps(rect) }
                 guard let lowest = blockers.map(\.bottom).max() else { break }
-                // Нижняя граница самого нижнего препятствия: выше уходить нельзя,
-                // потому что текущая строка уже пересекает его.
+                // The bottom edge of the lowest obstacle: we cannot go higher,
+                // because the current row already intersects it.
                 rect.row = lowest
             }
             newRows[index] = rect.row
             placed.append(rect)
         }
 
-        // Сборка в порядке входа: существующий элемент остаётся на индексе,
-        // новый — в конец.
+        // Assembly in input order: an existing element keeps its index,
+        // a new one goes to the end.
         var result: [TesseraTilePlacedItem] = []
         result.reserveCapacity(placements.count + 1)
         var didPlaceMoved = false
@@ -300,20 +300,20 @@ extension TesseraTileLayoutEngine {
         return result
     }
 
-    /// Меняет размер элемента на месте (E14.2, D31).
+    /// Resizes an element in place (D31).
     ///
-    /// Якорная ячейка остаётся; если `column + новая ширина > columns`, колонка
-    /// сдвигается влево (``clamped(cell:size:columns:)``). Рост разрешает
-    /// пересечения тем же каскадом выталкивания вниз, что и
-    /// ``inserting(id:size:at:into:columns:)``. Уменьшение ничего не двигает и
-    /// оставляет дыру. Неизвестный `id` или `columns <= 0` — вход без изменений.
+    /// The anchor cell stays; if `column + new width > columns`, the column
+    /// shifts left (``clamped(cell:size:columns:)``). Growth resolves
+    /// intersections with the same push-down cascade as
+    /// ``inserting(id:size:at:into:columns:)``. Shrinking moves nothing
+    /// and leaves a hole. An unknown `id` or `columns <= 0` returns the input unchanged.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор изменяемого элемента.
-    ///   - newSize: Новый размер.
-    ///   - placements: Текущий набор размещений.
-    ///   - columns: Число колонок.
-    /// - Returns: Новый набор размещений.
+    ///   - id: The identifier of the element being resized.
+    ///   - newSize: The new size.
+    ///   - placements: The current placement set.
+    ///   - columns: The number of columns.
+    /// - Returns: The new placement set.
     public static func resizing(
         id: AnyHashable,
         to newSize: TesseraTileSize,
@@ -326,32 +326,32 @@ extension TesseraTileLayoutEngine {
         return inserting(id: id, size: newSize, at: item.cell, into: placements, columns: columns)
     }
 
-    /// Убирает элемент из набора **без** репака — дыра остаётся (E14.2, D30).
+    /// Removes an element from the set **without** repacking — the hole stays (D30).
     ///
     /// - Parameters:
-    ///   - id: Идентификатор удаляемого элемента.
-    ///   - placements: Текущий набор размещений.
-    /// - Returns: Набор без элемента; остальные элементы не двигаются.
+    ///   - id: The identifier of the element being removed.
+    ///   - placements: The current placement set.
+    /// - Returns: The set without the element; the other elements do not move.
     public static func removing(id: AnyHashable, from placements: [TesseraTilePlacedItem]) -> [TesseraTilePlacedItem] {
         placements.filter { $0.id != id }
     }
 
-    /// Схлопывает пустые строки (E14.2, D31).
+    /// Collapses empty rows (D31).
     ///
-    /// Строка удаляется, только если её не покрывает **ни один** прямоугольник —
-    /// высокие плитки (2×2, 4×4) покрывают все свои строки. Каждый элемент
-    /// сдвигается вверх на число удалённых строк выше его верхней строки;
-    /// многострочные пустые промежутки (включая пустые строки в самом верху)
-    /// схлопываются целиком. Монотонное отображение строк сохраняет непрерывность
-    /// следа и не создаёт пересечений. Горизонтальные координаты не меняются.
+    /// A row is removed only if **no** rectangle covers it —
+    /// tall tiles (2×2, 4×4) cover all of their rows. Each element
+    /// moves up by the number of removed rows above its top row;
+    /// multi-row empty gaps (including empty rows at the very top)
+    /// collapse entirely. A monotonic row mapping preserves the continuity of
+    /// the footprint and creates no intersections. Horizontal coordinates do not change.
     ///
-    /// Вызывается слоем правки **только на drop**, не во время drag (D31).
+    /// Called by the edit layer **only on drop**, not during a drag (D31).
     ///
     /// - Parameters:
-    ///   - placements: Текущий набор размещений.
-    ///   - columns: Число колонок (нужно для ужатия размеров под узкую сетку:
-    ///     высота большой плитки на узкой сетке — по ``fittingSize(_:columns:)``).
-    /// - Returns: Набор без пустых строк; порядок массива сохранён.
+    ///   - placements: The current placement set.
+    ///   - columns: The number of columns (needed to shrink sizes to a narrow grid:
+    ///     the height of a large tile on a narrow grid comes from ``fittingSize(_:columns:)``).
+    /// - Returns: The set without empty rows; the array order is preserved.
     public static func collapsingEmptyRows(
         in placements: [TesseraTilePlacedItem],
         columns: Int
@@ -367,7 +367,7 @@ extension TesseraTileLayoutEngine {
             maxRow = max(maxRow, rect.bottom)
         }
 
-        // shift[r] — сколько пустых строк лежит строго выше строки r.
+        // shift[r] is the number of empty rows lying strictly above row r.
         var shift = Array(repeating: 0, count: maxRow + 1)
         var removed = 0
         for row in 0...maxRow {
@@ -384,21 +384,21 @@ extension TesseraTileLayoutEngine {
         }
     }
 
-    // MARK: Свободные ячейки
+    // MARK: Free cells
 
-    /// Ячейка «новая строка»: первая строка после последней занятой, колонка 0
-    /// (E14.2, D30).
+    /// The "new row" cell: the first row after the last occupied one, column 0
+    /// (D30).
     ///
-    /// Для новых закреплений и цели drop «снизу». Пустой набор даёт строку 0.
+    /// For new pins and the "bottom" drop target. An empty set gives row 0.
     ///
     /// - Parameters:
-    ///   - size: Размер размещаемого элемента (колонка 0 помещается всегда, размер
-    ///     учитывается для единообразия через ``clamped(cell:size:columns:)``).
-    ///   - columns: Число колонок.
-    ///   - placements: Текущий набор размещений.
-    ///   - excluding: Идентификатор элемента, который не учитывается (переносимый
-    ///     элемент освобождает своё место).
-    /// - Returns: Ячейка `(row: нижняя граница, column: 0)`.
+    ///   - size: The size of the element being placed (column 0 always fits; the size is
+    ///     taken into account for uniformity via ``clamped(cell:size:columns:)``).
+    ///   - columns: The number of columns.
+    ///   - placements: The current placement set.
+    ///   - excluding: The identifier of an element that is ignored (the element being moved
+    ///     frees its place).
+    /// - Returns: The cell `(row: bottom edge, column: 0)`.
     public static func newRowCell(
         size: TesseraTileSize,
         columns: Int,
@@ -414,20 +414,20 @@ extension TesseraTileLayoutEngine {
         return clamped(cell: TesseraTileGridPlacement(row: bottom, column: 0), size: size, columns: columns)
     }
 
-    /// Первая свободная ячейка «сверху-слева» под размер (first-fit) (E14.2).
+    /// The first free "top-left" cell for a size (first-fit).
     ///
-    /// Перебор строк сверху вниз, колонок слева направо; результат — первая
-    /// позиция, где весь прямоугольник свободен. Находится всегда: ниже последней
-    /// занятой строки место свободно. Нужна для случаев переноса, когда нужную
-    /// ячейку занять нельзя.
+    /// Rows are scanned top to bottom and columns left to right; the result is the first
+    /// position where the whole rectangle is free. One is always found: below the last
+    /// occupied row the space is free. Needed for move cases where the desired
+    /// cell cannot be taken.
     ///
     /// - Parameters:
-    ///   - size: Размер размещаемого элемента.
-    ///   - columns: Число колонок.
-    ///   - placements: Текущий набор размещений.
-    ///   - excluding: Идентификатор элемента, который не учитывается (переносимый
-    ///     элемент освобождает своё место).
-    /// - Returns: Ячейка левого верхнего угла.
+    ///   - size: The size of the element being placed.
+    ///   - columns: The number of columns.
+    ///   - placements: The current placement set.
+    ///   - excluding: The identifier of an element that is ignored (the element being moved
+    ///     frees its place).
+    /// - Returns: The top-left corner cell.
     public static func firstFreeCell(
         size: TesseraTileSize,
         columns: Int,
@@ -458,9 +458,9 @@ extension TesseraTileLayoutEngine {
         return TesseraTileGridPlacement(row: max(0, lastRow), column: 0)
     }
 
-    // MARK: Внутреннее
+    // MARK: Internals
 
-    /// След элемента: ячейка плюс размер, ужатый под узкую сетку.
+    /// The element footprint: the cell plus the size shrunk to a narrow grid.
     fileprivate static func placementRect(_ item: TesseraTilePlacedItem, columns: Int) -> PlacementRect {
         let fitted = fittingSize(item.size, columns: columns)
         return PlacementRect(

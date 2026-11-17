@@ -1,71 +1,71 @@
-// Модель секции пивота.
-// Проектный документ: docs/PIVOT-IOS-DESIGN.md — §3 «Архитектура»
-// (TesseraPivotSection — id, заголовок, фабрика контента) и §1 «Целевые UX-свойства»
-// (полноэкранные страницы, лента заголовков сверху).
+// The Pivot section model.
+// Design document: docs/PIVOT-IOS-DESIGN.md (architecture:
+// TesseraPivotSection is an id, a title, and a content factory; target UX properties:
+// full-screen pages, a header strip on top).
 
 #if canImport(UIKit)
 import UIKit
 import TesseraCore
 
-/// Описание одной секции пивота — страницы полноэкранного пейджера
-/// (docs/PIVOT-IOS-DESIGN.md §3).
+/// Describes a single pivot section: a page of the full-screen pager
+/// (see docs/PIVOT-IOS-DESIGN.md).
 ///
-/// Секции передаются в порядке чтения: первый элемент массива — первая
-/// страница для пользователя. В RTL порядок заголовков в ленте и направление
-/// свайпа зеркалятся компонентом, а не моделью (документ §8, «RTL»).
+/// Sections are passed in reading order: the first element of the array is the first
+/// page for the user. In RTL the order of headers in the strip and the swipe direction
+/// are mirrored by the component, not by the model (see the RTL notes in the design document).
 ///
-/// Контент задаётся через ``TesseraContentProviding`` из TesseraCore,
-/// поэтому секция не знает, UIKit это или SwiftUI-фасад: контроллер создаётся
-/// при первом запросе и переиспользуется хостингом при ленивой загрузке ±1
-/// (документ §7, «Ленивая загрузка страниц ±1»).
+/// Content is provided through ``TesseraContentProviding`` from TesseraCore,
+/// so the section does not know whether it is UIKit or a SwiftUI facade: the controller is created
+/// on the first request and reused by hosting during lazy ±1 loading
+/// (see lazy page loading in the design document).
 ///
-/// - Important: `id` должен быть уникален в пределах одного пивота: по нему
-///   хостинг переиспользует контроллер контента. Поведение при повторяющихся
-///   идентификаторах не определено.
-/// - Note: Все методы и свойства рассчитаны на главный поток: UI-состояние
-///   компонента не размазывается по модулям (docs/CORE-IOS-DESIGN.md §3).
+/// - Important: `id` must be unique within a single pivot: hosting uses it
+///   to reuse the content controller. Behavior with duplicate
+///   identifiers is undefined.
+/// - Note: All methods and properties are intended for the main thread: the component does not
+///   spread UI state across modules (docs/CORE-IOS-DESIGN.md).
 public struct TesseraPivotSection {
-    /// Стабильный идентификатор секции.
+    /// A stable section identifier.
     ///
-    /// Используется для переиспользования контроллера через
-    /// ``TesseraContentHosting``: пока идентификатор встречается в пивоте,
-    /// хостинг может вернуть тот же экземпляр контроллера
-    /// (docs/PIVOT-IOS-DESIGN.md §7, «Ленивая загрузка страниц ±1»).
+    /// Used to reuse the controller through
+    /// ``TesseraContentHosting``: as long as the identifier is present in the pivot,
+    /// hosting may return the same controller instance
+    /// (see lazy page loading in docs/PIVOT-IOS-DESIGN.md).
     public let id: AnyHashable
 
-    /// Заголовок секции в ленте.
+    /// The section title in the strip.
     ///
-    /// Текст для accessibility и озвучивания при смене секции строится из
-    /// него компонентом (документ §8, «VoiceOver»).
+    /// The component builds the accessibility text and the announcement on a section
+    /// change from it (see the VoiceOver notes in the design document).
     public let title: String
 
-    /// Поставщик контроллера контента секции.
+    /// The provider of the section's content controller.
     public let content: TesseraContentProviding
 
-    /// Создаёт секцию с готовым поставщиком контента.
+    /// Creates a section with a ready content provider.
     ///
     /// - Parameters:
-    ///   - id: Уникальный в пределах пивота идентификатор секции.
-    ///   - title: Заголовок секции.
-    ///   - content: Поставщик `UIViewController` (UIKit или SwiftUI-фасад).
+    ///   - id: A section identifier unique within the pivot.
+    ///   - title: The section title.
+    ///   - content: A `UIViewController` provider (UIKit or a SwiftUI facade).
     public init(id: AnyHashable, title: String, content: TesseraContentProviding) {
         self.id = id
         self.title = title
         self.content = content
     }
 
-    /// Создаёт секцию поверх фабрики UIKit-контроллера.
+    /// Creates a section on top of a UIKit controller factory.
     ///
-    /// Аналог convenience-инициализатора: структура не поддерживает
-    /// `convenience init`, поэтому это обычный дополнительный инициализатор.
-    /// Замыкание оборачивается в ``TesseraViewControllerProvider`` и вызывается
-    /// лениво — при первом запросе страницы пивотом
-    /// (docs/PIVOT-IOS-DESIGN.md §7, «Ленивая загрузка страниц ±1»).
+    /// The counterpart of a convenience initializer: a struct does not support
+    /// `convenience init`, so this is an ordinary additional initializer.
+    /// The closure is wrapped in ``TesseraViewControllerProvider`` and called
+    /// lazily, when the pivot first requests the page
+    /// (see lazy page loading in docs/PIVOT-IOS-DESIGN.md).
     ///
     /// - Parameters:
-    ///   - id: Уникальный в пределах пивота идентификатор секции.
-    ///   - title: Заголовок секции.
-    ///   - makeContent: Фабрика контроллера контента; вызывается на главном потоке.
+    ///   - id: A section identifier unique within the pivot.
+    ///   - title: The section title.
+    ///   - makeContent: The content controller factory; called on the main thread.
     public init(
         id: AnyHashable,
         title: String,

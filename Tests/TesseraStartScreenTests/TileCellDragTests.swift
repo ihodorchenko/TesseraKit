@@ -2,22 +2,22 @@
 //  TileCellDragTests.swift
 //  TesseraStartScreenTests
 //
-//  Drag по ячейкам: цель — клетка под пальцем, превью от базовых размещений,
-//  фиксация drop'а операциями `TesseraTileStore` по ячейкам (E14.5, 13.11.2026).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации
-//  (E14)», п. 53; решения D20, D21, D22, D30–D33 в docs/STATE.md.
+//  Cell-based drag: the target is the cell under the finger, the preview is computed from base placements,
+//  and the drop is committed by `TesseraTileStore` cell operations.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
+//  decisions D20, D21, D22, D30–D33 in docs/STATE.md.
 //
-//  Приёмочные сценарии пользователя:
-//  - A: ярлык, вынесенный из панели папки (или протащенный по сетке) и
-//    отпущенный над ПУСТОЙ клеткой, ложится ровно в неё, а не в самую верхнюю дыру;
-//  - B: пока палец над центром плитки/папки (`.group`/`.folder`), превью — базовая
-//    раскладка: цель остаётся под пальцем, подсветка рисуется на ней;
-//  - C: папка из ярлыка 1×1 встаёт на ячейку цели размером 2×2, соседи выталкиваются
-//    вниз, а не отправляются далеко вниз со случайными дырами.
+//  User acceptance scenarios:
+//  - A: a tile taken out of a folder panel (or dragged across the grid) and
+//    released over an EMPTY cell lands exactly in it, not in the topmost hole;
+//  - B: while the finger is over the center of a tile/folder (`.group`/`.folder`), the preview is the base
+//    layout: the target stays under the finger and the highlight is drawn on it;
+//  - C: a folder made of a 1×1 tile takes the target's 2×2 cell, neighbors are pushed
+//    down instead of being sent far down with random holes.
 //
-//  Раскладки точные: файл схемы версии 2 с дырами (`TileStoreCellFixture`) и сетка
-//  из `TesseraTileStore.snapshot(columns:)`, 4 колонки. Без `sleep`: завершение —
-//  прокруткой run loop (`waitUntil`).
+//  The layouts are exact: a version 2 schema file with holes (`TileStoreCellFixture`) and a grid
+//  from `TesseraTileStore.snapshot(columns:)`, 4 columns. No `sleep`: completion is awaited by
+//  spinning the run loop (`waitUntil`).
 //
 
 #if canImport(UIKit)
@@ -28,24 +28,24 @@ import XCTest
 
 final class TileCellDragTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Делегат-рекордер событий координатора.
+    /// A delegate that records coordinator events.
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
-        /// Перестановки по сетке.
+        /// Reorders within the grid.
         var moves: [(id: AnyHashable, cell: TesseraTileGridPlacement)] = []
 
-        /// Вынос/перенос между папками.
+        /// Take-out/move between folders.
         var folderMoves: [(id: AnyHashable, folder: AnyHashable?, cell: TesseraTileGridPlacement?)] = []
 
-        /// Созданные папки.
+        /// Created folders.
         var createdFolders: [TesseraTileFolder] = []
 
-        /// Добавления в папку.
+        /// Additions to a folder.
         var additions: [(id: AnyHashable, folder: AnyHashable)] = []
 
-        /// Отказы функции одобрения.
+        /// Rejections by the approval function.
         var failures: [TesseraTileGroupingAction] = []
 
         func tileEditCoordinator(
@@ -87,12 +87,12 @@ final class TileCellDragTests: XCTestCase {
         }
     }
 
-    /// Ячейка в короткой записи.
+    /// A cell in short notation.
     private func at(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
         TesseraTileGridPlacement(row: row, column: column)
     }
 
-    /// Шесть малых плиток: `a b c d` в строке 0, `e f` в строке 1.
+    /// Six small tiles: `a b c d` in row 0, `e f` in row 1.
     private func makeSixTilesHost(
         configuration: TesseraTileEditConfiguration = TesseraTileEditConfiguration(
             mergeHoverDuration: 0.05,
@@ -113,7 +113,7 @@ final class TileCellDragTests: XCTestCase {
         )
     }
 
-    /// Сравнивает рамки с точностью до долей точки (пиксельная сетка раскладки).
+    /// Compares frames to within fractions of a point (the layout's pixel grid).
     private func assertFrame(
         _ actual: CGRect?,
         _ expected: CGRect?,
@@ -122,7 +122,7 @@ final class TileCellDragTests: XCTestCase {
         line: UInt = #line
     ) {
         guard let actual, let expected else {
-            return XCTFail("Нет рамки: \(message)", file: file, line: line)
+            return XCTFail("No frame: \(message)", file: file, line: line)
         }
         XCTAssertEqual(actual.minX, expected.minX, accuracy: 0.5, message, file: file, line: line)
         XCTAssertEqual(actual.minY, expected.minY, accuracy: 0.5, message, file: file, line: line)
@@ -130,19 +130,19 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertEqual(actual.height, expected.height, accuracy: 0.5, message, file: file, line: line)
     }
 
-    /// Ждёт завершения drop'а: сессии нет, снимок убран, сетка совпала с моделью.
+    /// Waits for the drop to finish: no session, the snapshot view is gone, the grid matches the model.
     private func settle(_ host: TesseraTestDragHost, _ id: AnyHashable, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil }, "Сессия завершена", file: file, line: line)
-        XCTAssertTrue(host.waitForDragCleanup(id), "Ячейка снова видима", file: file, line: line)
+        XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil }, "Session finished", file: file, line: line)
+        XCTAssertTrue(host.waitForDragCleanup(id), "The cell is visible again", file: file, line: line)
         XCTAssertTrue(
             host.waitUntil { host.gridCells == host.store.placements(forColumns: 4) },
-            "Сетка показывает ячейки модели",
+            "The grid shows the model cells",
             file: file,
             line: line
         )
     }
 
-    /// Входит в edit, раскрывает панель папки и берёт иконку панели (E11.1).
+    /// Enters edit mode, expands a folder panel and takes a panel icon.
     private func startPanelDrag(
         _ host: TesseraTestDragHost,
         folderID: AnyHashable,
@@ -155,16 +155,16 @@ final class TileCellDragTests: XCTestCase {
         let panel = try XCTUnwrap(host.host.panelCell(folderID: folderID))
         let icon = try XCTUnwrap(panel.shortcutCells[iconIndex] as TesseraTileCell?)
         let iconFrame = try XCTUnwrap(icon.superview).convert(icon.frame, to: host.host.grid)
-        // E16.1: вход сразу в вынос (долгое нажатие по панели начинает перестановку).
+        // Enter the take-out right away (a long press on the panel starts a reorder).
         host.coordinator.startDragFromPanel(at: CGPoint(x: iconFrame.midX, y: iconFrame.midY))
         XCTAssertTrue(host.coordinator.isDragging)
     }
 
-    // MARK: - Сценарий A: пустая клетка, а не самая верхняя дыра
+    // MARK: - Scenario A: an empty cell, not the topmost hole
 
-    /// Ярлык из панели папки, отпущенный над пустой областью справа от папки 2×2,
-    /// когда следующая плитка широкая: ложится **ровно в клетку под пальцем**
-    /// (1, 3), а не в самую верхнюю дыру (0, 2).
+    /// A tile from a folder panel released over the empty area to the right of a 2×2 folder
+    /// when the next tile is wide: lands **exactly in the cell under the finger**
+    /// (1, 3), not in the topmost hole (0, 2).
     func testScenarioAPanelTileReleasedOverEmptyCellNextToFolderLandsExactlyThere() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("w", .wide, 2, 0)],
@@ -180,21 +180,21 @@ final class TileCellDragTests: XCTestCase {
         try startPanelDrag(host, folderID: "F", iconIndex: 2)
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 1, column: 3)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 3)), "Клетка под пальцем")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 3)), "The cell under the finger")
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "f3")
 
-        XCTAssertEqual(host.store.placement(of: "f3"), at(1, 3), "Ровно в клетку под пальцем")
-        XCTAssertNotEqual(host.store.placement(of: "f3"), at(0, 2), "Не в верхнюю дыру")
-        XCTAssertEqual(host.store.placement(of: "F"), at(0, 0), "Папка на месте")
-        XCTAssertEqual(host.store.placement(of: "w"), at(2, 0), "Широкая плитка на месте")
+        XCTAssertEqual(host.store.placement(of: "f3"), at(1, 3), "Exactly in the cell under the finger")
+        XCTAssertNotEqual(host.store.placement(of: "f3"), at(0, 2), "Not in the topmost hole")
+        XCTAssertEqual(host.store.placement(of: "F"), at(0, 0), "The folder stays in place")
+        XCTAssertEqual(host.store.placement(of: "w"), at(2, 0), "The wide tile stays in place")
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["f1", "f2"] as [AnyHashable])
         XCTAssertEqual(recorder.folderMoves.count, 1)
     }
 
-    /// То же для drag по сетке: плитка, отпущенная над пустой клеткой (1, 3),
-    /// ложится в неё, а не «подтягивается» в дыру (0, 3) выше.
+    /// The same for a drag across the grid: a tile released over the empty cell (1, 3)
+    /// lands in it and is not "pulled up" into the hole (0, 3) above.
     func testScenarioAGridTileReleasedOverEmptyCellLandsExactlyThere() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -219,34 +219,34 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertEqual(host.store.placement(of: "c"), at(0, 2))
         XCTAssertFalse(
             host.store.placements(forColumns: 4).values.contains(at(0, 3)),
-            "Дыра (0, 3) осталась пустой: обратного заполнения нет"
+            "The hole (0, 3) stayed empty: there is no backfill"
         )
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("d"))
     }
 
-    // MARK: - Сценарий B: цель слияния остаётся под пальцем
+    // MARK: - Scenario B: the merge target stays under the finger
 
-    /// Над центром плитки (`.group`) превью — базовая раскладка: плитка, которую
-    /// раньше сдвинуло превью перестановки, возвращается под палец, подсветка
-    /// рисуется на её базовой рамке.
+    /// Over the center of a tile (`.group`) the preview is the base layout: a tile that
+    /// the reorder preview had moved earlier returns under the finger, and the highlight
+    /// is drawn on its base frame.
     func testScenarioBGroupTargetStaysUnderFingerAndIsHighlighted() throws {
         let host = try makeSixTilesHost()
         let baseB = try XCTUnwrap(host.host.grid.frame(forItemID: "b"))
         let baseTable = try XCTUnwrap(host.gridCells)
 
         XCTAssertTrue(host.startDrag("a"))
-        // Над краем «c»: превью размещения — «c» вытолкнута вниз.
+        // Over the edge of "c": the placement preview pushes "c" down.
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 2, fx: 0.1)))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)))
-        XCTAssertNotEqual(host.gridCells, baseTable, "Превью сдвинуло раскладку")
+        XCTAssertNotEqual(host.gridCells, baseTable, "The preview shifted the layout")
 
-        // Над центром «b»: превью — база целиком, «b» под пальцем.
+        // Over the center of "b": the preview is the whole base, "b" is under the finger.
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 1)))
         let session = try XCTUnwrap(host.coordinator.dragSession)
         XCTAssertEqual(session.hover, .group("b"))
-        XCTAssertEqual(session.previewPlacements, session.basePlacements, "Нет залипшего превью")
-        XCTAssertEqual(host.gridCells, baseTable, "Сетка показывает базовые ячейки")
-        assertFrame(host.host.grid.frame(forItemID: "b"), baseB, "Цель не «убегает»")
+        XCTAssertEqual(session.previewPlacements, session.basePlacements, "No stale preview")
+        XCTAssertEqual(host.gridCells, baseTable, "The grid shows the base cells")
+        assertFrame(host.host.grid.frame(forItemID: "b"), baseB, "The target does not run away")
         let highlight = try XCTUnwrap(
             host.host.grid.subviews.compactMap { $0 as? TesseraTileDropHighlightView }.first { !$0.isHidden }
         )
@@ -257,8 +257,8 @@ final class TileCellDragTests: XCTestCase {
         settle(host, "a")
     }
 
-    /// То же для центра папки (`.folder`): цель под пальцем, после удержания
-    /// drop добавляет ярлык в папку, ячейка ярлыка остаётся дырой.
+    /// The same for the center of a folder (`.folder`): the target is under the finger, after the hold
+    /// the drop adds the tile to the folder, and the tile's cell is left as a hole.
     func testScenarioBFolderTargetStaysUnderFingerAndDropAddsTile() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -276,7 +276,7 @@ final class TileCellDragTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 1, column: 1, fx: 0.1)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 1)), "Край папки — ячейка папки")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 1)), "The folder edge is the folder cell")
         XCTAssertNotEqual(host.gridCells, baseTable)
 
         host.coordinator.updateDrag(to: CGPoint(x: baseF.midX, y: baseF.midY))
@@ -289,15 +289,15 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { recorder.additions.count == 1 })
         settle(host, "F")
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["f1", "f2", "a"] as [AnyHashable])
-        XCTAssertEqual(host.store.placement(of: "F"), at(1, 1), "Папка на месте")
-        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "Ячейка «a» — дыра")
+        XCTAssertEqual(host.store.placement(of: "F"), at(1, 1), "The folder stays in place")
+        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "The cell of \"a\" is a hole")
     }
 
-    // MARK: - Сценарий C: папка 2×2 на ячейке цели, соседи вниз
+    // MARK: - Scenario C: a 2×2 folder on the target cell, neighbors pushed down
 
-    /// Слияние двух малых ярлыков: папка 2×2 встаёт на ячейку цели «b» (0, 1),
-    /// накрытые соседи выталкиваются вниз каскадом (D31), ячейка «a» остаётся
-    /// дырой, а не «папка улетает далеко вниз со случайными дырами».
+    /// Merging two small tiles: a 2×2 folder takes the target cell of "b" (0, 1),
+    /// the covered neighbors are pushed down in a cascade (D31), the cell of "a" stays
+    /// a hole instead of "the folder flies far down with random holes".
     func testScenarioCFolderFromSmallTileStandsOnTargetCellAndPushesNeighborsDown() throws {
         let host = try makeSixTilesHost()
         let recorder = Recorder()
@@ -313,23 +313,23 @@ final class TileCellDragTests: XCTestCase {
         let folder = try XCTUnwrap(recorder.createdFolders.first)
         settle(host, folder.id)
 
-        XCTAssertEqual(folder.size, .medium, "Папка всегда 2×2 (D20)")
+        XCTAssertEqual(folder.size, .medium, "The folder is always 2×2 (D20)")
         XCTAssertEqual(folder.tiles.map { $0.id }, ["b", "a"] as [AnyHashable])
-        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 1), "На ячейке цели")
-        XCTAssertEqual(host.store.placement(of: "c"), at(2, 2), "«c» вытолкнута вниз (накрыта папкой)")
-        XCTAssertEqual(host.store.placement(of: "f"), at(2, 1), "«f» вытолкнута вниз (накрыта папкой)")
-        XCTAssertEqual(host.store.placement(of: "d"), at(0, 3), "Не затронутые — на местах")
-        XCTAssertEqual(host.store.placement(of: "e"), at(1, 0), "Не затронутые — на местах")
-        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "Ячейка «a» — дыра")
-        // Живое подключение: рамки сетки — по ячейкам модели.
+        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 1), "On the target cell")
+        XCTAssertEqual(host.store.placement(of: "c"), at(2, 2), "\"c\" is pushed down (covered by the folder)")
+        XCTAssertEqual(host.store.placement(of: "f"), at(2, 1), "\"f\" is pushed down (covered by the folder)")
+        XCTAssertEqual(host.store.placement(of: "d"), at(0, 3), "Unaffected tiles stay in place")
+        XCTAssertEqual(host.store.placement(of: "e"), at(1, 0), "Unaffected tiles stay in place")
+        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "The cell of \"a\" is a hole")
+        // Live connection: grid frames follow the model cells.
         let folderFrame = try XCTUnwrap(host.host.grid.frame(forItemID: folder.id))
-        assertFrame(folderFrame, host.cellFrame(row: 0, column: 1, size: .medium), "Рамки — по ячейкам модели")
+        assertFrame(folderFrame, host.cellFrame(row: 0, column: 1, size: .medium), "Frames follow the model cells")
     }
 
-    // MARK: - Хит-тест: клетка под пальцем
+    // MARK: - Hit test: the cell under the finger
 
-    /// Край широкой плитки-цели — её ячейка (не клетка под пальцем): ярлык встанет
-    /// на её место, широкая уйдёт вниз.
+    /// The edge of a wide target tile is its cell (not the cell under the finger): the tile
+    /// takes its place and the wide one goes down.
     func testWideTargetEdgeResolvesToItsOriginCell() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -338,41 +338,41 @@ final class TileCellDragTests: XCTestCase {
             ]
         )
         XCTAssertTrue(host.startDrag("x"))
-        // Правая часть широкой плитки (клетка (0, 3)), у самого края.
+        // The right part of the wide tile (cell (0, 3)), at the very edge.
         let frame = try XCTUnwrap(host.host.grid.frame(forItemID: "w"))
         host.coordinator.updateDrag(to: CGPoint(x: frame.maxX - 3, y: frame.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 0)), "Ячейка элемента-цели")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 0)), "The cell of the target item")
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "x")
         XCTAssertEqual(host.store.placement(of: "x"), at(0, 0))
-        XCTAssertEqual(host.store.placement(of: "w"), at(1, 0), "Широкая вытолкнута вниз")
+        XCTAssertEqual(host.store.placement(of: "w"), at(1, 0), "The wide tile is pushed down")
     }
 
-    /// Пустая клетка — цель «эта клетка»; собственная базовая ячейка цели не даёт.
+    /// An empty cell is the "this cell" target; the target's own base cell does not count.
     func testEmptyCellIsTargetAndOwnBaseCellIsNot() throws {
         let host = try makeSixTilesHost()
         XCTAssertTrue(host.startDrag("e"))
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 2, column: 2)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .newRow, "Ниже последней занятой строки")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .newRow, "Below the last occupied row")
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 1, column: 3)))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 3)))
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 1, column: 0, fx: 0.4, fy: 0.6)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.none, "Своя базовая ячейка")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, HoverTarget.none, "Its own base cell")
         let session = try XCTUnwrap(host.coordinator.dragSession)
-        XCTAssertEqual(session.previewPlacements, session.basePlacements, "Превью — база")
+        XCTAssertEqual(session.previewPlacements, session.basePlacements, "The preview is the base")
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "e")
-        XCTAssertEqual(host.store.placement(of: "e"), at(1, 0), "No-op: на месте")
+        XCTAssertEqual(host.store.placement(of: "e"), at(1, 0), "No-op: stays in place")
         XCTAssertEqual(host.store.placements(forColumns: 4).count, 6)
     }
 
-    /// Палец ниже последней занятой строки — цель «новая строка»: drop кладёт
-    /// элемент в колонку 0 новой строки (`moveItemToNewRow`).
+    /// A finger below the last occupied row is the "new row" target: the drop puts
+    /// the item in column 0 of the new row (`moveItemToNewRow`).
     func testBelowLastRowDropsIntoNewRow() throws {
         let host = try makeSixTilesHost()
         let recorder = Recorder()
@@ -382,17 +382,17 @@ final class TileCellDragTests: XCTestCase {
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 3, column: 3)))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .newRow)
         let previewFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "b"))
-        assertFrame(previewFrame, host.cellFrame(row: 2, column: 0), "Превью — начало новой строки")
+        assertFrame(previewFrame, host.cellFrame(row: 2, column: 0), "The preview is the start of the new row")
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "b")
         XCTAssertEqual(host.store.placement(of: "b"), at(2, 0))
-        XCTAssertEqual(host.store.placement(of: "a"), at(0, 0), "Остальные на местах, дыра (0, 1) осталась")
+        XCTAssertEqual(host.store.placement(of: "a"), at(0, 0), "The rest stay in place, the hole (0, 1) remains")
         XCTAssertEqual(recorder.moves.first?.id, AnyHashable("b"))
     }
 
-    /// У правого края ячейка ограничивается холстом: клетка (0, 3) для 2×2
-    /// превращается в (0, 2) — и в превью, и на drop; цель хранит клетку пальца.
+    /// At the right edge a cell is limited by the canvas: cell (0, 3) for a 2×2
+    /// becomes (0, 2), both in the preview and on drop; the target keeps the finger's cell.
     func testRightEdgeCellIsClampedByPreviewAndDrop() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -402,23 +402,23 @@ final class TileCellDragTests: XCTestCase {
         )
         XCTAssertTrue(host.startDrag("m"))
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 3)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 3)), "Клетка пальца без ограничения")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 3)), "The finger's cell without clamping")
         assertFrame(
             host.host.grid.frame(forItemID: "m"),
             host.cellFrame(row: 0, column: 2, size: .medium),
-            "Превью — на ограниченной ячейке"
+            "The preview is on the clamped cell"
         )
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "m")
         XCTAssertEqual(host.store.placement(of: "m"), at(0, 2))
         XCTAssertEqual(host.store.placement(of: "a"), at(0, 0))
-        // Строки 2–3 опустели и схлопнулись (на drop), строка 1 покрыта «m».
+        // Rows 2–3 became empty and collapsed (on drop), row 1 is covered by "m".
         XCTAssertEqual(host.store.placements(forColumns: 4).count, 2)
     }
 
-    /// RTL: клетка пальца считается в логических координатах — край занятой
-    /// клетки даёт её логическую ячейку, пустая клетка — логические строку и колонку.
+    /// RTL: the finger's cell is computed in logical coordinates: the edge of an occupied
+    /// cell gives its logical cell, an empty cell gives the logical row and column.
     func testRightToLeftResolvesLogicalCells() throws {
         let host = try makeSixTilesHost()
         host.host.grid.semanticContentAttribute = .forceRightToLeft
@@ -426,13 +426,13 @@ final class TileCellDragTests: XCTestCase {
         host.host.layout()
         let c = try XCTUnwrap(host.host.grid.frame(forItemID: "c"))
         let b = try XCTUnwrap(host.host.grid.frame(forItemID: "b"))
-        XCTAssertLessThan(c.minX, b.minX, "RTL: «c» левее «b»")
+        XCTAssertLessThan(c.minX, b.minX, "RTL: \"c\" is to the left of \"b\"")
 
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: CGPoint(x: c.minX + 3, y: c.midY))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Край «c»: логическая ячейка (0, 2)")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Edge of \"c\": logical cell (0, 2)")
 
-        // Пустая клетка (1, 3): на экране левее «f» (логическая колонка 1) на два шага.
+        // The empty cell (1, 3): on screen two steps to the left of "f" (logical column 1).
         let f = try XCTUnwrap(host.host.grid.frame(forItemID: "f"))
         let pitch = b.minX - c.minX
         host.coordinator.updateDrag(to: CGPoint(x: f.midX - 2 * pitch, y: f.midY))
@@ -442,8 +442,8 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertEqual(host.store.placement(of: "a"), at(1, 3))
     }
 
-    /// Папка, брошенная на центр другой папки, не сливается (вложенности нет) —
-    /// это размещение на её ячейку.
+    /// A folder dropped on the center of another folder does not merge (no nesting);
+    /// it is a placement on its cell.
     func testFolderOverFolderCenterIsPlacementNotMerge() throws {
         let host = try TesseraTestDragHost(
             cells: [],
@@ -459,12 +459,12 @@ final class TileCellDragTests: XCTestCase {
         settle(host, "F1")
     }
 
-    // MARK: - Превью от базы
+    // MARK: - Preview from the base
 
-    /// Превью считается от базовых размещений, а не от предыдущего превью: после
-    /// «b» → «c» сдвинута только «c», а «b» вернулась на место; возврат на свою
-    /// ячейку даёт базу целиком. Порядок элементов снимка сетки следует за
-    /// ячейками превью (E14.7), хост об изменениях не уведомляется.
+    /// The preview is computed from the base placements, not from the previous preview: after
+    /// "b" -> "c" only "c" is shifted and "b" returned to its place; returning to its own
+    /// cell gives the whole base. The order of the grid snapshot items follows the
+    /// preview cells, and the host is not notified of the changes.
     func testPreviewIsComputedFromBaseWithoutAccumulation() throws {
         let host = try makeSixTilesHost()
         var notifications = 0
@@ -474,32 +474,32 @@ final class TileCellDragTests: XCTestCase {
 
         XCTAssertTrue(host.startDrag("a"))
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 1, fx: 0.1)))
-        XCTAssertEqual(host.gridCells?["b"], at(1, 1), "«b» вытолкнута вниз, «f» ниже каскадом")
+        XCTAssertEqual(host.gridCells?["b"], at(1, 1), "\"b\" is pushed down, \"f\" below it in a cascade")
         XCTAssertEqual(host.gridCells?["f"], at(2, 1))
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 2, fx: 0.1)))
-        XCTAssertEqual(host.gridCells?["b"], at(0, 1), "«b» вернулась: сдвиги не накапливаются")
-        XCTAssertEqual(host.gridCells?["f"], at(1, 1), "«f» вернулась")
-        XCTAssertEqual(host.gridCells?["c"], at(1, 2), "Сдвинута только цель")
-        XCTAssertEqual(host.gridCells?["a"], at(0, 2), "Ярлык на ячейке цели")
+        XCTAssertEqual(host.gridCells?["b"], at(0, 1), "\"b\" returned: shifts do not accumulate")
+        XCTAssertEqual(host.gridCells?["f"], at(1, 1), "\"f\" returned")
+        XCTAssertEqual(host.gridCells?["c"], at(1, 2), "Only the target is shifted")
+        XCTAssertEqual(host.gridCells?["a"], at(0, 2), "The tile is on the target cell")
         XCTAssertEqual(
             host.gridIDs,
             ["b", "a", "d", "e", "f", "c"] as [AnyHashable],
-            "Порядок снимка — порядок чтения ячеек превью (E14.7)"
+            "The snapshot order is the reading order of the preview cells"
         )
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 0)))
-        XCTAssertEqual(host.gridCells, baseCells, "Возврат на свою ячейку — база")
-        XCTAssertEqual(host.gridIDs, baseOrder, "Порядок снимка — база")
-        XCTAssertEqual(notifications, 0, "Хранилище во время drag не пишется")
+        XCTAssertEqual(host.gridCells, baseCells, "Returning to its own cell gives the base")
+        XCTAssertEqual(host.gridIDs, baseOrder, "The snapshot order is the base")
+        XCTAssertEqual(notifications, 0, "The store is not written during the drag")
         XCTAssertEqual(host.store.placements(forColumns: 4), baseCells)
 
         host.coordinator.finishDrag(commit: false)
         settle(host, "a")
     }
 
-    /// Пустые строки во время drag не схлопываются (D31): плитки ниже не
-    /// поднимаются, пока элемент не брошен; на drop строка схлопывается.
+    /// Empty rows do not collapse during a drag (D31): tiles below do not
+    /// move up until the item is dropped; on drop the row collapses.
     func testEmptyRowsAreNotCollapsedDuringDragButCollapseOnDrop() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -511,18 +511,18 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertTrue(host.startDrag("c"))
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 3)))
         XCTAssertEqual(host.gridCells?["c"], at(0, 3))
-        XCTAssertEqual(host.gridCells?["d"], at(2, 0), "Строка 1 опустела, но во время drag не схлопывается")
+        XCTAssertEqual(host.gridCells?["d"], at(2, 0), "Row 1 became empty but does not collapse during the drag")
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "c")
         XCTAssertEqual(host.store.placement(of: "c"), at(0, 3))
-        XCTAssertEqual(host.store.placement(of: "d"), at(1, 0), "Пустая строка схлопнулась на drop")
+        XCTAssertEqual(host.store.placement(of: "d"), at(1, 0), "The empty row collapsed on drop")
     }
 
-    // MARK: - Фиксация drop'а по видам цели
+    // MARK: - Committing the drop by target kind
 
-    /// Без выдержанного удержания центр плитки — no-op: ячейки модели и делегат
-    /// не затронуты, сетка возвращается к модели.
+    /// Without a sustained hold the tile center is a no-op: the model cells and the delegate
+    /// are untouched, and the grid returns to the model.
     func testGroupWithoutHoldDropIsNoOp() throws {
         let host = try makeSixTilesHost(
             configuration: TesseraTileEditConfiguration(magnetSnapRadius: 0)
@@ -542,8 +542,8 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertTrue(recorder.moves.isEmpty)
     }
 
-    /// Отказ хоста на слияние: модель как до drop'а, делегат получает
-    /// `didFailGrouping`, сетка возвращается к модели.
+    /// The host rejects the merge: the model is as before the drop, the delegate receives
+    /// `didFailGrouping`, and the grid returns to the model.
     func testGroupDeniedByApprovalKeepsModelAndReportsFailure() throws {
         let host = try makeSixTilesHost()
         let recorder = Recorder()
@@ -562,8 +562,8 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertTrue(host.folders.isEmpty)
     }
 
-    /// Отмена (и выход из edit) посреди drag возвращает базовую раскладку и не
-    /// пишет в модель.
+    /// Cancelling (and leaving edit mode) in the middle of a drag returns the base layout and does not
+    /// write to the model.
     func testCancelRestoresBaseAndLeavesModelUntouched() throws {
         let host = try makeSixTilesHost()
         let recorder = Recorder()
@@ -590,8 +590,8 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertEqual(host.store.placements(forColumns: 4), before)
     }
 
-    /// Ярлык из панели на центр обычного ярлыка — не слияние, а вынос на ячейку
-    /// этого ярлыка (он вытолкнут вниз); drop на центр родной папки — no-op.
+    /// A tile from the panel onto the center of a regular tile is not a merge but a take-out onto the cell
+    /// of that tile (it is pushed down); a drop on the center of its own folder is a no-op.
     func testPanelTileOnPlainTileCenterIsPlacementAndOnSourceFolderIsNoOp() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("t", .small, 0, 2)],
@@ -601,11 +601,11 @@ final class TileCellDragTests: XCTestCase {
         )
         try startPanelDrag(host, folderID: "F", iconIndex: 0)
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 2)))
-        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "Центр ярлыка — не группа")
+        XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(0, 2)), "The tile center is not a group")
         host.coordinator.finishDrag(commit: true)
         settle(host, "f1")
         XCTAssertEqual(host.store.placement(of: "f1"), at(0, 2))
-        XCTAssertEqual(host.store.placement(of: "t"), at(1, 2), "Вытолкнут вниз")
+        XCTAssertEqual(host.store.placement(of: "t"), at(1, 2), "Pushed down")
 
         let host2 = try TesseraTestDragHost(
             cells: [],
@@ -621,10 +621,10 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertEqual(host2.folders.first?.tiles.map { $0.id }, ["f1", "f2"] as [AnyHashable])
     }
 
-    /// Ярлык из панели в новую строку (D45): в папке два ярлыка, она распускается,
-    /// оставшийся (large) встаёт на её ячейку со своим размером; превью «новой
-    /// строки» считается уже с ним, как и операция хранилища, поэтому ярлык ложится
-    /// ровно туда, где его показало превью (раньше папка из одного ярлыка исчезала).
+    /// A tile from the panel into a new row (D45): the folder has two tiles, it is dissolved,
+    /// the remaining one (large) takes its cell with its own size; the "new row"
+    /// preview is computed with it already, like the store operation, so the tile lands
+    /// exactly where the preview showed it (a folder with a single tile used to vanish).
     func testPanelTileToNewRowDissolvesFolderAndLandsWherePreviewShowed() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 0, 3)],
@@ -637,23 +637,23 @@ final class TileCellDragTests: XCTestCase {
         host.coordinator.updateDrag(to: CGPoint(x: bounds.midX, y: bounds.maxY - 20))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .newRow)
         let previewFrame = try XCTUnwrap(host.host.grid.frame(forItemID: "f1"))
-        XCTAssertNotNil(host.host.grid.frame(forItemID: "f2"), "Превью показало распад: оставшийся ярлык на месте папки")
-        XCTAssertNil(host.host.grid.frame(forItemID: "F"), "Папки в превью нет")
+        XCTAssertNotNil(host.host.grid.frame(forItemID: "f2"), "The preview showed the dissolution: the remaining tile is in the folder's place")
+        XCTAssertNil(host.host.grid.frame(forItemID: "F"), "There is no folder in the preview")
         host.coordinator.finishDrag(commit: true)
         settle(host, "f1")
 
-        XCTAssertTrue(host.folders.isEmpty, "Папка распалась")
+        XCTAssertTrue(host.folders.isEmpty, "The folder was dissolved")
         XCTAssertEqual(host.store.placement(of: "a"), at(0, 3))
-        XCTAssertEqual(host.store.placement(of: "f2"), at(1, 0), "Оставшийся ярлык — на ячейке папки")
-        XCTAssertEqual(host.store.snapshot().item(withID: "f2")?.size, .large, "со своим размером")
-        XCTAssertEqual(host.store.placement(of: "f1"), at(5, 0), "Новая строка считается с оставшимся ярлыком")
-        assertFrame(host.host.grid.frame(forItemID: "f1"), previewFrame, "Ярлык лёг туда, где показало превью")
+        XCTAssertEqual(host.store.placement(of: "f2"), at(1, 0), "The remaining tile is on the folder's cell")
+        XCTAssertEqual(host.store.snapshot().item(withID: "f2")?.size, .large, "with its own size")
+        XCTAssertEqual(host.store.placement(of: "f1"), at(5, 0), "The new row is computed with the remaining tile")
+        assertFrame(host.host.grid.frame(forItemID: "f1"), previewFrame, "The tile landed where the preview showed")
     }
 
-    // MARK: - Внешние изменения и магнит
+    // MARK: - External changes and the magnet
 
-    /// Внешняя правка, которая только передвинула плитки (состав тот же), делает
-    /// базу устаревшей: drag безопасно отменяется (E10.5-B1, E14.5).
+    /// An external edit that only moved tiles (same composition) makes
+    /// the base stale: the drag is safely cancelled.
     func testExternalCellOnlyChangeCancelsDrag() throws {
         let host = try makeSixTilesHost()
         XCTAssertTrue(host.startDrag("a"))
@@ -663,14 +663,14 @@ final class TileCellDragTests: XCTestCase {
         XCTAssertTrue(host.store.moveItem("f", toCell: at(3, 3), columns: 4))
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 0, column: 3, fx: 0.1)))
 
-        XCTAssertFalse(host.coordinator.isDragging, "Drag отменён")
+        XCTAssertFalse(host.coordinator.isDragging, "The drag was cancelled")
         XCTAssertTrue(host.waitUntil { host.gridCells == host.store.placements(forColumns: 4) })
-        XCTAssertEqual(host.store.placement(of: "f"), at(3, 3), "Чужая правка не откатилась")
-        XCTAssertGreaterThan(host.host.cell("a")?.contentView.alpha ?? 0, 0.9, "Ячейка видима")
+        XCTAssertEqual(host.store.placement(of: "f"), at(3, 3), "The external edit was not rolled back")
+        XCTAssertGreaterThan(host.host.cell("a")?.contentView.alpha ?? 0, 0.9, "The cell is visible")
     }
 
-    /// Магнит: снимок притягивается к рамке ячейки-цели (для своего размера) и
-    /// не притягивается над целями слияния.
+    /// Magnet: the snapshot view is pulled to the frame of the target cell (for its own size) and
+    /// is not pulled over merge targets.
     func testMagnetSnapsToTargetCellFrameAndNotOverMergeTargets() throws {
         let host = try makeSixTilesHost(
             configuration: TesseraTileEditConfiguration(
@@ -683,7 +683,7 @@ final class TileCellDragTests: XCTestCase {
         let session = try XCTUnwrap(host.coordinator.dragSession)
         session.hasLeftOriginSlot = true
 
-        // Пустая клетка (1, 3), палец чуть левее-выше центра (в радиусе притяжения).
+        // The empty cell (1, 3), the finger slightly left of and above the center (within the pull radius).
         let center = try XCTUnwrap(host.cellFrame(row: 1, column: 3)).center
         let finger = CGPoint(
             x: center.x - session.grabOffset.x + 6,
@@ -692,10 +692,10 @@ final class TileCellDragTests: XCTestCase {
         host.coordinator.updateDrag(to: finger)
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(1, 3)))
         let target = try XCTUnwrap(host.coordinator.dragMagnetTargetForTesting(at: finger))
-        XCTAssertEqual(target.x, center.x, accuracy: 0.001, "Центр рамки ячейки-цели")
+        XCTAssertEqual(target.x, center.x, accuracy: 0.001, "Center of the target cell's frame")
         XCTAssertEqual(target.y, center.y, accuracy: 0.001)
 
-        // Над центром «b» (цель слияния) притяжения нет.
+        // Over the center of "b" (a merge target) there is no pull.
         let bCenter = try XCTUnwrap(host.cellPoint(row: 0, column: 1))
         host.coordinator.updateDrag(to: bCenter)
         XCTAssertEqual(host.coordinator.dragSession?.hover, .group("b"))
@@ -708,7 +708,7 @@ final class TileCellDragTests: XCTestCase {
 
 private extension CGRect {
 
-    /// Центр рамки.
+    /// The center of a frame.
     var center: CGPoint { CGPoint(x: midX, y: midY) }
 }
 

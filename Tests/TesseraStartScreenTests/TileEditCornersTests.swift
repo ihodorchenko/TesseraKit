@@ -2,15 +2,15 @@
 //  TileEditCornersTests.swift
 //  TesseraStartScreenTests
 //
-//  Углы кнопок правки (D29, E15.2): открепление — в верхнем углу у конца строки
-//  (правый в LTR, левый в RTL), стрелка размера — в нижнем углу той же стороны,
-//  то есть обе кнопки одной плитки стоят друг над другом. Правило владения
-//  зонами касания на малой плитке: открепление владеет верхней половиной высоты,
-//  стрелка — нижней, центр плитки не принадлежит никому. Проектный документ:
-//  docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации (E15)», п. 59.
+//  Edit button corners (D29): unpin sits in the top corner at the end of the line
+//  (right in LTR, left in RTL), and the resize arrow sits in the bottom corner of the same side,
+//  so both buttons of one tile stand one above the other. The rule for owning
+//  touch zones on a small tile: unpin owns the upper half of the height,
+//  the arrow owns the lower half, and the tile center belongs to nobody. Design document:
+//  docs/STARTSCREEN-IOS-DESIGN.md (the "Implementation deviations" section).
 //
-//  Заодно — бэйдж против кнопок в настоящей правке на ширинах 375/390/402/414 pt
-//  при 6 колонках (E15.1).
+//  Also covers the badge versus the buttons in real edit mode at widths 375/390/402/414 pt
+//  with 6 columns.
 //
 
 #if canImport(UIKit)
@@ -21,9 +21,9 @@ import XCTest
 
 final class TileEditCornersTests: XCTestCase {
 
-    // MARK: - Помощники
+    // MARK: - Helpers
 
-    /// Оверлей кнопок плитки `side × side` с заданным направлением.
+    /// A button overlay for a `side × side` tile with the given direction.
     private func makeControl(
         side: CGFloat,
         rightToLeft: Bool = false,
@@ -49,9 +49,9 @@ final class TileEditCornersTests: XCTestCase {
         }
     }
 
-    // MARK: - Углы
+    // MARK: - Corners
 
-    /// Помощники углов: открепление сверху, стрелка снизу, оба у конца строки.
+    /// Corner helpers: unpin on top, the arrow below, both at the end of the line.
     func testCornerHelpersPutBothButtonsOnTrailingSideStackedVertically() {
         let bounds = CGRect(x: 0, y: 0, width: 80, height: 60)
         let overhang = TesseraTileEditControlView.cornerOverhang
@@ -59,8 +59,8 @@ final class TileEditCornersTests: XCTestCase {
         let resizeLTR = TesseraTileEditControlView.resizeButtonFrame(inTileBounds: bounds, side: 20, isRightToLeft: false)
         XCTAssertEqual(unpinLTR, CGRect(x: 80 - 20 + overhang, y: -overhang, width: 20, height: 20))
         XCTAssertEqual(resizeLTR, CGRect(x: 80 - 20 + overhang, y: 60 - 20 + overhang, width: 20, height: 20))
-        XCTAssertEqual(unpinLTR.midX, resizeLTR.midX, "в одной колонке")
-        XCTAssertLessThan(unpinLTR.midY, resizeLTR.midY, "открепление выше")
+        XCTAssertEqual(unpinLTR.midX, resizeLTR.midX, "in one column")
+        XCTAssertLessThan(unpinLTR.midY, resizeLTR.midY, "unpin is higher")
 
         let unpinRTL = TesseraTileEditControlView.unpinButtonFrame(inTileBounds: bounds, side: 20, isRightToLeft: true)
         let resizeRTL = TesseraTileEditControlView.resizeButtonFrame(inTileBounds: bounds, side: 20, isRightToLeft: true)
@@ -69,7 +69,7 @@ final class TileEditCornersTests: XCTestCase {
         XCTAssertEqual(unpinRTL.midX, resizeRTL.midX)
     }
 
-    /// Оверлей плитки сетки строит кнопки теми же помощниками (LTR и RTL).
+    /// A grid tile's overlay builds the buttons with the same helpers (LTR and RTL).
     func testGridOverlayUsesSharedCornerHelpers() {
         for rtl in [false, true] {
             for side: CGFloat in [55, 120] {
@@ -91,8 +91,8 @@ final class TileEditCornersTests: XCTestCase {
         }
     }
 
-    /// В настоящей правке: открепление — выше и у конца строки, стрелка — ниже, оба
-    /// выступают наружу у конца строки (правый край в LTR, левый в RTL).
+    /// In real edit mode: unpin is higher and at the end of the line, the arrow is lower, and both
+    /// protrude outward at the end of the line (the right edge in LTR, the left in RTL).
     func testRealEditSessionPlacesButtonsAtTrailingCorners() throws {
         for rtl in [false, true] {
             let host = TesseraTestDragHost(
@@ -116,14 +116,14 @@ final class TileEditCornersTests: XCTestCase {
                 let unpin = control.convert(control.unpinButtonFrame, to: host.host.grid)
                 let resize = control.convert(control.resizeButtonFrame, to: host.host.grid)
 
-                XCTAssertLessThan(unpin.minY, tile.minY, "открепление выступает вверх: \(id) rtl=\(rtl)")
-                XCTAssertGreaterThan(resize.maxY, tile.maxY, "стрелка выступает вниз: \(id) rtl=\(rtl)")
-                XCTAssertEqual(unpin.midX, resize.midX, accuracy: 0.5, "одна колонка: \(id) rtl=\(rtl)")
+                XCTAssertLessThan(unpin.minY, tile.minY, "unpin protrudes upward: \(id) rtl=\(rtl)")
+                XCTAssertGreaterThan(resize.maxY, tile.maxY, "the arrow protrudes downward: \(id) rtl=\(rtl)")
+                XCTAssertEqual(unpin.midX, resize.midX, accuracy: 0.5, "one column: \(id) rtl=\(rtl)")
                 if rtl {
-                    XCTAssertLessThan(unpin.minX, tile.minX, "RTL: слева \(id)")
+                    XCTAssertLessThan(unpin.minX, tile.minX, "RTL: on the left \(id)")
                     XCTAssertLessThan(unpin.midX, tile.midX, id)
                 } else {
-                    XCTAssertGreaterThan(unpin.maxX, tile.maxX, "LTR: справа \(id)")
+                    XCTAssertGreaterThan(unpin.maxX, tile.maxX, "LTR: on the right \(id)")
                     XCTAssertGreaterThan(unpin.midX, tile.midX, id)
                 }
             }
@@ -131,30 +131,30 @@ final class TileEditCornersTests: XCTestCase {
         }
     }
 
-    // MARK: - Правило владения зонами касания
+    // MARK: - Touch zone ownership rule
 
     private let sampledSides: [CGFloat] = [50, 55, 62, 120]
 
-    /// Зоны двух кнопок плитки никогда не пересекаются; верхняя половина высоты —
-    /// у открепления, нижняя — у стрелки; тап по каждой точке плитки и вокруг даёт
-    /// не больше одной кнопки, ровно как говорят зоны.
+    /// The zones of a tile's two buttons never intersect; the upper half of the height
+    /// belongs to unpin and the lower half to the arrow; a tap at every point of the tile and around it
+    /// reaches at most one button, exactly as the zones say.
     func testHitOwnershipIsDeterministicAtSmallAndLargeTileSizes() {
         for side in sampledSides {
             for rtl in [false, true] {
                 let control = makeControl(side: side, rightToLeft: rtl)
                 let unpinZone = control.unpinHitFrame
                 let resizeZone = control.resizeHitFrame
-                let label = "плитка \(side) rtl=\(rtl)"
+                let label = "tile \(side) rtl=\(rtl)"
 
                 XCTAssertFalse(unpinZone.isEmpty, label)
                 XCTAssertFalse(resizeZone.isEmpty, label)
-                XCTAssertLessThanOrEqual(unpinZone.maxY, side / 2 + 0.001, "открепление — верхняя половина: \(label)")
-                XCTAssertGreaterThanOrEqual(resizeZone.minY, side / 2 - 0.001, "стрелка — нижняя половина: \(label)")
-                // D48: выступ 4 pt придвинул центр кнопки к оси плитки на 2 pt, и
-                // обрезка по оси стала глубже: 50 pt — ≈ 40 × 41, 55 pt — ≈ 42,5 × 43,5,
-                // от 62 pt — полные 44 × 44.
-                XCTAssertGreaterThanOrEqual(unpinZone.width, 40 - 0.001, "ширина зоны \(label)")
-                XCTAssertGreaterThanOrEqual(unpinZone.height, 41 - 0.001, "высота зоны \(label)")
+                XCTAssertLessThanOrEqual(unpinZone.maxY, side / 2 + 0.001, "unpin is the upper half: \(label)")
+                XCTAssertGreaterThanOrEqual(resizeZone.minY, side / 2 - 0.001, "the arrow is the lower half: \(label)")
+                // D48: the 4 pt protrusion moved the button center 2 pt closer to the tile axis, and
+                // the clipping at the axis got deeper: 50 pt gives about 40 × 41, 55 pt about 42.5 × 43.5,
+                // and from 62 pt the full 44 × 44.
+                XCTAssertGreaterThanOrEqual(unpinZone.width, 40 - 0.001, "zone width \(label)")
+                XCTAssertGreaterThanOrEqual(unpinZone.height, 41 - 0.001, "zone height \(label)")
                 XCTAssertGreaterThanOrEqual(resizeZone.width, 40 - 0.001, label)
                 XCTAssertGreaterThanOrEqual(resizeZone.height, 41 - 0.001, label)
                 if side >= 62 {
@@ -169,7 +169,7 @@ final class TileEditCornersTests: XCTestCase {
                 XCTAssertNotNil(unpin, label)
                 XCTAssertNotNil(resize, label)
 
-                // Сэмплирование: результат hitTest совпадает с зонами, пересечений нет.
+                // Sampling: the hitTest result matches the zones, with no intersections.
                 var y: CGFloat = -30
                 while y < side + 30 {
                     var x: CGFloat = -30
@@ -177,14 +177,14 @@ final class TileEditCornersTests: XCTestCase {
                         let point = CGPoint(x: x, y: y)
                         let inUnpin = unpinZone.contains(point)
                         let inResize = resizeZone.contains(point)
-                        XCTAssertFalse(inUnpin && inResize, "зоны пересеклись в \(point): \(label)")
+                        XCTAssertFalse(inUnpin && inResize, "zones intersected at \(point): \(label)")
                         let hit = control.hitTest(point, with: nil)
                         if inUnpin {
-                            XCTAssertTrue(hit === unpin, "точка \(point) принадлежит откреплению: \(label)")
+                            XCTAssertTrue(hit === unpin, "point \(point) belongs to unpin: \(label)")
                         } else if inResize {
-                            XCTAssertTrue(hit === resize, "точка \(point) принадлежит стрелке: \(label)")
+                            XCTAssertTrue(hit === resize, "point \(point) belongs to the arrow: \(label)")
                         } else {
-                            XCTAssertNil(hit, "точка \(point) — ничья: \(label)")
+                            XCTAssertNil(hit, "point \(point) belongs to nobody: \(label)")
                         }
                         x += 0.5
                     }
@@ -194,22 +194,22 @@ final class TileEditCornersTests: XCTestCase {
         }
     }
 
-    /// Центр плитки и вся полоса вдоль вертикальной оси не принадлежат кнопкам
-    /// (тап по телу, long-press и drag работают), а сами центры кнопок — зона.
+    /// The tile center and the whole strip along the vertical axis do not belong to the buttons
+    /// (a tap on the body, long press and drag work), while the button centers themselves are a zone.
     func testTileCenterBelongsToNeitherButton() {
         for side in sampledSides {
             for rtl in [false, true] {
                 let control = makeControl(side: side, rightToLeft: rtl)
-                let label = "плитка \(side) rtl=\(rtl)"
+                let label = "tile \(side) rtl=\(rtl)"
                 let center = CGPoint(x: side / 2, y: side / 2)
                 XCTAssertNil(control.hitTest(center, with: nil), label)
                 XCTAssertFalse(control.unpinHitFrame.contains(center), label)
                 XCTAssertFalse(control.resizeHitFrame.contains(center), label)
-                // Вертикальная ось: ни у одной из кнопок нет зоны через неё.
+                // Vertical axis: neither button has a zone across it.
                 for y in stride(from: CGFloat(0), through: side, by: 1) {
-                    XCTAssertNil(control.hitTest(CGPoint(x: side / 2, y: y), with: nil), "ось y=\(y): \(label)")
+                    XCTAssertNil(control.hitTest(CGPoint(x: side / 2, y: y), with: nil), "axis y=\(y): \(label)")
                 }
-                // Противоположная (ведущая) половина плитки — тело.
+                // The opposite (leading) half of the tile is the body.
                 let leading = rtl ? side - 4 : 4
                 XCTAssertNil(control.hitTest(CGPoint(x: leading, y: 4), with: nil), label)
                 XCTAssertNil(control.hitTest(CGPoint(x: leading, y: side - 4), with: nil), label)
@@ -224,17 +224,17 @@ final class TileEditCornersTests: XCTestCase {
         }
     }
 
-    /// Старая нахлёстка: на плитке ≈ 50 pt зоны 44 pt пересеклись бы (≈ 1,5–2 pt),
-    /// теперь зазор между зонами по высоте не отрицателен на всех размерах.
+    /// The old overlap: on a tile of about 50 pt the 44 pt zones would intersect (by about 1.5–2 pt),
+    /// now the gap between zones in height is non-negative at all sizes.
     func testZonesDoNotOverlapAtSmallestTile() {
         for side in [CGFloat(48), 50, 50.5, 52, 55] {
             let control = makeControl(side: side)
             let gap = control.resizeHitFrame.minY - control.unpinHitFrame.maxY
-            XCTAssertGreaterThanOrEqual(gap, -0.001, "плитка \(side): зазор \(gap)")
+            XCTAssertGreaterThanOrEqual(gap, -0.001, "tile \(side): gap \(gap)")
         }
     }
 
-    /// Чистое правило: симметрично по направлению, зона внутри допустимой области.
+    /// A pure rule: symmetric by direction, with the zone inside the allowed area.
     func testGridHitZoneRuleIsMirroredInRightToLeft() {
         let bounds = CGRect(x: 0, y: 0, width: 62, height: 62)
         let side: CGFloat = 20
@@ -253,18 +253,18 @@ final class TileEditCornersTests: XCTestCase {
             )
             XCTAssertEqual(ltr.width, rtl.width, accuracy: 0.001)
             XCTAssertEqual(ltr.height, rtl.height, accuracy: 0.001)
-            XCTAssertEqual(rtl.minX, bounds.width - ltr.maxX, accuracy: 0.001, "зеркально (upper=\(upper))")
+            XCTAssertEqual(rtl.minX, bounds.width - ltr.maxX, accuracy: 0.001, "mirrored (upper=\(upper))")
             XCTAssertEqual(ltr.minY, rtl.minY, accuracy: 0.001)
             XCTAssertGreaterThan(ltr.minX, bounds.midX - 0.001)
             XCTAssertLessThan(rtl.maxX, bounds.midX + 0.001)
         }
     }
 
-    // MARK: - Соседние плитки
+    // MARK: - Adjacent tiles
 
-    /// Плитки друг над другом (зазор 8 pt): зоны стрелки верхней плитки и
-    /// открепления нижней пересекаются; касание в пересечении достаётся кнопке с
-    /// ближайшим центром — детерминированно, для каждой точки области.
+    /// Tiles one above the other (8 pt gap): the arrow zone of the upper tile and the
+    /// unpin zone of the lower one intersect; a touch in the intersection goes to the button with the
+    /// nearest center, deterministically, for every point of the area.
     func testStackedNeighboursResolveByNearestButtonCenter() {
         for side in sampledSides {
             let container = TesseraTileEditControlsHostView(frame: CGRect(x: 0, y: 0, width: 400, height: 600))
@@ -283,8 +283,8 @@ final class TileEditCornersTests: XCTestCase {
             let upperResize = centre(upper, upper.resizeButtonFrame)
             let lowerUnpin = centre(lower, lower.unpinButtonFrame)
 
-            XCTAssertTrue(container.hitTest(upperResize, with: nil)?.superview === upper, "центр стрелки: \(side)")
-            XCTAssertTrue(container.hitTest(lowerUnpin, with: nil)?.superview === lower, "центр открепления: \(side)")
+            XCTAssertTrue(container.hitTest(upperResize, with: nil)?.superview === upper, "arrow center: \(side)")
+            XCTAssertTrue(container.hitTest(lowerUnpin, with: nil)?.superview === lower, "unpin center: \(side)")
 
             var overlapSamples = 0
             var y = upperResize.y - 30
@@ -300,9 +300,9 @@ final class TileEditCornersTests: XCTestCase {
                         let lowerDistance = hypot(point.x - lowerUnpin.x, point.y - lowerUnpin.y)
                         let winner = container.hitTest(point, with: nil)?.superview
                         if upperDistance < lowerDistance {
-                            XCTAssertTrue(winner === upper, "\(point): ближе стрелка верхней, плитка \(side)")
+                            XCTAssertTrue(winner === upper, "\(point): the upper tile's arrow is closer, tile \(side)")
                         } else if lowerDistance < upperDistance {
-                            XCTAssertTrue(winner === lower, "\(point): ближе открепление нижней, плитка \(side)")
+                            XCTAssertTrue(winner === lower, "\(point): the lower tile's unpin is closer, tile \(side)")
                         } else {
                             XCTAssertNotNil(winner)
                         }
@@ -311,14 +311,14 @@ final class TileEditCornersTests: XCTestCase {
                 }
                 y += 1
             }
-            XCTAssertGreaterThan(overlapSamples, 0, "зоны соседей действительно пересекаются: \(side)")
+            XCTAssertGreaterThan(overlapSamples, 0, "neighbor zones really intersect: \(side)")
         }
     }
 
-    // MARK: - Ярлык панели папки
+    // MARK: - Folder panel tile
 
-    /// Панель: кнопка в верхнем углу у конца строки, зона — угловая четверть этого
-    /// же угла (правая в LTR, левая в RTL), центр и противоположные углы — тело.
+    /// The panel: the button is in the top corner at the end of the line, its zone is the corner quarter of that
+    /// same corner (right in LTR, left in RTL), and the center and opposite corners are the body.
     func testPanelControlUsesTrailingTopCornerAndQuarterZone() {
         for rtl in [false, true] {
             for side: CGFloat in [55, 88] {
@@ -329,7 +329,7 @@ final class TileEditCornersTests: XCTestCase {
                 control.frame = CGRect(x: 0, y: 0, width: side, height: side)
                 control.tileSize = control.frame.size
                 control.layoutIfNeeded()
-                let label = "панель \(side) rtl=\(rtl)"
+                let label = "panel \(side) rtl=\(rtl)"
 
                 let diameter = TesseraTileEditControlView.diameter(forTileSize: control.bounds.size, maxDiameter: 28)
                 XCTAssertEqual(
@@ -344,14 +344,14 @@ final class TileEditCornersTests: XCTestCase {
                 XCTAssertNil(control.hitTest(CGPoint(x: side / 2, y: side / 2), with: nil), label)
                 let leading: CGFloat = rtl ? side - 4 : 4
                 let trailing: CGFloat = rtl ? 4 : side - 4
-                XCTAssertNil(control.hitTest(CGPoint(x: leading, y: 4), with: nil), "ведущий верхний угол: \(label)")
-                XCTAssertNil(control.hitTest(CGPoint(x: trailing, y: side - 4), with: nil), "нижний угол: \(label)")
-                XCTAssertNotNil(control.hitTest(CGPoint(x: trailing, y: 4), with: nil), "ведомый верхний угол: \(label)")
+                XCTAssertNil(control.hitTest(CGPoint(x: leading, y: 4), with: nil), "leading top corner: \(label)")
+                XCTAssertNil(control.hitTest(CGPoint(x: trailing, y: side - 4), with: nil), "bottom corner: \(label)")
+                XCTAssertNotNil(control.hitTest(CGPoint(x: trailing, y: 4), with: nil), "trailing top corner: \(label)")
             }
         }
     }
 
-    // MARK: - Бэйдж и кнопки в настоящей правке (E15.1)
+    // MARK: - Badge and buttons in real edit mode
 
     private func gap(_ a: CGRect, _ b: CGRect) -> CGFloat {
         let dx = max(0, max(a.minX - b.maxX, b.minX - a.maxX))
@@ -359,10 +359,10 @@ final class TileEditCornersTests: XCTestCase {
         return hypot(dx, dy)
     }
 
-    /// Ширины 375/390/402/414 pt, 6 колонок: у плиток 1×1, 2×2 и 4×2 с бэйджами
-    /// (капсула, «99+», точка) бэйдж в правке не пересекает ни стрелку размера, ни
-    /// открепление; бэйдж остаётся видимым (кроме «99+» на 1×1 — плитка уже 58 pt, D48:
-    /// скрыт только на время правки). Измеренные зазоры выводятся в лог.
+    /// Widths 375/390/402/414 pt, 6 columns: for 1×1, 2×2 and 4×2 tiles with badges
+    /// (capsule, "99+", dot) the badge in edit mode intersects neither the resize arrow nor
+    /// unpin; the badge stays visible (except "99+" on 1×1: the tile is only 58 pt wide, D48:
+    /// it is hidden only while editing). The measured gaps are printed to the log.
     func testBadgeDoesNotOverlapButtonsInRealEditSession() throws {
         let badges: [(String, TesseraTileBadge)] = [("count 3", .count(3)), ("99+", .count(150)), ("dot", .dot)]
         for width in [CGFloat(375), 390, 402, 414] {
@@ -393,31 +393,31 @@ final class TileEditCornersTests: XCTestCase {
                     control.layoutIfNeeded()
                     let tile = try XCTUnwrap(host.host.grid.frame(forItemID: AnyHashable(id)), label)
 
-                    // D48: при выступе 4 pt «99+» (34 pt) не помещается правее стрелки
-                    // на плитках уже 58 pt, то есть на всех четырёх ширинах (было ≤ 402 pt).
+                    // D48: with a 4 pt protrusion "99+" (34 pt) does not fit to the right of the arrow
+                    // on tiles 58 pt wide, which is all four widths (it used to be ≤ 402 pt).
                     let expectHidden = badgeName == "99+" && id.hasPrefix("s") && tile.width < 18 + 34 + 6
                     XCTAssertEqual(
                         badgeView.alpha, expectHidden ? 0 : 1, accuracy: 0.001,
-                        "видимость бэйджа в правке: \(label)"
+                        "badge visibility in edit mode: \(label)"
                     )
                     if expectHidden {
-                        print("[E15.1] \(label): tile \(tile.size) — бэйдж скрыт на время правки")
+                        print("\(label): tile \(tile.size) — badge hidden while editing")
                         continue
                     }
                     let badgeFrame = cell.contentView.convert(badgeView.frame, to: host.host.grid)
                     let resize = control.convert(control.resizeButtonFrame, to: host.host.grid)
                     let unpin = control.convert(control.unpinButtonFrame, to: host.host.grid)
-                    XCTAssertTrue(tile.insetBy(dx: -0.5, dy: -0.5).contains(badgeFrame), "внутри плитки: \(label)")
-                    XCTAssertFalse(badgeFrame.intersects(resize), "бэйдж × стрелка: \(label)")
-                    XCTAssertFalse(badgeFrame.intersects(unpin), "бэйдж × открепление: \(label)")
+                    XCTAssertTrue(tile.insetBy(dx: -0.5, dy: -0.5).contains(badgeFrame), "inside the tile: \(label)")
+                    XCTAssertFalse(badgeFrame.intersects(resize), "badge × arrow: \(label)")
+                    XCTAssertFalse(badgeFrame.intersects(unpin), "badge × unpin: \(label)")
                     let resizeGap = gap(badgeFrame, resize)
                     let unpinGap = gap(badgeFrame, unpin)
                     XCTAssertGreaterThanOrEqual(resizeGap, TesseraTileBadgeLayout.editGap - 0.01, label)
-                    print("[E15.1] \(label): tile \(tile.size), badge \(badgeFrame.size), gap to resize \(resizeGap), to unpin \(unpinGap)")
+                    print("\(label): tile \(tile.size), badge \(badgeFrame.size), gap to resize \(resizeGap), to unpin \(unpinGap)")
                 }
                 host.coordinator.endEditing()
 
-                // После выхода из правки бэйдж возвращается в угол.
+                // After leaving edit mode the badge returns to the corner.
                 host.spin(0.05)
                 let cell = try XCTUnwrap(host.host.cell("s1"))
                 cell.layoutIfNeeded()

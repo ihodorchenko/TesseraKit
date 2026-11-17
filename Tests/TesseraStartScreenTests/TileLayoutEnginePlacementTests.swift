@@ -2,17 +2,17 @@
 //  TileLayoutEnginePlacementTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты чистого слоя «размещение по координатам» (E14.2, D30–D31).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и
-//  «Отступления реализации (E14)»; D30 (настоящие пустоты), D31 (коллизии —
-//  выталкивание вниз каскадом; строка схлопывается, только если её не занимает
-//  никто) в docs/STATE.md.
+//  Tests of the pure "placement by coordinates" layer (D30–D31).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid" and
+//  "Implementation deviations"; D30 (real holes), D31 (collisions —
+//  a cascading push down; a row collapses only if nobody
+//  occupies it) in docs/STATE.md.
 //
-//  Функции чистые: ни UIKit-цикла, ни хранилища, ни окна. Здесь — слоты, проверка
-//  корректности, ограничение ячейки, вставка/каскад, resize, удаление,
-//  схлопывание пустых строк, поиск свободных ячеек. Property-тест со случайными
-//  последовательностями операций — в `TileLayoutEnginePlacementPropertyTests`,
-//  геометрия панели папки — в `TileLayoutEngineFolderPlacementTests`.
+//  The functions are pure: no UIKit loop, no store, no window. Covered here: slots, validity
+//  checks, cell clamping, insertion/cascade, resize, removal,
+//  collapsing empty rows, searching for free cells. The property test with random
+//  operation sequences is in `TileLayoutEnginePlacementPropertyTests`,
+//  the folder panel geometry is in `TileLayoutEngineFolderPlacementTests`.
 //
 
 #if canImport(UIKit)
@@ -21,19 +21,19 @@ import UIKit
 import XCTest
 @testable import TesseraStartScreen
 
-// MARK: - Общие средства тестов размещений
+// MARK: - Shared helpers for placement tests
 
-/// Элемент набора размещений: `item("a", .small, 0, 2)` — строка 0, колонка 2.
+/// A placement set item: `item("a", .small, 0, 2)` — row 0, column 2.
 func placementItem(_ id: String, _ size: TesseraTileSize, _ row: Int, _ column: Int) -> TesseraTilePlacedItem {
     TesseraTilePlacedItem(id: id, size: size, cell: TesseraTileGridPlacement(row: row, column: column))
 }
 
-/// Ячейка элемента в наборе.
+/// An item's cell in the set.
 func placementCell(_ id: String, in placements: [TesseraTilePlacedItem]) -> TesseraTileGridPlacement? {
     placements.first(where: { $0.id == AnyHashable(id) })?.cell
 }
 
-/// Идентификаторы набора в порядке массива.
+/// The set's identifiers in array order.
 func placementIDs(_ placements: [TesseraTilePlacedItem]) -> [AnyHashable] {
     placements.map(\.id)
 }
@@ -44,7 +44,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
     // MARK: - slots
 
-    /// Слоты берут ячейки как есть, без упаковки: дыры остаются.
+    /// Slots take cells as they are, without packing: holes remain.
     func testSlotsUseExplicitCellsWithoutPacking() {
         let placements = [
             placementItem("a", .small, 3, 5),
@@ -58,7 +58,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(slots[1], TesseraTileLayoutSlot(id: "b", size: .medium, column: 2, row: 10, unit: 10))
     }
 
-    /// Слоты идут в порядке входного массива, а не в порядке чтения.
+    /// Slots follow the order of the input array, not the reading order.
     func testSlotsKeepInputOrder() {
         let placements = [
             placementItem("late", .small, 9, 0),
@@ -70,7 +70,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(slots.map(\.id), ["late", "early"])
     }
 
-    /// Плитка шире сетки пропускается, как в `pack`.
+    /// A tile wider than the grid is skipped, as in `pack`.
     func testSlotsSkipTilesWiderThanGridLikePack() {
         let placements = [
             placementItem("w", .wide, 0, 0),
@@ -82,7 +82,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(slots.map(\.id), ["s"])
     }
 
-    /// С `fitting: true` широкая плитка ужимается вместо пропуска.
+    /// With `fitting: true` a wide tile is clamped instead of skipped.
     func testSlotsFittingDegradesInsteadOfSkipping() {
         let placements = [placementItem("w", .wide, 0, 0), placementItem("l", .large, 4, 0)]
 
@@ -91,7 +91,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(slots.map(\.size), [.medium, .medium])
     }
 
-    /// Вырожденная геометрия — пустой результат.
+    /// Degenerate geometry gives an empty result.
     func testSlotsDegenerateGeometryIsEmpty() {
         let placements = [placementItem("a", .small, 0, 0)]
 
@@ -100,8 +100,8 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertTrue(TesseraTileLayoutEngine.slots(placements: [], columns: 6, unit: 1).isEmpty)
     }
 
-    /// Раскладка совпадает со слотами `pack` на компактном наборе: переход со
-    /// старого API на новый не меняет геометрию.
+    /// The layout matches the `pack` slots on a compact set: moving from the
+    /// old API to the new one does not change the geometry.
     func testSlotsMatchPackForCompactLayout() {
         let items: [(id: AnyHashable, size: TesseraTileSize)] = [
             ("a", .medium), ("b", .small), ("c", .wide), ("d", .large), ("e", .small),
@@ -116,7 +116,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
     // MARK: - validate / hasOverlaps
 
-    /// Корректный набор — без нарушителей.
+    /// A valid set has no violators.
     func testValidateReturnsNothingForValidSet() {
         let placements = [
             placementItem("a", .medium, 0, 0),
@@ -128,7 +128,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(placements, columns: columns))
     }
 
-    /// Пересечение: нарушителями названы оба участника, порядок — по входу.
+    /// An overlap: both participants are named violators, in input order.
     func testValidateReportsBothSidesOfOverlap() {
         let placements = [
             placementItem("a", .medium, 0, 0),
@@ -140,7 +140,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertTrue(TesseraTileLayoutEngine.hasOverlaps(placements, columns: columns))
     }
 
-    /// Выход за холст и отрицательные координаты — нарушения, но не «пересечения».
+    /// Going beyond the canvas and negative coordinates are violations, but not "overlaps".
     func testValidateReportsOutOfBounds() {
         let placements = [
             placementItem("right", .medium, 0, 5),
@@ -153,7 +153,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(placements, columns: columns))
     }
 
-    /// Соприкосновение по границе не пересечение.
+    /// Touching along a border is not an overlap.
     func testTouchingEdgesAreNotOverlap() {
         let placements = [
             placementItem("a", .medium, 0, 0),
@@ -164,7 +164,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(placements, columns: columns))
     }
 
-    /// Без колонок все элементы — нарушители, пересечений «нет».
+    /// With no columns all items are violators, and there are "no" overlaps.
     func testValidateWithZeroColumnsFlagsEverything() {
         let placements = [placementItem("a", .small, 0, 0)]
 
@@ -174,14 +174,14 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
     // MARK: - clamped
 
-    /// Отрицательная строка поднимается до нуля.
+    /// A negative row is raised to zero.
     func testClampedNegativeRowBecomesZero() {
         let cell = TesseraTileLayoutEngine.clamped(cell: TesseraTileGridPlacement(row: -3, column: 1), size: .small, columns: columns)
 
         XCTAssertEqual(cell, TesseraTileGridPlacement(row: 0, column: 1))
     }
 
-    /// Слишком правая ячейка сдвигается влево под ширину плитки.
+    /// A cell that is too far right is shifted left to fit the tile's width.
     func testClampedShiftsLeftNeverRight() {
         XCTAssertEqual(
             TesseraTileLayoutEngine.clamped(cell: TesseraTileGridPlacement(row: 2, column: 5), size: .medium, columns: columns),
@@ -197,30 +197,30 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Допустимая ячейка не меняется.
+    /// A valid cell does not change.
     func testClampedKeepsValidCell() {
         let cell = TesseraTileGridPlacement(row: 7, column: 2)
 
         XCTAssertEqual(TesseraTileLayoutEngine.clamped(cell: cell, size: .wide, columns: columns), cell)
     }
 
-    /// На узкой сетке берётся ужатая ширина: большая плитка при 3 колонках — 2.
+    /// On a narrow grid the clamped width is used: a large tile at 3 columns is 2.
     func testClampedUsesFittedWidthOnNarrowGrid() {
         let cell = TesseraTileLayoutEngine.clamped(cell: TesseraTileGridPlacement(row: 0, column: 3), size: .large, columns: 3)
 
         XCTAssertEqual(cell, TesseraTileGridPlacement(row: 0, column: 1))
     }
 
-    /// Без колонок колонка — 0.
+    /// With no columns the column is 0.
     func testClampedWithZeroColumnsPinsToColumnZero() {
         let cell = TesseraTileLayoutEngine.clamped(cell: TesseraTileGridPlacement(row: 1, column: 4), size: .small, columns: 0)
 
         XCTAssertEqual(cell, TesseraTileGridPlacement(row: 1, column: 0))
     }
 
-    // MARK: - inserting: базовые случаи
+    // MARK: - inserting: basic cases
 
-    /// Вставка в пустой набор — один элемент на ячейке.
+    /// Inserting into an empty set — one item on the cell.
     func testInsertingIntoEmptySet() {
         let result = TesseraTileLayoutEngine.inserting(
             id: "a", size: .medium, at: TesseraTileGridPlacement(row: 4, column: 2), into: [], columns: columns
@@ -229,7 +229,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(result, [placementItem("a", .medium, 4, 2)])
     }
 
-    /// Вставка на свободное место ничего не двигает, новый элемент — в конец.
+    /// Inserting into free space moves nothing; the new item goes to the end.
     func testInsertingAtFreeCellKeepsOthersAndAppends() {
         let base = [placementItem("a", .medium, 0, 0), placementItem("b", .small, 0, 4)]
 
@@ -242,7 +242,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(result.count, 3)
     }
 
-    /// Вставка за все строки — на своей строке, дыра между остаётся.
+    /// Inserting beyond all rows — on its own row, the hole in between remains.
     func testInsertingBelowAllRowsLeavesHole() {
         let base = [placementItem("a", .medium, 0, 0)]
 
@@ -254,7 +254,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("a", in: result), TesseraTileGridPlacement(row: 0, column: 0))
     }
 
-    /// Слишком правая ячейка сдвигается влево перед вставкой.
+    /// A cell that is too far right is shifted left before insertion.
     func testInsertingClampsTooRightCell() {
         let result = TesseraTileLayoutEngine.inserting(
             id: "w", size: .wide, at: TesseraTileGridPlacement(row: -2, column: 5), into: [], columns: columns
@@ -263,9 +263,9 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("w", in: result), TesseraTileGridPlacement(row: 0, column: 2))
     }
 
-    // MARK: - inserting: выталкивание вниз
+    // MARK: - inserting: pushing down
 
-    /// Малая плитка под вставляемой 2×2 уходит вниз на нижнюю границу вставки.
+    /// A small tile under an inserted 2×2 goes down to the insertion's lower bound.
     func testInsertingPushesOverlappedTileDownToInsertionBottom() {
         let base = [placementItem("s", .small, 0, 0)]
 
@@ -277,7 +277,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("m", in: result), TesseraTileGridPlacement(row: 0, column: 0))
     }
 
-    /// Каскад: толкаемая плитка выталкивает следующую и т. д.
+    /// Cascade: a pushed tile pushes the next one, and so on.
     func testInsertingCascadesThroughStackedTiles() {
         let base = [
             placementItem("a", .small, 0, 0),
@@ -295,8 +295,8 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(result, columns: columns))
     }
 
-    /// Плитка, которая не пересеклась, остаётся на месте даже ниже толкаемых
-    /// (дыра между ними допустима).
+    /// A tile that did not overlap stays in place even below the pushed ones
+    /// (a hole between them is allowed).
     func testInsertingDoesNotMoveTilesFarBelow() {
         let base = [placementItem("a", .small, 0, 0), placementItem("far", .small, 9, 0)]
 
@@ -308,8 +308,8 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("far", in: result)?.row, 9)
     }
 
-    /// Дыры выше вставки и соседи без пересечения не трогаются; по горизонтали
-    /// никто не двигается.
+    /// Holes above the insertion and neighbors without an overlap are not touched; nobody
+    /// moves horizontally.
     func testInsertingKeepsUnaffectedTilesAndNeverMovesHorizontally() {
         let base = [
             placementItem("top", .small, 0, 0),
@@ -331,7 +331,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         }
     }
 
-    /// Высокая плитка толкается целиком, и плитки под ней — тоже.
+    /// A tall tile is pushed as a whole, and the tiles below it too.
     func testInsertingPushesTallTileAndItsNeighborsBelow() {
         let base = [
             placementItem("tall", .large, 0, 0),
@@ -347,10 +347,10 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(result, columns: columns))
     }
 
-    /// Порядок обхода — чтение исходных позиций: левая из двух плиток одной
-    /// строки обрабатывается раньше (детерминированный итог).
+    /// The traversal order is the reading of the original positions: the left of two tiles
+    /// in one row is processed earlier (a deterministic outcome).
     func testInsertingProcessesReadingOrderOfOriginalPositions() {
-        // `wide` стоит правее и выше по индексу, но читается позже `left`.
+        // `wide` is to the right and earlier by index, but is read after `left`.
         let base = [
             placementItem("wide", .wide, 1, 2),
             placementItem("left", .small, 1, 0),
@@ -360,16 +360,16 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
             id: "m", size: .large, at: TesseraTileGridPlacement(row: 0, column: 0), into: base, columns: columns
         )
 
-        // Прямоугольник вставки — колонки 0–3, строки 0–3. Обе плитки уходят на 4.
+        // The insertion rectangle is columns 0–3, rows 0–3. Both tiles go to 4.
         XCTAssertEqual(placementCell("left", in: result), TesseraTileGridPlacement(row: 4, column: 0))
         XCTAssertEqual(placementCell("wide", in: result), TesseraTileGridPlacement(row: 4, column: 2))
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(result, columns: columns))
     }
 
-    // MARK: - inserting: перенос существующего
+    // MARK: - inserting: moving an existing item
 
-    /// Существующий элемент переносится: на своём индексе, без коллизии со своим
-    /// прежним местом.
+    /// An existing item is moved: at its own index, with no collision with its
+    /// former place.
     func testInsertingExistingIDMovesAndKeepsArrayIndex() {
         let base = [
             placementItem("a", .medium, 0, 0),
@@ -387,7 +387,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(result.count, 3)
     }
 
-    /// Перенос с новым размером: итоговый размер — переданный.
+    /// A move with a new size: the resulting size is the one passed.
     func testInsertingExistingIDAppliesNewSize() {
         let base = [placementItem("a", .small, 0, 0)]
 
@@ -398,11 +398,11 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(result, [placementItem("a", .wide, 1, 0)])
     }
 
-    // MARK: - inserting: особые случаи
+    // MARK: - inserting: special cases
 
-    /// Создание папки: 2×2 на месте малой плитки-цели выталкивает соседей вниз.
+    /// Folder creation: a 2×2 on the place of a small target tile pushes the neighbors down.
     func testFolderCreationAtSmallTargetBecomesMediumAndPushesNeighborsDown() {
-        // Цель — small (0,2); справа и снизу соседи, которые 2×2 перекроет.
+        // The target is small (0,2); to the right and below are neighbors that the 2×2 will cover.
         let base = [
             placementItem("target", .small, 0, 2),
             placementItem("right", .small, 0, 3),
@@ -420,13 +420,13 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("folder", in: result), TesseraTileGridPlacement(row: 0, column: 2))
         XCTAssertEqual(placementCell("right", in: result), TesseraTileGridPlacement(row: 2, column: 3))
         XCTAssertEqual(placementCell("below", in: result), TesseraTileGridPlacement(row: 2, column: 2))
-        // Диагональная плитка сначала упирается в 2×2, затем в уже сдвинутую `right`.
+        // The diagonal tile first hits the 2×2, then the already shifted `right`.
         XCTAssertEqual(placementCell("diag", in: result), TesseraTileGridPlacement(row: 3, column: 3))
         XCTAssertEqual(placementCell("untouched", in: result), TesseraTileGridPlacement(row: 0, column: 5))
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(result, columns: columns))
     }
 
-    /// Вынос широкой плитки в слишком узкую ячейку: сдвиг влево + выталкивание.
+    /// Taking a wide tile out into a cell that is too narrow: a shift left + pushing down.
     func testExtractingWideTileIntoNarrowCellClampsLeftAndPushes() {
         let base = [
             placementItem("a", .small, 0, 2),
@@ -442,7 +442,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("b", in: result), TesseraTileGridPlacement(row: 2, column: 5))
     }
 
-    /// Большая плитка у правого края сдвигается влево на 2 колонки.
+    /// A large tile at the right edge shifts left by 2 columns.
     func testInsertingLargeAtRightEdgeShiftsLeft() {
         let result = TesseraTileLayoutEngine.inserting(
             id: "l", size: .large, at: TesseraTileGridPlacement(row: 1, column: 5), into: [], columns: columns
@@ -451,21 +451,21 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("l", in: result), TesseraTileGridPlacement(row: 1, column: 2))
     }
 
-    /// Колонок меньше ширины плитки: след ужимается, плитка не пропадает.
+    /// Fewer columns than the tile's width: the footprint is clamped, the tile does not vanish.
     func testInsertingWideIntoGridNarrowerThanTileUsesFittedFootprint() {
         let result = TesseraTileLayoutEngine.inserting(
             id: "w", size: .wide, at: TesseraTileGridPlacement(row: 0, column: 2), into: [placementItem("s", .small, 0, 0)],
             columns: 3
         )
 
-        // Ужатая ширина 2: колонка 2 → 1, малая плитка на колонке 0 не мешает.
+        // Clamped width 2: column 2 → 1, a small tile at column 0 does not interfere.
         XCTAssertEqual(placementCell("w", in: result), TesseraTileGridPlacement(row: 0, column: 1))
         XCTAssertEqual(placementCell("s", in: result), TesseraTileGridPlacement(row: 0, column: 0))
         XCTAssertEqual(result.first(where: { $0.id == AnyHashable("w") })?.size, .wide)
         XCTAssertTrue(TesseraTileLayoutEngine.validate(result, columns: 3).isEmpty)
     }
 
-    /// Без колонок вход возвращается как есть.
+    /// With no columns the input is returned as is.
     func testInsertingWithZeroColumnsReturnsInput() {
         let base = [placementItem("a", .small, 0, 0)]
 
@@ -477,7 +477,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Идемпотентность: вставка уже корректного размещения на его ячейку.
+    /// Idempotence: inserting an already valid placement onto its own cell.
     func testInsertingValidPlacementAtOwnCellChangesNothing() {
         let base = [
             placementItem("a", .medium, 0, 0),
@@ -490,11 +490,11 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
             let result = TesseraTileLayoutEngine.inserting(
                 id: item.id, size: item.size, at: item.cell, into: base, columns: columns
             )
-            XCTAssertEqual(result, base, "перенос \(item.id) на свою ячейку изменил набор")
+            XCTAssertEqual(result, base, "moving \(item.id) onto its own cell changed the set")
         }
     }
 
-    /// Детерминизм: один вход — один выход.
+    /// Determinism: one input — one output.
     func testInsertingIsDeterministic() {
         let base = [
             placementItem("a", .small, 0, 0),
@@ -514,7 +514,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(first, columns: columns))
     }
 
-    /// Пересечения во входе тоже разрешаются: результат без пересечений.
+    /// Overlaps in the input are also resolved: the result has no overlaps.
     func testInsertingResolvesPreExistingOverlapsInInput() {
         let base = [placementItem("a", .medium, 0, 0), placementItem("b", .medium, 1, 1)]
 
@@ -527,7 +527,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
     // MARK: - resizing
 
-    /// Рост на месте: якорь остаётся, соседей нет — ничего не двигается.
+    /// Growing in place: the anchor stays, there are no neighbors — nothing moves.
     func testResizingGrowsInPlaceKeepingAnchor() {
         let base = [placementItem("a", .small, 2, 1), placementItem("b", .small, 8, 0)]
 
@@ -538,7 +538,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("b", in: result), TesseraTileGridPlacement(row: 8, column: 0))
     }
 
-    /// Рост у правого края сдвигает колонку влево.
+    /// Growing at the right edge shifts the column left.
     func testResizingNearRightEdgeShiftsColumnLeft() {
         let base = [placementItem("a", .small, 0, 5)]
 
@@ -552,7 +552,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Рост выталкивает соседей вниз каскадом.
+    /// Growing pushes neighbors down in a cascade.
     func testResizingGrowthPushesNeighborsDownWithCascade() {
         let base = [
             placementItem("a", .small, 0, 0),
@@ -569,7 +569,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(result, columns: columns))
     }
 
-    /// Уменьшение оставляет дыру: ничего не двигается.
+    /// Shrinking leaves a hole: nothing moves.
     func testResizingShrinkLeavesHoleAndMovesNothing() {
         let base = [
             placementItem("big", .large, 0, 0),
@@ -585,7 +585,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("side", in: result), TesseraTileGridPlacement(row: 0, column: 4))
     }
 
-    /// Тот же размер — набор не меняется; неизвестный id — тоже.
+    /// The same size — the set does not change; an unknown id — likewise.
     func testResizingSameSizeAndUnknownIDChangeNothing() {
         let base = [placementItem("a", .medium, 0, 0), placementItem("b", .small, 0, 2)]
 
@@ -596,7 +596,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
     // MARK: - removing
 
-    /// Удаление оставляет дыру, остальные не двигаются.
+    /// Removal leaves a hole, the others do not move.
     func testRemovingLeavesHole() {
         let base = [
             placementItem("a", .medium, 0, 0),
@@ -609,7 +609,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(result, [placementItem("b", .small, 0, 2), placementItem("c", .small, 2, 0)])
     }
 
-    /// Неизвестный id — набор прежний.
+    /// An unknown id — the set is unchanged.
     func testRemovingUnknownIDChangesNothing() {
         let base = [placementItem("a", .small, 0, 0)]
 
@@ -618,7 +618,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
     // MARK: - collapsingEmptyRows
 
-    /// Полностью пустая строка схлопывается; плитки ниже поднимаются.
+    /// A fully empty row collapses; the tiles below move up.
     func testCollapsingRemovesFullyEmptyRow() {
         let base = [placementItem("a", .small, 0, 0), placementItem("b", .small, 2, 3)]
 
@@ -628,8 +628,8 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("b", in: result), TesseraTileGridPlacement(row: 1, column: 3))
     }
 
-    /// Строки, покрытые высокой плиткой, не схлопываются, даже если в них больше
-    /// никого нет.
+    /// Rows covered by a tall tile do not collapse, even if nobody else
+    /// is in them.
     func testCollapsingKeepsRowsCoveredByTallTiles() {
         let base = [
             placementItem("tall", .large, 0, 0),
@@ -640,7 +640,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(TesseraTileLayoutEngine.collapsingEmptyRows(in: base, columns: columns), base)
     }
 
-    /// Многострочный пустой промежуток схлопывается целиком.
+    /// A multi-row empty gap collapses entirely.
     func testCollapsingRemovesMultiRowGapEntirely() {
         let base = [
             placementItem("a", .medium, 0, 0),
@@ -650,14 +650,14 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
         let result = TesseraTileLayoutEngine.collapsingEmptyRows(in: base, columns: columns)
 
-        // Покрыты строки 0–1, 7, 9–10; пустые — 2–6 и 8.
+        // Rows 0–1, 7, 9–10 are covered; 2–6 and 8 are empty.
         XCTAssertEqual(placementCell("a", in: result)?.row, 0)
         XCTAssertEqual(placementCell("b", in: result)?.row, 2)
         XCTAssertEqual(placementCell("c", in: result)?.row, 3)
         XCTAssertFalse(TesseraTileLayoutEngine.hasOverlaps(result, columns: columns))
     }
 
-    /// Пустые строки в самом верху тоже схлопываются.
+    /// Empty rows at the very top collapse too.
     func testCollapsingRemovesLeadingEmptyRows() {
         let base = [placementItem("a", .small, 4, 2), placementItem("b", .medium, 5, 0)]
 
@@ -667,7 +667,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(placementCell("b", in: result), TesseraTileGridPlacement(row: 1, column: 0))
     }
 
-    /// Колонки не меняются, порядок массива сохраняется, пустой набор — пустой.
+    /// Columns do not change, the array order is preserved, an empty set stays empty.
     func testCollapsingKeepsColumnsAndOrderAndHandlesEmptySet() {
         let base = [placementItem("z", .small, 5, 4), placementItem("a", .small, 0, 1)]
 
@@ -678,7 +678,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertTrue(TesseraTileLayoutEngine.collapsingEmptyRows(in: [], columns: columns).isEmpty)
     }
 
-    /// Плитка 2×2, закрывающая «пустую» для остальных строку, удерживает её.
+    /// A 2×2 tile covering a row that is "empty" for the others keeps it.
     func testCollapsingWithRowCoveredOnlyByMediumKeepsAllRows() {
         let base = [
             placementItem("top", .small, 0, 0),
@@ -689,7 +689,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         XCTAssertEqual(TesseraTileLayoutEngine.collapsingEmptyRows(in: base, columns: columns), base)
     }
 
-    /// Высота большой плитки на узкой сетке — ужатая: строки 2–3 пусты.
+    /// The height of a large tile on a narrow grid is clamped: rows 2–3 are empty.
     func testCollapsingUsesFittedHeightOnNarrowGrid() {
         let base = [placementItem("l", .large, 0, 0), placementItem("s", .small, 4, 0)]
 
@@ -702,7 +702,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
 
     // MARK: - newRowCell / firstFreeCell
 
-    /// Пустой набор — строка 0.
+    /// An empty set — row 0.
     func testNewRowCellOfEmptySetIsOrigin() {
         XCTAssertEqual(
             TesseraTileLayoutEngine.newRowCell(size: .medium, columns: columns, placements: []),
@@ -710,7 +710,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Новая строка — под самой нижней границей, включая высокие плитки.
+    /// A new row goes below the lowest bound, including tall tiles.
     func testNewRowCellIsBelowLastOccupiedRow() {
         let base = [placementItem("a", .small, 0, 0), placementItem("tall", .large, 2, 2)]
 
@@ -720,7 +720,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Переносимый элемент освобождает своё место: новая строка считается без него.
+    /// The item being moved frees its place: the new row is computed without it.
     func testNewRowCellExcludingMovedTile() {
         let base = [placementItem("a", .small, 0, 0), placementItem("last", .medium, 5, 0)]
 
@@ -730,7 +730,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Пустой набор — начало сетки.
+    /// An empty set — the start of the grid.
     func testFirstFreeCellOfEmptySetIsOrigin() {
         XCTAssertEqual(
             TesseraTileLayoutEngine.firstFreeCell(size: .large, columns: columns, placements: []),
@@ -738,7 +738,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Находит первую дыру сверху-слева.
+    /// Finds the first hole from the top left.
     func testFirstFreeCellFindsHoleTopLeft() {
         let base = [
             placementItem("a", .small, 0, 0),
@@ -751,7 +751,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Дыра, в которую плитка не помещается, пропускается.
+    /// A hole the tile does not fit into is skipped.
     func testFirstFreeCellSkipsHolesThatAreTooSmall() {
         let base = [
             placementItem("a", .small, 0, 0),
@@ -759,7 +759,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
             placementItem("d", .small, 1, 1),
         ]
 
-        // Дыра (0,1) — одна клетка: 2×2 ей не влезает; первая подходящая ниже.
+        // The hole (0,1) is a single cell: a 2×2 does not fit; the first suitable one is below.
         XCTAssertEqual(
             TesseraTileLayoutEngine.firstFreeCell(size: .medium, columns: columns, placements: base),
             TesseraTileGridPlacement(row: 0, column: 3)
@@ -770,7 +770,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Свободного места среди плиток нет — ячейка под последней строкой.
+    /// There is no free space among the tiles — a cell below the last row.
     func testFirstFreeCellFallsBackBelowEverything() {
         let base = [placementItem("a", .large, 0, 0), placementItem("b", .medium, 0, 4)]
 
@@ -784,7 +784,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Переносимый элемент освобождает своё место.
+    /// The item being moved frees its place.
     func testFirstFreeCellExcludingMovedTile() {
         let base = [placementItem("a", .medium, 0, 0), placementItem("b", .small, 0, 2)]
 
@@ -794,7 +794,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         )
     }
 
-    /// Найденная ячейка всегда свободна: вставка в неё ничего не двигает.
+    /// The found cell is always free: inserting into it moves nothing.
     func testFirstFreeCellInsertionNeverPushesAnything() {
         let base = [
             placementItem("a", .medium, 0, 0),
@@ -807,14 +807,14 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
             let cell = TesseraTileLayoutEngine.firstFreeCell(size: size, columns: columns, placements: base)
             let result = TesseraTileLayoutEngine.inserting(id: "n", size: size, at: cell, into: base, columns: columns)
 
-            XCTAssertEqual(Array(result.prefix(base.count)), base, "размер \(size)")
+            XCTAssertEqual(Array(result.prefix(base.count)), base, "size \(size)")
             XCTAssertEqual(placementCell("n", in: result), cell)
         }
     }
 
     // MARK: - fittingSize
 
-    /// При 6 колонках (D26) ни один размер D15 не ужимается.
+    /// At 6 columns (D26) no D15 size is clamped.
     func testFittingSizeKeepsAllSizesAtSixColumns() {
         for size in TesseraTileSize.allCases {
             XCTAssertEqual(TesseraTileLayoutEngine.fittingSize(size, columns: 6), size)
@@ -822,7 +822,7 @@ final class TileLayoutEnginePlacementTests: XCTestCase {
         }
     }
 
-    /// На узкой сетке ужатая ширина всегда ≤ колонок — основа `clamped`.
+    /// On a narrow grid the clamped width is always ≤ columns — the basis of `clamped`.
     func testFittingSizeAlwaysFitsWidthForClamping() {
         for columns in 1...6 {
             for size in TesseraTileSize.allCases {

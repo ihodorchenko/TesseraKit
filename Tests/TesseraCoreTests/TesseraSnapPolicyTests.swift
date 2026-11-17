@@ -2,32 +2,32 @@
 //  TesseraSnapPolicyTests.swift
 //  TesseraCoreTests
 //
-//  Контрактные тесты снапа (задача E1.7).
-//  Проектный документ: docs/Core-iOS-Design.md §2 «Ключевые контракты»
-//  («Два режима пейджера»: ближайший центр + порог скорости) и §3
-//  «Концептуальная поверхность API» (TesseraSnapPolicy — конфиг снапа).
+//  Contract tests for snapping.
+//  Design document: docs/CORE-IOS-DESIGN.md §2 (key contracts:
+//  "Two pager modes": nearest center + velocity threshold) and §3
+//  (conceptual API surface: TesseraSnapPolicy is the snapping config).
 //
-//  Проверяется чистая функция `targetContentOffset(...)`: она не зависит от UIKit и
-//  потому выполняется как на iOS, так и на macOS-хосте (файл не требует UIKit).
-//  Сценарии скорости (E10.11) заданы в единицах UIKit (points/ms) и переводятся
-//  в pt/s так же, как это делают потребители политики.
+//  Checks the pure function `targetContentOffset(...)`: it does not depend on UIKit and
+//  therefore runs both on iOS and on a macOS host (the file does not require UIKit).
+//  Velocity scenarios are expressed in UIKit units (points/ms) and converted
+//  to pt/s the same way the policy's consumers do it.
 //
 
 import XCTest
 @testable import TesseraCore
 
-/// Коэффициент `UIScrollView.DecelerationRate.fast` (0.99 за миллисекунду):
-/// константа продублирована, чтобы файл не зависел от UIKit.
+/// The `UIScrollView.DecelerationRate.fast` coefficient (0.99 per millisecond):
+/// the constant is duplicated so that the file does not depend on UIKit.
 private enum UIScrollViewFastDecelerationRateForTests {
     static let value: CGFloat = 0.99
 }
 
 final class TesseraSnapPolicyTests: XCTestCase {
 
-    /// Шаг снапа по умолчанию для тестов: 100 pt.
+    /// The default snap step for tests: 100 pt.
     private let itemWidth: CGFloat = 100
 
-    /// Универсальный вызов политики с дефолтными параметрами.
+    /// A generic policy call with default parameters.
     private func targetOffset(
         proposed: CGFloat,
         velocity: CGFloat = 0,
@@ -43,10 +43,10 @@ final class TesseraSnapPolicyTests: XCTestCase {
         )
     }
 
-    // MARK: - Выравнивание .center
+    // MARK: - .center alignment
 
-    /// `.center` округляет к ближайшей секции; полуцелые значения уходят вверх
-    /// (стандартное правило `CGFloat.rounded()` — от нуля).
+    /// `.center` rounds to the nearest section; half-integer values go up
+    /// (the standard `CGFloat.rounded()` rule: away from zero).
     func testCenterAlignmentRoundsToNearestSection() {
         let policy = TesseraSnapPolicy(velocityThreshold: 600, alignment: .center)
 
@@ -59,7 +59,7 @@ final class TesseraSnapPolicyTests: XCTestCase {
         XCTAssertEqual(targetOffset(proposed: 249, policy: policy), 200)
     }
 
-    /// Полуцелые индексы (0.5, 1.5, 2.5) при `.center` округляются от нуля.
+    /// Half-integer indexes (0.5, 1.5, 2.5) are rounded away from zero with `.center`.
     func testCenterAlignmentRoundsHalfValuesAwayFromZero() {
         let policy = TesseraSnapPolicy(alignment: .center)
 
@@ -68,10 +68,10 @@ final class TesseraSnapPolicyTests: XCTestCase {
         XCTAssertEqual(targetOffset(proposed: 250, pageCount: 4, policy: policy), 300)
     }
 
-    // MARK: - Выравнивание .leading
+    // MARK: - .leading alignment
 
-    /// `.leading` считает индекс как `floor(offset / itemWidth + 0.5)`: полуцелые
-    /// всегда вверх, в отличие от округления «от нуля» на отрицательных значениях.
+    /// `.leading` computes the index as `floor(offset / itemWidth + 0.5)`: half-integers
+    /// always go up, unlike rounding "away from zero" on negative values.
     func testLeadingAlignmentRoundsHalfUp() {
         let policy = TesseraSnapPolicy(velocityThreshold: 600, alignment: .leading)
 
@@ -84,8 +84,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         XCTAssertEqual(targetOffset(proposed: 150, policy: policy), 200)
     }
 
-    /// Для неотрицательных offset'ов формулы `.center` и `.leading` совпадают
-    /// (это зафиксировано в документации к `targetContentOffset`).
+    /// For non-negative offsets the `.center` and `.leading` formulas coincide
+    /// (this is recorded in the documentation of `targetContentOffset`).
     func testAlignmentsAgreeOnNonNegativeOffsets() {
         let center = TesseraSnapPolicy(alignment: .center)
         let leading = TesseraSnapPolicy(alignment: .leading)
@@ -96,13 +96,13 @@ final class TesseraSnapPolicyTests: XCTestCase {
             XCTAssertEqual(
                 targetOffset(proposed: proposed, policy: center),
                 targetOffset(proposed: proposed, policy: leading),
-                "Формулы выравниваний разошлись на неотрицательном offset \(proposed)"
+                "The alignment formulas diverged at non-negative offset \(proposed)"
             )
         }
     }
 
-    /// Отрицательный offset клампится в ноль при любом выравнивании: левее первой
-    /// секции снапить некуда.
+    /// A negative offset is clamped to zero with any alignment: there is nothing to snap to
+    /// left of the first section.
     func testNegativeOffsetsClampToFirstSection() {
         let center = TesseraSnapPolicy(alignment: .center)
         let leading = TesseraSnapPolicy(alignment: .leading)
@@ -113,26 +113,26 @@ final class TesseraSnapPolicyTests: XCTestCase {
         }
     }
 
-    // MARK: - Порог скорости: реальные сценарии (E10.11)
+    // MARK: - Velocity threshold: real scenarios
     //
-    // UIKit отдаёт скорость в points/ms, политика ждёт pt/s: потребитель
-    // переводит `× 1000`. `proposedOffset` у флика уже включает инерцию —
-    // для `.fast` (0.99/мс) проекция ≈ `offset + v(pt/ms) × 0.99 / 0.01`.
+    // UIKit reports velocity in points/ms, while the policy expects pt/s: the consumer
+    // converts it with `× 1000`. A flick's `proposedOffset` already includes inertia:
+    // for `.fast` (0.99/ms) the projection is ≈ `offset + v(pt/ms) × 0.99 / 0.01`.
 
-    /// Скорость UIKit (points/ms) в единицах политики (pt/s).
+    /// UIKit velocity (points/ms) in the policy's units (pt/s).
     private func pointsPerSecond(_ pointsPerMillisecond: CGFloat) -> CGFloat {
         pointsPerMillisecond * 1000
     }
 
-    /// Цель инерции UIKit при `decelerationRate = .fast`.
+    /// The UIKit inertia target with `decelerationRate = .fast`.
     private func projectedOffset(from offset: CGFloat, pointsPerMillisecond velocity: CGFloat) -> CGFloat {
         let rate = UIScrollViewFastDecelerationRateForTests.value
         return offset + velocity * rate / (1 - rate)
     }
 
-    /// Старт 0, протяжка 100, флик 3 pt/ms (3000 pt/s) при секции 320:
-    /// инерция предлагает ≈397 (ближайшая — 1), но шаг считается от стартовой
-    /// секции — итог 1, а не 2 (перескок секции).
+    /// Start 0, drag 100, flick 3 pt/ms (3000 pt/s) with a section width of 320:
+    /// inertia proposes ≈397 (the nearest is 1), but the step is counted from the starting
+    /// section, so the result is 1, not 2 (a section overshoot).
     func testFastFlickStepsOneSectionFromGestureStart() {
         let width: CGFloat = 320
         let proposed = projectedOffset(from: 100, pointsPerMillisecond: 3)
@@ -145,9 +145,9 @@ final class TesseraSnapPolicyTests: XCTestCase {
             pageCount: 5,
             startOffset: 0
         )
-        XCTAssertEqual(target, width, "один жест — не дальше соседней секции")
+        XCTAssertEqual(target, width, "one gesture goes no farther than the adjacent section")
 
-        // Без стартового offset'а опора — ближайшая к proposed: перескок.
+        // Without a starting offset the anchor is the one nearest to proposed: an overshoot.
         let legacy = TesseraSnapPolicy().targetContentOffset(
             proposedOffset: proposed,
             velocity: pointsPerSecond(3),
@@ -157,8 +157,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         XCTAssertEqual(legacy, width * 2)
     }
 
-    /// Короткая протяжка 50 и флик 1 pt/ms (1000 pt/s > 600): соседняя секция,
-    /// хотя инерция предлагает ≈149 (ближайшая — текущая 0).
+    /// A short drag of 50 and a flick of 1 pt/ms (1000 pt/s > 600): the adjacent section,
+    /// although inertia proposes ≈149 (the nearest is the current 0).
     func testShortFastFlickMovesToNeighbour() {
         let width: CGFloat = 320
         let proposed = projectedOffset(from: 50, pointsPerMillisecond: 1)
@@ -175,8 +175,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         )
     }
 
-    /// Та же короткая протяжка медленнее порога (0,4 pt/ms = 400 pt/s):
-    /// откат на ближайшую секцию.
+    /// The same short drag below the threshold (0.4 pt/ms = 400 pt/s):
+    /// a rollback to the nearest section.
     func testShortSlowDragReturnsToNearest() {
         let width: CGFloat = 320
         let proposed = projectedOffset(from: 50, pointsPerMillisecond: 0.4)
@@ -193,8 +193,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         )
     }
 
-    /// Флик назад со стартом на секции 2: протяжка −100, −3 pt/ms — итог 1,
-    /// а не 0.
+    /// A backward flick starting at section 2: drag −100, −3 pt/ms: the result is 1,
+    /// not 0.
     func testFastBackwardFlickStepsOneSectionFromGestureStart() {
         let width: CGFloat = 320
         let proposed = projectedOffset(from: 540, pointsPerMillisecond: -3)
@@ -211,8 +211,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         )
     }
 
-    /// Флик против направления протяжки: протянули вперёд, бросили назад —
-    /// шаг от стартовой секции по знаку скорости (кламп в ноль на первой).
+    /// A flick against the drag direction: dragged forward, flicked backward:
+    /// a step from the starting section by the velocity's sign (clamped to zero at the first).
     func testFlickAgainstDragDirectionUsesVelocitySign() {
         let width: CGFloat = 320
         let policy = TesseraSnapPolicy()
@@ -239,7 +239,7 @@ final class TesseraSnapPolicyTests: XCTestCase {
         )
     }
 
-    /// Нечисловой стартовый offset игнорируется — опора на ближайшую.
+    /// A non-numeric starting offset is ignored: the anchor is the nearest one.
     func testNonFiniteStartOffsetFallsBackToNearest() {
         XCTAssertEqual(
             targetOffset(proposed: 100, velocity: 1000),
@@ -253,8 +253,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         )
     }
 
-    /// Порог строгий (`abs(velocity) > threshold`): ровно на пороге остаёмся на
-    /// ближайшей секции; чуть выше — шаг от стартовой.
+    /// The threshold is strict (`abs(velocity) > threshold`): exactly at the threshold we stay on
+    /// the nearest section; slightly above it, a step from the starting one.
     func testVelocityAtThresholdKeepsNearestSection() {
         let policy = TesseraSnapPolicy(velocityThreshold: 600)
 
@@ -266,8 +266,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         }
     }
 
-    /// Отрицательный порог нормализуется к нулю: любая ненулевая скорость
-    /// считается быстрым свайпом, нулевая — нет.
+    /// A negative threshold is normalized to zero: any nonzero velocity
+    /// counts as a fast swipe, zero velocity does not.
     func testNegativeVelocityThresholdIsTreatedAsZero() {
         let policy = TesseraSnapPolicy(velocityThreshold: -100)
 
@@ -276,8 +276,8 @@ final class TesseraSnapPolicyTests: XCTestCase {
         XCTAssertEqual(targetOffset(proposed: 100, velocity: -5, policy: policy), 0)
     }
 
-    /// Пользовательский порог в pt/s: 1500 pt/s (1,5 pt/ms) — флик 1 pt/ms
-    /// уже «медленный», 2 pt/ms — быстрый.
+    /// A custom threshold in pt/s: 1500 pt/s (1.5 pt/ms): a 1 pt/ms flick
+    /// is already "slow", 2 pt/ms is fast.
     func testCustomVelocityThreshold() {
         let width: CGFloat = 320
         let policy = TesseraSnapPolicy(velocityThreshold: 1500)
@@ -304,32 +304,32 @@ final class TesseraSnapPolicyTests: XCTestCase {
         )
     }
 
-    // MARK: - Кламп в [0, (pageCount - 1) * itemWidth]
+    // MARK: - Clamp to [0, (pageCount - 1) * itemWidth]
 
-    /// Выше последней секции offset не уходит.
+    /// The offset does not go beyond the last section.
     func testUpperBoundClamp() {
         XCTAssertEqual(targetOffset(proposed: 200, velocity: 2000, pageCount: 3), 200)
         XCTAssertEqual(targetOffset(proposed: 1000, velocity: 0, pageCount: 3), 200)
         XCTAssertEqual(targetOffset(proposed: 250, velocity: 0, pageCount: 3), 200)
     }
 
-    /// Ниже первой секции offset не уходит.
+    /// The offset does not go below the first section.
     func testLowerBoundClamp() {
         XCTAssertEqual(targetOffset(proposed: 0, velocity: -2000, pageCount: 3), 0)
         XCTAssertEqual(targetOffset(proposed: -1000, velocity: 0, pageCount: 3), 0)
     }
 
-    /// Для одной страницы допустим только нулевой offset.
+    /// For a single page only a zero offset is valid.
     func testSinglePageAlwaysReturnsZero() {
         XCTAssertEqual(targetOffset(proposed: 500, velocity: 2000, pageCount: 1), 0)
         XCTAssertEqual(targetOffset(proposed: -500, velocity: -2000, pageCount: 1), 0)
         XCTAssertEqual(targetOffset(proposed: 0, velocity: 0, pageCount: 1), 0)
     }
 
-    // MARK: - Вырожденные входы
+    // MARK: - Degenerate inputs
 
-    /// Некорректная ширина секции (0, отрицательная, NaN) — снапить не к чему,
-    /// возвращается предложение системы без изменений.
+    /// An invalid section width (0, negative, NaN): there is nothing to snap to,
+    /// and the system's proposal is returned unchanged.
     func testDegenerateItemWidthReturnsProposedOffset() {
         let proposals: [CGFloat] = [123.456, -50, 0]
 
@@ -338,14 +338,14 @@ final class TesseraSnapPolicyTests: XCTestCase {
                 XCTAssertEqual(
                     targetOffset(proposed: proposed, itemWidth: width),
                     proposed,
-                    "Ширина \(width), proposed \(proposed): ожидался исходный offset"
+                    "Width \(width), proposed \(proposed): expected the original offset"
                 )
             }
         }
     }
 
-    /// Некорректное число страниц (0, отрицательное) — возвращается предложение
-    /// системы без изменений.
+    /// An invalid page count (0, negative): the system's proposal is returned
+    /// unchanged.
     func testDegeneratePageCountReturnsProposedOffset() {
         for count in [0, -2] {
             XCTAssertEqual(
@@ -355,16 +355,16 @@ final class TesseraSnapPolicyTests: XCTestCase {
         }
     }
 
-    // MARK: - Конфигурация по умолчанию
+    // MARK: - Default configuration
 
-    /// Дефолты: порог 600 pt/s и выравнивание `.center`.
+    /// Defaults: a threshold of 600 pt/s and `.center` alignment.
     func testDefaultConfiguration() {
         let policy = TesseraSnapPolicy()
 
         XCTAssertEqual(policy.velocityThreshold, 600)
         XCTAssertEqual(policy.alignment, .center)
 
-        // Поведенческая проверка дефолтного порога.
+        // A behavioral check of the default threshold.
         XCTAssertEqual(targetOffset(proposed: 100, velocity: 600, policy: policy), 100)
         XCTAssertEqual(targetOffset(proposed: 100, velocity: 601, policy: policy), 200)
     }

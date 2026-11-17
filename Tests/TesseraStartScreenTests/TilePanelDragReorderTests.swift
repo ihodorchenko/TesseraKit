@@ -2,24 +2,24 @@
 //  TilePanelDragReorderTests.swift
 //  TesseraStartScreenTests
 //
-//  Перестановка ярлыков drag'ом внутри открытой панели папки (E16.1, D40,
-//  13.11.2026; W10M §6.5, §6.6). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  «Отступления реализации (E16)», п. 65; решение D40 в docs/STATE.md.
+//  Reordering tiles by dragging inside an open folder panel (D40;
+//  Windows 10 Mobile §6.5, §6.6). Design document: docs/STARTSCREEN-IOS-DESIGN.md
+//  ("Implementation deviations"); decision D40 in docs/STATE.md.
 //
-//  Правила, которые проверяются:
-//  - долгое нажатие по ярлыку панели в правке начинает перестановку: панель
-//    остаётся открытой, ярлык скрыт и заменён пустышкой, кнопок открепления нет;
-//  - слот под пальцем — по рамкам слотов раскладки панели (строки/колонки, RTL);
-//    пустое место и заголовок дают ближайший слот;
-//  - соседи сдвигаются от базового порядка (без накопления), модель не меняется;
-//  - drop фиксирует `TesseraTileStore.moveWithinFolder` (один раз, делегат
-//    `didReorderTile`), drop на свой слот и отмена возвращают порядок;
-//  - выход пальца за панель плюс запас переводит drag в вынос (панель
-//    закрывается мгновенно, цели E14, D45, отказ хоста), назад к перестановке
-//    в этом drag возврата нет;
-//  - Reduce Motion — мгновенный сдвиг; автопрокрутка у края работает.
+//  The rules that are checked:
+//  - a long press on a panel tile in edit mode starts a reorder: the panel
+//    stays open, the tile is hidden and replaced by a placeholder, and there are no unpin buttons;
+//  - the slot under the finger comes from the frames of the panel layout slots (rows/columns, RTL);
+//    an empty spot and the header give the nearest slot;
+//  - neighbors shift from the base order (without accumulation), and the model does not change;
+//  - a drop commits `TesseraTileStore.moveWithinFolder` (once, the delegate
+//    `didReorderTile`), while a drop on its own slot and a cancel restore the order;
+//  - the finger leaving the panel plus a margin turns the drag into a take-out (the panel
+//    closes immediately; targets, D45, host refusal), and in that drag there is no way
+//    back to reordering;
+//  - with Reduce Motion the shift is instant; autoscroll at the edge works.
 //
-//  Стенд — настоящие `TesseraTileStore` и сетка в окне; раскладки точные.
+//  The rig uses a real `TesseraTileStore` and a grid in a window; layouts are exact.
 //
 
 #if canImport(UIKit)
@@ -30,7 +30,7 @@ import XCTest
 
 final class TilePanelDragReorderTests: XCTestCase {
 
-    // MARK: - Помощники
+    // MARK: - Helpers
 
     private let folderID: AnyHashable = "F"
 
@@ -76,8 +76,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         }
     }
 
-    /// Стенд: папка F (medium, (0,0)) из `count` малых ярлыков `t0…`, плитка `a`
-    /// в правом столбце под папкой. 4 колонки: панель — строки по четыре ярлыка.
+    /// Rig: folder F (medium, (0,0)) of `count` small tiles `t0…`, and tile `a`
+    /// in the right column under the folder. 4 columns: the panel has rows of four tiles.
     private func makeHost(
         count: Int = 6,
         reduceMotion: Bool = false
@@ -131,7 +131,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         CGPoint(x: frame.midX, y: frame.midY)
     }
 
-    /// Долгое нажатие по ярлыку панели `index`; возвращает точку нажатия.
+    /// A long press on panel tile `index`; returns the press point.
     @discardableResult
     private func lift(_ host: TesseraTestDragHost, index: Int) throws -> CGPoint {
         let panelItem = try XCTUnwrap(host.host.grid.displayItems.first { $0.isFolderPanel })
@@ -140,17 +140,17 @@ final class TilePanelDragReorderTests: XCTestCase {
         return point
     }
 
-    /// Ждёт, пока drag завершится и уборка пройдёт.
+    /// Waits for the drag to finish and the cleanup to pass.
     private func settle(_ host: TesseraTestDragHost) {
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil && !host.host.grid.isFolderChangeAnimating })
         XCTAssertTrue(host.waitUntil { host.host.grid.subviews.allSatisfy { !($0 is TesseraTilePlaceholderView) } })
         host.spin(0.4)
     }
 
-    // MARK: - Старт
+    // MARK: - Start
 
-    /// Долгое нажатие по ярлыку панели в правке начинает перестановку: панель
-    /// остаётся открытой, модель не тронута, кнопок открепления нет.
+    /// A long press on a panel tile in edit mode starts a reorder: the panel
+    /// stays open, the model is untouched, and there are no unpin buttons.
     func testLongPressStartsReorderAndKeepsPanelOpen() throws {
         let host = try makeHost()
         let panel = try openPanel(host)
@@ -166,12 +166,12 @@ final class TilePanelDragReorderTests: XCTestCase {
         XCTAssertEqual(reorder.slot, 2)
         XCTAssertEqual(reorder.folder.id, "F")
         XCTAssertEqual(session.itemID, "t2")
-        XCTAssertNil(session.sourceFolderID, "Это не вынос")
-        XCTAssertEqual(host.host.grid.expandedFolderID, folderID, "Панель осталась открытой")
-        XCTAssertEqual(ids(host), before, "Модель не меняется во время drag")
-        XCTAssertTrue(host.coordinator.panelEditControls.isEmpty, "Кнопок на ярлыках во время drag нет")
+        XCTAssertNil(session.sourceFolderID, "This is not a take-out")
+        XCTAssertEqual(host.host.grid.expandedFolderID, folderID, "The panel stayed open")
+        XCTAssertEqual(ids(host), before, "The model does not change during the drag")
+        XCTAssertTrue(host.coordinator.panelEditControls.isEmpty, "There are no buttons on tiles during the drag")
         XCTAssertEqual(panel.reorderSourceIndex, 2)
-        XCTAssertTrue(panel.shortcutCells[2].accessibilityElementsHidden, "Поднятый ярлык скрыт")
+        XCTAssertTrue(panel.shortcutCells[2].accessibilityElementsHidden, "The lifted tile is hidden")
 
         host.coordinator.finishDrag(commit: false)
         settle(host)
@@ -180,7 +180,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Долгое нажатие вне иконок панели (заголовок, фон) drag не начинает.
+    /// A long press outside the panel icons (header, background) does not start a drag.
     func testLongPressOnPanelBackgroundDoesNotStart() throws {
         let host = try makeHost()
         try openPanel(host)
@@ -194,8 +194,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Центр тела ярлыка не принадлежит кнопке открепления: long-press по телу
-    /// доходит до жеста (зона кнопки — угловая четверть), E15.9/E15.10.
+    /// The center of a tile body does not belong to the unpin button: a long press on the body
+    /// reaches the gesture (the button zone is a corner quarter).
     func testBodyCenterIsOutsideUnpinButtonZone() throws {
         let host = try makeHost()
         try openPanel(host)
@@ -205,16 +205,16 @@ final class TilePanelDragReorderTests: XCTestCase {
         let frame = geometry.frames[1]
 
         let bodyPoint = control.convert(center(frame), from: host.host.grid)
-        XCTAssertNil(control.hitTest(bodyPoint, with: nil), "Тело ярлыка — не кнопка")
-        // Правый верхний угол — кнопка.
+        XCTAssertNil(control.hitTest(bodyPoint, with: nil), "The tile body is not a button")
+        // The top right corner is a button.
         let corner = control.convert(CGPoint(x: frame.maxX - 4, y: frame.minY + 4), from: host.host.grid)
-        XCTAssertNotNil(control.hitTest(corner, with: nil), "Угол — кнопка открепления")
+        XCTAssertNotNil(control.hitTest(corner, with: nil), "The corner is the unpin button")
         host.coordinator.endEditing()
     }
 
-    // MARK: - Слот под пальцем
+    // MARK: - Slot under the finger
 
-    /// Чистая функция: сетка 4 колонки; центры слотов, зазоры, пустое место.
+    /// A pure function: a 4-column grid; slot centers, gaps, empty spot.
     func testSlotHitTestRowsAndColumns() {
         let frames: [CGRect] = (0..<6).map { index in
             CGRect(x: CGFloat(index % 4) * 50, y: 100 + CGFloat(index / 4) * 50, width: 48, height: 48)
@@ -227,16 +227,16 @@ final class TilePanelDragReorderTests: XCTestCase {
         XCTAssertEqual(slot(174, 124), 3)
         XCTAssertEqual(slot(24, 174), 4)
         XCTAssertEqual(slot(74, 174), 5)
-        XCTAssertEqual(slot(48.5, 124), 0, "Зазор между колонками принадлежит ближайшему слоту")
-        XCTAssertEqual(slot(124, 148.8), 2, "Зазор между строками")
-        XCTAssertEqual(slot(174, 174), 5, "Пустое место последней строки — ближайший слот")
-        XCTAssertEqual(slot(124, 400), 5, "Под панелью — ближайший слот последней строки")
-        XCTAssertEqual(slot(124, 10), 2, "Над сеткой (заголовок) — ближайший слот первой строки")
+        XCTAssertEqual(slot(48.5, 124), 0, "The gap between columns belongs to the nearest slot")
+        XCTAssertEqual(slot(124, 148.8), 2, "The gap between rows")
+        XCTAssertEqual(slot(174, 174), 5, "The empty spot of the last row is the nearest slot")
+        XCTAssertEqual(slot(124, 400), 5, "Below the panel is the nearest slot of the last row")
+        XCTAssertEqual(slot(124, 10), 2, "Above the grid (the header) is the nearest slot of the first row")
         XCTAssertNil(TesseraTileEditCoordinator.panelReorderSlot(at: .zero, slotFrames: [], spacing: 2))
     }
 
-    /// Рамки слотов реальной панели: слот под центром каждого ярлыка, а слоты не
-    /// зависят от превью сдвига.
+    /// Slot frames of the real panel: the slot under each tile's center, and slots do not
+    /// depend on the shift preview.
     func testSlotFramesFromPanelGeometry() throws {
         let host = try makeHost()
         try openPanel(host)
@@ -244,7 +244,7 @@ final class TilePanelDragReorderTests: XCTestCase {
 
         XCTAssertEqual(geometry.slotFrames.count, 6)
         for (slot, frame) in zip(geometry.slotFrames, geometry.frames) {
-            assertFrame(slot, frame, "Без превью слоты совпадают с рамками ярлыков")
+            assertFrame(slot, frame, "Without a preview the slots match the tile frames")
         }
         for (index, frame) in geometry.slotFrames.enumerated() {
             XCTAssertEqual(
@@ -254,13 +254,13 @@ final class TilePanelDragReorderTests: XCTestCase {
                 index
             )
         }
-        XCTAssertEqual(geometry.slotFrames[4].minX, geometry.slotFrames[0].minX, accuracy: 0.5, "Пятый — во второй строке")
+        XCTAssertEqual(geometry.slotFrames[4].minX, geometry.slotFrames[0].minX, accuracy: 0.5, "The fifth is in the second row")
         XCTAssertGreaterThan(geometry.slotFrames[4].minY, geometry.slotFrames[0].maxY - 1)
         XCTAssertTrue(geometry.panelFrame.contains(center(geometry.slotFrames[5])))
         host.coordinator.endEditing()
     }
 
-    /// RTL: колонки панели зеркалятся (слот 0 — правый), хит-тест по рамкам тоже.
+    /// RTL: panel columns are mirrored (slot 0 is the right one), and the frame-based hit test is too.
     func testSlotHitTestInRightToLeft() throws {
         let host = try makeHost()
         host.host.grid.semanticContentAttribute = .forceRightToLeft
@@ -271,7 +271,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.host.layout()
         let geometry = try geometry(host)
 
-        XCTAssertGreaterThan(geometry.slotFrames[0].midX, geometry.slotFrames[1].midX, "RTL: слот 0 правее слота 1")
+        XCTAssertGreaterThan(geometry.slotFrames[0].midX, geometry.slotFrames[1].midX, "RTL: slot 0 is to the right of slot 1")
         for (index, frame) in geometry.slotFrames.enumerated() {
             XCTAssertEqual(
                 TesseraTileEditCoordinator.panelReorderSlot(
@@ -281,7 +281,7 @@ final class TilePanelDragReorderTests: XCTestCase {
             )
         }
 
-        // Реальный drag в RTL: ярлык 0 на слот 1 (левее на экране).
+        // A real drag in RTL: tile 0 to slot 1 (to the left on screen).
         try lift(host, index: 0)
         host.coordinator.updateDrag(to: center(geometry.slotFrames[1]))
         XCTAssertEqual(host.coordinator.dragSession?.panelReorder?.slot, 1)
@@ -294,10 +294,10 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    // MARK: - Превью
+    // MARK: - Preview
 
-    /// Палец над слотом 3: пустышка в слоте 3, соседи сдвинулись, модель и
-    /// `onChange` не тронуты.
+    /// The finger is over slot 3: the placeholder is in slot 3, neighbors shifted, and the model and
+    /// `onChange` are untouched.
     func testSiblingsShiftAndModelIsUntouched() throws {
         let host = try makeHost(reduceMotion: true)
         let panel = try openPanel(host)
@@ -309,13 +309,13 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.updateDrag(to: center(try geometry(host).slotFrames[3]))
 
         XCTAssertEqual(panel.reorderSlot, 3)
-        // Порядок слотов: t1 t2 t3 [t0] t4 t5.
+        // Slot order: t1 t2 t3 [t0] t4 t5.
         XCTAssertEqual(panel.shortcutCells[1].frame.origin.x, slots[0].origin.x, accuracy: 0.5)
         XCTAssertEqual(panel.shortcutCells[2].frame.origin.x, slots[1].origin.x, accuracy: 0.5)
         XCTAssertEqual(panel.shortcutCells[3].frame.origin.x, slots[2].origin.x, accuracy: 0.5)
-        assertFrame(panel.shortcutCells[4].frame, slots[4], "За пустышкой ярлыки на своих местах")
+        assertFrame(panel.shortcutCells[4].frame, slots[4], "Tiles after the placeholder are in their places")
         assertFrame(panel.shortcutCells[5].frame, slots[5])
-        XCTAssertEqual(changes, 0, "Модель не пишется во время drag")
+        XCTAssertEqual(changes, 0, "The model is not written during the drag")
         XCTAssertEqual(ids(host), ["t0", "t1", "t2", "t3", "t4", "t5"] as [AnyHashable])
         XCTAssertEqual(host.store.autosaves, false)
 
@@ -324,8 +324,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Превью считается от базового порядка: проход по слотам 3 → 1 → 2 даёт то же,
-    /// что прямой переход на 2; повторный шаг в тот же слот ничего не меняет.
+    /// The preview is computed from the base order: passing through slots 3 → 1 → 2 gives the same
+    /// as going directly to 2; a repeated step into the same slot changes nothing.
     func testPreviewIsComputedFromBaseWithoutAccumulation() throws {
         let host = try makeHost(reduceMotion: true)
         let panel = try openPanel(host)
@@ -337,7 +337,7 @@ final class TilePanelDragReorderTests: XCTestCase {
             host.coordinator.updateDrag(to: center(geometry.slotFrames[slot]))
         }
 
-        // Ожидаемый порядок слотов: t1 t2 [t0] t3 t4 t5.
+        // Expected slot order: t1 t2 [t0] t3 t4 t5.
         XCTAssertEqual(panel.reorderSlot, 2)
         assertFrame(panel.shortcutCells[1].frame, slots[0])
         assertFrame(panel.shortcutCells[2].frame, slots[1])
@@ -345,7 +345,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         assertFrame(panel.shortcutCells[4].frame, slots[4])
         assertFrame(panel.shortcutCells[5].frame, slots[5])
 
-        // Возврат на исходный слот — полная база.
+        // Returning to the source slot is the full base.
         host.coordinator.updateDrag(to: center(geometry.slotFrames[0]))
         for index in 1..<6 { assertFrame(panel.shortcutCells[index].frame, slots[index]) }
 
@@ -354,7 +354,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Reduce Motion: слот меняется мгновенно, анимаций на ярлыках и пустышке нет.
+    /// Reduce Motion: the slot changes instantly, and there are no animations on tiles or the placeholder.
     func testReduceMotionShiftsInstantlyWithoutAnimations() throws {
         let host = try makeHost(reduceMotion: true)
         let panel = try openPanel(host)
@@ -363,14 +363,14 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.updateDrag(to: center(try geometry(host).slotFrames[2]))
 
         for cell in panel.shortcutCells {
-            XCTAssertTrue(cell.layer.animationKeys()?.isEmpty ?? true, "Без анимации сдвига")
+            XCTAssertTrue(cell.layer.animationKeys()?.isEmpty ?? true, "No shift animation")
         }
         host.coordinator.finishDrag(commit: false)
         settle(host)
         host.coordinator.endEditing()
     }
 
-    /// Без Reduce Motion сдвиг идёт анимацией; модельные рамки — сразу конечные.
+    /// Without Reduce Motion the shift is animated; model frames are final immediately.
     func testShiftIsAnimatedWithoutReduceMotion() throws {
         let host = try makeHost()
         let panel = try openPanel(host)
@@ -379,16 +379,16 @@ final class TilePanelDragReorderTests: XCTestCase {
 
         host.coordinator.updateDrag(to: center(try geometry(host).slotFrames[1]))
 
-        assertFrame(panel.shortcutCells[1].frame, slots[0], "Модельный кадр — конечный")
+        assertFrame(panel.shortcutCells[1].frame, slots[0], "The model frame is final")
         host.coordinator.finishDrag(commit: false)
         settle(host)
         host.coordinator.endEditing()
     }
 
-    // MARK: - Drop и отмена
+    // MARK: - Drop and cancel
 
-    /// Drop на слот 3: одна операция модели, один делегатный вызов, панель
-    /// осталась открытой и показывает новый порядок, кнопки вернулись.
+    /// A drop on slot 3: one model operation, one delegate call, the panel
+    /// stayed open and shows the new order, and the buttons are back.
     func testDropCommitsMoveWithinFolder() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -404,30 +404,30 @@ final class TilePanelDragReorderTests: XCTestCase {
         settle(host)
 
         XCTAssertEqual(ids(host), ["t1", "t2", "t3", "t0", "t4", "t5"] as [AnyHashable])
-        XCTAssertEqual(changes, 1, "Один onChange на drop")
+        XCTAssertEqual(changes, 1, "One onChange per drop")
         XCTAssertEqual(recorder.reorders.count, 1)
         XCTAssertEqual(recorder.reorders.first?.tile, "t0")
         XCTAssertEqual(recorder.reorders.first?.folder, "F")
         XCTAssertEqual(recorder.reorders.first?.index, 3)
         XCTAssertTrue(recorder.moves.isEmpty && recorder.failures.isEmpty)
-        XCTAssertEqual(host.store.placements, placements, "Ячейки рабочего стола не менялись")
-        XCTAssertEqual(host.host.grid.expandedFolderID, folderID, "Панель осталась открытой")
+        XCTAssertEqual(host.store.placements, placements, "The desktop cells did not change")
+        XCTAssertEqual(host.host.grid.expandedFolderID, folderID, "The panel stayed open")
         XCTAssertEqual(panel.shortcutCells.map { $0.itemID }, ids(host).map { Optional($0) })
         XCTAssertNil(panel.reorderSourceIndex)
-        XCTAssertTrue(panel.shortcutCells.allSatisfy { !$0.accessibilityElementsHidden }, "Скрытых ярлыков нет")
+        XCTAssertTrue(panel.shortcutCells.allSatisfy { !$0.accessibilityElementsHidden }, "There are no hidden tiles")
         let slots = try geometry(host).slotFrames
         for (index, cell) in panel.shortcutCells.enumerated() {
             let frame = panel.contentView.convert(cell.frame, to: host.host.grid)
             XCTAssertEqual(frame.origin.x, slots[index].origin.x, accuracy: 0.5)
             XCTAssertEqual(frame.origin.y, slots[index].origin.y, accuracy: 0.5)
         }
-        XCTAssertEqual(host.coordinator.panelEditControls.count, 6, "Кнопки открепления вернулись")
-        XCTAssertEqual(host.store.autosaves, false, "Автосохранение стенда восстановлено")
+        XCTAssertEqual(host.coordinator.panelEditControls.count, 6, "The unpin buttons are back")
+        XCTAssertEqual(host.store.autosaves, false, "The rig's autosave is restored")
         XCTAssertEqual(host.host.grid.snapshot?.folders.first?.tiles.map { $0.id }, ids(host))
         host.coordinator.endEditing()
     }
 
-    /// Drop сохраняется один раз на диск (автосохранение включено у стенда).
+    /// A drop is saved to disk once (autosave is enabled on the rig).
     func testDropPersistsOnce() throws {
         let host = try makeHost()
         host.store.autosaves = true
@@ -435,14 +435,14 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.store.autosaves = true
         try FileManager.default.removeItem(at: host.store.fileURL)
         try lift(host, index: 1)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: host.store.fileURL.path), "Во время drag ничего не пишется")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: host.store.fileURL.path), "Nothing is written during the drag")
 
         host.coordinator.updateDrag(to: center(try geometry(host).slotFrames[4]))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: host.store.fileURL.path), "Превью не пишет файл")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: host.store.fileURL.path), "The preview does not write a file")
         host.coordinator.finishDrag(commit: true)
         settle(host)
 
-        XCTAssertTrue(FileManager.default.fileExists(atPath: host.store.fileURL.path), "Drop записал файл")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: host.store.fileURL.path), "The drop wrote the file")
         let fresh = TesseraTileStore(directoryURL: host.directory.url)
         fresh.setCatalog((0..<6).map { tesseraTestTile("t\($0)", size: .small) } + [tesseraTestTile("a", size: .small)])
         try fresh.load()
@@ -453,7 +453,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Drop на свой слот: no-op — ни модели, ни делегата, ни `onChange`.
+    /// A drop on its own slot is a no-op: no model change, no delegate call, no `onChange`.
     func testDropOnOwnSlotIsNoOp() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -475,7 +475,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Отмена жеста: порядок и кадры возвращаются, модель и делегат не тронуты.
+    /// A gesture cancel: the order and frames are restored, and the model and delegate are untouched.
     func testCancelRestoresOriginalOrder() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -504,8 +504,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Внешнее изменение модели во время перестановки отменяет drag и возвращает
-    /// панель (B1); выход из правки тоже.
+    /// An external model change during a reorder cancels the drag and restores
+    /// the panel; leaving edit mode does too.
     func testExternalChangeAndEndEditingCancelReorder() throws {
         let host = try makeHost()
         let panel = try openPanel(host)
@@ -517,9 +517,9 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.host.layout()
         host.coordinator.updateDrag(to: center(try geometry(host).slotFrames[3]))
 
-        XCTAssertFalse(host.coordinator.isDragging, "Drag отменён")
+        XCTAssertFalse(host.coordinator.isDragging, "Drag cancelled")
         XCTAssertNil(panel.reorderSourceIndex)
-        XCTAssertEqual(ids(host), ["t3", "t0", "t1", "t2", "t4", "t5"] as [AnyHashable], "Чужая правка осталась")
+        XCTAssertEqual(ids(host), ["t3", "t0", "t1", "t2", "t4", "t5"] as [AnyHashable], "The external change remained")
         XCTAssertTrue(panel.shortcutCells.allSatisfy { !$0.accessibilityElementsHidden })
 
         try lift(host, index: 1)
@@ -529,9 +529,9 @@ final class TilePanelDragReorderTests: XCTestCase {
         XCTAssertNil(panel.reorderSourceIndex)
     }
 
-    // MARK: - Выход за панель: вынос
+    // MARK: - Leaving the panel: take-out
 
-    /// Палец в запасе у края панели ещё переставляет; за запасом — вынос.
+    /// A finger within the margin at the panel edge still reorders; beyond the margin it is a take-out.
     func testLeavingPanelSwitchesToTakeOutAfterMargin() throws {
         let host = try makeHost()
         let panel = try openPanel(host)
@@ -541,24 +541,24 @@ final class TilePanelDragReorderTests: XCTestCase {
         _ = session
         let dragView = try XCTUnwrap(host.coordinator.dragSession?.dragView)
 
-        // В пределах запаса — по-прежнему перестановка.
+        // Within the margin it is still a reorder.
         host.coordinator.updateDrag(to: CGPoint(x: slotX, y: panelFrame.maxY + TesseraTileEditCoordinator.panelReorderExitMargin - 2))
         XCTAssertNotNil(host.coordinator.dragSession?.panelReorder)
         XCTAssertEqual(host.host.grid.expandedFolderID, folderID)
 
-        // За запасом — вынос.
+        // Beyond the margin it is a take-out.
         host.coordinator.updateDrag(to: CGPoint(x: slotX, y: panelFrame.maxY + TesseraTileEditCoordinator.panelReorderExitMargin + 30))
         let taken = try XCTUnwrap(host.coordinator.dragSession)
         XCTAssertNil(taken.panelReorder)
-        XCTAssertEqual(taken.sourceFolderID, "F", "Источник — папка")
+        XCTAssertEqual(taken.sourceFolderID, "F", "The source is the folder")
         XCTAssertEqual(taken.itemID, "t0")
-        XCTAssertTrue(taken.dragView === dragView, "Тот же снимок едет за пальцем")
-        XCTAssertNil(host.host.grid.expandedFolderID, "Панель закрыта мгновенно")
+        XCTAssertTrue(taken.dragView === dragView, "The same snapshot follows the finger")
+        XCTAssertNil(host.host.grid.expandedFolderID, "The panel closed immediately")
         XCTAssertFalse(host.host.grid.isFolderChangeAnimating)
         XCTAssertNil(panel.reorderSourceIndex)
         XCTAssertTrue(host.coordinator.panelEditControls.isEmpty)
-        XCTAssertEqual(ids(host), ["t0", "t1", "t2", "t3", "t4", "t5"] as [AnyHashable], "Модель не менялась")
-        XCTAssertEqual(host.store.autosaves, false, "Транзакция автосохранения одна")
+        XCTAssertEqual(ids(host), ["t0", "t1", "t2", "t3", "t4", "t5"] as [AnyHashable], "The model did not change")
+        XCTAssertEqual(host.store.autosaves, false, "There is a single autosave transaction")
 
         host.coordinator.finishDrag(commit: false)
         settle(host)
@@ -566,8 +566,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// После выноса к перестановке в том же drag возврата нет: палец над прежним
-    /// местом панели ничего не переставляет; drop на пустую клетку — вынос E14.
+    /// After a take-out there is no way back to reordering in the same drag: a finger over the former
+    /// panel spot reorders nothing; a drop on an empty cell is a take-out.
     func testNoSwitchingBackAndTakeOutDropOnCell() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -580,8 +580,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.updateDrag(to: CGPoint(x: slotCenter.x, y: panelFrame.maxY + 60))
         XCTAssertNil(host.coordinator.dragSession?.panelReorder)
         host.coordinator.updateDrag(to: slotCenter)
-        XCTAssertNil(host.coordinator.dragSession?.panelReorder, "Назад к перестановке нельзя")
-        XCTAssertNil(host.host.grid.expandedFolderID, "Панель заново не открывается")
+        XCTAssertNil(host.coordinator.dragSession?.panelReorder, "There is no way back to reordering")
+        XCTAssertNil(host.host.grid.expandedFolderID, "The panel does not reopen")
 
         let target = try XCTUnwrap(host.cellPoint(row: 1, column: 3))
         host.coordinator.updateDrag(to: target)
@@ -589,7 +589,7 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.finishDrag(commit: true)
         settle(host)
 
-        XCTAssertTrue(recorder.reorders.isEmpty, "Это не перестановка")
+        XCTAssertTrue(recorder.reorders.isEmpty, "This is not a reorder")
         XCTAssertEqual(recorder.moves.count, 1)
         XCTAssertEqual(recorder.moves.first?.tile, "t2")
         XCTAssertNil(recorder.moves.first?.folder)
@@ -598,8 +598,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Перемещённый ярлык и вынос из папки в два ярлыка: правило D45 работает и
-    /// после выхода из перестановки (папка распускается).
+    /// A moved tile and a take-out from a two-tile folder: the D45 rule works
+    /// after leaving the reorder too (the folder is dissolved).
     func testTakeOutAfterReorderDissolvesTwoTileFolder() throws {
         let host = try makeHost(count: 2)
         let recorder = Recorder()
@@ -611,19 +611,19 @@ final class TilePanelDragReorderTests: XCTestCase {
 
         host.coordinator.updateDrag(to: CGPoint(x: slotX, y: panelFrame.maxY + 80))
         XCTAssertNil(host.coordinator.dragSession?.panelReorder)
-        XCTAssertNotNil(host.coordinator.dragSession?.folderDissolution, "Итог распада показан в превью")
+        XCTAssertNotNil(host.coordinator.dragSession?.folderDissolution, "The dissolution result is shown in the preview")
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 1, column: 3)))
         host.coordinator.finishDrag(commit: true)
         settle(host)
 
         XCTAssertEqual(recorder.dissolutions, ["F"])
-        XCTAssertTrue(host.folders.isEmpty, "Папка распущена")
-        XCTAssertEqual(host.store.placement(of: "t1"), tesseraCell(0, 0), "Оставшийся ярлык — на месте папки")
+        XCTAssertTrue(host.folders.isEmpty, "The folder is dissolved")
+        XCTAssertEqual(host.store.placement(of: "t1"), tesseraCell(0, 0), "The remaining tile is in the folder's place")
         host.coordinator.endEditing()
     }
 
-    /// Отказ хоста при drop после выноса: модель не меняется, делегат получает
-    /// отказ, панель закрыта (как в E11.1).
+    /// Host refusal on a drop after a take-out: the model does not change, the delegate gets
+    /// the refusal, and the panel is closed (as in a regular take-out).
     func testTakeOutRefusalAfterLeavingRestoresModel() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -645,8 +645,8 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Перестановка не спрашивает одобрения хоста (D14): запрет на любые
-    /// операции с папками её не блокирует.
+    /// A reorder does not ask for host approval (D14): a ban on any
+    /// folder operations does not block it.
     func testReorderIgnoresHostApproval() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -664,24 +664,24 @@ final class TilePanelDragReorderTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    // MARK: - Автопрокрутка в высокой панели
+    // MARK: - Autoscroll in a tall panel
 
-    /// Панель выше экрана: у нижнего края сетка прокручивается, слот считается по
-    /// актуальной геометрии, перестановка остаётся перестановкой.
+    /// A panel taller than the screen: at the bottom edge the grid scrolls, the slot is computed from
+    /// the current geometry, and a reorder stays a reorder.
     func testAutoScrollInTallPanelKeepsReordering() throws {
         let host = try makeHost(count: 40)
         try openPanel(host)
         let grid = host.host.grid
-        XCTAssertGreaterThan(try geometry(host).panelFrame.height, grid.bounds.height - 100, "Панель высокая")
+        XCTAssertGreaterThan(try geometry(host).panelFrame.height, grid.bounds.height - 100, "The panel is tall")
         let offsetBefore = grid.contentOffset.y
         try lift(host, index: 0)
 
         let bottom = CGPoint(x: grid.bounds.midX, y: grid.bounds.height - 4)
         host.coordinator.updateDrag(to: bottom)
-        XCTAssertNotNil(host.coordinator.dragSession?.panelReorder, "У края экрана внутри высокой панели — всё ещё перестановка")
-        XCTAssertTrue(host.waitUntil(timeout: 3) { grid.contentOffset.y > offsetBefore + 20 }, "Тикер прокручивает сетку")
+        XCTAssertNotNil(host.coordinator.dragSession?.panelReorder, "At the screen edge inside a tall panel it is still a reorder")
+        XCTAssertTrue(host.waitUntil(timeout: 3) { grid.contentOffset.y > offsetBefore + 20 }, "The ticker scrolls the grid")
         XCTAssertNotNil(host.coordinator.dragSession?.panelReorder)
-        XCTAssertGreaterThan(host.coordinator.dragSession?.panelReorder?.slot ?? 0, 4, "Слот пересчитан по прокрученной панели")
+        XCTAssertGreaterThan(host.coordinator.dragSession?.panelReorder?.slot ?? 0, 4, "The slot is recomputed for the scrolled panel")
 
         host.coordinator.finishDrag(commit: false)
         settle(host)

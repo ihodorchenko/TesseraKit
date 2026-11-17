@@ -2,15 +2,15 @@
 //  TileLayoutEnginePlacementPropertyTests.swift
 //  TesseraStartScreenTests
 //
-//  Property-тест слоя «размещение по координатам» (E14.2, D30–D31): seeded
-//  случайные последовательности `inserting` / `resizing` / `removing` /
-//  `collapsingEmptyRows` на разной ширине сетки. После каждого шага проверяются
-//  инварианты: нет пересечений, все следы внутри `[0, columns)`, идентификаторы
-//  уникальны; «незатронутые» плитки не двигаются по горизонтали, строки плиток
-//  выше вставки не меняются, а выталкивание только опускает.
+//  Property test of the "placement by coordinates" layer (D30–D31): seeded
+//  random sequences of `inserting` / `resizing` / `removing` /
+//  `collapsingEmptyRows` at different grid widths. After every step the invariants are checked:
+//  no overlaps, all footprints inside `[0, columns)`, identifiers are
+//  unique; "untouched" tiles do not move horizontally, tile rows
+//  above the insertion do not change, and pushing down only moves tiles down.
 //
-//  Генератор — `TesseraTestSeededGenerator`: прогон воспроизводим. Сообщение
-//  о падении содержит зерно, колонки и номер шага.
+//  The generator is `TesseraTestSeededGenerator`: a run is reproducible. A failure
+//  message contains the seed, the columns and the step number.
 //
 
 #if canImport(UIKit)
@@ -21,9 +21,9 @@ import XCTest
 
 final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// След плитки (по ужатому размеру) для проверок в тесте.
+    /// A tile footprint (by its clamped size) for checks in the test.
     private struct Footprint {
         let row: Int
         let column: Int
@@ -48,7 +48,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         )
     }
 
-    /// Общие инварианты корректного набора.
+    /// General invariants of a valid set.
     private func assertValid(
         _ placements: [TesseraTilePlacedItem],
         columns: Int,
@@ -58,26 +58,26 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
     ) {
         XCTAssertTrue(
             TesseraTileLayoutEngine.validate(placements, columns: columns).isEmpty,
-            "нарушители \(TesseraTileLayoutEngine.validate(placements, columns: columns)); \(context())",
+            "violators \(TesseraTileLayoutEngine.validate(placements, columns: columns)); \(context())",
             file: file,
             line: line
         )
         XCTAssertEqual(
             Set(placements.map(\.id)).count,
             placements.count,
-            "дубли идентификаторов; \(context())",
+            "duplicate identifiers; \(context())",
             file: file,
             line: line
         )
     }
 
-    /// Проверка свойств вставки/resize: что двигается и куда.
+    /// Checks the insert/resize properties: what moves and where.
     ///
     /// - Parameters:
-    ///   - before: Набор до операции (корректный).
-    ///   - after: Набор после операции.
-    ///   - id: Идентификатор вставленного элемента.
-    ///   - columns: Число колонок.
+    ///   - before: The set before the operation (valid).
+    ///   - after: The set after the operation.
+    ///   - id: The identifier of the inserted item.
+    ///   - columns: The column count.
     private func assertPushDownProperties(
         before: [TesseraTilePlacedItem],
         after: [TesseraTilePlacedItem],
@@ -88,7 +88,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         line: UInt = #line
     ) {
         guard let inserted = after.first(where: { $0.id == id }) else {
-            return XCTFail("вставленный элемент пропал; \(context())", file: file, line: line)
+            return XCTFail("the inserted item disappeared; \(context())", file: file, line: line)
         }
         let insertion = footprint(inserted, columns: columns)
 
@@ -96,30 +96,30 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         XCTAssertEqual(
             after.filter { $0.id != id }.map(\.id),
             others.map(\.id),
-            "порядок остальных изменился; \(context())",
+            "the order of the others changed; \(context())",
             file: file,
             line: line
         )
 
         for old in others {
             guard let new = after.first(where: { $0.id == old.id }) else {
-                XCTFail("элемент \(old.id) пропал; \(context())", file: file, line: line)
+                XCTFail("item \(old.id) disappeared; \(context())", file: file, line: line)
                 continue
             }
-            XCTAssertEqual(new.size, old.size, "размер \(old.id); \(context())", file: file, line: line)
-            XCTAssertEqual(new.cell.column, old.cell.column, "сдвиг \(old.id) по горизонтали; \(context())", file: file, line: line)
-            XCTAssertGreaterThanOrEqual(new.cell.row, old.cell.row, "\(old.id) поднялся; \(context())", file: file, line: line)
+            XCTAssertEqual(new.size, old.size, "size of \(old.id); \(context())", file: file, line: line)
+            XCTAssertEqual(new.cell.column, old.cell.column, "horizontal shift of \(old.id); \(context())", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(new.cell.row, old.cell.row, "\(old.id) moved up; \(context())", file: file, line: line)
 
-            // Плитки целиком выше вставки не меняются.
+            // Tiles entirely above the insertion do not change.
             if footprint(old, columns: columns).bottom <= insertion.row {
-                XCTAssertEqual(new.cell, old.cell, "\(old.id) выше вставки сдвинулся; \(context())", file: file, line: line)
+                XCTAssertEqual(new.cell, old.cell, "\(old.id) above the insertion moved; \(context())", file: file, line: line)
             }
         }
     }
 
     // MARK: - Property
 
-    /// Случайные последовательности операций сохраняют инварианты.
+    /// Random operation sequences preserve the invariants.
     func testRandomOperationSequencesKeepInvariants() {
         let columnChoices = [3, 4, 6, 6, 8]
 
@@ -130,7 +130,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
             var nextID = 0
 
             for step in 0..<60 {
-                let context = "seed \(seed), columns \(columns), шаг \(step)"
+                let context = "seed \(seed), columns \(columns), step \(step)"
                 let sizes = TesseraTileSize.allCases
                 let size = sizes[generator.int(upperBound: sizes.count)]
                 let cell = TesseraTileGridPlacement(
@@ -148,7 +148,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
                     assertPushDownProperties(
                         before: placements, after: after, id: id, columns: columns, context
                     )
-                    // Детерминизм.
+                    // Determinism.
                     XCTAssertEqual(
                         after,
                         TesseraTileLayoutEngine.inserting(id: id, size: size, at: cell, into: placements, columns: columns),
@@ -174,7 +174,7 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
                     assertPushDownProperties(
                         before: placements, after: after, id: target.id, columns: columns, context
                     )
-                    // Якорь остаётся: строка та же, колонка только влево.
+                    // The anchor stays: the same row, the column only moves left.
                     let resized = after.first(where: { $0.id == target.id })
                     XCTAssertEqual(resized?.cell.row, target.cell.row, context)
                     XCTAssertLessThanOrEqual(resized?.cell.column ?? .max, target.cell.column, context)
@@ -197,8 +197,8 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         }
     }
 
-    /// Свойства схлопывания: порядок/колонки/размеры, строки только вверх,
-    /// относительный порядок строк, идемпотентность и отсутствие пустых строк.
+    /// Collapse properties: order/columns/sizes, rows only move up,
+    /// the relative order of rows, idempotence and no empty rows.
     private func assertCollapseProperties(
         before: [TesseraTilePlacedItem],
         after: [TesseraTilePlacedItem],
@@ -221,12 +221,12 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         XCTAssertEqual(
             TesseraTileLayoutEngine.collapsingEmptyRows(in: after, columns: columns),
             after,
-            "схлопывание неидемпотентно; \(context())",
+            "collapse is not idempotent; \(context())",
             file: file,
             line: line
         )
 
-        // Каждая строка от 0 до нижней границы покрыта.
+        // Every row from 0 to the bottom bound is covered.
         var covered = Set<Int>()
         var bottom = 0
         for item in after {
@@ -234,11 +234,11 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
             for row in rect.row..<rect.bottom { covered.insert(row) }
             bottom = max(bottom, rect.bottom)
         }
-        XCTAssertEqual(covered.count, bottom, "после схлопывания остались пустые строки; \(context())", file: file, line: line)
+        XCTAssertEqual(covered.count, bottom, "empty rows remained after the collapse; \(context())", file: file, line: line)
     }
 
-    /// Вставка в место без пересечений ничего не меняет у остальных (дыры
-    /// сохраняются) — на случайных наборах.
+    /// Inserting into a spot without overlaps changes nothing for the others (holes
+    /// are preserved) — on random sets.
     func testInsertionIntoFreeCellLeavesEveryoneUntouched() {
         for seed in 100..<130 {
             var generator = TesseraTestSeededGenerator(seed: UInt64(seed))
@@ -251,10 +251,10 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
                 let after = TesseraTileLayoutEngine.inserting(
                     id: AnyHashable("i\(index)"), size: size, at: cell, into: placements, columns: columns
                 )
-                XCTAssertEqual(Array(after.prefix(placements.count)), placements, "seed \(seed), шаг \(index)")
+                XCTAssertEqual(Array(after.prefix(placements.count)), placements, "seed \(seed), step \(index)")
                 placements = after
 
-                // Периодически создаём дыры.
+                // Periodically create holes.
                 if index % 3 == 2, let victim = placements.first {
                     placements = TesseraTileLayoutEngine.removing(id: victim.id, from: placements)
                 }
@@ -263,8 +263,8 @@ final class TileLayoutEnginePlacementPropertyTests: XCTestCase {
         }
     }
 
-    /// Любой корректный набор не меняется при вставке каждого своего элемента на
-    /// его же ячейку (идемпотентность на случайных данных).
+    /// Any valid set is unchanged when each of its items is inserted onto
+    /// its own cell (idempotence on random data).
     func testSelfInsertionIsIdempotentOnRandomValidSets() {
         for seed in 200..<220 {
             var generator = TesseraTestSeededGenerator(seed: UInt64(seed))

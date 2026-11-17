@@ -1,4 +1,4 @@
-// TesseraStartScreen — компонент «Рабочий стол» (Windows 10 Mobile):
-// сетка живых плиток, список приложений, страница-хук.
-// Проектный документ: docs/StartScreen-iOS-Design.md
+// TesseraStartScreen — the Start Screen component (Windows 10 Mobile style):
+// a grid of live tiles, an app list, and a hook page.
+// Design document: docs/StartScreen-iOS-Design.md
 public enum TesseraStartScreen {}

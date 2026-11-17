@@ -2,25 +2,25 @@
 //  TileGridSnapshotApplicationTests.swift
 //  TesseraStartScreenTests
 //
-//  Дифф-применение снимка и состояние ячеек сетки (E10.4, волна W3 плана
-//  E9/E10). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3
-//  «Плиточная сетка» (инвалидация и batch-обновления), §4 «Live-плитки»
-//  (флипы, паузы), §5 «Режим редактирования» (дим 0.7), §8 «Параллакс»
-//  (пауза live-контента вне экрана), §9 «Accessibility»; D12 (ярлык —
-//  действие), D17 (панель папки), E8.2 (дим), E8.9 (магнитизм), E10.1
-//  (пиксельное выравнивание, `gridMetrics`).
+//  Diff-based snapshot application and grid cell state.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3
+//  "Tile grid" (invalidation and batch updates), §4 "Live tiles"
+//  (flips, pauses), §5 "Edit mode" (dim 0.7), §8 "Parallax"
+//  (pausing off-screen live content), §9 "Accessibility"; D12 (a tile is an
+//  action), D17 (folder panel); also the dim, the magnet and pixel
+//  alignment (`gridMetrics`).
 //
-//  Проверяется:
-//  - снимок при смене состава применяется диффом: ячейки сохраняют
-//    регистрацию live-плитки (флип не сбрасывается на лицевую сторону) и
-//    фазу idle-флипа превью папки;
-//  - владелец дима 0.7 — сетка: дим переживает update/resize/drop;
-//  - ярлык панели раскрытой папки активируется общим маршрутом `onTap` и не
-//    активируется в режиме редактирования;
-//  - `magnetSlotCenters(for:)` совпадает с рамками раскладки до пикселя
+//  What is tested:
+//  - a snapshot with a changed composition is applied as a diff: cells keep
+//    the live tile registration (the flip is not reset to the front side) and
+//    the idle flip phase of the folder preview;
+//  - the owner of the 0.7 dim is the grid: the dim survives update/resize/drop;
+//  - a tile of an expanded folder panel is activated through the shared `onTap` route and is not
+//    activated in edit mode;
+//  - `magnetSlotCenters(for:)` matches the layout frames to the pixel
 //    (`TesseraTileLayoutEngine.gridMetrics`);
-//  - публичная пауза live-контента не снимается `grid.update` в обход
-//    контроллера, пока START за кадром (остаток T1).
+//  - the public live content pause is not lifted by `grid.update` bypassing
+//    the controller while START is off screen.
 //
 
 #if canImport(UIKit)
@@ -31,7 +31,7 @@ import XCTest
 
 final class TileGridSnapshotApplicationTests: XCTestCase {
 
-    // MARK: - Окружение
+    // MARK: - Environment
 
     private var windows: [UIWindow] = []
 
@@ -44,11 +44,11 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Дифф снимка: live-плитки (E10.4)
+    // MARK: - Snapshot diff: live tiles
 
-    /// Смена состава больше не идёт через `reloadData`: live-ячейка сохраняется
-    /// вместе с контейнером, поэтому флип на обратную сторону не сбрасывается на
-    /// лицевую (раньше это ломало live-плитки при каждом обновлении бейджей).
+    /// A composition change no longer goes through `reloadData`: the live cell is kept
+    /// together with its container, so a flip to the back side is not reset to the
+    /// front side (this used to break live tiles on every badge update).
     func testSnapshotDiffPreservesLiveTileFlip() throws {
         let live = tesseraTestLiveTile(
             "live",
@@ -63,7 +63,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
 
         let liveView = try XCTUnwrap(
             host.firstSubview(of: TesseraLiveTileView.self),
-            "Live-плитка на экране"
+            "The live tile is on screen"
         )
         let liveCell = try XCTUnwrap(host.cell(live.id))
         liveView.show(.back, animated: false)
@@ -79,24 +79,24 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         host.layout()
 
         let liveViewAfter = try XCTUnwrap(host.firstSubview(of: TesseraLiveTileView.self))
-        XCTAssertTrue(liveViewAfter === liveView, "Контейнер живой плитки сохранён")
-        XCTAssertTrue(host.cell(live.id) === liveCell, "Ячейка сохранена диффом")
+        XCTAssertTrue(liveViewAfter === liveView, "The live tile container is kept")
+        XCTAssertTrue(host.cell(live.id) === liveCell, "The cell is kept by the diff")
         XCTAssertEqual(
             liveViewAfter.side,
             .back,
-            "Флип не сброшен на лицевую сторону при смене состава"
+            "The flip is not reset to the front side on a composition change"
         )
         XCTAssertFalse(liveViewAfter.isFlipping)
     }
 
-    // MARK: - Дифф снимка: превью папки (E10.4)
+    // MARK: - Snapshot diff: folder preview
 
-    /// Превью закрытой папки сохраняет idlе-флип: переиспользование ячейки при
-    /// `reloadData` сбрасывало мини-плитки на иконки, теперь состав применяется
-    /// диффом и состояние превью не перезапускается.
+    /// The closed folder preview keeps its idle flip: cell reuse on
+    /// `reloadData` used to reset the mini-tiles to icons, now the composition is applied
+    /// as a diff and the preview state is not restarted.
     func testSnapshotDiffPreservesFolderPreviewFlip() throws {
-        // B1 (фикс-раунд): idle-флип превью возможен только у ярлыка с видимым
-        // бейджем — `TesseraFolderMiniTileView.showBadge` игнорирует `.none`.
+        // The idle flip of the preview is possible only for a tile with a visible
+        // badge: `TesseraFolderMiniTileView.showBadge` ignores `.none`.
         let folder = TesseraTileFolder(
             id: "folder",
             title: "folder",
@@ -112,9 +112,9 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         let cell = try XCTUnwrap(host.cell(folder.id))
         let preview = try XCTUnwrap(cell.folderPreviewView)
         let miniTile = try XCTUnwrap(preview.miniTileViews.first)
-        XCTAssertTrue(miniTile.hasVisibleBadge, "У ярлыка папки есть бейдж")
+        XCTAssertTrue(miniTile.hasVisibleBadge, "The folder tile has a badge")
         miniTile.showBadge(animated: false)
-        XCTAssertTrue(miniTile.showsBadgeSide, "Мини-плитка перевернулась к бейджу")
+        XCTAssertTrue(miniTile.showsBadgeSide, "The mini-tile flipped to the badge")
 
         host.grid.update(
             snapshot: TesseraTileGridSnapshot(
@@ -128,22 +128,22 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         let cellAfter = try XCTUnwrap(host.cell(folder.id))
         let previewAfter = try XCTUnwrap(cellAfter.folderPreviewView)
         let miniTileAfter = try XCTUnwrap(previewAfter.miniTileViews.first)
-        XCTAssertTrue(cellAfter === cell, "Ячейка папки сохранена")
-        XCTAssertTrue(previewAfter === preview, "Превью папки не пересоздано")
+        XCTAssertTrue(cellAfter === cell, "The folder cell is kept")
+        XCTAssertTrue(previewAfter === preview, "The folder preview is not recreated")
         XCTAssertTrue(miniTileAfter === miniTile)
         XCTAssertTrue(
             miniTileAfter.showsBadgeSide,
-            "Idle-флип превью не сброшен на иконку"
+            "The idle flip of the preview is not reset to the icon"
         )
     }
 
-    // MARK: - Контракт «без анимации» (M2)
+    // MARK: - The "no animation" contract
 
-    /// `reload(snapshot:)` и `update(animated: false)` обязаны применять смену
-    /// состава без анимации: иначе `performBatchUpdates` анимирует
-    /// insert/delete дефолтной длительностью UIKit (~0,25 с) и контракт
-    /// «снимок без анимации» нарушается. Внутренний признак фиксирует
-    /// `UIView.performWithoutAnimation`; анимированный путь идёт кроссфейдом.
+    /// `reload(snapshot:)` and `update(animated: false)` must apply a composition change
+    /// without animation: otherwise `performBatchUpdates` animates
+    /// insert/delete with the default UIKit duration (about 0.25 s) and the
+    /// "snapshot without animation" contract is broken. An internal flag is pinned
+    /// by `UIView.performWithoutAnimation`; the animated path goes through a crossfade.
     func testNonAnimatedSnapshotApplicationDoesNotAnimateDiff() {
         let host = TesseraTestWindowedGrid(
             items: [.tile(tesseraTestTile("a", size: .small))]
@@ -164,12 +164,12 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
 
         XCTAssertTrue(
             host.grid.didApplyLastSnapshotWithoutAnimation,
-            "Неанимированный путь применяется через UIView.performWithoutAnimation"
+            "The non-animated path is applied through UIView.performWithoutAnimation"
         )
         XCTAssertFalse(host.grid.didApplyLastSnapshotWithCrossfade)
         XCTAssertEqual(host.grid.items.count, 2)
 
-        // reload(snapshot:) — тоже без анимации.
+        // reload(snapshot:) is also without animation.
         host.grid.reload(
             snapshot: TesseraTileGridSnapshot(
                 items: [
@@ -183,7 +183,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         host.layout()
         XCTAssertTrue(host.grid.didApplyLastSnapshotWithoutAnimation)
 
-        // Анимированный путь — кроссфейд, а не «без анимации».
+        // The animated path is a crossfade, not "without animation".
         host.grid.update(
             snapshot: TesseraTileGridSnapshot(
                 items: [
@@ -202,11 +202,11 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         XCTAssertEqual(host.grid.items.count, 4)
     }
 
-    // MARK: - Владелец дима (E10.4, E8.2)
+    // MARK: - Dim owner
 
-    /// Дим 0.7 режима редактирования переживает обновление снимка, resize и
-    /// возврат из скрытия на время drag: владелец прозрачности — сетка, а не
-    /// `configure` ячейки.
+    /// The 0.7 edit mode dim survives a snapshot update, resize and
+    /// returning from hiding for the duration of a drag: the opacity owner is the grid, not
+    /// the cell's `configure`.
     func testEditDimmingSurvivesSnapshotUpdateResizeAndDrop() throws {
         let first = tesseraTestTile("first", size: .small)
         let second = tesseraTestTile("second", size: .small)
@@ -225,7 +225,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
             accuracy: 0.001
         )
 
-        // 1) Обновление снимка: меняется только содержимое (бейдж).
+        // 1) Snapshot update: only the content (badge) changes.
         host.grid.update(
             snapshot: TesseraTileGridSnapshot(
                 items: [
@@ -247,10 +247,10 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
             try XCTUnwrap(host.cell(first.id)).contentView.alpha,
             TesseraTileGridView.dimmedTileAlpha,
             accuracy: 0.001,
-            "Дим пережил update"
+            "The dim survived the update"
         )
 
-        // 2) Resize: смена размера переупаковывает сетку.
+        // 2) Resize: a size change repacks the grid.
         host.grid.update(
             snapshot: TesseraTileGridSnapshot(
                 items: [.tile(first), .tile(tesseraTestTile("second", size: .medium))],
@@ -263,10 +263,10 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
             try XCTUnwrap(host.cell(first.id)).contentView.alpha,
             TesseraTileGridView.dimmedTileAlpha,
             accuracy: 0.001,
-            "Дим пережил resize"
+            "The dim survived the resize"
         )
 
-        // 3) Drop/unpin: скрытие на время drag не должно «поднять» плитку до 1.
+        // 3) Drop/unpin: hiding for the duration of a drag must not "raise" the tile to 1.
         host.grid.setItemHidden(true, forItemID: first.id)
         XCTAssertEqual(try XCTUnwrap(host.cell(first.id)).contentView.alpha, 0, accuracy: 0.001)
         host.grid.setItemHidden(false, forItemID: first.id)
@@ -274,10 +274,10 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
             try XCTUnwrap(host.cell(first.id)).contentView.alpha,
             TesseraTileGridView.dimmedTileAlpha,
             accuracy: 0.001,
-            "После возврата из скрытия остаётся дим, а не полная яркость"
+            "After returning from hiding the dim remains, not full brightness"
         )
 
-        // 4) Снятие дима возвращает полную яркость.
+        // 4) Removing the dim returns full brightness.
         host.grid.setEditDimming(
             [first.id: 1, second.id: 1],
             animated: false
@@ -285,8 +285,8 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(host.cell(first.id)).contentView.alpha, 1, accuracy: 0.001)
     }
 
-    /// Реальный координатор входа в редактирование применяет дим через сетку, и
-    /// обновление снимка в режиме редактирования его не стирает.
+    /// A real coordinator entering edit mode applies the dim through the grid, and
+    /// a snapshot update in edit mode does not erase it.
     func testCoordinatorDimmingSurvivesGridUpdate() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -307,7 +307,7 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
                 let alpha = self.alpha(of: first.id, in: host)
                 return abs(alpha - TesseraTileGridView.dimmedTileAlpha) < 0.001
             },
-            "Дим режима редактирования применён к ячейкам"
+            "The edit mode dim is applied to the cells"
         )
         defer { coordinator.endEditing() }
 
@@ -333,24 +333,24 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
             alpha(of: first.id, in: host),
             TesseraTileGridView.dimmedTileAlpha,
             accuracy: 0.001,
-            "update в режиме редактирования не стирает дим"
+            "update in edit mode does not erase the dim"
         )
     }
 
-    /// Прозрачность содержимого ячейки элемента.
+    /// The opacity of an item's cell content.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор элемента.
-    ///   - host: Окно с сеткой.
-    /// - Returns: `contentView.alpha` видимой ячейки или 1, если её нет.
+    ///   - id: Item identifier.
+    ///   - host: The window with the grid.
+    /// - Returns: `contentView.alpha` of the visible cell, or 1 if there is none.
     private func alpha(of id: AnyHashable, in host: TesseraTestWindowedGrid) -> CGFloat {
         host.cell(id)?.contentView.alpha ?? 1
     }
 
-    // MARK: - Ярлыки панели раскрытой папки (E10.4)
+    // MARK: - Tiles of the expanded folder panel
 
-    /// Активация ярлыка внутри панели идёт общим маршрутом `onTap` (действие
-    /// ярлыка выполняет хост, D12), а не вызовом `action` мимо события.
+    /// Activating a tile inside the panel goes through the shared `onTap` route (the tile
+    /// action is performed by the host, D12), not by calling `action` bypassing the event.
     func testPanelShortcutActivationGoesThroughOnTap() throws {
         var actionCalls = 0
         let inFolder = TesseraTileDescriptor(
@@ -371,18 +371,18 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         host.grid.onTap = { tapped.append($0) }
 
         XCTAssertTrue(shortcut.accessibilityActivate())
-        XCTAssertEqual(tapped.count, 1, "Активация пришла в onTap")
+        XCTAssertEqual(tapped.count, 1, "The activation arrived in onTap")
         XCTAssertEqual(tapped.first?.tile?.id, inFolder.id)
-        XCTAssertEqual(actionCalls, 0, "Панель не вызывает action напрямую")
+        XCTAssertEqual(actionCalls, 0, "The panel does not call action directly")
         XCTAssertEqual(
             host.grid.expandedFolderID,
             folder.id,
-            "Активация ярлыка не закрывает папку"
+            "Activating a tile does not close the folder"
         )
     }
 
-    /// В режиме редактирования панель не активирует действие ярлыка: тап
-    /// принадлежит координатору.
+    /// In edit mode the panel does not activate the tile action: the tap
+    /// belongs to the coordinator.
     func testPanelShortcutDoesNotActivateInEditMode() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -414,16 +414,16 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
 
         _ = shortcut.accessibilityActivate()
 
-        XCTAssertTrue(tapped.isEmpty, "В edit-режиме действие не активируется")
+        XCTAssertTrue(tapped.isEmpty, "In edit mode the action is not activated")
         XCTAssertEqual(actionCalls, 0)
     }
 
-    // MARK: - Магнитизм: центры слотов = рамки раскладки (E10.4, E10.1)
+    // MARK: - Magnet: slot centers = layout frames
 
-    /// `magnetSlotCenters(for:)` считает геометрию через
-    /// `TesseraTileLayoutEngine.gridMetrics`, поэтому центры слотов совпадают с
-    /// центрами фактических рамок раскладки до пикселя (раньше невыровненный
-    /// юнит расходился с раскладкой).
+    /// `magnetSlotCenters(for:)` computes the geometry through
+    /// `TesseraTileLayoutEngine.gridMetrics`, so slot centers match the
+    /// centers of the actual layout frames to the pixel (an unaligned unit
+    /// used to diverge from the layout).
     func testMagnetSlotCentersMatchLayoutFrames() throws {
         let smallItems = (0..<5).map {
             TesseraTileGridItem.tile(tesseraTestTile("s\($0)", size: .small))
@@ -432,12 +432,12 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         host.layout()
 
         let centers = host.grid.magnetSlotCenters(for: .small)
-        XCTAssertEqual(centers.count, 4 * 2, "Четыре колонки на две занятые строки")
+        XCTAssertEqual(centers.count, 4 * 2, "Four columns by two occupied rows")
 
-        // n5: центр слота не обязан быть на пиксельной сетке (при нечётной
-        // ширине юнита он попадает на полпикселя). Выравнивание гарантирует
-        // раскладка — проверяем рамки элементов, а центры слотов лишь сверяем
-        // с центрами этих рамок ниже.
+        // A slot center need not be on the pixel grid (with an odd
+        // unit width it lands on half a pixel). Alignment is guaranteed by
+        // the layout, so the item frames are checked, and the slot centers are only compared
+        // with the centers of those frames below.
         let scale = host.grid.traitCollection.displayScale > 0
             ? host.grid.traitCollection.displayScale
             : UIScreen.main.scale
@@ -451,13 +451,13 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
                     (value * scale).rounded(),
                     value * scale,
                     accuracy: 1e-6,
-                    "Рамка \(item.id): \(label) на пиксельной сетке"
+                    "Frame \(item.id): \(label) on the pixel grid"
                 )
             }
         }
 
-        // Первая строка занята четырьмя small-плитками: центры их слотов —
-        // в точности центры рамок раскладки.
+        // The first row is occupied by four small tiles: their slot centers are
+        // exactly the centers of the layout frames.
         for index in 0..<4 {
             let frame = try XCTUnwrap(host.grid.frame(forItemID: "s\(index)"))
             XCTAssertEqual(centers[index].x, frame.midX, accuracy: 1e-6)
@@ -465,8 +465,8 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         }
     }
 
-    /// Для medium-плитки центр слота совпадает с центром её рамки (2×2 юнита), в
-    /// том числе при нестандартных полях: горизонталь повторяет раскладку.
+    /// For a medium tile the slot center matches the center of its frame (2×2 units), including
+    /// with non-standard insets: the horizontal follows the layout.
     func testMagnetSlotCentersMatchLayoutFramesWithInsets() throws {
         let medium = tesseraTestTile("m", size: .medium)
         let items: [TesseraTileGridItem] = [
@@ -480,17 +480,17 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         host.layout()
 
         let centers = host.grid.magnetSlotCenters(for: .medium)
-        XCTAssertEqual(centers.count, 3, "Две строки: medium помещается в трёх колонках")
+        XCTAssertEqual(centers.count, 3, "Two rows: a medium tile fits in three columns")
 
         let expected = try XCTUnwrap(host.grid.frame(forItemID: medium.id))
         XCTAssertEqual(centers[0].x, expected.midX, accuracy: 1e-6)
         XCTAssertEqual(centers[0].y, expected.midY, accuracy: 1e-6)
     }
 
-    // MARK: - Публичная пауза live-контента (E10.4, остаток T1)
+    // MARK: - Public live content pause
 
-    /// Пока START за кадром, `grid.update` в обход контроллера не возобновляет
-    /// live-плитки: пауза принадлежит сетке и учитывается в конфигурации ячеек.
+    /// While START is off screen, `grid.update` bypassing the controller does not resume
+    /// live tiles: the pause belongs to the grid and is accounted for in the cell configuration.
     func testLiveTilesStayPausedAfterGridUpdateWhileStartOffScreen() throws {
         let screen = TesseraStartScreenViewController()
         screen.configure(leftPanel: nil, rightPage: { UIViewController() })
@@ -510,16 +510,16 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         )
         let first = tesseraTestTile("first", size: .small)
         let second = tesseraTestTile("second", size: .small)
-        // Medium live + small в той же строке: добавление второго small не
-        // меняет высоту контента — сценарий из остатка T1 (layout не
-        // перезапускается, паузу применяет только сетка).
+        // Medium live + small in the same row: adding a second small does not
+        // change the content height: the layout is not
+        // restarted, only the grid applies the pause.
         screen.reload(grid: TesseraTileGridSnapshot(items: [.tile(live), .tile(first)], unpinned: []))
         let window = host(screen)
         appear(screen)
 
         let liveView = try XCTUnwrap(
             firstSubview(of: TesseraLiveTileView.self, in: screen.gridView),
-            "Live-плитка показана на START"
+            "The live tile is shown on START"
         )
         XCTAssertEqual(liveView.side, .front)
 
@@ -528,11 +528,11 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         XCTAssertEqual(screen.currentPage, .applications)
         XCTAssertTrue(
             screen.gridView.isLiveContentPaused,
-            "START за кадром — публичная пауза live-контента включена"
+            "START is off screen: the public live content pause is on"
         )
 
-        // Обновление в обход контроллера — остаток T1: раньше `willDisplay`
-        // новой ячейки регистрировал её видимой и флип возобновлялся.
+        // An update bypassing the controller: previously `willDisplay`
+        // of a new cell registered it as visible and the flip resumed.
         screen.gridView.update(
             snapshot: TesseraTileGridSnapshot(
                 items: [.tile(live), .tile(first), .tile(second)],
@@ -545,28 +545,28 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         let liveViewAfter = try XCTUnwrap(
             firstSubview(of: TesseraLiveTileView.self, in: screen.gridView)
         )
-        XCTAssertTrue(liveViewAfter === liveView, "Ячейка live-плитки сохранена")
-        XCTAssertEqual(liveViewAfter.side, .front, "START за кадром — флипов нет")
+        XCTAssertTrue(liveViewAfter === liveView, "The live tile cell is kept")
+        XCTAssertEqual(liveViewAfter.side, .front, "START is off screen: no flips")
         XCTAssertFalse(liveViewAfter.isFlipping)
 
-        // Возврат на START возобновляет расписание.
+        // Returning to START resumes the schedule.
         screen.showPage(.start, animated: false)
         XCTAssertFalse(screen.gridView.isLiveContentPaused)
         XCTAssertTrue(
             waitUntil(timeout: 3) { liveView.side == .back || liveView.isFlipping },
-            "На START расписание флипов возобновляется"
+            "On START the flip schedule resumes"
         )
         window.isHidden = true
     }
 
-    // MARK: - Помощники контроллера (§4, §8)
+    // MARK: - Controller helpers
 
     private let screenSize = CGSize(width: 390, height: 844)
 
-    /// Встраивает экран в окно и доводит раскладку (без appearance).
+    /// Embeds the screen in a window and finishes the layout (without appearance).
     ///
-    /// - Parameter screen: Экран рабочего стола.
-    /// - Returns: Окно, удерживаемое до `tearDown`.
+    /// - Parameter screen: The start screen.
+    /// - Returns: The window, retained until `tearDown`.
     private func host(_ screen: TesseraStartScreenViewController) -> UIWindow {
         let window = UIWindow(frame: CGRect(origin: .zero, size: screenSize))
         window.isHidden = false
@@ -579,9 +579,9 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         return window
     }
 
-    /// Доводит раскладку экрана и его сетки.
+    /// Finishes the layout of the screen and its grid.
     ///
-    /// - Parameter screen: Экран рабочего стола.
+    /// - Parameter screen: The start screen.
     private func layout(_ screen: TesseraStartScreenViewController) {
         screen.view.layoutIfNeeded()
         screen.gridView.superview?.layoutIfNeeded()
@@ -591,27 +591,27 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
             .forEach { $0.layoutIfNeeded() }
     }
 
-    /// Сообщает экрану о появлении (двойной appearance идемпотентен).
+    /// Notifies the screen of appearance (a double appearance is idempotent).
     ///
-    /// - Parameter screen: Экран рабочего стола.
+    /// - Parameter screen: The start screen.
     private func appear(_ screen: TesseraStartScreenViewController) {
         screen.beginAppearanceTransition(true, animated: false)
         screen.endAppearanceTransition()
     }
 
-    /// Прокручивает run loop заданное время.
+    /// Spins the run loop for the given time.
     ///
-    /// - Parameter seconds: Длительность ожидания.
+    /// - Parameter seconds: Wait duration.
     private func spin(_ seconds: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    /// Ждёт выполнения условия, прокручивая run loop.
+    /// Waits for a condition to hold, spinning the run loop.
     ///
     /// - Parameters:
-    ///   - timeout: Максимальное ожидание.
-    ///   - condition: Условие готовности.
-    /// - Returns: `true`, если условие выполнилось.
+    ///   - timeout: Maximum wait.
+    ///   - condition: Readiness condition.
+    /// - Returns: `true` if the condition was met.
     private func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -621,12 +621,12 @@ final class TileGridSnapshotApplicationTests: XCTestCase {
         return condition()
     }
 
-    /// Первый подвид заданного типа в иерархии.
+    /// The first subview of the given type in the hierarchy.
     ///
     /// - Parameters:
-    ///   - type: Тип подвида.
-    ///   - root: Корень поиска.
-    /// - Returns: Найденный вид или `nil`.
+    ///   - type: Subview type.
+    ///   - root: Search root.
+    /// - Returns: The found view or `nil`.
     private func firstSubview<T: UIView>(of type: T.Type, in root: UIView) -> T? {
         if let match = root as? T { return match }
         for subview in root.subviews {

@@ -2,18 +2,18 @@
 //  PivotSyncTests.swift
 //  TesseraPivotTests
 //
-//  Контрактные тесты синхронизации ленты и пейджера пивота (задача E2.7).
-//  Проектный документ: docs/PIVOT-IOS-DESIGN.md §5 «Синхронизация ленты и
-//  пейджера» (один источник истины и один писатель `contentOffset`:
-//  свайп → лента без обратной записи, тап → `setContentOffset(animated:)`),
-//  §4 «Математика ядра» (завершение перехода → выделение и автоцентрирование
-//  ленты), §8 «Accessibility» (Reduce Motion отключает анимацию перехода,
-//  VoiceOver-жест листает секции).
+//  Contract tests for synchronizing the pivot's strip and pager.
+//  Design document: docs/PIVOT-IOS-DESIGN.md §5 (strip and pager
+//  synchronization: a single source of truth and a single writer of `contentOffset`:
+//  swipe → strip with no write back, tap → `setContentOffset(animated:)`),
+//  §4 (core math: transition completion → strip selection and auto-centering),
+//  §8 (accessibility: Reduce Motion disables the transition animation,
+//  the VoiceOver gesture pages through sections).
 //
-//  Проверки идут через публичный API (`selectSection(at:animated:)`,
-//  `accessibilityScroll`, колбэки делегата) и `@testable`-доступ к ленте и
-//  пейджеру; окно и прогон UI-цикла не нужны — вид загружается и
-//  раскладывается вручную, как в контрактных тестах Core (D10).
+//  The checks go through the public API (`selectSection(at:animated:)`,
+//  `accessibilityScroll`, delegate callbacks) and `@testable` access to the strip and
+//  the pager; no window or UI run loop is needed: the view is loaded and
+//  laid out manually, as in the Core contract tests (D10).
 //
 
 #if canImport(UIKit)
@@ -23,7 +23,7 @@ import UIKit
 import TesseraCore
 @testable import TesseraPivot
 
-/// Шпион делегата пивота: фиксирует порядок и значения всех трёх колбэков.
+/// A pivot delegate spy: records the order and values of all three callbacks.
 private final class PivotDelegateSpy: TesseraPivotDelegate {
     private(set) var selectedIndexes: [Int] = []
     private(set) var progressValues: [CGFloat] = []
@@ -46,18 +46,18 @@ final class PivotSyncTests: XCTestCase {
 
     private let pivotSize = CGSize(width: 320, height: 640)
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makeSections(count: Int) -> [TesseraPivotSection] {
         (0..<count).map { index in
-            TesseraPivotSection(id: index, title: "Секция \(index)") {
+            TesseraPivotSection(id: index, title: "Section \(index)") {
                 UIViewController()
             }
         }
     }
 
-    /// Загружает пивот, задаёт размер и раскладывает его. Возвращает внутренний
-    /// скролл-вью пейджера: он — единственный писатель `contentOffset` (§5).
+    /// Loads the pivot, sets its size, and lays it out. Returns the pager's inner
+    /// scroll view: it is the only writer of `contentOffset` (§5).
     private func makeLoadedPivot(
         sectionCount: Int = 4
     ) throws -> (pivot: TesseraPivotViewController, scrollView: UIScrollView) {
@@ -70,30 +70,30 @@ final class PivotSyncTests: XCTestCase {
             pivot.pagerViewController.view.subviews
                 .compactMap { $0 as? UIScrollView }
                 .first,
-            "Пейджер пивота обязан содержать UIScrollView"
+            "The Pivot pager must contain a UIScrollView"
         )
         return (pivot, scrollView)
     }
 
-    // MARK: - Компоновка и режим пейджера (§2, §3)
+    // MARK: - Layout and pager mode (§2, §3)
 
-    /// Пивот использует пейджер Core в режиме `.paged`: снап даёт
-    /// `isPagingEnabled`, кастомный снап не нужен (§2).
+    /// The pivot uses the Core pager in `.paged` mode: snapping is provided by
+    /// `isPagingEnabled`, and custom snapping is not needed (§2).
     func testPagerRunsInPagedMode() throws {
         let (pivot, scrollView) = try makeLoadedPivot()
 
         if case .paged = pivot.pagerViewController.mode {
-            // Ожидаемый режим (docs/PIVOT-IOS-DESIGN.md §2).
+            // The expected mode (docs/PIVOT-IOS-DESIGN.md §2).
         } else {
-            XCTFail("Пивот должен работать в режиме .paged")
+            XCTFail("The pivot must work in .paged mode")
         }
 
-        // Пейджер найден обходом иерархии для арбитража вертикального скролла (§6).
+        // The pager is found by walking the hierarchy, for vertical scroll arbitration (§6).
         XCTAssertTrue(pivot.pagerScrollView === scrollView)
         XCTAssertTrue(scrollView.isPagingEnabled)
     }
 
-    /// Заголовки ленты — это заголовки секций в порядке чтения (§3).
+    /// The strip's titles are the sections' titles in reading order (§3).
     func testStripTitlesMirrorSections() throws {
         let (pivot, _) = try makeLoadedPivot(sectionCount: 4)
 
@@ -101,11 +101,11 @@ final class PivotSyncTests: XCTestCase {
         XCTAssertEqual(pivot.headerStripView.selectedIndex, 0)
     }
 
-    // MARK: - Тап → переход (§5)
+    // MARK: - Tap → transition (§5)
 
-    /// Программный переход (тот же путь, которым пользуется тап) сразу ставит
-    /// `contentOffset` на страницу, обновляет индекс и выделение ленты;
-    /// пейджер сообщает о показанной секции.
+    /// A programmatic transition (the same path a tap uses) immediately sets
+    /// `contentOffset` to the page and updates the index and the strip's selection;
+    /// the pager reports the shown section.
     func testSelectSectionWithoutAnimationJumpsAndReportsShownSection() throws {
         let (pivot, scrollView) = try makeLoadedPivot()
         let spy = PivotDelegateSpy()
@@ -120,7 +120,7 @@ final class PivotSyncTests: XCTestCase {
         XCTAssertEqual(spy.shownIndexes, [2])
     }
 
-    /// Индекс вне диапазона зажимается: 99 → последняя секция, -5 → первая.
+    /// An out-of-range index is clamped: 99 → the last section, -5 → the first.
     func testSelectSectionClampsOutOfRangeIndexes() throws {
         let (pivot, scrollView) = try makeLoadedPivot()
         let pageWidth = scrollView.bounds.width
@@ -134,10 +134,10 @@ final class PivotSyncTests: XCTestCase {
         XCTAssertEqual(pivot.currentSectionIndex, 0)
     }
 
-    /// Тап по заголовку: лента сообщает намерение через `onSelect`, контроллер
-    /// сначала уведомляет делегата и только потом переходит (§5). Синхронно
-    /// проверяются намерение, индекс и выделение; завершение перехода при
-    /// анимации приходит отдельным колбэком.
+    /// A tap on a header: the strip reports an intent via `onSelect`, and the controller
+    /// first notifies the delegate and only then transitions (§5). The intent, the index, and the selection
+    /// are checked synchronously; with animation the transition's completion
+    /// arrives as a separate callback.
     func testHeaderTapReportsSelectionAndUpdatesState() throws {
         let (pivot, _) = try makeLoadedPivot()
         let spy = PivotDelegateSpy()
@@ -151,11 +151,11 @@ final class PivotSyncTests: XCTestCase {
         XCTAssertEqual(pivot.headerStripView.selectedIndex, 2)
     }
 
-    /// Reduce Motion: при включённой системной настройке тап переходит без
-    /// анимации — `contentOffset` ставится сразу и завершение приходит
-    /// синхронно (§8, «прыжок по тапу — без анимации»). При выключенной
-    /// настройке переход анимируется, поэтому синхронно проверяем только
-    /// намерение и выделение: завершение придёт от пейджера на кадрах.
+    /// Reduce Motion: with the system setting on, a tap transitions without
+    /// animation: `contentOffset` is set at once and completion arrives
+    /// synchronously (§8, "a tap jump has no animation"). With the setting
+    /// off the transition is animated, so only the intent and the selection are checked
+    /// synchronously: completion will come from the pager on the frames.
     func testTapTransitionHonoursReduceMotionGate() throws {
         let (pivot, scrollView) = try makeLoadedPivot()
         let spy = PivotDelegateSpy()
@@ -175,11 +175,11 @@ final class PivotSyncTests: XCTestCase {
         }
     }
 
-    // MARK: - Свайп → лента: без обратной записи в contentOffset (§5)
+    // MARK: - Swipe → strip: no write back to contentOffset (§5)
 
-    /// Свайп (запись `contentOffset` самим скролл-вью) обновляет ленту через
-    /// `didChangeProgress`, но обратной записи нет: offset остаётся ровно тем,
-    /// что поставил жест.
+    /// A swipe (a `contentOffset` write by the scroll view itself) updates the strip via
+    /// `didChangeProgress`, but there is no write back: the offset stays exactly what
+    /// the gesture set.
     func testSwipeProgressUpdatesStripWithoutWritingContentOffset() throws {
         let (pivot, scrollView) = try makeLoadedPivot()
         let pageWidth = scrollView.bounds.width
@@ -191,8 +191,8 @@ final class PivotSyncTests: XCTestCase {
         XCTAssertEqual(pivot.headerStripView.selectedIndex, 2)
     }
 
-    /// Колбэк прогресса, вызванный пейджером напрямую, — только чтение:
-    /// `contentOffset` не меняется, выделение ленты следует за `t` (§5).
+    /// A progress callback invoked by the pager directly is read-only:
+    /// `contentOffset` does not change, and the strip's selection follows `t` (§5).
     func testProgressCallbackFromPagerIsReadOnly() throws {
         let (pivot, scrollView) = try makeLoadedPivot()
         let offsetBefore = scrollView.contentOffset
@@ -204,7 +204,7 @@ final class PivotSyncTests: XCTestCase {
         XCTAssertEqual(pivot.currentSectionIndex, 1)
     }
 
-    /// Непрерывный прогресс пробрасывается внешнему делегату (§3).
+    /// Continuous progress is forwarded to the external delegate (§3).
     func testProgressIsForwardedToExternalDelegate() throws {
         let (pivot, _) = try makeLoadedPivot()
         let spy = PivotDelegateSpy()
@@ -215,8 +215,8 @@ final class PivotSyncTests: XCTestCase {
         XCTAssertEqual(spy.progressValues, [1.5])
     }
 
-    /// Завершение перехода выделяет показанную секцию и доцентровывает ленту,
-    /// но не двигает пейджер: `contentOffset` по-прежнему пишет только пейджер
+    /// Transition completion selects the shown section and re-centers the strip,
+    /// but does not move the pager: `contentOffset` is still written only by the pager
     /// (§4, §5).
     func testDidShowPageAtSelectsSectionWithoutMovingPager() throws {
         let (pivot, scrollView) = try makeLoadedPivot()
@@ -234,20 +234,20 @@ final class PivotSyncTests: XCTestCase {
 
     // MARK: - Accessibility (§8)
 
-    /// VoiceOver-жест «вперёд» в LTR уводит на следующую секцию, «назад» с
-    /// первой секции не обрабатывается; жест идёт через тот же
-    /// `selectSection(at:animated:)` — единственный программный писатель.
+    /// The VoiceOver "forward" gesture in LTR goes to the next section, "backward" from
+    /// the first section is not handled; the gesture goes through the same
+    /// `selectSection(at:animated:)`, the only programmatic writer.
     func testAccessibilityScrollUsesSingleWriterInLTR() throws {
         let (pivot, _) = try makeLoadedPivot()
 
-        // Конвенция UIKit (E9.3): в LTR свайп вправо — назад, влево — вперёд.
-        XCTAssertFalse(pivot.accessibilityScroll(.right), "С первой секции назад некуда")
+        // The UIKit convention: in LTR a swipe right is backward, left is forward.
+        XCTAssertFalse(pivot.accessibilityScroll(.right), "There is nowhere to go back from the first section")
         XCTAssertTrue(pivot.accessibilityScroll(.left))
         XCTAssertEqual(pivot.currentSectionIndex, 1)
     }
 
-    /// Reduce Motion читается в момент решения и не кешируется (§8): флаг
-    /// компонента — это системная настройка, а не сохранённое значение.
+    /// Reduce Motion is read at decision time and is not cached (§8): the component's
+    /// flag is the system setting, not a stored value.
     func testReduceMotionFlagIsLive() {
         XCTAssertEqual(
             TesseraAccessibility.isReduceMotionEnabled,

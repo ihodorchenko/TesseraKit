@@ -2,17 +2,17 @@
 //  TesseraPagerTests.swift
 //  TesseraCoreTests
 //
-//  Контрактные тесты пейджера (задача E1.7).
-//  Проектный документ: docs/Core-iOS-Design.md §2 «Ключевые контракты»
-//  (инвариант t, один писатель contentOffset, два режима пейджера, дисциплина
-//  производительности) и §3 «Концептуальная поверхность API»
+//  Contract tests for the pager.
+//  Design document: docs/CORE-IOS-DESIGN.md §2 (key contracts:
+//  the `t` invariant, a single writer of contentOffset, two pager modes, performance
+//  discipline) and §3 (conceptual API surface):
 //  (TesseraPagerViewController, TesseraPageDescriptor, TesseraPagerDelegate).
 //
-//  Проверяются: конфигурация UIScrollView для режимов paged/snapping,
-//  геометрия contentSize, программный переход go(toPage:), инвариант
-//  t = contentOffset.x / pageWidth (LTR и RTL), интеграция снапа и ленивая
-//  загрузка окна ±1. Тесты работают без окна и без прогона UI-цикла:
-//  контроллер загружает вид и раскладывается вручную.
+//  Checked: UIScrollView configuration for the paged/snapping modes,
+//  `contentSize` geometry, the programmatic `go(toPage:)` transition, the invariant
+//  t = contentOffset.x / pageWidth (LTR and RTL), snapping integration, and lazy
+//  loading of the ±1 window. The tests run without a window and without spinning a run loop:
+//  the controller loads its view and is laid out manually.
 //
 
 #if canImport(UIKit)
@@ -21,7 +21,7 @@ import XCTest
 import UIKit
 @testable import TesseraCore
 
-/// Шпион делегата: фиксирует порядок и значения колбэков пейджера.
+/// A delegate spy: records the order and values of the pager's callbacks.
 private final class TesseraPagerDelegateSpy: TesseraPagerDelegate {
     private(set) var shownIndexes: [Int] = []
     private(set) var progressValues: [CGFloat] = []
@@ -43,18 +43,18 @@ final class TesseraPagerTests: XCTestCase {
     private let pageWidth: CGFloat = 320
     private let pageHeight: CGFloat = 480
 
-    // MARK: - Вспомогательные фабрики
+    // MARK: - Factory helpers
 
     private func makePages(count: Int) -> [TesseraPageDescriptor] {
         (0..<count).map { (index: Int) -> TesseraPageDescriptor in
-            TesseraPageDescriptor(id: index, title: "Страница \(index)") {
+            TesseraPageDescriptor(id: index, title: "Page \(index)") {
                 UIViewController()
             }
         }
     }
 
-    /// Загружает пейджер, задаёт размер вида, раскладывает и возвращает
-    /// внутренний UIScrollView (единственный прямой потомок корневого вида).
+    /// Loads the pager, sets the view size, lays it out, and returns
+    /// the inner UIScrollView (the only direct child of the root view).
     private func makeLoadedPager(
         mode: TesseraPagerMode = .paged,
         pageCount: Int
@@ -66,15 +66,15 @@ final class TesseraPagerTests: XCTestCase {
 
         let scrollView = try XCTUnwrap(
             pager.view.subviews.compactMap { $0 as? UIScrollView }.first,
-            "Пейджер обязан содержать UIScrollView"
+            "The pager must contain a UIScrollView"
         )
         return (pager, scrollView)
     }
 
-    // MARK: - Конфигурация режимов
+    // MARK: - Mode configuration
 
-    /// `.paged`: включён `isPagingEnabled`, обычная децелерация, выключены
-    /// индикаторы, делегат — сам пейджер.
+    /// `.paged`: `isPagingEnabled` is on, normal deceleration, indicators are
+    /// off, and the delegate is the pager itself.
     func testPagedModeConfiguresScrollView() throws {
         let pager = TesseraPagerViewController(mode: .paged, pages: makePages(count: 3))
         pager.loadViewIfNeeded()
@@ -91,8 +91,8 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertTrue(scrollView.delegate === pager)
     }
 
-    /// `.snapping`: `isPagingEnabled` выключен, децелерация `.fast` — снап
-    /// выполняет `TesseraSnapPolicy` (Core §2, «Два режима пейджера»).
+    /// `.snapping`: `isPagingEnabled` is off, deceleration is `.fast`; snapping
+    /// is done by `TesseraSnapPolicy` (Core §2, "Two pager modes").
     func testSnappingModeConfiguresScrollView() throws {
         let pager = TesseraPagerViewController(mode: .snapping, pages: makePages(count: 3))
         pager.loadViewIfNeeded()
@@ -104,9 +104,9 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(scrollView.decelerationRate, .fast)
     }
 
-    // MARK: - Геометрия
+    // MARK: - Geometry
 
-    /// `contentSize` — `pageWidth × pageCount` по горизонтали и высота вида.
+    /// `contentSize` is `pageWidth × pageCount` horizontally and the view's height.
     func testLayoutSetsContentSizeForAllPages() throws {
         let (_, scrollView) = try makeLoadedPager(pageCount: 4)
 
@@ -115,7 +115,7 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(scrollView.contentSize.height, pageHeight)
     }
 
-    /// Страницы-дети получают полноширинный фрейм высотой со скролл-вью.
+    /// Child pages get a full-width frame as tall as the scroll view.
     func testLoadedPageFramesFillScrollView() throws {
         let (pager, scrollView) = try makeLoadedPager(pageCount: 3)
 
@@ -126,8 +126,8 @@ final class TesseraPagerTests: XCTestCase {
         }
     }
 
-    /// Пустой набор страниц: `contentSize` нулевой, переход и accessibility
-    /// не падают.
+    /// An empty page set: `contentSize` is zero, and transitions and accessibility
+    /// do not crash.
     func testEmptyPagerKeepsZeroContentSize() throws {
         let (pager, scrollView) = try makeLoadedPager(pageCount: 0)
 
@@ -141,8 +141,8 @@ final class TesseraPagerTests: XCTestCase {
 
     // MARK: - go(toPage:)
 
-    /// Программный переход выставляет offset по индексу в порядке чтения (LTR):
-    /// `index × pageWidth`, индекс клампится в границы набора.
+    /// A programmatic transition sets the offset by the index in reading order (LTR):
+    /// `index × pageWidth`, and the index is clamped to the set's bounds.
     func testGoToPageSetsContentOffsetInLTR() throws {
         let (pager, scrollView) = try makeLoadedPager(pageCount: 4)
 
@@ -156,7 +156,7 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, 0)
     }
 
-    /// Индекс вне диапазона зажимается: 99 → последняя страница, -5 → первая.
+    /// An out-of-range index is clamped: 99 → the last page, -5 → the first.
     func testGoToPageClampsOutOfRangeIndexes() throws {
         let (pager, scrollView) = try makeLoadedPager(pageCount: 4)
 
@@ -167,8 +167,8 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, 0)
     }
 
-    /// Переход до загрузки вида запоминается и применяется на первом layout'е —
-    /// без промежуточного скачка на первую страницу.
+    /// A transition requested before the view loads is remembered and applied on the first layout,
+    /// without an intermediate jump to the first page.
     func testPendingGoToPageIsAppliedOnFirstLayout() throws {
         let pager = TesseraPagerViewController(mode: .paged, pages: makePages(count: 4))
 
@@ -184,7 +184,7 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, pageWidth * 2)
     }
 
-    /// Нулевая ширина вида откладывает переход до появления геометрии.
+    /// A zero view width defers the transition until geometry appears.
     func testGoToPageWithZeroWidthDefersUntilLayout() throws {
         let pager = TesseraPagerViewController(mode: .paged, pages: makePages(count: 4))
         pager.loadViewIfNeeded()
@@ -202,8 +202,8 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, pageWidth * 2)
     }
 
-    /// В RTL физический слот страницы зеркалится: индекс 0 — крайняя правая
-    /// страница, `pageCount - 1` — крайняя левая (Core §2, инвариант t).
+    /// In RTL the page's physical slot is mirrored: index 0 is the rightmost
+    /// page, `pageCount - 1` the leftmost (Core §2, the `t` invariant).
     func testGoToPageUsesMirroredSlotsInRTL() throws {
         let pager = TesseraPagerViewController(mode: .paged, pages: makePages(count: 4))
         pager.loadViewIfNeeded()
@@ -214,7 +214,7 @@ final class TesseraPagerTests: XCTestCase {
             pager.view.subviews.compactMap { $0 as? UIScrollView }.first
         )
 
-        // Стартовая страница чтения 0 занимает физический слот 3.
+        // The starting reading page 0 occupies physical slot 3.
         XCTAssertEqual(scrollView.contentOffset.x, pageWidth * 3)
 
         pager.go(toPage: 1, animated: false)
@@ -224,10 +224,10 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, 0)
     }
 
-    // MARK: - Инвариант t
+    // MARK: - The t invariant
 
-    /// LTR: `t = contentOffset.x / pageWidth` без изменений; дробная часть —
-    /// прогресс перехода (Core §2, «Инвариант прогресса»).
+    /// LTR: `t = contentOffset.x / pageWidth` unchanged; the fractional part is
+    /// the transition progress (Core §2, "Progress invariant").
     func testProgressInLTRFollowsRawOffset() throws {
         let (pager, scrollView) = try makeLoadedPager(pageCount: 3)
         let spy = TesseraPagerDelegateSpy()
@@ -246,8 +246,8 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(spy.lastProgress), 2, accuracy: 0.0001)
     }
 
-    /// RTL: тот же сырой offset нормализуется от направления чтения:
-    /// левый край — последняя страница чтения (Core §2, инвариант t).
+    /// RTL: the same raw offset is normalized from the reading direction:
+    /// the left edge is the last reading page (Core §2, the `t` invariant).
     func testProgressInRTLIsMirroredToReadingDirection() throws {
         let pager = TesseraPagerViewController(mode: .paged, pages: makePages(count: 3))
         pager.loadViewIfNeeded()
@@ -270,10 +270,10 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(spy.lastProgress), 0, accuracy: 0.0001)
     }
 
-    // MARK: - Интеграция снапа
+    // MARK: - Snapping integration
 
-    /// `.snapping`: целевой offset считается `TesseraSnapPolicy` от фактической
-    /// ширины страницы и скорости жеста.
+    /// `.snapping`: the target offset is computed by `TesseraSnapPolicy` from the actual
+    /// page width and the gesture velocity.
     func testSnappingModeAppliesSnapPolicy() throws {
         let (pager, scrollView) = try makeLoadedPager(mode: .snapping, pageCount: 3)
 
@@ -302,8 +302,8 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(lastPageTarget.x, pageWidth * 2)
     }
 
-    /// `.paged`: снап выполняет `isPagingEnabled`, метод делегата не меняет
-    /// предложенный offset.
+    /// `.paged`: `isPagingEnabled` does the snapping, and the delegate method does not change
+    /// the proposed offset.
     func testPagedModeDoesNotOverrideProposedOffset() throws {
         let (pager, scrollView) = try makeLoadedPager(mode: .paged, pageCount: 3)
 
@@ -317,14 +317,14 @@ final class TesseraPagerTests: XCTestCase {
         XCTAssertEqual(target.x, 100)
     }
 
-    // MARK: - Ленивая загрузка ±1
+    // MARK: - Lazy loading of ±1
 
-    /// В памяти держится текущая страница и соседи ±1; при переходе окно
-    /// сдвигается, а освободившиеся контроллеры не пересоздаются повторно.
+    /// Memory holds the current page and its ±1 neighbors; on a transition the window
+    /// shifts, and controllers that were freed are not recreated again.
     func testLazyLoadingKeepsCurrentPageAndNeighbours() throws {
         var createdPages: [Int] = []
         let pages = (0..<5).map { (index: Int) -> TesseraPageDescriptor in
-            TesseraPageDescriptor(id: index, title: "Страница \(index)") {
+            TesseraPageDescriptor(id: index, title: "Page \(index)") {
                 createdPages.append(index)
                 return UIViewController()
             }
@@ -335,24 +335,24 @@ final class TesseraPagerTests: XCTestCase {
         pager.view.frame = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
         pager.view.layoutIfNeeded()
 
-        // Первая страница и её правый сосед.
+        // The first page and its right neighbor.
         XCTAssertEqual(createdPages, [0, 1])
         XCTAssertEqual(pager.children.count, 2)
 
-        // Переход на 3: окно 2...4, страницы 0 и 1 выгружаются.
+        // Go to 3: the window is 2...4, pages 0 and 1 are unloaded.
         pager.go(toPage: 3, animated: false)
         XCTAssertEqual(createdPages, [0, 1, 2, 3, 4])
         XCTAssertEqual(pager.children.count, 3)
 
-        // Переход на 4: нужны только 3 и 4, страница 2 выгружается.
+        // Go to 4: only 3 and 4 are needed, page 2 is unloaded.
         pager.go(toPage: 4, animated: false)
         XCTAssertEqual(createdPages, [0, 1, 2, 3, 4])
         XCTAssertEqual(pager.children.count, 2)
     }
 
-    // MARK: - Делегат
+    // MARK: - Delegate
 
-    /// Мгновенный переход сообщает `didShowPageAt` ровно один раз.
+    /// An instant transition reports `didShowPageAt` exactly once.
     func testImmediateGoReportsShownPageOnce() throws {
         let (pager, _) = try makeLoadedPager(pageCount: 3)
         let spy = TesseraPagerDelegateSpy()
@@ -365,41 +365,41 @@ final class TesseraPagerTests: XCTestCase {
 
     // MARK: - Accessibility
 
-    /// Вертикальные направления и выход за границы в LTR не обрабатываются
-    /// пейджером (pageStep = 0 или индекс за пределами набора).
+    /// Vertical directions and going out of bounds in LTR are not handled
+    /// by the pager (pageStep = 0 or an index outside the set).
     func testAccessibilityScrollRejectsVerticalAndOutOfBoundsGestures() throws {
         let (pager, _) = try makeLoadedPager(pageCount: 3)
 
         XCTAssertFalse(pager.accessibilityScroll(.up))
         XCTAssertFalse(pager.accessibilityScroll(.down))
-        // Первая страница: назад (свайп вправо в LTR) некуда.
+        // First page: there is nowhere to go back (swipe right in LTR).
         XCTAssertFalse(pager.accessibilityScroll(.right))
     }
 
-    /// В LTR трёхпальцевый свайп влево уводит на следующую страницу
-    /// (конвенция UIKit, E9.3), свайп вправо возвращает назад.
+    /// In LTR a three-finger swipe left goes to the next page
+    /// (the UIKit convention), and a swipe right goes back.
     ///
-    /// Направление проверяется на границах набора, чтобы не зависеть от
-    /// анимации перехода: с первой страницы вперёд можно, назад — нет;
-    /// с последней — наоборот.
+    /// Direction is checked at the set's boundaries so as not to depend on
+    /// the transition animation: from the first page forward is possible, backward is not;
+    /// from the last page it is the opposite.
     func testAccessibilityScrollMovesForwardInLTR() throws {
         let (pager, _) = try makeLoadedPager(pageCount: 3)
 
-        XCTAssertTrue(pager.accessibilityScroll(.left), "Свайп влево в LTR листает вперёд")
+        XCTAssertTrue(pager.accessibilityScroll(.left), "A swipe left in LTR pages forward")
     }
 
-    /// В LTR свайп вправо листает назад: с последней страницы назад можно,
-    /// вперёд (свайп влево) — нет.
+    /// In LTR a swipe right pages backward: from the last page backward is possible,
+    /// forward (swipe left) is not.
     func testAccessibilityScrollMovesBackwardInLTR() throws {
         let (pager, _) = try makeLoadedPager(pageCount: 3)
         pager.go(toPage: 2, animated: false)
 
-        XCTAssertFalse(pager.accessibilityScroll(.left), "С последней страницы вперёд некуда")
-        XCTAssertTrue(pager.accessibilityScroll(.right), "Свайп вправо в LTR листает назад")
+        XCTAssertFalse(pager.accessibilityScroll(.left), "There is nowhere forward from the last page")
+        XCTAssertTrue(pager.accessibilityScroll(.right), "A swipe right in LTR pages backward")
     }
 
-    /// В RTL физическое направление инвертируется: с первой страницы жест
-    /// «вправо» ведёт вперёд, «влево» — назад (за границу).
+    /// In RTL the physical direction is inverted: from the first page the "right"
+    /// gesture leads forward and "left" leads backward (out of bounds).
     func testAccessibilityScrollRespectsRTL() throws {
         let pager = TesseraPagerViewController(mode: .paged, pages: makePages(count: 3))
         pager.loadViewIfNeeded()

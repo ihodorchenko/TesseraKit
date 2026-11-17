@@ -2,19 +2,19 @@
 //  TesseraParallaxLayerTests.swift
 //  TesseraCoreTests
 //
-//  Контрактные тесты параллакса (задача E1.7).
-//  Проектный документ: docs/Core-iOS-Design.md §2 «Ключевые контракты»
-//  («Параллакс: backgroundOffset = offset × factor, factor ∈ (0, 1);
-//  слой заведомо больше contentSize; Reduce Motion → фактор 0»), §3
-//  «Концептуальная поверхность API» (TesseraParallaxLayer — фон + фактор + ось)
-//  и §2, п. 6 (Reduce Motion).
+//  Contract tests for parallax.
+//  Design document: docs/CORE-IOS-DESIGN.md §2 (key contracts:
+//  "Parallax: backgroundOffset = offset × factor, factor ∈ (0, 1);
+//  the layer is deliberately larger than contentSize; Reduce Motion → factor 0"), §3
+//  (conceptual API surface: TesseraParallaxLayer is background + factor + axis)
+//  and §2 (Reduce Motion).
 //
-//  Проверяются чистая функция `effectiveOffset(contentOffset:factor:)`
-//  (смещение фона в координатах контента, знак как у offset'а), пересборка
-//  `transform` при `update(withContentOffset:)` (экранная проекция со знаком
-//  минус для слоя рядом со скроллом, E10.7), контракт направления «фон едет
-//  туда же, куда контент, но медленнее» и отсечка параллакса через
-//  инжектируемый провайдер Reduce Motion.
+//  Checked: the pure function `effectiveOffset(contentOffset:factor:)`
+//  (the background shift in content coordinates, with the same sign as the offset), rebuilding
+//  `transform` on `update(withContentOffset:)` (an on-screen projection with a
+//  minus sign for a layer next to the scroll view), the direction contract "the background moves
+//  the same way as the content, but slower", and the parallax cutoff via an
+//  injectable Reduce Motion provider.
 //
 
 #if canImport(UIKit)
@@ -25,9 +25,9 @@ import UIKit
 
 final class TesseraParallaxLayerTests: XCTestCase {
 
-    // MARK: - Вспомогательные проверки
+    // MARK: - Helper checks
 
-    /// Проверяет, что трансформ слоя — это чистый сдвиг без масштаба и поворота.
+    /// Checks that the layer's transform is a pure translation with no scale or rotation.
     private func assertTranslation(
         _ transform: CGAffineTransform,
         x: CGFloat,
@@ -44,7 +44,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(transform.ty, y, accuracy: accuracy, file: file, line: line)
     }
 
-    /// Слой с уже применённым offset'ом и прозрачным провайдером Reduce Motion.
+    /// A layer with an offset already applied and a pass-through Reduce Motion provider.
     private func makeLayer(
         factor: CGFloat,
         offset: CGPoint,
@@ -58,9 +58,9 @@ final class TesseraParallaxLayerTests: XCTestCase {
         return layer
     }
 
-    // MARK: - effectiveOffset: чистый контракт
+    // MARK: - effectiveOffset: the pure contract
 
-    /// При факторе 0 фон стоит на месте независимо от offset'а.
+    /// With factor 0 the background stays in place regardless of the offset.
     func testEffectiveOffsetAtFactorZero() {
         let offset = CGPoint(x: 120, y: -80)
         let result = TesseraParallaxLayer.effectiveOffset(contentOffset: offset, factor: 0)
@@ -69,7 +69,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(result.y, 0)
     }
 
-    /// При факторе 0.5 фон смещается ровно вдвое медленнее контента по обеим осям.
+    /// With factor 0.5 the background shifts exactly half as fast as the content on both axes.
     func testEffectiveOffsetAtHalfFactor() {
         let result = TesseraParallaxLayer.effectiveOffset(
             contentOffset: CGPoint(x: 120, y: -80),
@@ -80,8 +80,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(result.y, -40)
     }
 
-    /// При факторе 1 фон едет вместе с контентом (крайний случай допустимого
-    /// диапазона, хотя проектный диапазон — `(0, 1)`).
+    /// With factor 1 the background moves together with the content (the edge case of the allowed
+    /// range, although the design range is `(0, 1)`).
     func testEffectiveOffsetAtFullFactor() {
         let offset = CGPoint(x: 120, y: -80)
         let result = TesseraParallaxLayer.effectiveOffset(contentOffset: offset, factor: 1)
@@ -90,9 +90,9 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(result.y, offset.y)
     }
 
-    /// Знак offset'а сохраняется на обеих осях: `effectiveOffset` — смещение фона
-    /// в координатах контента. Экранная проекция (`transform`) — со знаком минус,
-    /// её проверяют тесты `update(withContentOffset:)` и контракт направления.
+    /// The offset's sign is preserved on both axes: `effectiveOffset` is the background shift
+    /// in content coordinates. The on-screen projection (`transform`) has a minus sign;
+    /// it is checked by the `update(withContentOffset:)` tests and the direction contract.
     func testEffectiveOffsetPreservesSignOnBothAxes() {
         let result = TesseraParallaxLayer.effectiveOffset(
             contentOffset: CGPoint(x: -120, y: 80),
@@ -103,9 +103,9 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(result.y, 20)
     }
 
-    // MARK: - Конфигурация слоя
+    // MARK: - Layer configuration
 
-    /// `factor` — множитель по умолчанию 0.5, `extraSize` — ноль.
+    /// `factor` is a multiplier with a default of 0.5, `extraSize` is zero.
     func testDefaultFactorAndExtraSize() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
 
@@ -114,8 +114,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.contentSize, .zero)
     }
 
-    /// `configure` отсекает фактор в `[0, 1]`; `NaN` и бесконечность трактуются
-    /// как 0 (безопасное «не двигаемся»).
+    /// `configure` clamps the factor to `[0, 1]`; `NaN` and infinity are treated
+    /// as 0 (a safe "do not move").
     func testConfigureClampsFactorToUnitRange() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
 
@@ -135,8 +135,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.factor, 0.25)
     }
 
-    /// Отрицательный и нечисловой запас размера трактуется как 0, а валидный —
-    /// прибавляется к каждой оси.
+    /// A negative or non-numeric size margin is treated as 0, and a valid one is
+    /// added to each axis.
     func testConfigureSanitizesExtraSize() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
 
@@ -153,8 +153,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.extraSize, 10)
     }
 
-    /// Размер слоя равен `contentSize + extraSize` по каждой оси (Core §2:
-    /// слой заведомо больше контента).
+    /// The layer's size equals `contentSize + extraSize` on each axis (Core §2:
+    /// the layer is deliberately larger than the content).
     func testSetContentSizeAddsExtraSizeOnBothAxes() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 64)
@@ -164,7 +164,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.bounds.size, CGSize(width: 364, height: 264))
     }
 
-    /// Отрицательные и нечисловые компоненты `contentSize` трактуются как 0.
+    /// Negative and non-numeric `contentSize` components are treated as 0.
     func testSetContentSizeSanitizesDegenerateComponents() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 0)
@@ -174,7 +174,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.bounds.size, .zero)
     }
 
-    /// Инициализатор с `frame` берёт его размер как `contentSize`.
+    /// The initializer taking a `frame` uses its size as `contentSize`.
     func testFrameInitializerTakesContentSizeFromFrame() {
         let frame = CGRect(x: 0, y: 0, width: 320, height: 480)
         let layer = TesseraParallaxLayer(frame: frame)
@@ -183,8 +183,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.bounds.size, CGSize(width: 320, height: 480))
     }
 
-    /// Повторный `configure` с теми же значениями идемпотентен: размер и
-    /// трансформ не меняются.
+    /// A repeated `configure` with the same values is idempotent: the size and
+    /// the transform do not change.
     func testConfigureIsIdempotentForSameValues() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 64)
@@ -200,14 +200,14 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.transform, transform)
     }
 
-    // MARK: - update(withContentOffset:) и transform
+    // MARK: - update(withContentOffset:) and transform
 
-    /// `update(withContentOffset:)` меняет только `transform`: сдвиг равен
-    /// `−offset × factor` (экранная проекция для слоя-соседа скролла, E10.7),
-    /// масштаба и поворота нет.
+    /// `update(withContentOffset:)` changes only `transform`: the shift equals
+    /// `−offset × factor` (an on-screen projection for a layer next to the scroll view),
+    /// with no scale or rotation.
     ///
-    /// До E10.7 тест канонизировал `+offset × factor` — именно этот знак уводил
-    /// фон в сторону, противоположную контенту.
+    /// Previously the test canonized `+offset × factor`, and exactly that sign moved
+    /// the background opposite to the content.
     func testUpdateTranslatesLayerByEffectiveOffset() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 0)
@@ -217,7 +217,7 @@ final class TesseraParallaxLayerTests: XCTestCase {
         assertTranslation(layer.transform, x: -60, y: 20)
     }
 
-    /// Нулевой offset оставляет слой в покое (identity-трансформ).
+    /// A zero offset leaves the layer at rest (an identity transform).
     func testUpdateWithZeroOffsetKeepsIdentity() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 0)
@@ -227,8 +227,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.transform, .identity)
     }
 
-    /// Нечисловые координаты offset'а игнорируются: `NaN` не «отравляет»
-    /// `transform`, последнее валидное состояние сохраняется.
+    /// Non-numeric offset coordinates are ignored: `NaN` does not "poison"
+    /// `transform`, and the last valid state is kept.
     func testUpdateIgnoresNonFiniteCoordinates() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 0)
@@ -239,8 +239,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         assertTranslation(layer.transform, x: -50, y: -50)
     }
 
-    /// Смена `factor` пересчитывает трансформ от последнего offset'а без нового
-    /// вызова `update(withContentOffset:)`.
+    /// Changing `factor` recomputes the transform from the last offset without a new
+    /// call to `update(withContentOffset:)`.
     func testConfigureRecomputesTransformFromLastOffset() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
         layer.configure(factor: 0.5, extraSize: 0)
@@ -256,8 +256,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
 
     // MARK: - Reduce Motion
 
-    /// Reduce Motion → действующий фактор 0, даже если сконфигурирован 1:
-    /// фон стоит на месте, контент продолжает скроллиться (Core §2, п. 6).
+    /// Reduce Motion → the effective factor is 0 even if 1 is configured:
+    /// the background stays in place while the content keeps scrolling (Core §2, Reduce Motion).
     func testReduceMotionProviderForcesZeroFactor() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { true })
         layer.configure(factor: 1, extraSize: 0)
@@ -265,12 +265,12 @@ final class TesseraParallaxLayerTests: XCTestCase {
         layer.update(withContentOffset: CGPoint(x: 200, y: 100))
 
         XCTAssertEqual(layer.transform, .identity)
-        // Публичная конфигурация не подменяется: отключён только действующий фактор.
+        // The public configuration is not overridden: only the effective factor is disabled.
         XCTAssertEqual(layer.factor, 1)
     }
 
-    /// `respectsReduceMotion == false` отключает отсечку (отладочный сценарий):
-    /// фактор применяется даже при включённом Reduce Motion.
+    /// `respectsReduceMotion == false` disables the cutoff (a debugging scenario):
+    /// the factor applies even with Reduce Motion on.
     func testRespectsReduceMotionFalseAppliesFactor() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { true })
         layer.respectsReduceMotion = false
@@ -281,8 +281,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         assertTranslation(layer.transform, x: -200, y: -100)
     }
 
-    /// Провайдер опрашивается на каждом пересчёте: переключение Reduce Motion
-    /// подхватывается следующим `update` без пересоздания слоя.
+    /// The provider is queried on every recomputation: toggling Reduce Motion
+    /// is picked up by the next `update` without recreating the layer.
     func testProviderToggleIsAppliedOnNextUpdate() {
         var reduceMotion = true
         let layer = TesseraParallaxLayer(reduceMotionProvider: { reduceMotion })
@@ -296,8 +296,8 @@ final class TesseraParallaxLayerTests: XCTestCase {
         assertTranslation(layer.transform, x: -100, y: -100)
     }
 
-    /// Системное уведомление о смене Reduce Motion сбрасывает сдвиг, не дожидаясь
-    /// следующего `scrollViewDidScroll` (Core §2, п. 6).
+    /// The system notification about a Reduce Motion change resets the shift without waiting for
+    /// the next `scrollViewDidScroll` (Core §2, Reduce Motion).
     func testReduceMotionNotificationResetsTransform() {
         var reduceMotion = false
         let layer = TesseraParallaxLayer(reduceMotionProvider: { reduceMotion })
@@ -314,25 +314,25 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(layer.transform, .identity)
     }
 
-    // MARK: - Направление: слой — сосед скролла (E10.7а)
+    // MARK: - Direction: the layer is a sibling of the scroll view
 
-    /// Сцена контракта направления: контейнер-«экран», в нём слой фона и
-    /// **рядом** с ним (не внутри) скролл-вью с контентом — ровно так слой
-    /// кладут Panorama и StartScreen.
+    /// The direction-contract scene: a "screen" container holding a background layer and,
+    /// **next to** it (not inside), a scroll view with content, exactly how
+    /// Panorama and StartScreen place the layer.
     private struct SiblingScene {
         let container: UIView
         let layer: TesseraParallaxLayer
         let scrollView: UIScrollView
         let content: UIView
 
-        /// Экранная (в координатах контейнера) позиция начала вью с учётом
-        /// `transform` и `contentOffset`.
+        /// The on-screen position (in container coordinates) of a view's origin, accounting for
+        /// `transform` and `contentOffset`.
         func screenOrigin(of view: UIView) -> CGPoint {
             view.convert(CGPoint.zero, to: container)
         }
 
-        /// Пишет offset в скролл и транслирует его слою — как делает
-        /// потребитель в `scrollViewDidScroll`.
+        /// Writes the offset to the scroll view and forwards it to the layer, as
+        /// a consumer does in `scrollViewDidScroll`.
         func scroll(to offset: CGPoint) {
             scrollView.contentOffset = offset
             layer.update(withContentOffset: scrollView.contentOffset)
@@ -357,12 +357,12 @@ final class TesseraParallaxLayerTests: XCTestCase {
         return SiblingScene(container: container, layer: layer, scrollView: scrollView, content: content)
     }
 
-    /// Контракт направления (E10.7): слой лежит рядом со скроллом; offset
-    /// растёт на Δ по обеим осям → контент на экране уходит на −Δ, фон — на
-    /// −Δ × factor: **в ту же сторону**, что контент, но медленнее.
+    /// The direction contract: the layer sits next to the scroll view; the offset
+    /// grows by Δ on both axes → the content moves on screen by −Δ, the background by
+    /// −Δ × factor: **the same way** as the content, but slower.
     ///
-    /// До E10.7 слой ставил `transform = +offset × factor`, и фон ехал в
-    /// противоположную контенту сторону — этот тест ловит регресс знака.
+    /// Previously the layer set `transform = +offset × factor`, and the background moved in
+    /// the direction opposite to the content; this test catches a sign regression.
     func testSiblingLayerMovesWithContentButSlowerOnBothAxes() {
         let factor: CGFloat = 0.5
         let scene = makeSiblingScene(factor: factor, reduceMotion: false)
@@ -377,17 +377,17 @@ final class TesseraParallaxLayerTests: XCTestCase {
         let contentAfter = scene.screenOrigin(of: scene.content)
         let backgroundAfter = scene.screenOrigin(of: scene.layer)
 
-        // Контент: offset +Δ → экранная позиция −Δ.
+        // Content: offset +Δ → on-screen position −Δ.
         XCTAssertEqual(contentAfter.x - contentBefore.x, -delta.x, accuracy: 0.0001)
         XCTAssertEqual(contentAfter.y - contentBefore.y, -delta.y, accuracy: 0.0001)
 
-        // Фон: −Δ × factor — тот же знак, что у контента, модуль в factor раз меньше.
+        // Background: −Δ × factor, the same sign as the content, with a magnitude factor times smaller.
         XCTAssertEqual(backgroundAfter.x - backgroundBefore.x, -delta.x * factor, accuracy: 0.0001)
         XCTAssertEqual(backgroundAfter.y - backgroundBefore.y, -delta.y * factor, accuracy: 0.0001)
     }
 
-    /// Контракт направления при Reduce Motion: контент продолжает уезжать, а
-    /// экранная позиция фона не меняется (Core §2, п. 6).
+    /// The direction contract under Reduce Motion: the content keeps moving away while
+    /// the background's on-screen position does not change (Core §2, Reduce Motion).
     func testSiblingLayerStaysInPlaceUnderReduceMotion() {
         let scene = makeSiblingScene(factor: 0.5, reduceMotion: true)
         scene.scroll(to: CGPoint(x: 100, y: 60))
@@ -407,10 +407,10 @@ final class TesseraParallaxLayerTests: XCTestCase {
         XCTAssertEqual(scene.layer.transform, .identity)
     }
 
-    // MARK: - Декоративность слоя
+    // MARK: - The layer is decorative
 
-    /// Слой декоративный: не перехватывает касания и не является отдельным
-    /// элементом accessibility-дерева.
+    /// The layer is decorative: it does not intercept touches and is not a separate
+    /// element of the accessibility tree.
     func testLayerIsDecorative() {
         let layer = TesseraParallaxLayer(reduceMotionProvider: { false })
 

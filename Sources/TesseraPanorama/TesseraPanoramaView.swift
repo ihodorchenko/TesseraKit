@@ -2,16 +2,16 @@
 //  TesseraPanoramaView.swift
 //  TesseraPanorama
 //
-//  SwiftUI-фасад панорамы.
-//  Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §2 «Выбор фундамента»
-//  (UIKit-ядро + SwiftUI-фасад через `UIViewControllerRepresentable`), §3
-//  «Концептуальная архитектура» (декларативный API: секции, стиль, делегат),
-//  §7 «Accessibility» (мост состояния — только `ObservableObject`: iOS 15 не
-//  поддерживает макрос Observable; анимации и VoiceOver остаются в UIKit-ядре).
+//  The SwiftUI facade of the panorama.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md (choice of foundation:
+//  a UIKit core + a SwiftUI facade via `UIViewControllerRepresentable`; conceptual
+//  architecture: a declarative API of sections, style, and delegate;
+//  accessibility: the state bridge is only an `ObservableObject`, since iOS 15 does not
+//  support the Observable macro; animations and VoiceOver stay in the UIKit core).
 //
-//  Фасад не дублирует механику: он создаёт и обновляет
-//  `TesseraPanoramaViewController`. Снап, параллакс, заголовки, арбитраж жестов и
-//  accessibility живут в UIKit-ядре (§2, §3).
+//  The facade does not duplicate mechanics: it creates and updates
+//  `TesseraPanoramaViewController`. Snapping, parallax, headers, gesture arbitration, and
+//  accessibility live in the UIKit core.
 //
 
 #if canImport(UIKit) && canImport(SwiftUI)
@@ -19,18 +19,18 @@ import SwiftUI
 import TesseraCore
 import UIKit
 
-/// SwiftUI-представление панорамы (docs/PANORAMA-IOS-DESIGN.md §2, §3).
+/// The SwiftUI view of the panorama (see docs/PANORAMA-IOS-DESIGN.md).
 ///
-/// Обёртка над ``TesseraPanoramaViewController``. На iOS 15 чистый SwiftUI не отдаёт
-/// прогресс перетаскивания страницы, поэтому снап, параллакс фона и
-/// интерполяция заголовков по `t` выполняются в UIKit-ядре, а SwiftUI только
-/// описывает состояние (§2).
+/// A wrapper over ``TesseraPanoramaViewController``. On iOS 15, pure SwiftUI does not expose
+/// the progress of a page drag, so snapping, background parallax, and
+/// header interpolation by `t` run in the UIKit core, and SwiftUI only
+/// describes the state.
 ///
 /// ```swift
 /// TesseraPanoramaView(
 ///     sections: [
-///         TesseraPanoramaSection(id: "start", title: "Начало") { StartViewController() },
-///         TesseraPanoramaSection(id: "news", title: "Новости") { NewsViewController() },
+///         TesseraPanoramaSection(id: "start", title: "Home") { StartViewController() },
+///         TesseraPanoramaSection(id: "news", title: "News") { NewsViewController() },
 ///     ],
 ///     style: TesseraPanoramaStyle(
 ///         peek: 48,
@@ -39,52 +39,52 @@ import UIKit
 /// )
 /// ```
 ///
-/// ## Обновление
+/// ## Updates
 ///
-/// - ``TesseraPanoramaStyle`` передаётся на каждом обновлении, но ядро сравнивает его
-///   с текущим и пропускает применение того же стиля (E10.13);
-/// - при изменении набора `id` или заголовков секции пересобираются
-///   (`reload(sections:)`, контроллеры с сохранившимся `id` переиспользуются);
-/// - при тех же `id` и заголовках новый контент доносится до уже загруженных
-///   секций на месте (E10.12б): контроллер SwiftUI-секции
-///   (`TesseraSwiftUIContentProvider`) получает новый `rootView`, позиция
-///   прокрутки, текущая секция и `@State` сохраняются. UIKit-поставщик
-///   (`TesseraViewControllerProvider`) обновлять готовый контроллер не умеет —
-///   его состояние меняйте через сам контроллер либо сменой `id` (§3).
+/// - ``TesseraPanoramaStyle`` is passed on every update, but the core compares it
+///   with the current one and skips applying an identical style;
+/// - when the set of `id`s or titles changes, the sections are rebuilt
+///   (`reload(sections:)`; controllers whose `id` survives are reused);
+/// - with the same `id`s and titles, new content reaches the already loaded
+///   sections in place: the controller of a SwiftUI section
+///   (`TesseraSwiftUIContentProvider`) receives a new `rootView`, and the scroll
+///   position, the current section, and `@State` are preserved. A UIKit provider
+///   (`TesseraViewControllerProvider`) cannot update a ready controller:
+///   change its state through the controller itself or by changing the `id`.
 ///
-/// ## Делегат
+/// ## Delegate
 ///
-/// ``TesseraPanoramaDelegate`` — протокол с классовой связностью, а SwiftUI-структура не
-/// может хранить `weak`-ссылку. Поэтому фасад передаёт делегата координатору,
-/// который удерживает последнее значение ``TesseraPanoramaView`` и пробрасывает оба
-/// колбэка (§3). Делегат удерживается сильной ссылкой, пока представление
-/// установлено: если он сам держит SwiftUI-состояние, используйте промежуточный
-/// объект во избежание цикла.
+/// ``TesseraPanoramaDelegate`` is a class-bound protocol, and a SwiftUI struct cannot
+/// hold a `weak` reference. The facade therefore hands the delegate to a coordinator,
+/// which retains the latest ``TesseraPanoramaView`` value and forwards both
+/// callbacks. The delegate is held by a strong reference while the view is
+/// installed: if it holds SwiftUI state itself, use an intermediate
+/// object to avoid a retain cycle.
 public struct TesseraPanoramaView: UIViewControllerRepresentable {
 
-    /// Секции в порядке чтения (§3).
+    /// The sections in reading order.
     private let sections: [TesseraPanoramaSection]
 
-    /// Внешний вид: peek, множитель параллакса, шрифт и цвета заголовков, фон.
+    /// The appearance: peek, parallax factor, header font and colors, background.
     private let style: TesseraPanoramaStyle
 
-    /// Политика снапа (§4, «Снап»).
+    /// The snapping policy (see the snapping notes in the design document).
     ///
-    /// В ``TesseraPanoramaStyle`` поля снапа нет (волна 1), поэтому порог скорости
-    /// передаётся отдельно и уходит в ядро как есть.
+    /// ``TesseraPanoramaStyle`` has no snapping field, so the velocity threshold
+    /// is passed separately and goes to the core as is.
     private let snapPolicy: TesseraSnapPolicy
 
-    /// Наблюдатель прогресса и показа секции.
+    /// The observer of progress and section changes.
     private let delegate: TesseraPanoramaDelegate?
 
-    /// Создаёт фасад панорамы.
+    /// Creates the panorama facade.
     ///
     /// - Parameters:
-    ///   - sections: Секции в порядке чтения; первый элемент — первая секция для
-    ///     пользователя (в RTL физический порядок зеркалит ядро, §7).
-    ///   - style: Внешний вид; по умолчанию системный.
-    ///   - snapPolicy: Политика снапа; по умолчанию — параметры Core.
-    ///   - delegate: Наблюдатель состояния; необязателен.
+    ///   - sections: The sections in reading order; the first element is the first section for the
+    ///     user (in RTL the core mirrors the physical order).
+    ///   - style: The appearance; the system default if omitted.
+    ///   - snapPolicy: The snapping policy; Core's parameters by default.
+    ///   - delegate: The state observer; optional.
     public init(
         sections: [TesseraPanoramaSection],
         style: TesseraPanoramaStyle = TesseraPanoramaStyle(),
@@ -99,17 +99,17 @@ public struct TesseraPanoramaView: UIViewControllerRepresentable {
 
     // MARK: - UIViewControllerRepresentable
 
-    /// Создаёт координатор-делегат (§3: мост колбэков UIKit в SwiftUI).
+    /// Creates the coordinator delegate (the bridge from UIKit callbacks to SwiftUI).
     ///
-    /// - Returns: Координатор, удерживаемый SwiftUI.
+    /// - Returns: A coordinator retained by SwiftUI.
     public func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
     }
 
-    /// Создаёт UIKit-ядро панорамы.
+    /// Creates the UIKit core of the panorama.
     ///
-    /// - Parameter context: Контекст SwiftUI.
-    /// - Returns: Настроенный ``TesseraPanoramaViewController``.
+    /// - Parameter context: The SwiftUI context.
+    /// - Returns: A configured ``TesseraPanoramaViewController``.
     public func makeUIViewController(context: Context) -> TesseraPanoramaViewController {
         let panorama = TesseraPanoramaViewController(sections: sections, style: style)
         panorama.snapPolicy = snapPolicy
@@ -118,21 +118,21 @@ public struct TesseraPanoramaView: UIViewControllerRepresentable {
         return panorama
     }
 
-    /// Обновляет секции, стиль и политику снапа существующего контроллера.
+    /// Updates the sections, style, and snapping policy of an existing controller.
     ///
-    /// Полная пересборка (`reload`) выполняется только при изменении `id` или
-    /// заголовков; иначе новый контент доносится до загруженных секций на месте
-    /// (E10.12б). Стиль и снап передаются всегда — ядро пропускает тот же стиль.
+    /// A full rebuild (`reload`) happens only when the `id`s or
+    /// titles change; otherwise new content reaches the loaded sections in place.
+    /// The style and snapping policy are always passed; the core skips an identical style.
     ///
     /// - Parameters:
-    ///   - uiViewController: Живой ``TesseraPanoramaViewController``.
-    ///   - context: Контекст SwiftUI с координатором.
+    ///   - uiViewController: The live ``TesseraPanoramaViewController``.
+    ///   - context: The SwiftUI context with the coordinator.
     public func updateUIViewController(
         _ uiViewController: TesseraPanoramaViewController,
         context: Context
     ) {
-        // Координатор хранит последнюю версию описания: иначе делегат видел бы
-        // устаревшее состояние после перерисовки SwiftUI.
+        // The coordinator keeps the latest version of the description: otherwise the delegate would see
+        // stale state after SwiftUI redraws.
         context.coordinator.parent = self
         context.coordinator.panoramaViewController = uiViewController
 
@@ -140,49 +140,49 @@ public struct TesseraPanoramaView: UIViewControllerRepresentable {
         uiViewController.style = style
         uiViewController.snapPolicy = snapPolicy
 
-        // Тот же набор id/заголовков — контент на месте, без остановки прокрутки
-        // и сброса показа секции; иначе — reload с переиспользованием по id.
+        // The same set of ids/titles: content is updated in place, without stopping scrolling
+        // or resetting the shown section; otherwise reload with reuse by id.
         uiViewController.updateContent(of: sections)
     }
 
-    // MARK: - Координатор
+    // MARK: - Coordinator
 
-    /// Делегат UIKit-ядра, пробрасывающий события в ``TesseraPanoramaDelegate`` (§3).
+    /// The UIKit core's delegate that forwards events to ``TesseraPanoramaDelegate``.
     ///
-    /// Живёт столько же, сколько представление: его удерживает SwiftUI, поэтому
-    /// слабая ссылка `TesseraPanoramaViewController.delegate` не теряет наблюдателя
-    /// между перерисовками.
+    /// It lives as long as the view: SwiftUI retains it, so the
+    /// weak reference `TesseraPanoramaViewController.delegate` does not lose the observer
+    /// between redraws.
     public final class Coordinator: NSObject, TesseraPanoramaDelegate {
 
-        /// Последняя версия описания из SwiftUI: источник делегата и состояния.
+        /// The latest description from SwiftUI: the source of the delegate and state.
         fileprivate var parent: TesseraPanoramaView
 
-        /// Ядро, к которому привязан координатор. Слабо: контроллер уже
-        /// удерживается иерархией SwiftUI.
+        /// The core this coordinator is bound to. Weak: the controller is already
+        /// retained by the SwiftUI hierarchy.
         fileprivate weak var panoramaViewController: TesseraPanoramaViewController?
 
-        /// Создаёт координатор поверх описания панорамы.
+        /// Creates a coordinator over a panorama description.
         ///
-        /// - Parameter parent: Описание из `makeCoordinator()`.
+        /// - Parameter parent: The description from `makeCoordinator()`.
         fileprivate init(parent: TesseraPanoramaView) {
             self.parent = parent
             super.init()
         }
 
-        /// Пробрасывает показ секции во внешний делегат.
+        /// Forwards a section change to the external delegate.
         ///
         /// - Parameters:
-        ///   - panorama: Панорама-источник события.
-        ///   - index: Индекс показанной секции в порядке чтения.
+        ///   - panorama: The panorama that emitted the event.
+        ///   - index: The index of the shown section in reading order.
         public func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int) {
             parent.delegate?.panorama(panorama, didShowSectionAt: index)
         }
 
-        /// Пробрасывает непрерывный прогресс во внешний делегат.
+        /// Forwards continuous progress to the external delegate.
         ///
         /// - Parameters:
-        ///   - panorama: Панорама-источник события.
-        ///   - t: Нормализованный прогресс в порядке чтения.
+        ///   - panorama: The panorama that emitted the event.
+        ///   - t: The normalized progress in reading order.
         public func panorama(_ panorama: TesseraPanoramaViewController, didChangeProgress t: CGFloat) {
             parent.delegate?.panorama(panorama, didChangeProgress: t)
         }

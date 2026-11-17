@@ -2,19 +2,19 @@
 //  PanoScrollViewVelocityTests.swift
 //  TesseraPanoramaTests
 //
-//  Место вызова снапа в панораме (E10.11, волна W1): `TesseraPanoScrollView` получает
-//  скорость от UIKit в points/ms, переводит её в pt/s (`× 1000`) для
-//  `TesseraSnapPolicy` и передаёт стартовый offset жеста из
-//  `scrollViewWillBeginDragging`, чтобы шаг ±1 считался от секции начала жеста.
-//  Проектный документ: docs/PANORAMA-IOS-DESIGN.md §4 «Геометрия и математика
-//  ядра» (снап: ближайший центр + порог скорости) и раздел «Отступления
-//  реализации».
+//  Where the panorama invokes snapping: `TesseraPanoScrollView` receives the
+//  velocity from UIKit in points/ms, converts it to pt/s (`× 1000`) for
+//  `TesseraSnapPolicy`, and passes the gesture's starting offset from
+//  `scrollViewWillBeginDragging`, so that the ±1 step is counted from the section where the gesture began.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md §4 (geometry and core
+//  math: snapping is nearest center + velocity threshold) and the section on implementation
+//  deviations.
 //
-//  Регрессии, которые ловят тесты:
-//  - без перевода единиц короткий быстрый флик (1 pt/ms = 1000 pt/s) ниже
-//    порога 600 pt/s и откатывается на секцию 0;
-//  - без опоры на стартовую секцию шаг считается от `nearest(proposed)` и
-//    перескакивает через секцию (цель 2 вместо 1).
+//  Regressions these tests catch:
+//  - without unit conversion a short fast flick (1 pt/ms = 1000 pt/s) falls below
+//    the 600 pt/s threshold and rolls back to section 0;
+//  - without anchoring on the starting section the step is counted from `nearest(proposed)` and
+//    overshoots a section (target 2 instead of 1).
 //
 
 #if canImport(UIKit)
@@ -26,13 +26,13 @@ import TesseraCore
 
 final class PanoScrollViewVelocityTests: XCTestCase {
 
-    /// Ширина экрана (как в `PanoSnapTests`).
+    /// The screen width (as in `PanoSnapTests`).
     private let screenWidth: CGFloat = 390
 
-    /// Peek (§4: 16…64 pt); шаг секции — `390 − 48 = 342` pt.
+    /// Peek (§4: 16…64 pt); the section step is `390 − 48 = 342` pt.
     private let peek: CGFloat = 48
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makeScrollView(sectionCount: Int = 4) -> TesseraPanoScrollView {
         let scrollView = TesseraPanoScrollView(peek: peek)
@@ -42,13 +42,13 @@ final class PanoScrollViewVelocityTests: XCTestCase {
         return scrollView
     }
 
-    /// Проигрывает жест так, как его отдаёт UIKit: начало drag на `startX`,
-    /// протяжка до `startX + dragDistance`, окончание drag со скоростью
-    /// `velocityPointsPerMs` (points/ms). Если `proposedX` не задан, предложенная
-    /// цель оценивается по формуле инерции UIKit:
-    /// `offset + v × r / (1 − r)`, где `r` — `decelerationRate` скролла (`.fast`).
+    /// Replays a gesture the way UIKit delivers it: drag begins at `startX`,
+    /// the drag runs to `startX + dragDistance`, and drag ends with velocity
+    /// `velocityPointsPerMs` (points/ms). If `proposedX` is not given, the proposed
+    /// target is estimated with UIKit's inertia formula:
+    /// `offset + v × r / (1 − r)`, where `r` is the scroll view's `decelerationRate` (`.fast`).
     ///
-    /// - Returns: цель снапа, записанная скролл-вью в `targetContentOffset`.
+    /// - Returns: the snap target written by the scroll view into `targetContentOffset`.
     private func simulateDrag(
         _ scrollView: TesseraPanoScrollView,
         startX: CGFloat = 0,
@@ -73,11 +73,11 @@ final class PanoScrollViewVelocityTests: XCTestCase {
         return target.x
     }
 
-    // MARK: - Тесты
+    // MARK: - Tests
 
-    /// Протяжка ~100 pt от секции 0 и отпускание на 3 pt/ms (3000 pt/s):
-    /// цель — ровно секция 1. Ни перескока на секцию 2 (шаг от
-    /// `nearest(proposed)`), ни отката на 0.
+    /// A drag of ~100 pt from section 0 and a release at 3 pt/ms (3000 pt/s):
+    /// the target is exactly section 1. Neither an overshoot to section 2 (a step from
+    /// `nearest(proposed)`) nor a rollback to 0.
     func testFastFlickFromFirstSectionLandsOnNextSection() {
         let scrollView = makeScrollView()
         let itemWidth = scrollView.itemWidth
@@ -93,9 +93,9 @@ final class PanoScrollViewVelocityTests: XCTestCase {
         XCTAssertEqual(scrollView.readingIndex(forRawOffset: target), 1)
     }
 
-    /// Та же протяжка, но система предложила цель с длинной инерцией (около
-    /// секции 2): один жест всё равно сдвигает не дальше чем на одну секцию от
-    /// стартовой.
+    /// The same drag, but the system proposed a target with long inertia (around
+    /// section 2): one gesture still moves no farther than one section from
+    /// the starting one.
     func testFastFlickWithLongInertiaDoesNotSkipSection() {
         let scrollView = makeScrollView()
         let itemWidth = scrollView.itemWidth
@@ -111,9 +111,9 @@ final class PanoScrollViewVelocityTests: XCTestCase {
         XCTAssertEqual(scrollView.readingIndex(forRawOffset: target), 1)
     }
 
-    /// Короткий флик: 50 pt и 1 pt/ms (1000 pt/s > порога 600 pt/s). Ближайшая к
-    /// предложенной цели секция — 0, но скорость выше порога: цель — секция 1.
-    /// Без перевода points/ms → pt/s флик откатился бы назад.
+    /// A short flick: 50 pt and 1 pt/ms (1000 pt/s > the 600 pt/s threshold). The section nearest to
+    /// the proposed target is 0, but the velocity is above the threshold: the target is section 1.
+    /// Without the points/ms → pt/s conversion the flick would roll back.
     func testShortQuickFlickAdvancesToNextSection() {
         let scrollView = makeScrollView()
         let itemWidth = scrollView.itemWidth

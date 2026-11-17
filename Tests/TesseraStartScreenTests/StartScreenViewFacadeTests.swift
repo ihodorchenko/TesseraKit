@@ -2,16 +2,16 @@
 //  StartScreenViewFacadeTests.swift
 //  TesseraStartScreenTests
 //
-//  Регрессионные тесты SwiftUI-фасада рабочего стола по ревью (E10.8, E9.8б;
-//  трек T1 в docs/PLAN.md).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §2 «Архитектура»
-//  (TesseraStartScreenView → StartScreenViewController, TesseraStartScreenDelegate), §4
-//  «Live-плитки», §7 «Страница слева: хук» и §14 (D12: тап — событие, действие
-//  выполняет хост).
+//  Regression tests for the SwiftUI start screen facade, from the review
+//  (see docs/PLAN.md).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, §2 "Architecture"
+//  (TesseraStartScreenView -> StartScreenViewController, TesseraStartScreenDelegate), §4
+//  "Live tiles", §7 "Left page: the hook" and §14 (D12: a tap is an event, the action
+//  is performed by the host).
 //
-//  Фасад встраивается через `UIHostingController` в окно; живой
-//  `TesseraStartScreenViewController` находится обходом детей хостинга.
-//  Перерисовка SwiftUI эмулируется заменой `rootView` и проходом layout'а.
+//  The facade is embedded through `UIHostingController` in a window; the live
+//  `TesseraStartScreenViewController` is found by walking the hosting children.
+//  A SwiftUI redraw is emulated by replacing `rootView` and running a layout pass.
 //
 
 #if canImport(UIKit) && canImport(SwiftUI)
@@ -24,7 +24,7 @@ import TesseraCore
 
 final class StartScreenViewFacadeTests: XCTestCase {
 
-    // MARK: - Шпионы
+    // MARK: - Spies
 
     private final class DelegateSpy: TesseraStartScreenDelegate {
         private(set) var tappedShortcuts: [TesseraTileDescriptor] = []
@@ -58,7 +58,7 @@ final class StartScreenViewFacadeTests: XCTestCase {
         var frontFace = TesseraLiveTileFace(title: "Front")
     }
 
-    // MARK: - Окружение
+    // MARK: - Environment
 
     private var windows: [UIWindow] = []
 
@@ -96,7 +96,7 @@ final class StartScreenViewFacadeTests: XCTestCase {
             }
             return nil
         }
-        return try XCTUnwrap(find(hosting), "Фасад обязан создать контроллер рабочего стола")
+        return try XCTUnwrap(find(hosting), "The facade must create the start screen controller")
     }
 
     private func pagerScrollView(of screen: TesseraStartScreenViewController) throws -> UIScrollView {
@@ -110,9 +110,9 @@ final class StartScreenViewFacadeTests: XCTestCase {
         return TesseraTileGridSnapshot(items: [.folder(folder)], unpinned: [])
     }
 
-    // MARK: - Сигнатура снимка: содержимое папок (E9.8б)
+    // MARK: - Snapshot signature: folder contents
 
-    /// Бейдж и подпись ярлыка внутри папки доходят до сетки.
+    /// A badge and a tile caption inside a folder reach the grid.
     func testFolderContentBadgeAndTitleChangesReachGrid() throws {
         let hosting = host(TesseraStartScreenView(snapshot: folderSnapshot(innerBadge: .none, innerTitle: "Mail")))
         let screen = try screen(in: hosting)
@@ -121,17 +121,17 @@ final class StartScreenViewFacadeTests: XCTestCase {
         render(hosting)
 
         guard case .folder(let folder)? = screen.gridView.items.first else {
-            return XCTFail("Ожидалась папка")
+            return XCTFail("A folder was expected")
         }
         XCTAssertEqual(folder.tiles.first?.badge, .count(3))
         XCTAssertEqual(folder.tiles.first?.title, "Inbox")
     }
 
-    // MARK: - Таблица ячеек снимка (E14.5)
+    // MARK: - Snapshot cell table
 
-    /// Снимок с теми же элементами, но другими ячейками (например, после открепления
-    /// осталась дыра) доходит до сетки; снимок без таблицы показанную таблицу не
-    /// затирает (хост, который не знает про ячейки).
+    /// A snapshot with the same items but different cells (for example, a hole
+    /// left after unpinning) reaches the grid; a snapshot without a table does not
+    /// overwrite the displayed table (a host that does not know about cells).
     func testPlacementTableChangeReachesGridAndTablelessSnapshotKeepsIt() throws {
         func snapshot(secondColumn: Int?) -> TesseraTileGridSnapshot {
             let items: [TesseraTileGridItem] = ["a", "b"].map {
@@ -157,7 +157,7 @@ final class StartScreenViewFacadeTests: XCTestCase {
         XCTAssertEqual(
             screen.gridView.snapshot?.placementTable?.cells["b"],
             TesseraTileGridPlacement(row: 0, column: 3),
-            "Другие ячейки при тех же элементах применены"
+            "Different cells with the same items were applied"
         )
 
         hosting.rootView = TesseraStartScreenView(snapshot: snapshot(secondColumn: nil))
@@ -165,14 +165,14 @@ final class StartScreenViewFacadeTests: XCTestCase {
         XCTAssertEqual(
             screen.gridView.snapshot?.placementTable?.cells["b"],
             TesseraTileGridPlacement(row: 0, column: 3),
-            "Снимок без таблицы показанные ячейки не затирает"
+            "A snapshot without a table does not overwrite the displayed cells"
         )
     }
 
-    // MARK: - Сигнатура снимка: liveContent и action (E10.8)
+    // MARK: - Snapshot signature: liveContent and action
 
-    /// Появление `liveContent` у ярлыка с тем же `id` доходит до сетки —
-    /// плитка становится живой.
+    /// A `liveContent` appearing on a tile with the same `id` reaches the grid:
+    /// the tile becomes live.
     func testLiveContentChangeReachesGrid() throws {
         let plain = TesseraTileDescriptor(id: "t", title: "T", action: {})
         let hosting = host(TesseraStartScreenView(snapshot: TesseraTileGridSnapshot(items: [.tile(plain)], unpinned: [])))
@@ -184,13 +184,13 @@ final class StartScreenViewFacadeTests: XCTestCase {
         render(hosting)
 
         guard case .tile(let shortcut)? = screen.gridView.items.first else {
-            return XCTFail("Ожидался ярлык")
+            return XCTFail("A tile was expected")
         }
         XCTAssertTrue(shortcut.liveContent === provider)
     }
 
-    /// Делегат получает ярлык с актуальным замыканием `action`, даже если
-    /// остальное в ярлыке не менялось (D12: действие выполняет хост).
+    /// The delegate receives the tile with the current `action` closure, even if
+    /// nothing else in the tile changed (D12: the action is performed by the host).
     func testTapDeliversShortcutWithLatestAction() throws {
         let delegate = DelegateSpy()
         var calls: [String] = []
@@ -216,11 +216,11 @@ final class StartScreenViewFacadeTests: XCTestCase {
         XCTAssertEqual(calls, ["new"])
     }
 
-    // MARK: - Поставщик хука из body (E10.8)
+    // MARK: - Hook provider from body
 
-    /// Поставщик хука, создаваемый в `body` заново на каждой перерисовке, не
-    /// пересобирает пейджер: идущий свайп (offset между страницами) не
-    /// сбрасывается.
+    /// A hook provider recreated in `body` on every redraw does not
+    /// rebuild the pager: an ongoing swipe (offset between pages) is not
+    /// reset.
     func testQuickPanelProviderRecreatedPerRenderDoesNotRebuildPager() throws {
         let snapshot = TesseraTileGridSnapshot(items: [], unpinned: [])
         let hosting = host(TesseraStartScreenView(
@@ -240,14 +240,14 @@ final class StartScreenViewFacadeTests: XCTestCase {
         )
         render(hosting)
 
-        XCTAssertEqual(scrollView.contentOffset.x, midOffset, accuracy: 0.5, "Пейджер не пересобирался")
+        XCTAssertEqual(scrollView.contentOffset.x, midOffset, accuracy: 0.5, "The pager was not rebuilt")
         XCTAssertEqual(screen.currentPage, .start)
     }
 
-    // MARK: - Видимость хука при появлении экрана (E10.8)
+    // MARK: - Hook visibility when the screen appears
 
-    /// `didChangeHookVisibility` приходит, когда экран с открытым хуком
-    /// уходит и возвращается (viewDidDisappear/viewWillAppear).
+    /// `didChangeHookVisibility` arrives when a screen with an open hook
+    /// leaves and comes back (viewDidDisappear/viewWillAppear).
     func testHookVisibilityFollowsScreenAppearance() throws {
         let delegate = DelegateSpy()
         let hosting = host(TesseraStartScreenView(

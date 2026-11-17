@@ -3,8 +3,8 @@ import PackageDescription
 
 let package = Package(
     name: "TesseraKit",
-    // E9.8г: у TesseraStartScreen появились локализованные ресурсы
-    // (en/ru Localizable.strings) — SPM требует явную базовую локализацию.
+    // TesseraStartScreen ships localized resources
+    // (en/ru Localizable.strings), so SPM requires an explicit default localization.
     defaultLocalization: "en",
     platforms: [.iOS(.v15), .macCatalyst(.v15)],
     products: [
@@ -17,7 +17,7 @@ let package = Package(
         .target(name: "TesseraCore"),
         .target(name: "TesseraPanorama", dependencies: ["TesseraCore"]),
         .target(name: "TesseraPivot", dependencies: ["TesseraCore"]),
-        // E9.8г: строки по умолчанию — ресурсы SPM; публичный API не менялся.
+        // Default strings are SPM resources; the public API is unchanged.
         .target(
             name: "TesseraStartScreen",
             dependencies: ["TesseraCore"],

@@ -2,21 +2,20 @@
 //  StartScreenControllerReviewTests.swift
 //  TesseraStartScreenTests
 //
-//  Регрессионные тесты контроллера рабочего стола по повторному ревью
-//  (E10.6, трек T1 в docs/PLAN.md).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §1 «Три страницы»
-//  (политика ведущей кромки, арбитраж осей), §4 «Live-плитки» (паузы вне
-//  экрана), §7 «Страница слева: хук» (колбэки появления/скрытия), §8
-//  «Параллакс фона» (запас обоев) и §9 «Accessibility» (озвучивание страниц).
-//  Core-контракт пейджера после W1: docs/CORE-IOS-DESIGN.md, «Отступления
-//  реализации», пп. 6–7 (reload по id, appearance только текущей странице).
+//  Regression tests of the desktop controller from the follow-up review.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md — §1 "Three pages"
+//  (leading-edge policy, axis arbitration), §4 "Live tiles" (off-screen pauses),
+//  §7 "Left page: the hook" (appear/disappear callbacks), §8 "Background
+//  parallax" (wallpaper margin) and §9 "Accessibility" (page announcements).
+//  Core pager contract: docs/CORE-IOS-DESIGN.md, "Implementation deviations"
+//  (reload by id, appearance only for the current page).
 //
-//  Экран встраивается в окно вручную (без rootViewController); появление
-//  экрана дополнительно задаётся явными `beginAppearanceTransition`/
-//  `endAppearanceTransition` (повторное появление для контроллера
-//  идемпотентно). Окно не привязано к сцене, анимации прокрутки в нём не
-//  тикают: свайп и завершение программной анимации пейджера эмулируются
-//  вызовами его `UIScrollViewDelegate`, как это сделал бы UIKit.
+//  The screen is embedded into a window manually (without a rootViewController); the screen's
+//  appearance is additionally driven by explicit `beginAppearanceTransition`/
+//  `endAppearanceTransition` (a repeated appearance is idempotent for the
+//  controller). The window is not attached to a scene, and scroll animations in it do not
+//  tick: a swipe and the completion of the pager's programmatic animation are emulated
+//  by calling its `UIScrollViewDelegate`, as UIKit would.
 //
 
 #if canImport(UIKit)
@@ -28,9 +27,9 @@ import TesseraCore
 
 final class StartScreenControllerReviewTests: XCTestCase {
 
-    // MARK: - Шпионы
+    // MARK: - Spies
 
-    /// Поставщик хука, записывающий колбэки появления/скрытия (§7).
+    /// A hook provider that records appear/disappear callbacks (§7).
     private final class PanelSpy: TesseraQuickPanelProviding {
         let name: String
         private(set) var appearCount = 0
@@ -55,7 +54,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
         }
     }
 
-    /// UIKit-делегат экрана: страницы и видимость хука.
+    /// The screen's UIKit delegate: pages and hook visibility.
     private final class DelegateSpy: TesseraStartScreenDelegate {
         private(set) var pages: [TesseraStartScreenPage] = []
         private(set) var hookVisibility: [Bool] = []
@@ -76,13 +75,13 @@ final class StartScreenControllerReviewTests: XCTestCase {
         }
     }
 
-    /// Провайдер live-плитки с обратной стороной (флипы возможны).
+    /// A live tile provider with a back side (flips are possible).
     private final class FlippingProvider: TesseraLiveTileContentProvider {
         var frontFace = TesseraLiveTileFace(title: "Front")
         var backFace: TesseraLiveTileFace? { TesseraLiveTileFace(title: "Back") }
     }
 
-    // MARK: - Окружение
+    // MARK: - Environment
 
     private var windows: [UIWindow] = []
 
@@ -97,7 +96,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
 
     private let screenSize = CGSize(width: 390, height: 844)
 
-    /// Встраивает экран в окно и доводит раскладку (без appearance).
+    /// Embeds the screen into a window and completes layout (without appearance).
     @discardableResult
     private func host(_ screen: TesseraStartScreenViewController) -> UIWindow {
         let window = UIWindow(frame: CGRect(origin: .zero, size: screenSize))
@@ -111,7 +110,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
         return window
     }
 
-    /// Доводит раскладку экрана, пейджера и START-страницы.
+    /// Completes the layout of the screen, the pager and the START page.
     private func layout(_ screen: TesseraStartScreenViewController) {
         screen.view.layoutIfNeeded()
         if let pager = try? pager(of: screen) {
@@ -135,35 +134,35 @@ final class StartScreenControllerReviewTests: XCTestCase {
     private func pager(of screen: TesseraStartScreenViewController) throws -> TesseraPagerViewController {
         try XCTUnwrap(
             screen.children.compactMap { $0 as? TesseraPagerViewController }.first,
-            "Экран обязан содержать пейджер Core"
+            "The screen must contain the Core pager"
         )
     }
 
     private func pagerScrollView(of screen: TesseraStartScreenViewController) throws -> UIScrollView {
         try XCTUnwrap(
             pager(of: screen).view.subviews.compactMap { $0 as? UIScrollView }.first,
-            "Пейджер обязан содержать UIScrollView"
+            "The pager must contain a UIScrollView"
         )
     }
 
     private func gridCollectionView(of screen: TesseraStartScreenViewController) throws -> UICollectionView {
         try XCTUnwrap(
             screen.gridView.subviews.compactMap { $0 as? UICollectionView }.first,
-            "Сетка держит коллекцию"
+            "The grid holds the collection"
         )
     }
 
-    /// Горизонтальное положение START-страницы на экране (0 — START видна).
+    /// The horizontal position of the START page on screen (0 — START is visible).
     private func startPageScreenX(of screen: TesseraStartScreenViewController) -> CGFloat {
         screen.gridView.convert(screen.gridView.bounds, to: screen.view).minX
     }
 
-    /// Прокручивает run loop заданное время.
+    /// Spins the run loop for the given time.
     private func spin(_ seconds: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    /// Ждёт условия, прокручивая run loop.
+    /// Waits for a condition while spinning the run loop.
     private func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -173,11 +172,11 @@ final class StartScreenControllerReviewTests: XCTestCase {
         return condition()
     }
 
-    /// Эмулирует завершение программной анимации пейджера.
+    /// Emulates the completion of the pager's programmatic animation.
     ///
-    /// Окно тестового процесса не привязано к сцене, и анимация
-    /// `setContentOffset(_:animated: true)` в нём не тикает: тест доводит
-    /// offset до цели и сообщает пейджеру о завершении, как сделал бы UIKit.
+    /// The test process window is not attached to a scene, and the animation of
+    /// `setContentOffset(_:animated: true)` does not tick in it: the test brings the
+    /// offset to the target and tells the pager it finished, as UIKit would.
     private func completeAnimatedTransition(
         _ screen: TesseraStartScreenViewController,
         toReadingIndex readingIndex: Int
@@ -191,7 +190,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
         pager.scrollViewDidEndScrollingAnimation(scrollView)
     }
 
-    /// Эмулирует завершённый свайп пейджера на страницу `readingIndex` (LTR).
+    /// Emulates a completed pager swipe to the `readingIndex` page (LTR).
     private func swipe(_ screen: TesseraStartScreenViewController, toReadingIndex readingIndex: Int) throws {
         let pager = try pager(of: screen)
         let scrollView = try pagerScrollView(of: screen)
@@ -216,11 +215,11 @@ final class StartScreenControllerReviewTests: XCTestCase {
         return screen
     }
 
-    // MARK: - Досинхронизация пейджера после пересборки (E10.6)
+    // MARK: - Pager resync after a rebuild
 
-    /// Сценарий А: политика уступки края, программный показ хука и свайп на
-    /// START. После отложенной «заморозки» хука (пересборка страниц) на экране
-    /// START, а не список приложений.
+    /// Scenario A: the edge-yield policy, a programmatic hook show and a swipe to
+    /// START. After the deferred "freeze" of the hook (a page rebuild) the screen shows
+    /// START, not the apps list.
     func testEdgePolicyQuickPanelThenSwipeToStartKeepsStartOnScreen() throws {
         let panel = PanelSpy("A")
         let screen = makeScreen(leftPanel: panel)
@@ -234,18 +233,18 @@ final class StartScreenControllerReviewTests: XCTestCase {
         try swipe(screen, toReadingIndex: 1)
         XCTAssertEqual(screen.currentPage, .start)
 
-        // Отложенная пересборка: хук выпадает из свайпаемого набора.
+        // Deferred rebuild: the hook drops out of the swipeable set.
         spin(0.1)
         layout(screen)
 
         XCTAssertEqual(screen.currentPage, .start)
-        XCTAssertFalse(screen.accessibilityScroll(.previous), "Хук снова только программный")
+        XCTAssertFalse(screen.accessibilityScroll(.previous), "The hook is programmatic-only again")
         XCTAssertEqual(try pagerScrollView(of: screen).contentOffset.x, 0, accuracy: 0.5)
-        XCTAssertEqual(startPageScreenX(of: screen), 0, accuracy: 0.5, "На экране START")
+        XCTAssertEqual(startPageScreenX(of: screen), 0, accuracy: 0.5, "START is on screen")
     }
 
-    /// Сценарий Б: `configure(leftPanel:)` на START добавляет хук слева — на
-    /// экране остаётся START (индекс сдвинулся на 1), хук не «появлялся».
+    /// Scenario B: `configure(leftPanel:)` on START adds a hook on the left — the screen
+    /// stays on START (the index shifted by 1), and the hook did not "appear".
     func testConfigureAddingLeftPanelOnStartKeepsStartOnScreen() throws {
         let panel = PanelSpy("A")
         let screen = makeScreen(leftPanel: nil)
@@ -258,14 +257,14 @@ final class StartScreenControllerReviewTests: XCTestCase {
         let scrollView = try pagerScrollView(of: screen)
         XCTAssertEqual(screen.currentPage, .start)
         XCTAssertEqual(scrollView.contentOffset.x, scrollView.bounds.width, accuracy: 0.5)
-        XCTAssertEqual(startPageScreenX(of: screen), 0, accuracy: 0.5, "На экране START")
-        XCTAssertEqual(panel.appearCount, 0, "Хук не показывался")
+        XCTAssertEqual(startPageScreenX(of: screen), 0, accuracy: 0.5, "START is on screen")
+        XCTAssertEqual(panel.appearCount, 0, "The hook was not shown")
     }
 
-    // MARK: - showPage при политике уступки края (E10.6)
+    // MARK: - showPage under the edge-yield policy
 
-    /// Программный показ хука при политике края шлёт всё, что положено
-    /// переходу: колбэк поставщика, события делегата и анонс VoiceOver.
+    /// A programmatic hook show under the edge policy sends everything a transition
+    /// should: the provider callback, delegate events and a VoiceOver announcement.
     func testShowQuickPanelUnderEdgePolicyNotifiesProviderDelegateAndVoiceOver() throws {
         let panel = PanelSpy("A")
         let delegate = DelegateSpy()
@@ -286,24 +285,24 @@ final class StartScreenControllerReviewTests: XCTestCase {
         XCTAssertEqual(announcements, [screen.quickPanelTitle])
     }
 
-    // MARK: - currentPage только по подтверждению пейджера (E10.6)
+    // MARK: - currentPage only on pager confirmation
 
-    /// Анимированный `showPage` не записывает `currentPage` до завершения
-    /// перехода: источник истины — пейджер.
+    /// An animated `showPage` does not write `currentPage` until the transition
+    /// completes: the pager is the source of truth.
     func testAnimatedShowPageCommitsCurrentPageOnlyAfterPagerConfirms() throws {
         let screen = makeScreen(leftPanel: PanelSpy("A"))
         host(screen)
         appear(screen)
 
         screen.showPage(.applications, animated: true)
-        XCTAssertEqual(screen.currentPage, .start, "Переход ещё не подтверждён")
+        XCTAssertEqual(screen.currentPage, .start, "The transition is not confirmed yet")
 
         try completeAnimatedTransition(screen, toReadingIndex: 2)
         XCTAssertEqual(screen.currentPage, .applications)
     }
 
-    /// Палец перехватил анимированный переход и вернул пейджер на START:
-    /// `currentPage` остаётся START (раньше «залипал» на цели анимации).
+    /// A finger intercepted the animated transition and returned the pager to START:
+    /// `currentPage` stays START (it used to get stuck on the animation target).
     func testInterceptedAnimatedTransitionKeepsConfirmedPage() throws {
         let screen = makeScreen(leftPanel: PanelSpy("A"))
         host(screen)
@@ -322,10 +321,10 @@ final class StartScreenControllerReviewTests: XCTestCase {
         XCTAssertEqual(startPageScreenX(of: screen), 0, accuracy: 0.5)
     }
 
-    // MARK: - Колбэки хука (§7, E10.6)
+    // MARK: - Hook callbacks (§7)
 
-    /// `quickPanelWillAppear` приходит до появления: при анимированном
-    /// показе — сразу, а не по завершении перехода.
+    /// `quickPanelWillAppear` arrives before the appearance: with an animated
+    /// show — immediately, not on transition completion.
     func testQuickPanelWillAppearBeforeAnimatedTransitionCompletes() throws {
         let panel = PanelSpy("A")
         let screen = makeScreen(leftPanel: panel)
@@ -333,17 +332,17 @@ final class StartScreenControllerReviewTests: XCTestCase {
         appear(screen)
 
         screen.showPage(.quickPanel, animated: true)
-        XCTAssertEqual(panel.appearCount, 1, "willAppear — до появления страницы")
+        XCTAssertEqual(panel.appearCount, 1, "willAppear — before the page appears")
 
         try completeAnimatedTransition(screen, toReadingIndex: 0)
         XCTAssertEqual(screen.currentPage, .quickPanel)
-        XCTAssertEqual(panel.appearCount, 1, "Повторного willAppear нет")
+        XCTAssertEqual(panel.appearCount, 1, "No repeated willAppear")
         XCTAssertEqual(panel.disappearCount, 0)
     }
 
-    /// Хук, запрошенный до загрузки, не получает `quickPanelWillAppear`, пока
-    /// экран не показан; делегат и VoiceOver тоже молчат. Появление и уход
-    /// экрана дают симметричные колбэки.
+    /// A hook requested before loading does not receive `quickPanelWillAppear` until
+    /// the screen is shown; the delegate and VoiceOver stay silent too. The screen
+    /// appearing and leaving give symmetric callbacks.
     func testHookCallbacksFollowScreenAppearanceNotViewDidLoad() throws {
         let panel = PanelSpy("A")
         let delegate = DelegateSpy()
@@ -353,14 +352,14 @@ final class StartScreenControllerReviewTests: XCTestCase {
         screen.delegate = delegate
         screen.showPage(.quickPanel, animated: false)
 
-        // Загрузка и раскладка без окна: `viewDidLoad` и layout — не появление.
-        // (Добавление вида в окно UIKit сам считает появлением, поэтому окно —
-        // только после проверки.)
+        // Loading and layout without a window: `viewDidLoad` and layout are not an appearance.
+        // (UIKit itself counts adding a view to a window as an appearance, so the window
+        // comes only after the check.)
         screen.loadViewIfNeeded()
         screen.view.frame = CGRect(origin: .zero, size: screenSize)
         layout(screen)
         XCTAssertEqual(screen.currentPage, .quickPanel)
-        XCTAssertEqual(panel.appearCount, 0, "Экран ещё не показан")
+        XCTAssertEqual(panel.appearCount, 0, "The screen is not shown yet")
         XCTAssertEqual(delegate.hookVisibility, [])
 
         host(screen)
@@ -372,10 +371,10 @@ final class StartScreenControllerReviewTests: XCTestCase {
         XCTAssertEqual(panel.disappearCount, 1)
         XCTAssertEqual(delegate.hookVisibility, [true, false])
 
-        XCTAssertEqual(announcements, [], "Стартовая страница не озвучивается")
+        XCTAssertEqual(announcements, [], "The start page is not announced")
     }
 
-    /// Стартовая страница не озвучивается из `viewDidLoad`.
+    /// The start page is not announced from `viewDidLoad`.
     func testInitialPageIsNotAnnouncedOnLoad() {
         var announcements: [String] = []
         let screen = makeScreen(leftPanel: PanelSpy("A"))
@@ -387,9 +386,9 @@ final class StartScreenControllerReviewTests: XCTestCase {
         XCTAssertEqual(announcements, [])
     }
 
-    /// Замена и удаление поставщика, пока хук на экране: прежний получает
-    /// `didDisappear`, новый — `willAppear`; страница пересоздаётся новым
-    /// поставщиком.
+    /// Replacing and removing the provider while the hook is on screen: the old one gets
+    /// `didDisappear`, the new one — `willAppear`; the page is recreated by the new
+    /// provider.
     func testReplacingAndRemovingProviderWhileHookVisibleIsSymmetric() throws {
         let first = PanelSpy("A")
         let second = PanelSpy("B")
@@ -402,29 +401,29 @@ final class StartScreenControllerReviewTests: XCTestCase {
         screen.configure(leftPanel: second, rightPage: { UIViewController() })
         layout(screen)
         XCTAssertEqual(screen.currentPage, .quickPanel)
-        XCTAssertEqual(first.disappearCount, 1, "Прежний поставщик получает didDisappear")
-        XCTAssertEqual(second.appearCount, 1, "Новый поставщик получает willAppear")
-        XCTAssertGreaterThanOrEqual(second.makeCount, 1, "Страница создана новым поставщиком")
+        XCTAssertEqual(first.disappearCount, 1, "The old provider gets didDisappear")
+        XCTAssertEqual(second.appearCount, 1, "The new provider gets willAppear")
+        XCTAssertGreaterThanOrEqual(second.makeCount, 1, "The page was created by the new provider")
 
         screen.configure(leftPanel: nil, rightPage: { UIViewController() })
         layout(screen)
         XCTAssertEqual(screen.currentPage, .start)
-        XCTAssertEqual(second.disappearCount, 1, "Удалённый поставщик получает didDisappear")
+        XCTAssertEqual(second.disappearCount, 1, "The removed provider gets didDisappear")
         XCTAssertEqual(first.appearCount, 1)
         XCTAssertEqual(first.disappearCount, 1)
     }
 
-    // MARK: - Арбитраж осей против блокировки скролла папкой (E10.6)
+    // MARK: - Axis arbitration vs. the folder's scroll lock
 
-    /// Горизонтальный жест начался, пока анимация папки держала сетку
-    /// выключенной: после обоих завершений сетка снова прокручивается.
+    /// A horizontal gesture began while the folder animation kept the grid
+    /// disabled: after both completions the grid scrolls again.
     func testHorizontalGestureDuringFolderAnimationDoesNotFreezeGrid() throws {
         let screen = makeScreen(leftPanel: nil)
         host(screen)
         let grid = screen.gridView
         let collectionView = try gridCollectionView(of: screen)
 
-        // Анимация папки: снимок `true`, на время анимации — `false`.
+        // Folder animation: the snapshot is `true`, and `false` for the duration of the animation.
         let folderSnapshot = grid.isScrollEnabled
         grid.isScrollEnabled = false
         screen.beginHorizontalScroll(isHorizontal: true)
@@ -435,8 +434,8 @@ final class StartScreenControllerReviewTests: XCTestCase {
         XCTAssertTrue(collectionView.panGestureRecognizer.isEnabled)
     }
 
-    /// Анимация папки началась посреди горизонтального жеста и закончилась
-    /// после него: сетка не остаётся выключенной навсегда.
+    /// The folder animation began in the middle of a horizontal gesture and ended
+    /// after it: the grid does not stay disabled forever.
     func testFolderAnimationStartedDuringHorizontalGestureDoesNotFreezeGrid() throws {
         let screen = makeScreen(leftPanel: nil)
         host(screen)
@@ -453,9 +452,9 @@ final class StartScreenControllerReviewTests: XCTestCase {
         XCTAssertTrue(collectionView.panGestureRecognizer.isEnabled)
     }
 
-    /// Сам арбитраж работает: на время горизонтального жеста сетка не
-    /// принимает вертикальный пан, после — принимает; вертикальный жест сетку
-    /// не блокирует.
+    /// The arbitration itself works: during a horizontal gesture the grid does not
+    /// accept a vertical pan, and afterwards it does; a vertical gesture does not
+    /// block the grid.
     func testHorizontalGestureBlocksGridPanOnlyWhileActive() throws {
         let screen = makeScreen(leftPanel: nil)
         host(screen)
@@ -473,10 +472,10 @@ final class StartScreenControllerReviewTests: XCTestCase {
         screen.endHorizontalScroll()
     }
 
-    // MARK: - Live-плитки вне экрана (§4, E10.6)
+    // MARK: - Live tiles off screen (§4)
 
-    /// Пока START за кадром, live-плитки не флипаются; возврат на START
-    /// возобновляет расписание.
+    /// While START is off screen, live tiles do not flip; returning to START
+    /// resumes the schedule.
     func testLiveTilesDoNotFlipWhileStartIsOffScreen() throws {
         let screen = makeScreen(leftPanel: nil)
         screen.gridView.liveTileConfiguration = TesseraLiveTileEngine.Configuration(
@@ -499,7 +498,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
 
         let liveView = try XCTUnwrap(
             firstSubview(of: TesseraLiveTileView.self, in: screen.gridView),
-            "Live-плитка показана на START"
+            "The live tile is shown on START"
         )
         XCTAssertEqual(liveView.side, .front)
 
@@ -507,20 +506,20 @@ final class StartScreenControllerReviewTests: XCTestCase {
         XCTAssertEqual(screen.currentPage, .applications)
         spin(1.3)
 
-        XCTAssertEqual(liveView.side, .front, "START за кадром — флипов нет")
+        XCTAssertEqual(liveView.side, .front, "START is off screen — no flips")
         XCTAssertFalse(liveView.isFlipping)
 
         screen.showPage(.start, animated: false)
         XCTAssertTrue(
             waitUntil(timeout: 3) { liveView.side == .back || liveView.isFlipping },
-            "На START расписание флипов возобновляется"
+            "The flip schedule resumes on START"
         )
     }
 
-    // MARK: - Запас обоев при росте контента (§8, E10.6)
+    // MARK: - Wallpaper margin as content grows
 
-    /// Рост высоты контента через `grid.update` (без `reload(grid:)`)
-    /// пересчитывает запас обоев: в конце прокрутки страница закрыта.
+    /// Growth of the content height through `grid.update` (without `reload(grid:)`)
+    /// recomputes the wallpaper margin: at the end of scrolling the page is covered.
     func testWallpaperReserveFollowsContentGrowthWithoutReload() throws {
         let screen = makeScreen(leftPanel: nil, rightPage: false)
         screen.wallpaperParallaxFactor = 0.6
@@ -538,7 +537,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
         try assertWallpaperCoversPageAtBottom(of: screen, collectionView: collectionView)
     }
 
-    /// Раскрытие папки (панель удлиняет контент) пересчитывает запас обоев.
+    /// Expanding a folder (the panel lengthens the content) recomputes the wallpaper margin.
     func testWallpaperReserveFollowsFolderExpansion() throws {
         let screen = makeScreen(leftPanel: nil, rightPage: false)
         screen.wallpaperParallaxFactor = 0.6
@@ -546,8 +545,8 @@ final class StartScreenControllerReviewTests: XCTestCase {
         let folder = TesseraTileFolder(
             id: "folder",
             title: "Folder",
-            // Шесть колонок по умолчанию (D26): плиток нужно столько, чтобы панель
-            // вдвое превысила вьюпорт.
+            // Six columns by default (D26): enough tiles are needed so that the panel
+            // is twice the viewport.
             tiles: (0..<200).map { tesseraTestTile("f\($0)", size: .small) }
         )
         screen.reload(grid: TesseraTileGridSnapshot(items: [.folder(folder)], unpinned: []))
@@ -561,7 +560,7 @@ final class StartScreenControllerReviewTests: XCTestCase {
         try assertWallpaperCoversPageAtBottom(of: screen, collectionView: collectionView)
     }
 
-    // MARK: - Вспомогательные проверки
+    // MARK: - Helper checks
 
     private func firstSubview<T: UIView>(of type: T.Type, in root: UIView) -> T? {
         if let match = root as? T { return match }
@@ -584,12 +583,12 @@ final class StartScreenControllerReviewTests: XCTestCase {
 
         let height = page.bounds.height
         let maximum = max(0, max(screen.gridView.contentSize.height, height) - height)
-        XCTAssertGreaterThan(maximum, height, "Контент обязан вырасти заметно выше вьюпорта", file: file, line: line)
+        XCTAssertGreaterThan(maximum, height, "The content must grow noticeably taller than the viewport", file: file, line: line)
 
         collectionView.contentOffset = CGPoint(x: 0, y: maximum)
         let rect = imageView.convert(imageView.bounds, to: page)
-        XCTAssertLessThanOrEqual(rect.minY, 0.001, "Полоса сверху", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(rect.maxY, height - 0.001, "Полоса снизу", file: file, line: line)
+        XCTAssertLessThanOrEqual(rect.minY, 0.001, "Strip at the top", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(rect.maxY, height - 0.001, "Strip at the bottom", file: file, line: line)
     }
 }
 

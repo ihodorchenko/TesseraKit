@@ -2,19 +2,19 @@
 //  TileEditButtonGapTapTests.swift
 //  TesseraStartScreenTests
 //
-//  Тап по выступающей части кнопки правки (E15.10): кнопки «открепить» и
-//  «размер» на плитке сетки выступают за рамку плитки (`cornerOverhang`, 4 pt после D48; было 6 pt),
-//  то есть в зазор между плитками. Тап по этой части раньше срабатывал и по
-//  кнопке (открепление/размер), и по жесту «тап по фону» (зазор — не плитка):
-//  правка неожиданно заканчивалась. Теперь жест фона не принимает касания,
-//  которые попадают в зону касания любого оверлея правки — по тому же
-//  `hitTest`, что и сами кнопки. Проектный документ:
-//  docs/STARTSCREEN-IOS-DESIGN.md, «Отступления реализации (E14)», п. 58.
+//  A tap on the protruding part of an edit button: the "unpin" and
+//  "resize" buttons on a grid tile protrude beyond the tile frame (`cornerOverhang`, 4 pt after D48; it was 6 pt),
+//  that is, into the gap between tiles. A tap on that part used to trigger both the
+//  button (unpin/resize) and the "tap on background" gesture (the gap is not a tile):
+//  edit mode ended unexpectedly. Now the background gesture does not accept touches
+//  that land in the touch area of any edit overlay, using the same
+//  `hitTest` as the buttons themselves. Design document:
+//  docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations".
 //
-//  Симуляция касания: настоящий `hitTest` окна определяет вид под пальцем,
-//  жест фона получает `UITouch` с этим видом и точкой (`shouldReceive`), затем
-//  выполняются действия кнопки `touchUpInside` и (если жест принял касание)
-//  действие жеста фона. Без `sleep`: ожидание — прокруткой run loop.
+//  Touch simulation: the window's real `hitTest` determines the view under the finger,
+//  the background gesture gets a `UITouch` with that view and point (`shouldReceive`), then
+//  the `touchUpInside` button actions run and (if the gesture accepted the touch)
+//  the background gesture action. No `sleep`: waiting is done by spinning the run loop.
 //
 
 #if canImport(UIKit)
@@ -25,10 +25,10 @@ import XCTest
 
 final class TileEditButtonGapTapTests: XCTestCase {
 
-    // MARK: - Помощники
+    // MARK: - Helpers
 
-    /// Касание с заданными видом и точкой (у `UITouch` нет публичного init'а
-    /// с параметрами, поэтому подкласс переопределяет нужные геттеры).
+    /// A touch with the given view and point (`UITouch` has no public initializer
+    /// with parameters, so a subclass overrides the needed getters).
     private final class TouchStub: UITouch {
         private let stubWindow: UIWindow
         private let windowPoint: CGPoint
@@ -66,15 +66,15 @@ final class TileEditButtonGapTapTests: XCTestCase {
         }
     }
 
-    /// Результат касания.
+    /// Touch result.
     private struct Outcome {
-        /// Вид под пальцем по настоящему `hitTest` окна.
+        /// The view under the finger according to the window's real `hitTest`.
         let hit: UIView?
-        /// Принял ли касание жест «тап по фону».
+        /// Whether the "tap on background" gesture accepted the touch.
         let backgroundReceived: Bool
     }
 
-    /// Стенд: четыре средние плитки (2 × 2 при 4 колонках), правка включена.
+    /// Fixture: four medium tiles (2 × 2 with 4 columns), edit mode on.
     private func makeHost(rightToLeft: Bool = false) throws -> (TesseraTestDragHost, Recorder) {
         let host = TesseraTestDragHost(
             descriptors: (0..<4).map { tesseraTestTile("t\($0)", size: .medium) }
@@ -103,22 +103,22 @@ final class TileEditButtonGapTapTests: XCTestCase {
         _ id: AnyHashable,
         in host: TesseraTestDragHost
     ) throws -> TesseraTileEditControlView {
-        let control = try XCTUnwrap(host.coordinator.editControls[id], "оверлей \(id)")
+        let control = try XCTUnwrap(host.coordinator.editControls[id], "overlay \(id)")
         control.layoutIfNeeded()
         return control
     }
 
-    /// Рамка в координатах сетки (контейнер кнопок совпадает с `bounds` сетки).
+    /// A frame in grid coordinates (the button container matches the grid `bounds`).
     private func gridFrame(_ rect: CGRect, of control: TesseraTileEditControlView, in host: TesseraTestDragHost) -> CGRect {
         control.convert(rect, to: host.host.grid)
     }
 
-    /// Прогоняет касание в точке сетки: решение жеста фона, действие кнопки
-    /// под пальцем, затем действие жеста фона, если он принял касание.
+    /// Runs a touch at a grid point: the background gesture decision, the action of the button
+    /// under the finger, then the background gesture action if it accepted the touch.
     @discardableResult
     private func tap(_ point: CGPoint, in host: TesseraTestDragHost) -> Outcome {
         let outcome = touchDown(at: point, in: host)
-        // Отпускание: кнопка (`touchUpInside`) и жест фона.
+        // Release: the button (`touchUpInside`) and the background gesture.
         if let button = outcome.hit as? UIButton {
             for target in button.allTargets {
                 for action in button.actions(forTarget: target, forControlEvent: .touchUpInside) ?? [] {
@@ -132,7 +132,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
         return outcome
     }
 
-    /// Только решение о приёме касания (без действий).
+    /// Only the decision whether to accept the touch (no actions).
     private func touchDown(at point: CGPoint, in host: TesseraTestDragHost) -> Outcome {
         let window = host.host.window
         let windowPoint = host.host.grid.convert(point, to: window)
@@ -144,8 +144,8 @@ final class TileEditButtonGapTapTests: XCTestCase {
         return Outcome(hit: hit, backgroundReceived: received)
     }
 
-    /// Точка внутри видимой кнопки, **вне рамки плитки** и в зазоре (под ней
-    /// нет плитки), ближайшая к центру кнопки: «выступающая часть».
+    /// A point inside the visible button, **outside the tile frame** and in the gap (there is
+    /// no tile under it), closest to the button center: the "protruding part".
     private func overhangPointIfAny(
         button: CGRect,
         tile: CGRect,
@@ -179,19 +179,19 @@ final class TileEditButtonGapTapTests: XCTestCase {
     ) throws -> CGPoint {
         try XCTUnwrap(
             overhangPointIfAny(button: button, tile: tile, in: host),
-            "у кнопки нет части в зазоре"
+            "the button has no part in the gap"
         )
     }
 
-    /// Сколько единиц событий делегата с префиксом.
+    /// How many delegate events have the prefix.
     private func waitForEvent(_ event: String, _ recorder: Recorder, _ host: TesseraTestDragHost) -> Bool {
         host.waitUntil { recorder.events.contains(event) }
     }
 
-    // MARK: - Воспроизведение ошибки: кнопка открепления
+    // MARK: - Reproducing the bug: the unpin button
 
-    /// Тап по выступающей в зазор части кнопки открепления: ярлык откреплён, а
-    /// правка **остаётся** (раньше сразу заканчивалась).
+    /// A tap on the part of the unpin button protruding into the gap: the tile is unpinned and
+    /// edit mode **stays on** (it used to end immediately).
     func testTapOnUnpinOverhangInGapUnpinsAndKeepsEditing() throws {
         let (host, recorder) = try makeHost()
         let id: AnyHashable = "t3"
@@ -200,18 +200,18 @@ final class TileEditButtonGapTapTests: XCTestCase {
         let button = gridFrame(control.unpinButtonFrame, of: control, in: host)
         let point = try overhangPoint(button: button, tile: tile, in: host)
 
-        XCTAssertNil(host.host.grid.item(at: point), "точка — в зазоре, не на плитке")
+        XCTAssertNil(host.host.grid.item(at: point), "the point is in the gap, not on a tile")
         XCTAssertFalse(tile.contains(point))
         let outcome = touchDown(at: point, in: host)
-        XCTAssertTrue(outcome.hit is UIButton, "под пальцем — кнопка")
-        XCTAssertFalse(outcome.backgroundReceived, "жест фона не принимает касание в кнопке")
+        XCTAssertTrue(outcome.hit is UIButton, "a button is under the finger")
+        XCTAssertFalse(outcome.backgroundReceived, "the background gesture does not accept a touch on a button")
 
         tap(point, in: host)
-        XCTAssertTrue(waitForEvent("unpin:t3", recorder, host), "кнопка сработала")
-        XCTAssertTrue(host.coordinator.isEditing, "правка не закончилась")
+        XCTAssertTrue(waitForEvent("unpin:t3", recorder, host), "the button fired")
+        XCTAssertTrue(host.coordinator.isEditing, "edit mode did not end")
     }
 
-    /// То же для кнопки размера: размер сменён, правка остаётся.
+    /// The same for the resize button: the size changes, edit mode stays on.
     func testTapOnResizeOverhangInGapResizesAndKeepsEditing() throws {
         let (host, recorder) = try makeHost()
         let id: AnyHashable = "t0"
@@ -226,14 +226,14 @@ final class TileEditButtonGapTapTests: XCTestCase {
         XCTAssertFalse(outcome.backgroundReceived)
 
         tap(point, in: host)
-        XCTAssertTrue(recorder.events.contains("resize:t0"), "кнопка сработала")
-        XCTAssertTrue(host.coordinator.isEditing, "правка не закончилась")
+        XCTAssertTrue(recorder.events.contains("resize:t0"), "the button fired")
+        XCTAssertTrue(host.coordinator.isEditing, "edit mode did not end")
     }
 
-    /// D48: выступ 4 pt. Крайняя точка выступающей части кнопки (на 3,5 pt
-    /// правее рамки плитки, у центра кнопки по вертикали) по-прежнему защищена —
-    /// тап по ней открепляет ярлык и не выходит из правки; и у открепления, и у
-    /// стрелки размера выступ ровно 4 pt.
+    /// D48: a 4 pt overhang. The extreme point of the protruding part of the button (3.5 pt
+    /// to the right of the tile frame, at the button's vertical center) is still protected:
+    /// a tap on it unpins the tile and does not leave edit mode; both the unpin button and
+    /// the resize arrow overhang by exactly 4 pt.
     func testExtremeOverhangPointIsProtectedWithFourPointOverhang() throws {
         XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4)
         let (host, recorder) = try makeHost()
@@ -249,35 +249,35 @@ final class TileEditButtonGapTapTests: XCTestCase {
 
         for button in [unpin, resize] {
             let point = CGPoint(x: tile.maxX + 3.5, y: button.midY)
-            XCTAssertNil(host.host.grid.item(at: point), "точка — в зазоре")
+            XCTAssertNil(host.host.grid.item(at: point), "the point is in the gap")
             let outcome = touchDown(at: point, in: host)
-            XCTAssertTrue(outcome.hit is UIButton, "крайняя точка выступа — кнопка")
+            XCTAssertTrue(outcome.hit is UIButton, "the extreme point of the overhang is a button")
             XCTAssertFalse(outcome.backgroundReceived)
         }
         tap(CGPoint(x: tile.maxX + 3.5, y: unpin.midY), in: host)
         XCTAssertTrue(waitForEvent("unpin:t3", recorder, host))
-        XCTAssertTrue(host.coordinator.isEditing, "правка не закончилась")
+        XCTAssertTrue(host.coordinator.isEditing, "edit mode did not end")
     }
 
-    // MARK: - Расширенная зона касания (44 pt)
+    // MARK: - Extended touch area (44 pt)
 
-    /// Точки зоны касания вне видимой кнопки (расширение до 44 pt) ведут себя
-    /// как сама кнопка: касание уходит кнопке, жест фона его не принимает —
-    /// и в зазоре справа, и над плиткой верхнего ряда.
+    /// Points of the touch area outside the visible button (extended to 44 pt) behave
+    /// like the button itself: the touch goes to the button, the background gesture does not accept it,
+    /// both in the gap to the right and above the top row tile.
     func testExtendedHitZoneBehavesLikeTheButton() throws {
         let (host, recorder) = try makeHost()
         let id: AnyHashable = "t3"
         let control = try control(id, in: host)
         let button = gridFrame(control.unpinButtonFrame, of: control, in: host)
         let hit = gridFrame(control.unpinHitFrame, of: control, in: host)
-        XCTAssertGreaterThan(hit.width, button.width, "зона шире кнопки")
+        XCTAssertGreaterThan(hit.width, button.width, "the area is wider than the button")
 
-        // Справа от кнопки (E15.2: открепление — в верхнем углу у конца строки):
-        // в зазоре между плитками либо в поле сетки (глубже зазора — другая плитка).
+        // To the right of the button (unpin is in the top corner at the end of the row):
+        // in the gap between tiles or in the grid inset (deeper than the gap is another tile).
         let left = CGPoint(x: button.maxX + 1, y: button.midY)
         XCTAssertTrue(hit.contains(left))
         XCTAssertFalse(button.contains(left))
-        XCTAssertNil(host.host.grid.item(at: left), "точка — в зазоре")
+        XCTAssertNil(host.host.grid.item(at: left), "the point is in the gap")
         let outcome = touchDown(at: left, in: host)
         XCTAssertTrue(outcome.hit is UIButton)
         XCTAssertFalse(outcome.backgroundReceived)
@@ -287,8 +287,8 @@ final class TileEditButtonGapTapTests: XCTestCase {
         XCTAssertTrue(host.coordinator.isEditing)
     }
 
-    /// Расширенная зона над верхним краем плитки первого ряда (поле сетки):
-    /// касание тоже принадлежит кнопке, а не фону.
+    /// The extended area above the top edge of a first-row tile (the grid inset):
+    /// the touch belongs to the button too, not to the background.
     func testExtendedHitZoneAboveTopRowDoesNotExitEditing() throws {
         let (host, recorder) = try makeHost()
         let id: AnyHashable = "t0"
@@ -296,7 +296,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
         let button = gridFrame(control.unpinButtonFrame, of: control, in: host)
         let hit = gridFrame(control.unpinHitFrame, of: control, in: host)
         let above = CGPoint(x: button.midX, y: button.minY - 1)
-        try XCTSkipUnless(above.y > 0 && hit.contains(above), "кнопка прижата к краю сетки")
+        try XCTSkipUnless(above.y > 0 && hit.contains(above), "the button is pressed against the grid edge")
         XCTAssertFalse(button.contains(above))
         XCTAssertNil(host.host.grid.item(at: above))
 
@@ -308,70 +308,70 @@ final class TileEditButtonGapTapTests: XCTestCase {
         XCTAssertTrue(host.coordinator.isEditing)
     }
 
-    // MARK: - Пустое место и тело плитки: без изменений
+    // MARK: - Empty space and the tile body: unchanged
 
-    /// Тап в зазоре вне зон всех кнопок по-прежнему выходит из правки.
+    /// A tap in a gap outside all button areas still leaves edit mode.
     func testTapInPureGapStillExitsEditing() throws {
         let (host, recorder) = try makeHost()
         let t0 = try XCTUnwrap(host.host.grid.frame(forItemID: "t0"))
         let t1 = try XCTUnwrap(host.host.grid.frame(forItemID: "t1"))
-        // Середина вертикального зазора между t0 и t1: далеко от углов плиток.
+        // The middle of the vertical gap between t0 and t1: far from the tile corners.
         let point = CGPoint(x: (t0.maxX + t1.minX) / 2, y: t0.midY)
         XCTAssertNil(host.host.grid.item(at: point))
 
         let outcome = touchDown(at: point, in: host)
         XCTAssertNil(outcome.hit as? UIButton)
-        XCTAssertTrue(outcome.backgroundReceived, "пустое место принимает жест фона")
+        XCTAssertTrue(outcome.backgroundReceived, "empty space accepts the background gesture")
 
         tap(point, in: host)
-        XCTAssertFalse(host.coordinator.isEditing, "тап по пустому месту — выход")
-        XCTAssertTrue(recorder.events.isEmpty, "кнопки не срабатывали")
+        XCTAssertFalse(host.coordinator.isEditing, "a tap on empty space leaves edit mode")
+        XCTAssertTrue(recorder.events.isEmpty, "no buttons fired")
     }
 
-    /// Тап по телу любой плитки (в том числе «приглушённой») правку не
-    /// заканчивает, как и раньше; жест фона касание принимает (решает сетка).
+    /// A tap on the body of any tile (including a "dimmed" one) does not end edit
+    /// mode, as before; the background gesture accepts the touch (the grid decides).
     func testTapOnTileBodyKeepsEditingAsBefore() throws {
         let (host, recorder) = try makeHost()
         for id in ["t0", "t1", "t2", "t3"] {
             let center = try XCTUnwrap(host.point(AnyHashable(id)))
             let outcome = touchDown(at: center, in: host)
             XCTAssertNil(outcome.hit as? UIButton, id)
-            XCTAssertTrue(outcome.backgroundReceived, "тело плитки \(id): решение за сеткой, как раньше")
+            XCTAssertTrue(outcome.backgroundReceived, "body of tile \(id): the grid decides, as before")
             tap(center, in: host)
             XCTAssertTrue(host.coordinator.isEditing, "\(id)")
         }
         XCTAssertTrue(recorder.events.isEmpty)
     }
 
-    // MARK: - Соседние плитки: пересекающиеся зоны
+    // MARK: - Adjacent tiles: overlapping areas
 
-    /// В перекрёстке зазоров сходятся зоны трёх кнопок разных плиток (стрелка
-    /// размера t0 и открепления t1 и t2, t3): касание достаётся одной из них
-    /// (как раньше — по порядку подвью), правка остаётся.
+    /// At the gap intersection the areas of three buttons of different tiles meet (the resize arrow
+    /// of t0 and the unpin of t1 and t2, t3): the touch goes to one of them
+    /// (as before, by subview order), and edit mode stays on.
     func testOverlappingZonesOfNeighbouringTilesKeepEditing() throws {
         let (host, recorder) = try makeHost()
         let t0 = try XCTUnwrap(host.host.grid.frame(forItemID: "t0"))
         let t3 = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
-        // Перекрёсток зазоров между четырьмя плитками.
+        // The gap intersection between four tiles.
         let point = CGPoint(x: (t0.maxX + t3.minX) / 2, y: (t0.maxY + t3.minY) / 2)
         XCTAssertNil(host.host.grid.item(at: point))
 
         let outcome = touchDown(at: point, in: host)
-        XCTAssertTrue(outcome.hit is UIButton, "в перекрёстке — кнопка какой-то из плиток")
+        XCTAssertTrue(outcome.hit is UIButton, "at the intersection there is a button of one of the tiles")
         XCTAssertFalse(outcome.backgroundReceived)
 
         tap(point, in: host)
         XCTAssertTrue(host.coordinator.isEditing)
-        // Сработала ровно одна кнопка (resize t0 синхронно либо unpin t3 после полёта).
+        // Exactly one button fired (resize t0 synchronously or unpin t3 after the flight).
         host.spin(0.4)
         XCTAssertEqual(recorder.events.count, 1, "\(recorder.events)")
         XCTAssertTrue(host.coordinator.isEditing)
     }
 
-    // MARK: - Единый источник правды: зоны кнопок и жест фона
+    // MARK: - Single source of truth: button areas and the background gesture
 
-    /// По всей сетке: жест фона принимает касание тогда и только тогда, когда
-    /// под ним не кнопка оверлея правки (`hitTest` окна ↔ `shouldReceive`).
+    /// Across the whole grid: the background gesture accepts a touch if and only if
+    /// there is no edit overlay button under it (`hitTest` of the window <-> `shouldReceive`).
     func testBackgroundRecognizerAgreesWithButtonHitTestAcrossGrid() throws {
         let (host, _) = try makeHost()
         let grid = host.host.grid
@@ -395,17 +395,17 @@ final class TileEditButtonGapTapTests: XCTestCase {
 
     // MARK: - RTL
 
-    /// RTL: кнопки зеркалятся (E15.2: обе у начала физического левого края —
-    /// открепление вверху слева, размер внизу слева); касание по выступающей
-    /// части каждой не выводит из правки.
+    /// RTL: the buttons are mirrored (both at the start of the physical left edge:
+    /// unpin at the top left, resize at the bottom left); a touch on the protruding
+    /// part of each does not leave edit mode.
     func testRightToLeftOverhangsKeepEditing() throws {
         let (host, recorder) = try makeHost(rightToLeft: true)
 
-        // Открепление t3: зеркальный угол — левый верхний.
+        // Unpin of t3: the mirrored corner is the top left.
         let t3Control = try control("t3", in: host)
         let t3 = try XCTUnwrap(host.host.grid.frame(forItemID: "t3"))
         let unpinButton = gridFrame(t3Control.unpinButtonFrame, of: t3Control, in: host)
-        XCTAssertLessThan(unpinButton.midX, t3.midX, "RTL: кнопка открепления слева")
+        XCTAssertLessThan(unpinButton.midX, t3.midX, "RTL: the unpin button is on the left")
         let unpinPoint = try overhangPoint(button: unpinButton, tile: t3, in: host)
         let unpinOutcome = touchDown(at: unpinPoint, in: host)
         XCTAssertTrue(unpinOutcome.hit is UIButton)
@@ -414,11 +414,11 @@ final class TileEditButtonGapTapTests: XCTestCase {
         XCTAssertTrue(waitForEvent("unpin:t3", recorder, host))
         XCTAssertTrue(host.coordinator.isEditing)
 
-        // Размер t0: зеркальный угол — левый нижний.
+        // Resize of t0: the mirrored corner is the bottom left.
         let t0Control = try control("t0", in: host)
         let t0 = try XCTUnwrap(host.host.grid.frame(forItemID: "t0"))
         let resizeButton = gridFrame(t0Control.resizeButtonFrame, of: t0Control, in: host)
-        XCTAssertLessThan(resizeButton.midX, t0.midX, "RTL: стрелка размера слева")
+        XCTAssertLessThan(resizeButton.midX, t0.midX, "RTL: the resize arrow is on the left")
         let resizePoint = try overhangPoint(button: resizeButton, tile: t0, in: host)
         let resizeOutcome = touchDown(at: resizePoint, in: host)
         XCTAssertTrue(resizeOutcome.hit is UIButton)
@@ -428,7 +428,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
         XCTAssertTrue(host.coordinator.isEditing)
     }
 
-    /// RTL: пустое место по-прежнему выходит из правки.
+    /// RTL: empty space still leaves edit mode.
     func testRightToLeftPureGapStillExitsEditing() throws {
         let (host, _) = try makeHost(rightToLeft: true)
         let t0 = try XCTUnwrap(host.host.grid.frame(forItemID: "t0"))
@@ -442,7 +442,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
         XCTAssertFalse(host.coordinator.isEditing)
     }
 
-    // MARK: - Кнопки панели папки
+    // MARK: - Folder panel buttons
 
     private func makePanelHost() throws -> (TesseraTestDragHost, Recorder) {
         let host = try TesseraTestDragHost(
@@ -460,8 +460,8 @@ final class TileEditButtonGapTapTests: XCTestCase {
         return (host, recorder)
     }
 
-    /// Кнопки панели не затронуты: тап по кнопке (центр и выступающая часть)
-    /// открепляет ярлык, правка остаётся; жест фона такое касание не принимает.
+    /// The panel buttons are unaffected: a tap on the button (center and protruding part)
+    /// unpins the tile and edit mode stays on; the background gesture does not accept such a touch.
     func testPanelButtonTapKeepsEditing() throws {
         let (host, recorder) = try makePanelHost()
         let geometry = try XCTUnwrap(host.host.grid.panelShortcutGeometry())
@@ -470,7 +470,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
         let tile = geometry.frames[0]
         let button = gridFrame(control.unpinButtonFrame, of: control, in: host)
         let center = CGPoint(x: button.midX, y: button.midY)
-        // У кнопки ярлыка панели в зазоре может не быть части (E15.2: правый угол).
+        // A panel tile button may have no part in the gap (right corner).
         let overhang = overhangPointIfAny(button: button, tile: tile, in: host)
 
         for point in [center, overhang].compactMap({ $0 }) {
@@ -480,11 +480,11 @@ final class TileEditButtonGapTapTests: XCTestCase {
         }
         tap(center, in: host)
         XCTAssertTrue(waitForEvent("unpin:\(tileID)", recorder, host))
-        XCTAssertTrue(host.coordinator.isEditing, "правка не закончилась")
+        XCTAssertTrue(host.coordinator.isEditing, "edit mode did not end")
     }
 
-    /// Панель: зона касания кнопок и жест фона согласованы по всей сетке; тело
-    /// ярлыка панели вне угловой четверти кнопку не считает и жест принимает.
+    /// Panel: the button touch area and the background gesture are consistent across the whole grid; the body
+    /// of a panel tile outside the corner quarter does not count as a button and the gesture accepts it.
     func testPanelBackgroundRecognizerAgreesWithButtonHitTest() throws {
         let (host, _) = try makePanelHost()
         let grid = host.host.grid
@@ -510,9 +510,9 @@ final class TileEditButtonGapTapTests: XCTestCase {
         XCTAssertTrue(outcome.backgroundReceived)
     }
 
-    // MARK: - Включение жеста
+    // MARK: - Enabling the gesture
 
-    /// Жест фона включён только в правке; вне правки касания не принимает.
+    /// The background gesture is enabled only in edit mode; outside edit mode it does not accept touches.
     func testBackgroundRecognizerFollowsEditMode() throws {
         let host = TesseraTestDragHost(
             descriptors: (0..<4).map { tesseraTestTile("t\($0)", size: .medium) }
@@ -523,7 +523,7 @@ final class TileEditButtonGapTapTests: XCTestCase {
 
         host.coordinator.beginEditing()
         XCTAssertTrue(recognizer.isEnabled)
-        XCTAssertFalse(recognizer.cancelsTouchesInView, "семантика cancelsTouchesInView прежняя")
+        XCTAssertFalse(recognizer.cancelsTouchesInView, "cancelsTouchesInView semantics unchanged")
 
         host.coordinator.endEditing()
         XCTAssertFalse(recognizer.isEnabled)

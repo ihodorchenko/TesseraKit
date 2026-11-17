@@ -1,39 +1,39 @@
 import UIKit
 
-/// Нормализация прогресса пейджера по направлению чтения (LTR/RTL).
+/// Normalizes pager progress by reading direction (LTR/RTL).
 ///
-/// Контракт §2 `docs/Core-iOS-Design.md`: «в RTL `t` нормализуется от направления
-/// чтения». Сырой `t = contentOffset.x / pageWidth` в RTL растёт против направления
-/// чтения, поэтому его нельзя отдавать потребителям напрямую. После нормализации
-/// `0` — первая страница в порядке чтения, `pageCount - 1` — последняя; индикатор
-/// Pivot, заголовки Panorama и пейджер StartScreen работают с одним и тем же
-/// знанием о направлении и не дублируют зеркалирование у себя.
+/// Per the contract in `docs/CORE-IOS-DESIGN.md`: in RTL, `t` is normalized by the
+/// reading direction. The raw `t = contentOffset.x / pageWidth` grows against the
+/// reading direction in RTL, so it must not be handed to consumers directly. After normalization,
+/// `0` is the first page in reading order and `pageCount - 1` is the last; the Pivot
+/// indicator, the Panorama headers, and the StartScreen pager share the same
+/// knowledge of direction and do not duplicate mirroring themselves.
 ///
-/// Функции чистые: не читают состояние, не пишут `contentOffset` (§2 — единственные
-/// писатели это пейджер и контроллер), не требуют главного потока, поэтому
-/// пригодны для контрактных тестов E1.7.
+/// The functions are pure: they read no state, do not write `contentOffset` (only the pager
+/// and the controller write it), and do not require the main thread, so they
+/// are suitable for contract tests.
 public enum TesseraRTL {
 
-    /// Переводит сырой прогресс пейджера в прогресс по направлению чтения.
+    /// Converts the pager's raw progress into progress in reading direction.
     ///
-    /// - LTR: `t` возвращается без изменений.
-    /// - RTL: `CGFloat(pageCount - 1) - t` — зеркалирование относительно середины
-    ///   ленты, чтобы крайние страницы поменялись местами, а дробная часть
-    ///   (непрерывный прогресс перехода) сохранилась.
-    /// - `pageCount <= 1`: возвращается `t` без изменений — нормализовывать нечего,
-    ///   единственная страница всегда «первая» и «последняя» одновременно.
+    /// - LTR: `t` is returned unchanged.
+    /// - RTL: `CGFloat(pageCount - 1) - t`, which mirrors around the middle of the
+    ///   strip so that the edge pages swap places while the fractional part
+    ///   (the continuous transition progress) is preserved.
+    /// - `pageCount <= 1`: `t` is returned unchanged, because there is nothing to normalize and
+    ///   the only page is always both "first" and "last".
     ///
-    /// Функция непрерывна и не округляет `t`: используется для анимаций
-    /// (`frame`/`transform`/`alpha`, §2). Для дискретного индекса страницы есть
-    /// ``pageIndex(for:pageCount:layoutDirection:)`` — у него другое правило
-    /// округления, см. документацию метода.
+    /// The function is continuous and does not round `t`: it is used for animations
+    /// (`frame`/`transform`/`alpha`). For a discrete page index, use
+    /// ``pageIndex(for:pageCount:layoutDirection:)``, which has a different rounding
+    /// rule; see that method's documentation.
     ///
     /// - Parameters:
-    ///   - t: Сырой прогресс `contentOffset.x / pageWidth`.
-    ///   - pageCount: Число страниц; значения `<= 1` трактуются как «нормализация
-    ///     не нужна».
-    ///   - layoutDirection: Направление раскладки интерфейса.
-    /// - Returns: Прогресс по направлению чтения.
+    ///   - t: The raw progress `contentOffset.x / pageWidth`.
+    ///   - pageCount: The number of pages; values `<= 1` are treated as "no normalization
+    ///     needed".
+    ///   - layoutDirection: The interface layout direction.
+    /// - Returns: The progress in reading direction.
     public static func normalizedProgress(
         _ t: CGFloat,
         pageCount: Int,
@@ -45,29 +45,29 @@ public enum TesseraRTL {
         return CGFloat(pageCount - 1) - t
     }
 
-    /// Индекс страницы для сырого прогресса `t` с учётом направления чтения.
+    /// The page index for raw progress `t`, taking the reading direction into account.
     ///
-    /// Правило (`docs/Core-iOS-Design.md` §2, «целая часть — индекс»):
+    /// Rule ("the integer part is the index", see `docs/CORE-IOS-DESIGN.md`):
     /// - LTR: `clamp(Int(t.rounded(.down)), 0, pageCount - 1)`.
-    /// - RTL: `pageCount - 1 - <тот же clamp>` — сначала берётся индекс страницы,
-    ///   занимающей видимую область, затем он зеркалится в порядок чтения.
-    /// - `pageCount <= 1`: всегда `0`.
+    /// - RTL: `pageCount - 1 - <the same clamp>`: the index of the page
+    ///   occupying the visible area is taken first, then mirrored into reading order.
+    /// - `pageCount <= 1`: always `0`.
     ///
-    /// Округление идёт до зеркалирования намеренно: индекс — это страница, которая
-    /// сейчас в кадре, а не прогресс входа следующей. На дробном `t` это даёт
-    /// `pageCount - 1 - floor(t)`, что на середине перехода отличается от
-    /// `floor(normalizedProgress(t))` на единицу; для непрерывных анимаций нужно
-    /// ``normalizedProgress(_:pageCount:layoutDirection:)``, а не этот метод.
+    /// Rounding happens before mirroring on purpose: the index is the page that
+    /// is currently in frame, not the entry progress of the next one. For fractional `t` this gives
+    /// `pageCount - 1 - floor(t)`, which in the middle of a transition differs by one from
+    /// `floor(normalizedProgress(t))`; continuous animations should use
+    /// ``normalizedProgress(_:pageCount:layoutDirection:)``, not this method.
     ///
-    /// Защитные случаи: `NaN` даёт `0` (неопределённый прогресс трактуется как
-    /// первая страница); бесконечности зажимаются границами, благодаря чему
-    /// `Int(_:)` не может переполниться на мусорных промежуточных значениях.
+    /// Defensive cases: `NaN` gives `0` (undefined progress is treated as the
+    /// first page); infinities are clamped to the bounds, so
+    /// `Int(_:)` cannot overflow on garbage intermediate values.
     ///
     /// - Parameters:
-    ///   - t: Сырой прогресс `contentOffset.x / pageWidth`.
-    ///   - pageCount: Число страниц; значения `<= 1` дают `0`.
-    ///   - layoutDirection: Направление раскладки интерфейса.
-    /// - Returns: Индекс страницы в порядке чтения.
+    ///   - t: The raw progress `contentOffset.x / pageWidth`.
+    ///   - pageCount: The number of pages; values `<= 1` give `0`.
+    ///   - layoutDirection: The interface layout direction.
+    /// - Returns: The page index in reading order.
     public static func pageIndex(
         for t: CGFloat,
         pageCount: Int,
@@ -81,15 +81,15 @@ public enum TesseraRTL {
         return pageCount - 1 - index
     }
 
-    /// Дискретный индекс страницы в сырых координатах контента (LTR-порядок).
+    /// The discrete page index in raw content coordinates (LTR order).
     ///
-    /// Зажимает результат в `0...pageCount - 1` до преобразования в `Int`: так
-    /// бесконечности и очень большие `t` не приводят к переполнению.
+    /// Clamps the result to `0...pageCount - 1` before converting to `Int`, so
+    /// infinities and very large `t` values do not cause overflow.
     ///
     /// - Parameters:
-    ///   - t: Сырой прогресс.
-    ///   - pageCount: Число страниц, строго больше единицы (проверяется вызывающим).
-    /// - Returns: Индекс в `0...pageCount - 1`.
+    ///   - t: The raw progress.
+    ///   - pageCount: The number of pages, strictly greater than one (checked by the caller).
+    /// - Returns: The index in `0...pageCount - 1`.
     private static func clampedIndex(for t: CGFloat, pageCount: Int) -> Int {
         guard !t.isNaN else { return 0 }
 

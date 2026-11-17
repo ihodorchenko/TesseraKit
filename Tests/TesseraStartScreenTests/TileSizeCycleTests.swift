@@ -2,11 +2,11 @@
 //  TileSizeCycleTests.swift
 //  TesseraStartScreenTests
 //
-//  Цикл размеров по тапу на стрелку (D28, E15.3): малый → широкий → средний →
-//  большой → малый. Порядок задан явно (`TesseraTileSize.cycleOrder`), а не порядком
-//  `allCases`; хост задаёт набор `supportedSizesProvider`, а не порядок.
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 и «Отступления
-//  реализации (E15)», п. 59; W10M-STARTSCREEN.md §5.
+//  The size cycle on a tap of the arrow (D28): small → wide → medium →
+//  large → small. The order is set explicitly (`TesseraTileSize.cycleOrder`), not by the order of
+//  `allCases`; the host provides the set via `supportedSizesProvider`, not the order.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 and "Implementation
+//  deviations"; docs/W10M-STARTSCREEN.md §5.
 //
 
 #if canImport(UIKit)
@@ -17,17 +17,17 @@ import XCTest
 
 final class TileSizeCycleTests: XCTestCase {
 
-    // MARK: - Чистая модель
+    // MARK: - Pure model
 
-    /// Порядок цикла — W10M с `large` в конце; он не совпадает с `allCases`.
+    /// The cycle order is that of Windows 10 Mobile with `large` last; it differs from `allCases`.
     func testCycleOrderIsExplicitAndDiffersFromAllCases() {
         XCTAssertEqual(TesseraTileSize.cycleOrder, [.small, .wide, .medium, .large])
         XCTAssertEqual(TesseraTileSize.allCases, [.small, .medium, .wide, .large])
         XCTAssertNotEqual(TesseraTileSize.cycleOrder, TesseraTileSize.allCases)
-        XCTAssertEqual(Set(TesseraTileSize.cycleOrder), Set(TesseraTileSize.allCases), "все четыре размера D15")
+        XCTAssertEqual(Set(TesseraTileSize.cycleOrder), Set(TesseraTileSize.allCases), "all four D15 sizes")
     }
 
-    /// Из любого размера полный набор ведёт по кругу в порядке W10M.
+    /// From any size the full set leads around the circle in the Windows 10 Mobile order.
     func testNextAmongAllSizesFollowsCycleFromEveryStart() {
         let all = TesseraTileSize.allCases
         XCTAssertEqual(TesseraTileSize.small.next(among: all), .wide)
@@ -42,24 +42,24 @@ final class TileSizeCycleTests: XCTestCase {
                 size = size.next(among: all)
                 visited.append(size)
             }
-            XCTAssertEqual(size, start, "четыре шага замыкают круг от \(start)")
-            XCTAssertEqual(Set(visited).count, 4, "круг проходит все размеры от \(start)")
+            XCTAssertEqual(size, start, "four steps close the circle from \(start)")
+            XCTAssertEqual(Set(visited).count, 4, "the circle visits all sizes from \(start)")
         }
     }
 
-    /// Неподдерживаемые размеры пропускаются; порядок списка хоста не важен.
+    /// Unsupported sizes are skipped; the order of the host list does not matter.
     func testNextSkipsUnsupportedAndIgnoresHostListOrder() {
-        // Без wide: small → medium → large → small.
+        // Without wide: small → medium → large → small.
         let noWide: [TesseraTileSize] = [.large, .small, .medium]
         XCTAssertEqual(TesseraTileSize.small.next(among: noWide), .medium)
         XCTAssertEqual(TesseraTileSize.medium.next(among: noWide), .large)
         XCTAssertEqual(TesseraTileSize.large.next(among: noWide), .small)
 
-        // Без large (3 колонки: wide тоже не влезает → small/medium).
+        // Without large (3 columns: wide does not fit either → small/medium).
         XCTAssertEqual(TesseraTileSize.small.next(among: [.medium, .small]), .medium)
         XCTAssertEqual(TesseraTileSize.medium.next(among: [.medium, .small]), .small)
 
-        // Список в обратном порядке даёт тот же результат.
+        // The list in reverse order gives the same result.
         for start in TesseraTileSize.allCases {
             XCTAssertEqual(
                 start.next(among: [.small, .wide, .large]),
@@ -70,7 +70,7 @@ final class TileSizeCycleTests: XCTestCase {
         XCTAssertEqual(TesseraTileSize.large.next(among: [.small, .large]), .small)
     }
 
-    /// Единственный поддерживаемый размер замыкает цикл на себе; пустой набор — тоже.
+    /// A single supported size closes the cycle on itself; an empty set does too.
     func testNextWithSingleOrEmptySetStaysOnCurrent() {
         for size in TesseraTileSize.allCases {
             XCTAssertEqual(size.next(among: [size]), size)
@@ -78,14 +78,14 @@ final class TileSizeCycleTests: XCTestCase {
         }
     }
 
-    /// Текущий размер вне поддерживаемого набора: берётся ближайший дальше по циклу.
+    /// The current size is outside the supported set: the nearest one further along the cycle is taken.
     func testNextFromUnsupportedCurrentTakesNearestOnCycle() {
-        XCTAssertEqual(TesseraTileSize.medium.next(among: [.small, .wide]), .small, "medium → large(нет) → small")
+        XCTAssertEqual(TesseraTileSize.medium.next(among: [.small, .wide]), .small, "medium → large (unsupported) → small")
         XCTAssertEqual(TesseraTileSize.wide.next(among: [.large]), .large)
-        XCTAssertEqual(TesseraTileSize.small.next(among: [.large, .medium]), .medium, "small → wide(нет) → medium")
+        XCTAssertEqual(TesseraTileSize.small.next(among: [.large, .medium]), .medium, "small → wide (unsupported) → medium")
     }
 
-    // MARK: - Координатор
+    // MARK: - Coordinator
 
     private func makeHost(
         size: TesseraTileSize,
@@ -97,7 +97,7 @@ final class TileSizeCycleTests: XCTestCase {
         )
     }
 
-    /// Координатор идёт по циклу D28 из каждого стартового размера и замыкает круг.
+    /// The coordinator follows the D28 cycle from each starting size and closes the circle.
     func testCoordinatorCyclesInW10MOrderFromEveryStart() {
         let expected: [TesseraTileSize: [TesseraTileSize]] = [
             .small: [.wide, .medium, .large, .small],
@@ -108,30 +108,30 @@ final class TileSizeCycleTests: XCTestCase {
         for start in TesseraTileSize.allCases {
             let host = makeHost(size: start)
             for (step, next) in (expected[start] ?? []).enumerated() {
-                XCTAssertEqual(host.coordinator.cycleSize(of: "a"), next, "старт \(start), шаг \(step + 1)")
+                XCTAssertEqual(host.coordinator.cycleSize(of: "a"), next, "start \(start), step \(step + 1)")
                 XCTAssertEqual(host.store.descriptor(withID: "a")?.size, next)
                 XCTAssertEqual(host.host.grid.items.first { $0.id == AnyHashable("a") }?.size, next)
             }
         }
     }
 
-    /// Хост сужает набор: цикл пропускает недоступные размеры, порядок задан
-    /// моделью, а не списком хоста.
+    /// The host narrows the set: the cycle skips unavailable sizes, the order is set
+    /// by the model, not by the host list.
     func testCoordinatorRespectsSupportedSizesProvider() {
         let host = makeHost(size: .small)
         host.coordinator.supportedSizesProvider = { _ in [.large, .small, .medium] }
-        XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .medium, "wide пропущен")
+        XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .medium, "wide skipped")
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .large)
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .small)
 
         host.coordinator.supportedSizesProvider = { _ in [.large, .wide] }
-        // Текущий small вне набора: ближайший дальше по циклу — wide.
+        // The current small is outside the set: the nearest one further along the cycle is wide.
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .wide)
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .large)
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .wide)
     }
 
-    /// Единственный поддерживаемый размер: менять нечего, стрелки нет.
+    /// A single supported size: there is nothing to change, no arrow.
     func testCoordinatorSingleSupportedSizeDoesNothing() {
         let host = makeHost(size: .medium)
         host.coordinator.supportedSizesProvider = { _ in [.medium] }
@@ -139,7 +139,7 @@ final class TileSizeCycleTests: XCTestCase {
         XCTAssertEqual(host.store.descriptor(withID: "a")?.size, .medium)
     }
 
-    /// Узкая сетка (3 колонки): wide/large не влезают, цикл — small ↔ medium.
+    /// A narrow grid (3 columns): wide/large do not fit, the cycle is small ↔ medium.
     func testCoordinatorInNarrowGridCyclesBetweenSmallAndMedium() {
         let host = makeHost(size: .small, columns: 3)
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .medium)
@@ -147,10 +147,10 @@ final class TileSizeCycleTests: XCTestCase {
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .medium)
     }
 
-    // MARK: - Формат хранения
+    // MARK: - Storage format
 
-    /// Размер после шагов цикла сохраняется и читается как раньше (сырое
-    /// значение `TesseraTileSize`); формат файла не менялся.
+    /// The size after cycle steps is saved and read as before (the raw
+    /// value of `TesseraTileSize`); the file format did not change.
     func testPersistenceRoundTripKeepsCycledSize() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -167,14 +167,14 @@ final class TileSizeCycleTests: XCTestCase {
         XCTAssertEqual(fresh.descriptor(withID: "a")?.size, .wide)
 
         let json = try String(contentsOf: store.fileURL)
-        XCTAssertTrue(json.contains("\"wide\""), "в файле сырое значение размера")
+        XCTAssertTrue(json.contains("\"wide\""), "the file has the raw size value")
     }
 
     // MARK: - VoiceOver
 
-    /// Действие «Изменить размер» делает тот же шаг цикла D28, что и стрелка: оба
-    /// вызывают `cycleSize(of:)`, поэтому озвучивается тот же новый размер
-    /// (объявление шлётся только при включённом VoiceOver и не перехватывается).
+    /// The "Change size" action performs the same D28 cycle step as the arrow: both
+    /// call `cycleSize(of:)`, so the same new size is announced
+    /// (the announcement is posted only when VoiceOver is on and is not intercepted).
     func testVoiceOverResizeActionUsesSameCycle() throws {
         let host = makeHost(size: .small)
         host.coordinator.beginEditing()
@@ -194,14 +194,14 @@ final class TileSizeCycleTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Стрелка (кнопка оверлея) и действие VoiceOver дают один и тот же размер.
+    /// The arrow (an overlay button) and the VoiceOver action give the same size.
     func testArrowButtonAndVoiceOverActionAgree() throws {
         let host = makeHost(size: .wide)
         host.coordinator.beginEditing()
         host.spin(0.03)
         let control = try XCTUnwrap(host.coordinator.editControls["a"])
         control.onResize?()
-        XCTAssertEqual(host.store.descriptor(withID: "a")?.size, .medium, "стрелка: wide → medium")
+        XCTAssertEqual(host.store.descriptor(withID: "a")?.size, .medium, "arrow: wide → medium")
 
         let resizeName = TesseraStartScreenStrings.string(.a11yActionResize)
         XCTAssertTrue(host.waitUntil {

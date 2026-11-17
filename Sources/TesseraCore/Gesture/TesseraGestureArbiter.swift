@@ -1,54 +1,54 @@
-// TesseraGestureArbiter — арбитраж жестов «родитель-ребёнок» для TesseraCore.
-// Проектный документ: docs/Core-iOS-Design.md,
-// §2 «Ключевые контракты» (пункт «Арбитраж») и §3 «Концептуальная поверхность API».
+// TesseraGestureArbiter: parent-child gesture arbitration for TesseraCore.
+// Design document: docs/CORE-IOS-DESIGN.md
+// (key contracts: gesture arbitration; conceptual API surface).
 //
-// Схема (вариант B): горизонталью владеет пейджер (horizontalOwner), вертикалью —
-// дочерние скролл-вью (verticalOwners). Пейджер решает, начинать ли собственный пан,
-// по доминирующей оси в `gestureRecognizerShouldBegin`; на время горизонтального
-// жеста прокрутка детей блокируется и затем восстанавливается.
+// Scheme: the pager owns the horizontal axis (horizontalOwner) and the child
+// scroll views own the vertical axis (verticalOwners). The pager decides whether to begin its own pan
+// by the dominant axis in `gestureRecognizerShouldBegin`; for the duration of a horizontal
+// gesture the children's scrolling is blocked and then restored.
 //
-// Дисциплина §2 «Дисциплина производительности»: здесь нет layout-операций.
-// Методы только читают velocity/translation и меняют флаг `isScrollEnabled`.
+// Performance discipline: no layout operations here.
+// The methods only read velocity/translation and change the `isScrollEnabled` flag.
 
 import UIKit
 
-/// Доминирующая ось жеста в арбитраже «родитель-ребёнок».
+/// The dominant axis of a gesture in parent-child arbitration.
 ///
-/// См. docs/Core-iOS-Design.md §2 «Арбитраж»: горизонталь отдаётся пейджеру,
-/// вертикаль — дочернему скролл-вью.
+/// See "gesture arbitration" in docs/CORE-IOS-DESIGN.md: horizontal motion goes to the pager,
+/// vertical motion goes to the child scroll view.
 public enum TesseraGestureAxis: Equatable {
-    /// Горизонтальное движение: жест обрабатывает пейджер-владелец.
+    /// Horizontal motion: the owning pager handles the gesture.
     case horizontal
-    /// Вертикальное движение: жест обрабатывают дочерние скролл-вью.
+    /// Vertical motion: the child scroll views handle the gesture.
     case vertical
 }
 
-/// Арбитр жестов «родитель-ребёнок»: распределяет жест между горизонтальным
-/// пейджером и вертикальными детьми по доминирующей оси.
+/// A parent-child gesture arbiter: splits a gesture between the horizontal
+/// pager and the vertical children by the dominant axis.
 ///
-/// Контракт (docs/Core-iOS-Design.md §2 «Арбитраж»): пейджер скроллит только
-/// горизонтально, дети — вертикально; решение принимается по доминирующей оси
-/// в `gestureRecognizerShouldBegin`, а не постфактум. Поддерживается несколько
-/// детей (например, сетка и список на одном экране StartScreen).
+/// Contract (docs/CORE-IOS-DESIGN.md, "gesture arbitration"): the pager scrolls only
+/// horizontally and the children only vertically; the decision is made by the dominant axis
+/// in `gestureRecognizerShouldBegin`, not after the fact. Several
+/// children are supported (for example, a grid and a list on one StartScreen).
 ///
-/// Использование.
+/// Usage.
 ///
-/// - Important: **Не назначайте арбитр делегатом пана `UIScrollView`.**
-///   Делегатом встроенного `panGestureRecognizer` скролл-вью обязан оставаться
-///   сам скролл-вью: строка `scrollView.panGestureRecognizer.delegate = arbiter`
-///   приводит к исключению UIKit (`NSInvalidArgumentException`: «UIScrollView's
+/// - Important: **Do not assign the arbiter as the delegate of a `UIScrollView` pan.**
+///   The scroll view itself must remain the delegate of its built-in
+///   `panGestureRecognizer`: the line `scrollView.panGestureRecognizer.delegate = arbiter`
+///   raises a UIKit exception (`NSInvalidArgumentException`: "UIScrollView's
 ///   built-in pan gesture recognizer must have its scroll view as its
-///   delegate»). Пейджер TesseraKit построен на `UIScrollView`, поэтому
-///   этот путь для него закрыт.
+///   delegate"). The TesseraKit pager is built on `UIScrollView`, so
+///   that route is closed to it.
 ///
-/// Рабочая схема (так делают Pivot, Panorama и StartScreen): подписаться на пан
-/// скролл-вью аддитивно через `addTarget` — это не трогает его делегата и
-/// внутреннюю обработку жестов — и на состоянии `.began` принять решение по оси
-/// чистой функцией ``axisDecision(forVelocity:)``. При горизонтали собрать
-/// арбитр и заблокировать детей, по завершении жеста — восстановить:
+/// The working scheme (used by Pivot, Panorama, and StartScreen): subscribe to the scroll view's
+/// pan additively via `addTarget`, which leaves its delegate and
+/// internal gesture handling untouched, and decide the axis in the `.began` state
+/// with the pure function ``axisDecision(forVelocity:)``. For a horizontal gesture, create
+/// an arbiter and block the children, then restore them when the gesture ends:
 ///
 /// ```swift
-/// // Один раз, когда скролл-вью пейджера известен:
+/// // Once, when the pager's scroll view is known:
 /// pagerScrollView.panGestureRecognizer.addTarget(
 ///     self, action: #selector(pagerPanDidChange(_:)))
 ///
@@ -58,13 +58,13 @@ public enum TesseraGestureAxis: Equatable {
 ///         let velocity = pan.velocity(in: pan.view)
 ///         let vector = velocity == .zero ? pan.translation(in: pan.view) : velocity
 ///         guard TesseraGestureArbiter.axisDecision(forVelocity: vector) == .horizontal
-///         else { return } // вертикаль — детям, ничего не блокируем
+///         else { return } // vertical goes to the children, block nothing
 ///         let arbiter = TesseraGestureArbiter(horizontalOwner: pagerScrollView,
 ///                                             verticalOwners: [grid, list])
-///         arbiter.prepareForHorizontalScroll() // блокировка детей
-///         gestureArbiter = arbiter             // арбитр держит владелец
+///         arbiter.prepareForHorizontalScroll() // block the children
+///         gestureArbiter = arbiter             // the owner retains the arbiter
 ///     case .ended, .cancelled, .failed:
-///         gestureArbiter?.endHorizontalScroll() // восстановление детей
+///         gestureArbiter?.endHorizontalScroll() // restore the children
 ///         gestureArbiter = nil
 ///     default:
 ///         break
@@ -72,55 +72,55 @@ public enum TesseraGestureAxis: Equatable {
 /// }
 /// ```
 ///
-/// `UIGestureRecognizer` держит таргеты слабо (проверено тестом
-/// `TesseraGestureTargetRetentionTests`), поэтому `addTarget(self, …)` не
-/// создаёт цикла удержания и `deinit` владельца достижим.
+/// `UIGestureRecognizer` holds its targets weakly (verified by the test
+/// `TesseraGestureTargetRetentionTests`), so `addTarget(self, …)` does not
+/// create a retain cycle and the owner's `deinit` is reachable.
 ///
-/// ``gestureRecognizerShouldBegin(_:)`` (решение до начала жеста, как в §2)
-/// применим только там, где делегата можно назначить законно: для
-/// **собственного** `UIPanGestureRecognizer` горизонтального владельца, либо
-/// из переопределения `gestureRecognizerShouldBegin(_:)` в подклассе
-/// `UIScrollView` (метод `UIView`, вызывается для жестов этого вида, делегата
-/// не требует) — например, `return arbiter?.shouldBegin(gestureRecognizer) ??
+/// ``gestureRecognizerShouldBegin(_:)`` (the decision before the gesture begins)
+/// applies only where the delegate can be assigned legitimately: for the horizontal owner's
+/// **own** `UIPanGestureRecognizer`, or
+/// from an override of `gestureRecognizerShouldBegin(_:)` in a `UIScrollView`
+/// subclass (a `UIView` method called for gestures of that view; it needs no delegate),
+/// for example `return arbiter?.shouldBegin(gestureRecognizer) ??
 /// super.gestureRecognizerShouldBegin(gestureRecognizer)`.
 ///
-/// Арбитр не удерживается скролл-вью, поэтому его должен удерживать владелец
-/// (пейджер или контроллер). Он сильно держит переданные скролл-вью, поэтому
-/// при ленивой загрузке страниц удобно создавать его на время жеста.
+/// The scroll view does not retain the arbiter, so the owner (the pager or a controller)
+/// must retain it. The arbiter holds the scroll views strongly, so with
+/// lazily loaded pages it is convenient to create it only for the duration of a gesture.
 ///
-/// Все методы рассчитаны на главный поток: UIKit-свойства и жесты читаются
-/// и меняются только там. Layout не выполняется.
+/// All methods are intended for the main thread: UIKit properties and gestures are read
+/// and changed only there. No layout is performed.
 public final class TesseraGestureArbiter: NSObject, UIGestureRecognizerDelegate {
 
-    // MARK: - Владельцы
+    // MARK: - Owners
 
-    /// Горизонтальный владелец: пейджер, чей пан арбитр пропускает или отклоняет.
+    /// The horizontal owner: the pager whose pan the arbiter lets through or rejects.
     private let horizontalOwner: UIScrollView
 
-    /// Вертикальные дети. Хранятся в порядке регистрации, без дублей;
-    /// горизонтальный владелец исключён при инициализации.
+    /// The vertical children, stored in registration order without duplicates;
+    /// the horizontal owner is excluded at initialization.
     private let verticalOwners: [UIScrollView]
 
-    /// Снимок `isScrollEnabled` детей на время горизонтального жеста.
-    /// `nil` — горизонтальный жест не идёт, блокировки нет.
+    /// A snapshot of the children's `isScrollEnabled` for the duration of a horizontal gesture.
+    /// `nil` means no horizontal gesture is in progress and nothing is blocked.
     private var savedChildStates: [(view: UIScrollView, wasScrollEnabled: Bool)]?
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт арбитр для пары «горизонтальный пейджер — вертикальные дети».
+    /// Creates an arbiter for the "horizontal pager, vertical children" pair.
     ///
     /// - Parameters:
-    ///   - horizontalOwner: скролл-вью пейджера, который скроллит только по горизонтали.
-    ///   - verticalOwners: дочерние скролл-вью, скроллящие по вертикали. Порядок
-    ///     сохраняется; дубли и сам `horizontalOwner` отбрасываются, чтобы арбитр
-    ///     не отключал прокрутку владельца.
+    ///   - horizontalOwner: The pager's scroll view, which scrolls only horizontally.
+    ///   - verticalOwners: The child scroll views that scroll vertically. Order is
+    ///     preserved; duplicates and `horizontalOwner` itself are dropped so that the arbiter
+    ///     never disables the owner's scrolling.
     ///
-    /// Делегат пана не назначается и не должен назначаться для встроенного
-    /// пана `UIScrollView` (UIKit бросит исключение) — см. рецепт в описании типа.
+    /// No pan delegate is assigned, and none must be assigned for the built-in
+    /// `UIScrollView` pan (UIKit throws an exception); see the recipe in the type description.
     public init(horizontalOwner: UIScrollView, verticalOwners: [UIScrollView]) {
         self.horizontalOwner = horizontalOwner
 
-        // Регистрация детей: только уникальные экземпляры и никогда — сам владелец.
+        // Register the children: only unique instances, and never the owner itself.
         var registered: [UIScrollView] = []
         registered.reserveCapacity(verticalOwners.count)
         for child in verticalOwners {
@@ -133,38 +133,38 @@ public final class TesseraGestureArbiter: NSObject, UIGestureRecognizerDelegate 
         super.init()
     }
 
-    // MARK: - Решение по оси
+    // MARK: - Axis decision
 
-    /// Определяет доминирующую ось жеста по вектору скорости.
+    /// Determines the dominant axis of a gesture from its velocity vector.
     ///
-    /// Чистая функция без состояния и UIKit-побочных эффектов — основной объект
-    /// контрактных тестов арбитража.
+    /// A pure function with no state and no UIKit side effects; it is the main subject of the
+    /// arbitration contract tests.
     ///
-    /// Правило: горизонталь, если `|dx| > |dy|`; вертикаль, если `|dx| < |dy|`.
-    /// **При равенстве модулей (в том числе при нулевой скорости) побеждает
-    /// горизонталь** — это осознанный дефолт: без данных о доминировании жест
-    /// остаётся у пейджера, а не «залипает» у ребёнка. Знак скорости не важен,
-    /// сравниваются модули; направление в RTL нормализует сам пейджер,
-    /// к выбору оси это не относится.
+    /// Rule: horizontal if `|dx| > |dy|`; vertical if `|dx| < |dy|`.
+    /// **When the magnitudes are equal (including zero velocity), horizontal
+    /// wins.** This is a deliberate default: without data on dominance the gesture
+    /// stays with the pager instead of getting stuck on a child. The sign of the velocity does not matter;
+    /// magnitudes are compared; the pager normalizes direction in RTL itself,
+    /// which has no bearing on the axis choice.
     ///
-    /// - Parameter velocity: вектор скорости жеста (точки в секунду или точки —
-    ///   важна лишь относительная величина компонент).
-    /// - Returns: `.horizontal`, если `|dx| >= |dy|`; иначе `.vertical`.
+    /// - Parameter velocity: The gesture's velocity vector (points per second or points;
+    ///   only the relative size of the components matters).
+    /// - Returns: `.horizontal` if `|dx| >= |dy|`; otherwise `.vertical`.
     public static func axisDecision(forVelocity velocity: CGPoint) -> TesseraGestureAxis {
         abs(velocity.x) >= abs(velocity.y) ? .horizontal : .vertical
     }
 
     // MARK: - UIGestureRecognizerDelegate
 
-    /// Публичное решение «начинать ли жест».
+    /// The public "should the gesture begin" decision.
     ///
-    /// Для пана горизонтального владельца: если доминирующая ось вертикальная,
-    /// возвращается `false` — пейджер жест не начинает, и вертикальный скролл
-    /// остаётся детям. Остальные жесты (делегат могли назначить и им) не
-    /// ограничиваются — возвращается `true`.
+    /// For the horizontal owner's pan: if the dominant axis is vertical,
+    /// returns `false`, so the pager does not begin the gesture and vertical scrolling
+    /// stays with the children. Other gestures (the delegate may have been assigned to them too) are
+    /// not restricted and the result is `true`.
     ///
-    /// - Parameter gestureRecognizer: проверяемый распознаватель.
-    /// - Returns: `true`, если жест может начаться.
+    /// - Parameter gestureRecognizer: The recognizer to check.
+    /// - Returns: `true` if the gesture may begin.
     public func shouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === horizontalOwner.panGestureRecognizer else {
             return true
@@ -177,27 +177,27 @@ public final class TesseraGestureArbiter: NSObject, UIGestureRecognizerDelegate 
         return axis == .horizontal
     }
 
-    /// Мост к UIKit: `UIGestureRecognizerDelegate` вызывает именно этот метод.
-    /// Решение делегируется публичному `shouldBegin(_:)`, чтобы логика оставалась
-    /// тестируемой без подмены протокола.
+    /// The bridge to UIKit: `UIGestureRecognizerDelegate` calls exactly this method.
+    /// The decision is delegated to the public `shouldBegin(_:)` so that the logic stays
+    /// testable without substituting the protocol.
     ///
-    /// Срабатывает, только если арбитр законно назначен делегатом жеста —
-    /// для встроенного пана `UIScrollView` это невозможно (см. описание типа).
+    /// Fires only if the arbiter is legitimately assigned as the gesture's delegate;
+    /// for the built-in `UIScrollView` pan this is impossible (see the type description).
     @objc public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         shouldBegin(gestureRecognizer)
     }
 
-    // MARK: - Блокировка детей на время горизонтального жеста
+    // MARK: - Blocking the children during a horizontal gesture
 
-    /// Блокирует прокрутку всех вертикальных детей на время горизонтального жеста:
-    /// запоминает текущие `isScrollEnabled` и выставляет `false`.
+    /// Blocks scrolling of all vertical children for the duration of a horizontal gesture:
+    /// it remembers the current `isScrollEnabled` values and sets them to `false`.
     ///
-    /// Вызывается в начале горизонтального скролла пейджера (например, из
-    /// `scrollViewWillBeginDragging`). Layout не выполняется — меняется только
-    /// флаг прокрутки. Повторный вызов идемпотентен: снимок не перезаписывается,
-    /// поэтому исходные значения не теряются.
+    /// Called at the start of the pager's horizontal scroll (for example, from
+    /// `scrollViewWillBeginDragging`). No layout is performed; only the scrolling
+    /// flag changes. A repeated call is idempotent: the snapshot is not overwritten,
+    /// so the original values are not lost.
     public func prepareForHorizontalScroll() {
-        // Уже блокируем — сохраняем первый (истинный) снимок.
+        // Already blocking: keep the first (true) snapshot.
         guard savedChildStates == nil else { return }
 
         var saved: [(view: UIScrollView, wasScrollEnabled: Bool)] = []
@@ -209,30 +209,30 @@ public final class TesseraGestureArbiter: NSObject, UIGestureRecognizerDelegate 
         savedChildStates = saved
     }
 
-    /// Восстанавливает прокрутку детей после горизонтального жеста: возвращает
-    /// каждому ровно то значение `isScrollEnabled`, что было до блокировки
-    /// (изначально выключенным детям останется `false`).
+    /// Restores the children's scrolling after a horizontal gesture: gives
+    /// each child exactly the `isScrollEnabled` value it had before blocking
+    /// (children that were initially disabled stay `false`).
     ///
-    /// Вызывается по завершении горизонтального скролла пейджера (например, из
-    /// `scrollViewDidEndDragging`/`scrollViewDidEndDecelerating`). Вызов без
-    /// предшествующего `prepareForHorizontalScroll()` — no-op. Layout не выполняется.
+    /// Called when the pager's horizontal scroll ends (for example, from
+    /// `scrollViewDidEndDragging`/`scrollViewDidEndDecelerating`). A call without a
+    /// preceding `prepareForHorizontalScroll()` is a no-op. No layout is performed.
     public func endHorizontalScroll() {
         guard let saved = savedChildStates else { return }
-        // Сбрасываем снимок до восстановления: повторный вызов станет no-op.
+        // Reset the snapshot before restoring: a repeated call becomes a no-op.
         savedChildStates = nil
         for entry in saved {
             entry.view.isScrollEnabled = entry.wasScrollEnabled
         }
     }
 
-    // MARK: - Внутреннее
+    // MARK: - Internals
 
-    /// Скорость пана с запасным путём по смещению.
+    /// The pan's velocity with a fallback to translation.
     ///
-    /// В `gestureRecognizerShouldBegin` UIKit обычно уже даёт ненулевой velocity.
-    /// Если он нулевой (жест только начался / вырожденный ввод), доминирующую ось
-    /// определяем по `translation`: для отношения `|dx|` и `|dy|` масштаб не важен,
-    /// поэтому та же чистая функция применима к смещению.
+    /// In `gestureRecognizerShouldBegin`, UIKit usually already provides a non-zero velocity.
+    /// If it is zero (the gesture has just started or the input is degenerate), the dominant axis
+    /// is determined from `translation`: only the ratio of `|dx|` and `|dy|` matters, not the scale,
+    /// so the same pure function applies to the displacement.
     private func effectiveVelocity(of pan: UIPanGestureRecognizer) -> CGPoint {
         let velocity = pan.velocity(in: pan.view)
         guard velocity == .zero else { return velocity }

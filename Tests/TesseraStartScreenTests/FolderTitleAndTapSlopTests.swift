@@ -2,11 +2,11 @@
 //  FolderTitleAndTapSlopTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты E12.7 (мелкие находки ручного прогона Example):
-//  - новая папка получает локализованное название по умолчанию (строки
-//    модуля, а не литерал; `TesseraTileEditConfiguration.folderTitle` его
-//    перекрывает), а заголовок панели показывает название как набрано;
-//  - касание, ушедшее дальше допуска, не считается тапом по плитке.
+//  Tests for minor findings from manual Example runs:
+//  - a new folder gets a localized default title (module strings,
+//    not a literal; `TesseraTileEditConfiguration.folderTitle` overrides it), and the panel
+//    heading shows the title as typed;
+//  - a touch that moved beyond the slop is not treated as a tap on a tile.
 //
 
 #if canImport(UIKit)
@@ -17,9 +17,9 @@ import XCTest
 
 final class FolderTitleAndTapSlopTests: XCTestCase {
 
-    // MARK: - Название папки по умолчанию
+    // MARK: - Default folder title
 
-    /// Строка по умолчанию различается в en/ru и не пуста.
+    /// The default string differs between en and ru and is non-empty.
     func testDefaultFolderTitleIsLocalizedInBothLanguages() {
         let russian = TesseraStartScreenStrings.string(.folderScreenDefaultTitle, language: "ru")
         let english = TesseraStartScreenStrings.string(.folderScreenDefaultTitle, language: "en")
@@ -28,8 +28,8 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         XCTAssertNotEqual(russian, english)
     }
 
-    /// Папка, созданная координатором без названия, получает название по
-    /// умолчанию; явное название и `folderTitle` конфигурации его перекрывают.
+    /// A folder created by the coordinator without a title gets the default
+    /// title; an explicit title and the configuration's `folderTitle` override it.
     func testCoordinatorCreatedFolderGetsDefaultTitle() throws {
         let fallback = TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
         let host = TesseraTestDragHost(descriptors: [tesseraTestTile("a"), tesseraTestTile("b")])
@@ -37,18 +37,18 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         let first = try XCTUnwrap(host.coordinator.createFolder(withTile: "a"))
         XCTAssertEqual(first.title, fallback)
 
-        let second = try XCTUnwrap(host.coordinator.createFolder(withTile: "b", title: "Работа"))
-        XCTAssertEqual(second.title, "Работа", "Явное название не заменяется")
+        let second = try XCTUnwrap(host.coordinator.createFolder(withTile: "b", title: "Work"))
+        XCTAssertEqual(second.title, "Work", "An explicit title is not replaced")
 
         let custom = TesseraTestDragHost(
             descriptors: [tesseraTestTile("a")],
-            configuration: TesseraTileEditConfiguration(folderTitle: "Мои")
+            configuration: TesseraTileEditConfiguration(folderTitle: "Mine")
         )
-        XCTAssertEqual(try XCTUnwrap(custom.coordinator.createFolder(withTile: "a")).title, "Мои")
+        XCTAssertEqual(try XCTUnwrap(custom.coordinator.createFolder(withTile: "a")).title, "Mine")
     }
 
-    /// Папка, созданная drop'ом ярлыка на ярлык (атомарный путь), тоже
-    /// получает название по умолчанию.
+    /// A folder created by dropping a tile onto a tile (the atomic path) also
+    /// gets the default title.
     func testDropCreatedFolderGetsDefaultTitle() throws {
         let host = TesseraTestDragHost(
             descriptors: [tesseraTestTile("t", size: .medium), tesseraTestTile("s", size: .small)],
@@ -66,8 +66,8 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         )
     }
 
-    /// Хранилище по-прежнему принимает пустое название (подстановка — только
-    /// на пути создания папки редактором).
+    /// The store still accepts an empty title (the fallback applies only
+    /// on the editor's folder creation path).
     func testStoreStillAcceptsEmptyFolderTitle() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -77,9 +77,9 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(store.createFolder(withTile: "a", columns: 4)).title, "")
     }
 
-    // MARK: - Заголовок панели и подпись плитки папки
+    // MARK: - Panel heading and folder tile label
 
-    /// Ищет подписи внутри вью (рекурсивно).
+    /// Finds labels inside a view (recursively).
     private func allLabels(in view: UIView) -> [UILabel] {
         var result: [UILabel] = []
         for subview in view.subviews {
@@ -89,14 +89,14 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         return result
     }
 
-    /// Заголовок панели — как набрано, без приведения к нижнему регистру;
-    /// пустое название заменяется названием по умолчанию.
+    /// The panel heading shows the title as typed, without lowercasing;
+    /// an empty title is replaced by the default title.
     func testPanelHeadingShowsTitleAsTypedAndFallsBackWhenEmpty() throws {
-        let typed = TesseraTileFolder(id: "f1", title: "Работа", tiles: [tesseraTestTile("a")])
+        let typed = TesseraTileFolder(id: "f1", title: "Work", tiles: [tesseraTestTile("a")])
         let empty = TesseraTileFolder(id: "f2", title: "", tiles: [tesseraTestTile("b")])
 
         for (folder, expected) in [
-            (typed, "Работа"),
+            (typed, "Work"),
             (empty, TesseraStartScreenStrings.string(.folderScreenDefaultTitle)),
         ] {
             let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -117,7 +117,7 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         }
     }
 
-    /// Плитка папки без названия подписывается названием по умолчанию.
+    /// A folder tile without a title is labelled with the default title.
     func testFolderTileWithoutTitleShowsDefaultTitle() throws {
         let empty = TesseraTileFolder(id: "f", title: "", tiles: [tesseraTestTile("a")])
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -136,9 +136,9 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         })
     }
 
-    // MARK: - Допуск смещения тапа
+    // MARK: - Tap slop
 
-    /// Сетка с одной плиткой и счётчиком `onTap`.
+    /// A grid with one tile and an `onTap` counter.
     private func makeGrid(taps: @escaping (TesseraTileGridItem) -> Void) throws -> (TesseraTileGridView, UICollectionView) {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         grid.columns = 4
@@ -150,26 +150,26 @@ final class FolderTitleAndTapSlopTests: XCTestCase {
         return (grid, collectionView)
     }
 
-    /// Выбор ячейки без смещения касания — тап; со смещением дальше допуска —
-    /// не тап, и следующий выбор после нового касания снова работает.
+    /// Selecting a cell without touch movement is a tap; with movement beyond the slop it is
+    /// not a tap, and the next selection after a new touch works again.
     func testSelectionAfterMovementBeyondSlopIsNotATap() throws {
         var tapped: [AnyHashable] = []
         let (grid, collectionView) = try makeGrid { tapped.append($0.id) }
         let indexPath = IndexPath(item: 0, section: 0)
 
         grid.collectionView(collectionView, didSelectItemAt: indexPath)
-        XCTAssertEqual(tapped, ["a"], "Обычный тап проходит")
+        XCTAssertEqual(tapped, ["a"], "A plain tap goes through")
 
         grid.tapSlopRecognizer.exceededSlop = true
         grid.collectionView(collectionView, didSelectItemAt: indexPath)
-        XCTAssertEqual(tapped, ["a"], "Длинный свайп не вызывает тап")
+        XCTAssertEqual(tapped, ["a"], "A long swipe does not trigger a tap")
 
         grid.tapSlopRecognizer.exceededSlop = false
         grid.collectionView(collectionView, didSelectItemAt: indexPath)
-        XCTAssertEqual(tapped, ["a", "a"], "Новое касание без смещения — снова тап")
+        XCTAssertEqual(tapped, ["a", "a"], "A new touch without movement is a tap again")
     }
 
-    /// Наблюдатель смещения стоит на коллекции и не вмешивается в касания.
+    /// The movement observer sits on the collection view and does not interfere with touches.
     func testSlopRecognizerIsPassiveAndInstalled() throws {
         let (grid, collectionView) = try makeGrid { _ in }
         let recognizer = grid.tapSlopRecognizer

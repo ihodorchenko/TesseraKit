@@ -2,16 +2,16 @@
 //  TesseraPagerReloadTests.swift
 //  TesseraCoreTests
 //
-//  Регрессионные тесты пейджера по повторному ревью (E10.10).
-//  Проектный документ: docs/CORE-IOS-DESIGN.md §2 «Ключевые контракты»
-//  (инвариант t, один писатель contentOffset) и docs/PIVOT-IOS-DESIGN.md §1 п.4
-//  («прямой прыжок без пролёта промежуточных»).
+//  Regression tests for the pager from the repeated review.
+//  Design document: docs/CORE-IOS-DESIGN.md §2 (key contracts:
+//  the `t` invariant, a single writer of contentOffset) and docs/PIVOT-IOS-DESIGN.md §1
+//  ("direct jump without flying through intermediate pages").
 //
-//  Сценарии: `reload(pages:)` сохраняет текущую страницу по `id` и не
-//  пересоздаёт контроллеры с сохранившимся `id`; поворот (смена ширины) не
-//  сбивает текущую страницу; смена направления на лету перераскладывает слоты;
-//  appearance-коллбэки приходят по видимости; анимированный дальний переход
-//  не пролетает промежуточные страницы.
+//  Scenarios: `reload(pages:)` keeps the current page by `id` and does not
+//  recreate controllers whose `id` survived; rotation (a width change) does not
+//  disturb the current page; a direction change on the fly re-lays out the slots;
+//  appearance callbacks arrive according to visibility; an animated far transition
+//  does not fly through the intermediate pages.
 //
 
 #if canImport(UIKit)
@@ -20,7 +20,7 @@ import XCTest
 import UIKit
 @testable import TesseraCore
 
-/// Контроллер страницы, считающий appearance-коллбэки.
+/// A page controller that counts appearance callbacks.
 private final class AppearanceSpyController: UIViewController {
     let pageID: String
 
@@ -59,16 +59,16 @@ private final class AppearanceSpyController: UIViewController {
         didDisappearCount += 1
     }
 
-    /// Видима ли страница по счётчикам коллбэков.
+    /// Whether the page is visible according to the callback counters.
     var isAppeared: Bool { didAppearCount > didDisappearCount }
 
-    /// Пары will/did сбалансированы (нет «висящих» переходов).
+    /// will/did pairs are balanced (no "dangling" transitions).
     var isBalanced: Bool {
         willAppearCount == didAppearCount && willDisappearCount == didDisappearCount
     }
 }
 
-/// Фабрика страниц: запоминает каждый созданный контроллер по `id`.
+/// A page factory: remembers every created controller by `id`.
 private final class PageFactory {
     private(set) var created: [String: [AppearanceSpyController]] = [:]
 
@@ -87,7 +87,7 @@ private final class PageFactory {
     func controller(_ id: String) -> AppearanceSpyController? { created[id]?.last }
 }
 
-/// Шпион делегата: индексы показанных страниц и значения прогресса.
+/// A delegate spy: indexes of the shown pages and progress values.
 private final class PagerDelegateSpy: TesseraPagerDelegate {
     var shownIndexes: [Int] = []
     var progressValues: [CGFloat] = []
@@ -106,7 +106,7 @@ final class TesseraPagerReloadTests: XCTestCase {
     private let pageWidth: CGFloat = 320
     private let pageHeight: CGFloat = 480
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makeLoadedPager(
         _ pages: [TesseraPageDescriptor],
@@ -128,7 +128,7 @@ final class TesseraPagerReloadTests: XCTestCase {
     private func scrollView(of pager: TesseraPagerViewController) throws -> UIScrollView {
         try XCTUnwrap(
             pager.view.subviews.compactMap { $0 as? UIScrollView }.first,
-            "Пейджер обязан содержать UIScrollView"
+            "The pager must contain a UIScrollView"
         )
     }
 
@@ -146,10 +146,10 @@ final class TesseraPagerReloadTests: XCTestCase {
         pager.endAppearanceTransition()
     }
 
-    // MARK: - reload(pages:): текущая страница по id (E10.10 a)
+    // MARK: - reload(pages:): current page by id
 
-    /// `[A, B, C]`, текущая B; `reload([X, A, B, C])` — текущей остаётся B
-    /// (теперь индекс 2), offset и прогресс соответствуют ей.
+    /// `[A, B, C]`, current is B; `reload([X, A, B, C])` leaves B current
+    /// (now at index 2), and the offset and progress correspond to it.
     func testReloadWithInsertedLeadingPageKeepsCurrentPageByID() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(factory.descriptors(["A", "B", "C"]))
@@ -165,7 +165,7 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(loadedIDs(pager), ["A", "B", "C"])
     }
 
-    /// Текущий `id` исчез — сохраняется прежний индекс с зажимом.
+    /// The current `id` disappeared: the previous index is kept, clamped.
     func testReloadWithoutCurrentIDKeepsClampedIndex() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(factory.descriptors(["A", "B", "C"]))
@@ -177,10 +177,10 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, pageWidth)
     }
 
-    // MARK: - reload(pages:): переиспользование контроллеров (E10.10 b)
+    // MARK: - reload(pages:): controller reuse
 
-    /// Контроллеры с сохранившимся `id` не пересоздаются: тот же экземпляр до и
-    /// после `reload`, фрейм — в новом слоте; страница вне окна ±1 не создаётся.
+    /// Controllers whose `id` survived are not recreated: the same instance before and
+    /// after `reload`, with its frame in the new slot; a page outside the ±1 window is not created.
     func testReloadReusesControllersOfSurvivingIDs() throws {
         let factory = PageFactory()
         let (pager, _) = try makeLoadedPager(factory.descriptors(["A", "B", "C"]))
@@ -194,7 +194,7 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(factory.creationCount("A"), 1)
         XCTAssertEqual(factory.creationCount("B"), 1)
         XCTAssertEqual(factory.creationCount("C"), 1)
-        XCTAssertEqual(factory.creationCount("X"), 0, "X вне окна ±1 вокруг B")
+        XCTAssertEqual(factory.creationCount("X"), 0, "X is outside the ±1 window around B")
         XCTAssertTrue(pager.children.contains { $0 === originalA })
         XCTAssertTrue(pager.children.contains { $0 === originalB })
         XCTAssertTrue(pager.children.contains { $0 === originalC })
@@ -202,7 +202,7 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(originalA.view.frame.minX, pageWidth)
     }
 
-    /// Исчезнувшие `id` выгружаются; сохранившийся — тот же экземпляр.
+    /// Ids that disappeared are unloaded; the one that survived is the same instance.
     func testReloadDetachesRemovedIDsAndKeepsSurvivor() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(factory.descriptors(["A", "B", "C"]))
@@ -220,10 +220,10 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(loadedIDs(pager), ["B", "D"])
     }
 
-    // MARK: - Поворот (E10.10 d)
+    // MARK: - Rotation
 
-    /// 3 страницы, текущая — последняя; ширина 390 → 844 (поворот).
-    /// Зажатие offset'а UIKit'ом при смене frame не должно сбивать страницу.
+    /// 3 pages, the current one is the last; width 390 → 844 (rotation).
+    /// UIKit clamping the offset on a frame change must not disturb the page.
     func testWidthChangeKeepsLastPage() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(
@@ -245,7 +245,7 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(spy.progressValues.last), 2, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(factory.controller("C")).view.frame.minX, 844 * 2)
 
-        // Обратный поворот тоже сохраняет страницу.
+        // The reverse rotation also keeps the page.
         pager.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         pager.view.layoutIfNeeded()
 
@@ -253,10 +253,10 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, 390 * 2)
     }
 
-    // MARK: - Смена направления на лету (E10.10 e)
+    // MARK: - Direction change on the fly
 
-    /// Смена `semanticContentAttribute` без явного `setNeedsLayout`: слоты
-    /// перераскладываются, текущая страница сохраняется по порядку чтения.
+    /// A `semanticContentAttribute` change without an explicit `setNeedsLayout`: the slots
+    /// are re-laid out, and the current page is kept by reading order.
     func testSemanticContentAttributeChangeRelayoutsSlots() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(factory.descriptors(["A", "B", "C", "D"]))
@@ -266,7 +266,7 @@ final class TesseraPagerReloadTests: XCTestCase {
         pager.view.semanticContentAttribute = .forceRightToLeft
         pager.view.layoutIfNeeded()
 
-        // RTL: страница чтения 1 — физический слот 4 − 1 − 1 = 2.
+        // RTL: reading page 1 is physical slot 4 − 1 − 1 = 2.
         XCTAssertEqual(pager.currentPageIndex, 1)
         XCTAssertEqual(scrollView.contentOffset.x, pageWidth * 2)
         XCTAssertEqual(try XCTUnwrap(factory.controller("B")).view.frame.minX, pageWidth * 2)
@@ -280,9 +280,9 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(factory.controller("B")).view.frame.minX, pageWidth)
     }
 
-    /// Направление сменилось, а до layout'а пейджер успел синхронизировать
-    /// индекс по offset'у (показ пейджера): offset всё ещё стоит в слотах
-    /// старого направления и не должен трактоваться как зеркальная страница.
+    /// The direction changed, and before layout the pager managed to synchronize
+    /// the index from the offset (the pager being shown): the offset still sits in the slots
+    /// of the old direction and must not be interpreted as a mirrored page.
     func testDirectionChangeBeforeLayoutKeepsReadingPage() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(factory.descriptors(["A", "B", "C", "D"]))
@@ -297,10 +297,10 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(factory.controller("B")).isAppeared)
     }
 
-    // MARK: - Appearance по видимости (E10.10 f)
+    // MARK: - Appearance by visibility
 
-    /// При показе пейджера appear получает только текущая страница; после
-    /// свайпа — новая appear, старая disappear; соседи ±1 коллбэков не получают.
+    /// When the pager is shown, only the current page receives appear; after
+    /// a swipe the new page gets appear and the old one disappear; the ±1 neighbors get no callbacks.
     func testAppearanceCallbacksFollowVisiblePage() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(factory.descriptors(["A", "B", "C"]))
@@ -311,10 +311,10 @@ final class TesseraPagerReloadTests: XCTestCase {
 
         XCTAssertEqual(pageA.willAppearCount, 1)
         XCTAssertEqual(pageA.didAppearCount, 1)
-        XCTAssertEqual(pageB.willAppearCount, 0, "сосед ±1 не виден")
+        XCTAssertEqual(pageB.willAppearCount, 0, "the ±1 neighbor is not visible")
         XCTAssertEqual(pageB.didAppearCount, 0)
 
-        // Свайп на B.
+        // Swipe to B.
         scrollView.contentOffset = CGPoint(x: pageWidth, y: 0)
         pager.scrollViewDidEndDecelerating(scrollView)
 
@@ -322,19 +322,19 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertTrue(pageB.isAppeared)
         XCTAssertFalse(pageA.isAppeared)
         XCTAssertEqual(pageA.didDisappearCount, 1)
-        XCTAssertEqual(pageC.willAppearCount, 0, "новый сосед ±1 не виден")
+        XCTAssertEqual(pageC.willAppearCount, 0, "the new ±1 neighbor is not visible")
 
         disappear(pager)
 
         for page in [pageA, pageB, pageC] {
-            XCTAssertFalse(page.isAppeared, "страница \(page.pageID) осталась видимой")
-            XCTAssertTrue(page.isBalanced, "несбалансированные коллбэки у \(page.pageID)")
+            XCTAssertFalse(page.isAppeared, "page \(page.pageID) stayed visible")
+            XCTAssertTrue(page.isBalanced, "unbalanced callbacks for \(page.pageID)")
         }
         XCTAssertEqual(pageB.didDisappearCount, 1)
     }
 
-    /// Мгновенный дальний переход: прежняя текущая выгружается со
-    /// сбалансированным disappear, целевая получает appear.
+    /// An instant far transition: the previous current page is unloaded with a
+    /// balanced disappear, and the target receives appear.
     func testAppearanceOnFarImmediateJumpAndReload() throws {
         let factory = PageFactory()
         let (pager, _) = try makeLoadedPager(factory.descriptors(["A", "B", "C", "D", "E"]))
@@ -349,7 +349,7 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertTrue(pageA.isBalanced)
         XCTAssertTrue(pageE.isAppeared)
 
-        // reload с сохранившимся id текущей страницы не дёргает её appearance.
+        // A reload that keeps the current page's id does not touch its appearance.
         pager.reload(pages: factory.descriptors(["E", "F"]))
         XCTAssertEqual(pageE.didAppearCount, 1)
         XCTAssertEqual(pageE.didDisappearCount, 0)
@@ -360,16 +360,16 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertTrue(pageE.isBalanced)
     }
 
-    // MARK: - Анимированный дальний переход (E10.10 c)
+    // MARK: - Animated far transition
 
-    /// `go(toPage:animated:true)` дальше ±1: без пролёта промежуточных
-    /// страниц — offset сразу переставляется на соседа цели, окно ±1 вокруг
-    /// цели загружено до анимации, `didShowPageAt` приходит один раз — для цели.
+    /// `go(toPage:animated:true)` beyond ±1: without flying through the intermediate
+    /// pages, the offset is set at once to the target's neighbor, the ±1 window around
+    /// the target is loaded before the animation, and `didShowPageAt` arrives once, for the target.
     ///
-    /// Анимация `setContentOffset(_:animated:)` в тестовом процессе без
-    /// приложения ведёт себя по-разному (без окна завершается синхронно, в
-    /// окне без дисплея не продвигается), поэтому её конец при необходимости
-    /// имитируется: offset ставится в цель, затем `didEndScrollingAnimation`.
+    /// The `setContentOffset(_:animated:)` animation behaves differently in a test process
+    /// without an app (without a window it completes synchronously, in a
+    /// window without a display it does not advance), so its end is emulated
+    /// when needed: the offset is set to the target, then `didEndScrollingAnimation`.
     func testAnimatedFarJumpSkipsIntermediatePages() throws {
         let factory = PageFactory()
         let (pager, scrollView) = try makeLoadedPager(
@@ -380,19 +380,19 @@ final class TesseraPagerReloadTests: XCTestCase {
 
         pager.go(toPage: 5, animated: true)
 
-        // До анимации: offset уже на соседе цели, окно вокруг цели загружено,
-        // промежуточные страницы не создавались.
+        // Before the animation: the offset is already at the target's neighbor, the window around the target is loaded,
+        // and the intermediate pages were not created.
         XCTAssertGreaterThanOrEqual(scrollView.contentOffset.x, pageWidth * 4)
         XCTAssertEqual(loadedIDs(pager), ["E", "F"])
         XCTAssertEqual(factory.creationCount("C"), 0)
         XCTAssertEqual(factory.creationCount("D"), 0)
         XCTAssertTrue(
             spy.shownIndexes.allSatisfy { $0 == 5 },
-            "ложный didShowPage для промежуточной страницы: \(spy.shownIndexes)"
+            "spurious didShowPage for an intermediate page: \(spy.shownIndexes)"
         )
 
-        // Без окна UIKit может завершить анимацию синхронно; иначе имитируем
-        // последний кадр. Повторное завершение не дублирует didShowPage.
+        // Without a window UIKit may complete the animation synchronously; otherwise we emulate
+        // the last frame. A repeated completion does not duplicate didShowPage.
         if spy.shownIndexes.isEmpty {
             scrollView.setContentOffset(CGPoint(x: pageWidth * 5, y: 0), animated: false)
             pager.scrollViewDidEndScrollingAnimation(scrollView)
@@ -405,14 +405,14 @@ final class TesseraPagerReloadTests: XCTestCase {
         XCTAssertEqual(factory.creationCount("D"), 0)
         XCTAssertFalse(spy.progressValues.isEmpty)
         for value in spy.progressValues {
-            XCTAssertGreaterThanOrEqual(value, 4 - 0.0001, "пролёт промежуточной страницы: t = \(value)")
+            XCTAssertGreaterThanOrEqual(value, 4 - 0.0001, "flew through an intermediate page: t = \(value)")
             XCTAssertLessThanOrEqual(value, 5 + 0.0001)
         }
     }
 
-    /// Анимированный переход на текущую страницу не зависает: UIKit не
-    /// присылает `didEndScrollingAnimation` для нулевого пути, переход
-    /// завершается сразу.
+    /// An animated transition to the current page does not hang: UIKit does not
+    /// send `didEndScrollingAnimation` for a zero-length path, so the transition
+    /// completes at once.
     func testAnimatedGoToCurrentPageFinishesImmediately() throws {
         let factory = PageFactory()
         let (pager, _) = try makeLoadedPager(factory.descriptors(["A", "B", "C"]))

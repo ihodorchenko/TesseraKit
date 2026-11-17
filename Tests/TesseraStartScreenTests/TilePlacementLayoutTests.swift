@@ -2,25 +2,25 @@
 //  TilePlacementLayoutTests.swift
 //  TesseraStartScreenTests
 //
-//  Раскладка по явным ячейкам: плитки встают на свои ячейки, дыры остаются
-//  (E14.3, D30). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3
-//  «Плиточная сетка» и «Отступления реализации (E14)», п. 51; решения D30–D33
-//  в docs/STATE.md.
+//  Layout by explicit cells: tiles land on their cells, holes remain
+//  (D30). Design document: docs/STARTSCREEN-IOS-DESIGN.md §3
+//  "Tile grid" and "Implementation deviations"; decisions D30–D33
+//  in docs/STATE.md.
 //
-//  Проверяется `TesseraTileCollectionViewLayout` на коллекции без окна и
-//  руками собранных таблицах ячеек (`TesseraTileGridPlacementTable`):
-//  - снимок с дырами: плитки не «проваливаются» в дыру, высота контента — по
-//    нижней занятой строке, пустые хвостовые строки не считаются;
-//  - откат на упаковку по порядку: таблицы нет, неполная, некорректная
-//    (пересечение, выход за холст, отрицательная ячейка) или другой ширины —
-//    кадры в точности прежние;
-//  - ключ геометрии: смена одних ячеек (и одной заявленной ширины)
-//    пересчитывает раскладку;
-//  - раскрытая папка с дырами ниже: строки ниже полосы сдвигаются вниз на
-//    высоту панели и зазор без репака, дыры сохраняются; откат на упаковку
-//    сохраняет прежний репак под панелью (D17/D18);
-//  - RTL: ячейки логические, зеркалит раскладка;
-//  - узкая сетка: большая плитка ужимается, а не пропускается.
+//  `TesseraTileCollectionViewLayout` is checked on a collection without a window and on
+//  hand-built cell tables (`TesseraTileGridPlacementTable`):
+//  - a snapshot with holes: tiles do not "fall" into a hole, the content height follows the
+//    lowest occupied row, empty trailing rows do not count;
+//  - fallback to order packing: no table, an incomplete one, an invalid one
+//    (an overlap, going beyond the canvas, a negative cell) or one for another width —
+//    the frames are exactly as before;
+//  - the geometry key: a change of cells alone (or of the declared width alone)
+//    recomputes the layout;
+//  - an opened folder with holes below: rows below the band shift down by
+//    the panel height and the gap with no repack, holes are preserved; the fallback to packing
+//    keeps the former repack under the panel (D17/D18);
+//  - RTL: cells are logical, the layout mirrors;
+//  - a narrow grid: a large tile is clamped rather than skipped.
 //
 
 #if canImport(UIKit)
@@ -31,12 +31,12 @@ import XCTest
 
 final class TilePlacementLayoutTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Масштаб пиксельного выравнивания тестов.
+    /// The pixel-alignment scale of the tests.
     private let scale: CGFloat = 2
 
-    /// Раскладка на коллекции без окна.
+    /// A layout on a collection without a window.
     private struct Harness {
         let layout: TesseraTileCollectionViewLayout
         let collectionView: UICollectionView
@@ -62,7 +62,7 @@ final class TilePlacementLayoutTests: XCTestCase {
         return Harness(layout: layout, collectionView: collectionView)
     }
 
-    /// Ожидаемая геометрия сетки: те же формулы, что у раскладки (E10.1).
+    /// The expected grid geometry: the same formulas as the layout's.
     private struct Geometry {
         let metrics: TesseraTileLayoutEngine.GridMetrics
         let left: CGFloat
@@ -83,10 +83,10 @@ final class TilePlacementLayoutTests: XCTestCase {
             self.rightToLeft = rightToLeft
         }
 
-        /// Шаг строки/колонки: юнит + зазор.
+        /// The row/column pitch: unit + gap.
         var pitch: CGFloat { metrics.unit + metrics.spacing }
 
-        /// Рамка плитки на ячейке (логические координаты).
+        /// A tile frame on a cell (logical coordinates).
         func frame(_ cell: TesseraTileGridPlacement, size: TesseraTileSize) -> CGRect {
             let slot = TesseraTileLayoutSlot(id: "x", size: size, column: cell.column, row: cell.row, unit: metrics.unit)
             var rect = TesseraTileLayoutEngine.rect(
@@ -110,17 +110,17 @@ final class TilePlacementLayoutTests: XCTestCase {
         TesseraTileGridPlacement(row: row, column: column)
     }
 
-    /// Рамки набора по индексу (раскладка получает набор и таблицу, как от сетки).
+    /// Frames of the set by index (the layout receives the set and the table, as from the grid).
     private func frames(
         _ harness: Harness,
         _ items: [TesseraTileGridItem],
         table: TesseraTileGridPlacementTable?
     ) throws -> [CGRect] {
         harness.layout.setItems(items, placements: table, reason: .items)
-        return try items.indices.map { try XCTUnwrap(harness.layout.frame(forItemAt: $0), "кадр \($0)") }
+        return try items.indices.map { try XCTUnwrap(harness.layout.frame(forItemAt: $0), "frame \($0)") }
     }
 
-    /// Размещения набора в порядке `items` — для индекса вставки панели.
+    /// Placements of the set in `items` order — for the panel insertion index.
     private func placed(_ items: [TesseraTileGridItem], table: TesseraTileGridPlacementTable) -> [TesseraTilePlacedItem] {
         items.compactMap { item in
             guard !item.isFolderPanel, let cell = table.cells[item.id] else { return nil }
@@ -149,9 +149,9 @@ final class TilePlacementLayoutTests: XCTestCase {
         return !intersection.isNull && intersection.width > 0.001 && intersection.height > 0.001
     }
 
-    // MARK: - Дыры
+    // MARK: - Holes
 
-    /// Плитки встают на свои ячейки; дыра остаётся, ничто не поднимается в неё.
+    /// Tiles land on their cells; a hole remains, nothing moves up into it.
     func testHolesStayAndTilesDoNotBackfill() throws {
         let items = [small("a"), small("b"), small("c")]
         let table = TesseraTileGridPlacementTable(
@@ -170,19 +170,19 @@ final class TilePlacementLayoutTests: XCTestCase {
                 g.frame(cell(0, 3), size: .small),
                 g.frame(cell(2, 1), size: .small),
             ],
-            "кадры по ячейкам"
+            "frames by cells"
         )
-        XCTAssertEqual(result[2].minY - result[0].minY, 2 * g.pitch, accuracy: 0.001, "две пустые строки над c")
-        XCTAssertEqual(result[1].minX - result[0].minX, 3 * g.pitch, accuracy: 0.001, "две пустые колонки между a и b")
+        XCTAssertEqual(result[2].minY - result[0].minY, 2 * g.pitch, accuracy: 0.001, "two empty rows above c")
+        XCTAssertEqual(result[1].minX - result[0].minX, 3 * g.pitch, accuracy: 0.001, "two empty columns between a and b")
 
-        // Без таблицы те же плитки были бы упакованы вплотную в первую строку.
+        // Without a table the same tiles would be packed tightly into the first row.
         let packed = try frames(makeHarness(), items, table: nil)
         XCTAssertEqual(packed[2].minY, packed[0].minY, accuracy: 0.001)
         XCTAssertGreaterThan(result[2].minY, packed[2].minY)
     }
 
-    /// Высота контента — нижняя граница самой нижней занятой строки; пустые
-    /// хвостовые строки (таблица лишних ячеек) не прибавляют высоты.
+    /// The content height is the lower bound of the lowest occupied row; empty
+    /// trailing rows (a table of extra cells) add no height.
     func testContentHeightIsBottomOfLowestOccupiedRow() throws {
         let harness = makeHarness()
         let items = [small("a"), medium("b")]
@@ -196,12 +196,12 @@ final class TilePlacementLayoutTests: XCTestCase {
             harness.layout.collectionViewContentSize.height,
             lowest + 16,
             accuracy: 0.001,
-            "нижняя занятая строка + нижнее поле"
+            "lowest occupied row + bottom inset"
         )
         XCTAssertLessThan(harness.layout.collectionViewContentSize.height, Geometry(scale: scale).top + 50 * Geometry(scale: scale).pitch)
     }
 
-    /// Единственная плитка глубоко вниз: пустые строки над ней сохраняются.
+    /// A single tile deep down: the empty rows above it are preserved.
     func testLeadingEmptyRowsAreKept() throws {
         let harness = makeHarness()
         let result = try frames(
@@ -214,8 +214,8 @@ final class TilePlacementLayoutTests: XCTestCase {
         XCTAssertEqual(harness.layout.collectionViewContentSize.height, result[0].maxY + 16, accuracy: 0.001)
     }
 
-    /// Большая плитка на узкой сетке ужимается и не пропускается; след считает
-    /// `fittingSize`, дыра под ней остаётся.
+    /// A large tile on a narrow grid is clamped and not skipped; the footprint is computed by
+    /// `fittingSize`, the hole under it remains.
     func testWideTileOnNarrowGridIsFittedNotSkipped() throws {
         let harness = makeHarness(columns: 2)
         let items: [TesseraTileGridItem] = [.tile(tesseraTestTile("w", size: .wide)), small("s")]
@@ -227,13 +227,13 @@ final class TilePlacementLayoutTests: XCTestCase {
         assertFrames(
             result,
             [g.frame(cell(0, 0), size: TesseraTileLayoutEngine.fittingSize(.wide, columns: 2)), g.frame(cell(3, 1), size: .small)],
-            "ужатая плитка и малая плитка после дыры"
+            "a clamped tile and a small tile after the hole"
         )
     }
 
-    // MARK: - Откат на упаковку
+    // MARK: - Fallback to packing
 
-    /// Все виды негодной таблицы дают в точности прежние кадры упаковки.
+    /// All kinds of an unusable table give exactly the former packing frames.
     func testFallbackToPackOverOrderKeepsLegacyFrames() throws {
         let items = [small("a"), small("b"), medium("c"), small("d")]
         let reference = try frames(makeHarness(), items, table: nil)
@@ -253,14 +253,14 @@ final class TilePlacementLayoutTests: XCTestCase {
         negative["a"] = cell(-1, 0)
 
         let cases: [(String, TesseraTileGridPlacementTable?)] = [
-            ("таблицы нет", nil),
-            ("пустая таблица", TesseraTileGridPlacementTable(cells: [:], columns: 4)),
-            ("неполная", TesseraTileGridPlacementTable(cells: incomplete, columns: 4)),
-            ("пересечение", TesseraTileGridPlacementTable(cells: overlapping, columns: 4)),
-            ("плитка вне холста", TesseraTileGridPlacementTable(cells: outside, columns: 4)),
-            ("широкая плитка выходит за холст", TesseraTileGridPlacementTable(cells: tooWide, columns: 4)),
-            ("отрицательная строка", TesseraTileGridPlacementTable(cells: negative, columns: 4)),
-            ("другая ширина холста", TesseraTileGridPlacementTable(cells: good, columns: 6)),
+            ("no table", nil),
+            ("empty table", TesseraTileGridPlacementTable(cells: [:], columns: 4)),
+            ("incomplete", TesseraTileGridPlacementTable(cells: incomplete, columns: 4)),
+            ("overlap", TesseraTileGridPlacementTable(cells: overlapping, columns: 4)),
+            ("tile outside the canvas", TesseraTileGridPlacementTable(cells: outside, columns: 4)),
+            ("a wide tile goes beyond the canvas", TesseraTileGridPlacementTable(cells: tooWide, columns: 4)),
+            ("negative row", TesseraTileGridPlacementTable(cells: negative, columns: 4)),
+            ("another canvas width", TesseraTileGridPlacementTable(cells: good, columns: 6)),
         ]
         for (name, table) in cases {
             let harness = makeHarness()
@@ -269,14 +269,14 @@ final class TilePlacementLayoutTests: XCTestCase {
             assertFrames(result, reference, name)
         }
 
-        // Контроль: корректная полная таблица — другая картинка.
+        // Control: a valid full table gives a different picture.
         let harness = makeHarness()
         let explicit = try frames(harness, items, table: TesseraTileGridPlacementTable(cells: good, columns: 4))
         XCTAssertTrue(harness.layout.usesExplicitPlacements)
         XCTAssertNotEqual(explicit[3].minY, reference[3].minY)
     }
 
-    /// Ширина холста не заявлена (`nil`): таблицу проверяет только `validate`.
+    /// The canvas width is not declared (`nil`): the table is checked by `validate` only.
     func testTableWithoutDeclaredWidthIsValidatedOnGridWidth() throws {
         let items = [small("a"), small("b")]
         let harness = makeHarness()
@@ -292,13 +292,13 @@ final class TilePlacementLayoutTests: XCTestCase {
             items,
             table: TesseraTileGridPlacementTable(cells: ["a": cell(0, 0), "b": cell(0, 4)], columns: nil)
         )
-        XCTAssertFalse(harness.layout.usesExplicitPlacements, "колонка 4 вне холста из 4 колонок")
+        XCTAssertFalse(harness.layout.usesExplicitPlacements, "column 4 is outside a 4-column canvas")
     }
 
-    // MARK: - Ключ геометрии
+    // MARK: - Geometry key
 
-    /// Одна лишь смена ячейки (состав, размеры и порядок те же) пересчитывает
-    /// раскладку; та же таблица повторно — кадры не меняются.
+    /// A change of a single cell alone (composition, sizes and order the same) recomputes
+    /// the layout; the same table again — the frames do not change.
     func testCellOnlyChangeInvalidatesGeometry() throws {
         let harness = makeHarness()
         let items = [small("a"), small("b")]
@@ -307,16 +307,16 @@ final class TilePlacementLayoutTests: XCTestCase {
 
         let before = try frames(harness, items, table: first)
         let again = try frames(harness, items, table: first)
-        assertFrames(again, before, "та же таблица — те же кадры")
+        assertFrames(again, before, "the same table — the same frames")
 
         let after = try frames(harness, items, table: second)
         let g = Geometry(scale: scale)
-        XCTAssertEqual(after[1].minY - before[1].minY, 3 * g.pitch, accuracy: 0.001, "b ушла на три строки вниз")
-        assertFrames([after[0]], [before[0]], "a не двигалась")
+        XCTAssertEqual(after[1].minY - before[1].minY, 3 * g.pitch, accuracy: 0.001, "b moved down three rows")
+        assertFrames([after[0]], [before[0]], "a did not move")
     }
 
-    /// Смена одной заявленной ширины таблицы (те же ячейки) переключает раскладку
-    /// между явными ячейками и упаковкой.
+    /// A change of the declared table width alone (the same cells) switches the layout
+    /// between explicit cells and packing.
     func testDeclaredWidthChangeInvalidatesGeometry() throws {
         let harness = makeHarness()
         let items = [small("a"), small("b")]
@@ -329,8 +329,8 @@ final class TilePlacementLayoutTests: XCTestCase {
         XCTAssertNotEqual(explicit[1].minY, fallback[1].minY)
     }
 
-    /// Смена числа колонок сетки делает таблицу чужой: откат на упаковку без
-    /// повторной подачи набора.
+    /// A change in the grid's column count makes the table foreign: fallback to packing without
+    /// resubmitting the set.
     func testGridColumnsChangeMakesTableForeign() throws {
         let harness = makeHarness(columns: 4)
         let items = [small("a"), small("b")]
@@ -343,9 +343,9 @@ final class TilePlacementLayoutTests: XCTestCase {
         XCTAssertFalse(harness.layout.usesExplicitPlacements)
     }
 
-    // MARK: - Панель раскрытой папки
+    // MARK: - Opened folder panel
 
-    /// Набор: папка 2×2 с соседями в полосе и три плитки ниже с дырами.
+    /// The set: a 2×2 folder with neighbors in the band and three tiles below with holes.
     private func panelScenario() -> (folder: TesseraTileFolder, items: [TesseraTileGridItem], table: TesseraTileGridPlacementTable) {
         let folder = tesseraTestFolder("f", tileCount: 6)
         let items: [TesseraTileGridItem] = [
@@ -361,9 +361,9 @@ final class TilePlacementLayoutTests: XCTestCase {
         return (folder, items, table)
     }
 
-    /// Панель с явными ячейками: полоса и всё выше — на месте, строки ниже
-    /// сдвигаются вниз на высоту панели и зазор, дыры между ними и под панелью
-    /// сохраняются (репака нет).
+    /// A panel with explicit cells: the band and everything above stay in place, the rows below
+    /// shift down by the panel height and the gap, the holes between them and under the panel
+    /// are preserved (no repack).
     func testExpandedPanelShiftsRowsBelowWithoutRepack() throws {
         let scenario = panelScenario()
         let harness = makeHarness()
@@ -383,35 +383,35 @@ final class TilePlacementLayoutTests: XCTestCase {
         let open = try frames(harness, expandedItems, table: scenario.table)
         XCTAssertTrue(harness.layout.usesExplicitPlacements)
 
-        // Индексы базовых элементов в раскрытом наборе.
+        // Indexes of the base items in the opened set.
         func openFrame(_ baseIndex: Int) -> CGRect { open[baseIndex < panelIndex ? baseIndex : baseIndex + 1] }
         let panel = open[panelIndex]
 
-        // Полоса (папка 2×2 + s1 + s2) — строки 0–1, панель — со строки 2.
+        // The band (the 2×2 folder + s1 + s2) is rows 0–1, the panel starts at row 2.
         XCTAssertEqual(panel.minY, g.top + 2 * g.pitch, accuracy: 0.001)
         XCTAssertGreaterThan(panel.height, 0)
         for baseIndex in 0...2 {
-            assertFrames([openFrame(baseIndex)], [collapsed[baseIndex]], "полоса не двигается: \(baseIndex)")
+            assertFrames([openFrame(baseIndex)], [collapsed[baseIndex]], "the band does not move: \(baseIndex)")
         }
 
-        // x, y, m — на высоту панели и зазор ниже; взаимное положение сохранено.
+        // x, y, m go below by the panel height and the gap; their relative position is preserved.
         let shift = panel.height + g.metrics.spacing
         for baseIndex in 3...5 {
             XCTAssertEqual(
                 openFrame(baseIndex).minY - collapsed[baseIndex].minY,
                 shift,
                 accuracy: 0.001,
-                "сдвиг на панель: \(baseIndex)"
+                "shift by the panel: \(baseIndex)"
             )
             XCTAssertEqual(openFrame(baseIndex).minX, collapsed[baseIndex].minX, accuracy: 0.001)
         }
-        XCTAssertEqual(openFrame(4).minY - openFrame(3).minY, 3 * g.pitch, accuracy: 0.001, "дыра между x и y")
-        XCTAssertEqual(openFrame(3).minY - panel.maxY, 2 * g.pitch + g.metrics.spacing, accuracy: 0.001, "две пустые строки под панелью")
+        XCTAssertEqual(openFrame(4).minY - openFrame(3).minY, 3 * g.pitch, accuracy: 0.001, "the hole between x and y")
+        XCTAssertEqual(openFrame(3).minY - panel.maxY, 2 * g.pitch + g.metrics.spacing, accuracy: 0.001, "two empty rows under the panel")
 
-        // Ничто не пересекается; высота контента — по нижней занятой строке.
+        // Nothing overlaps; the content height follows the lowest occupied row.
         for lhs in open.indices {
             for rhs in open.indices where rhs > lhs {
-                XCTAssertFalse(overlaps(open[lhs], open[rhs]), "\(lhs) и \(rhs) пересекаются")
+                XCTAssertFalse(overlaps(open[lhs], open[rhs]), "\(lhs) and \(rhs) overlap")
             }
         }
         XCTAssertEqual(
@@ -421,8 +421,8 @@ final class TilePlacementLayoutTests: XCTestCase {
         )
     }
 
-    /// Откат на упаковку сохраняет прежний репак под панелью: первая плитка под
-    /// панелью встаёт сразу под ней, на зазор ниже (D17/D18, E10.1).
+    /// The fallback to packing keeps the former repack under the panel: the first tile under
+    /// the panel goes right below it, a gap lower (D17/D18).
     func testExpandedPanelFallbackKeepsLegacyRepack() throws {
         let scenario = panelScenario()
         let harness = makeHarness()
@@ -439,23 +439,23 @@ final class TilePlacementLayoutTests: XCTestCase {
         let open = try frames(harness, expandedItems, table: nil)
         XCTAssertFalse(harness.layout.usesExplicitPlacements)
 
-        // По упаковке `m` (2×2) — единственная плитка ниже полосы, и она
-        // встаёт сразу под панелью.
+        // By packing `m` (2×2) is the only tile below the band, and it
+        // goes right below the panel.
         let panel = open[panelIndex]
         let mIndex = expandedItems.firstIndex { !$0.isFolderPanel && $0.id == AnyHashable("m") }!
         XCTAssertEqual(open[mIndex].minY, panel.maxY + 8, accuracy: 0.001)
 
-        // Негодная таблица ведёт себя так же.
+        // An unusable table behaves the same way.
         let broken = TesseraTileGridPlacementTable(cells: ["f": cell(0, 0)], columns: 4)
         let fallback = try frames(harness, expandedItems, table: broken)
         XCTAssertFalse(harness.layout.usesExplicitPlacements)
-        assertFrames(fallback, open, "неполная таблица — прежние кадры")
+        assertFrames(fallback, open, "an incomplete table — the former frames")
     }
 
     // MARK: - RTL
 
-    /// Ячейки логические: колонка 0 в RTL — правый край сетки; зеркалит
-    /// раскладка, а не таблица.
+    /// Cells are logical: column 0 in RTL is the right edge of the grid; the layout
+    /// mirrors, not the table.
     func testExplicitCellsAreMirroredInRightToLeft() throws {
         let items = [small("a"), small("b"), medium("c")]
         let table = TesseraTileGridPlacementTable(
@@ -475,17 +475,17 @@ final class TilePlacementLayoutTests: XCTestCase {
                 g.frame(cell(0, 3), size: .small),
                 g.frame(cell(2, 1), size: .medium),
             ],
-            "зеркальные кадры"
+            "mirrored frames"
         )
-        XCTAssertEqual(rtl[0].maxX, g.left + g.metrics.width, accuracy: 0.001, "колонка 0 — правый край")
-        XCTAssertEqual(rtl[1].minX, g.left, accuracy: 0.001, "колонка 3 — левый край")
+        XCTAssertEqual(rtl[0].maxX, g.left + g.metrics.width, accuracy: 0.001, "column 0 is the right edge")
+        XCTAssertEqual(rtl[1].minX, g.left, accuracy: 0.001, "column 3 is the left edge")
         for index in items.indices {
-            XCTAssertEqual(rtl[index].minY, ltr[index].minY, accuracy: 0.001, "строки не зеркалятся")
+            XCTAssertEqual(rtl[index].minY, ltr[index].minY, accuracy: 0.001, "rows are not mirrored")
             XCTAssertEqual(
                 rtl[index].minX - g.left,
                 g.metrics.width - (ltr[index].maxX - g.left),
                 accuracy: 0.001,
-                "зеркало внутри ширины сетки"
+                "mirror within the grid width"
             )
         }
     }
