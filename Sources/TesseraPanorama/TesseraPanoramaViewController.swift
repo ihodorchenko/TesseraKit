@@ -2,154 +2,154 @@
 //  TesseraPanoramaViewController.swift
 //  TesseraPanorama
 //
-//  Оркестратор панорамы: горизонталь, фон с параллаксом, заголовки секций и
-//  child-контроллеры с ленивой загрузкой.
-//  Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная
-//  архитектура» (компоновка: TesseraPanoramaViewController → TesseraPanoScrollView +
-//  PanoBackgroundView + PanoHeaderView + контейнер секций), §4 «Геометрия и
-//  математика ядра» (единый скаляр t, параллакс фона, снап, никакого layout в
-//  скролле), §5 «Вертикальный скролл внутри секции» (вариант B: горизонталь
-//  родителю, вертикаль ребёнку), §6 «Производительность» (lazy ±1, prefetch,
-//  без layout в горячем пути), §7 «Accessibility» (VoiceOver, Reduce Motion,
-//  Dynamic Type, RTL), §8 «Адаптивность» (поворот, одна секция, пустой список),
-//  §9 «Объём MVP».
+//  The panorama orchestrator: the horizontal strip, the parallax background, the section headers, and
+//  child controllers with lazy loading.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md (conceptual
+//  architecture: the composition TesseraPanoramaViewController → TesseraPanoScrollView +
+//  PanoBackgroundView + PanoHeaderView + the sections container; core geometry and
+//  math: a single scalar t, background parallax, snapping, no layout in
+//  scrolling; vertical scrolling inside a section: horizontal goes to the
+//  parent and vertical to the child; performance: lazy ±1, prefetch,
+//  no layout on the hot path; accessibility: VoiceOver, Reduce Motion,
+//  Dynamic Type, RTL; adaptivity: rotation, a single section, an empty list;
+//  the MVP scope).
 //
-//  Инварианты (§1, §4):
-//  - единственный скаляр `t = contentOffset.x / itemWidth` — источник для фона,
-//    заголовков и делегата;
-//  - `contentOffset` пишут только жест `TesseraPanoScrollView` и программный переход
-//    (`selectSection(at:animated:)`) — правило одного писателя из
-//    docs/CORE-IOS-DESIGN.md §2;
-//  - в `scrollViewDidScroll` — только `frame`/`transform`/`alpha`, без layout.
+//  Invariants:
+//  - the single scalar `t = contentOffset.x / itemWidth` is the source for the background,
+//    the headers, and the delegate;
+//  - `contentOffset` is written only by the `TesseraPanoScrollView` gesture and the programmatic transition
+//    (`selectSection(at:animated:)`), per the single-writer rule from
+//    docs/CORE-IOS-DESIGN.md;
+//  - `scrollViewDidScroll` changes only `frame`/`transform`/`alpha`, with no layout.
 //
 
 #if canImport(UIKit)
 import TesseraCore
 import UIKit
 
-/// Контроллер панорамы: горизонтальные секции-«холсты» с peek, параллакс фона и
-/// заголовки, анимированные по прогрессу свайпа (docs/PANORAMA-IOS-DESIGN.md §3).
+/// The panorama controller: horizontal "canvas" sections with a peek, a parallax background, and
+/// headers animated by the swipe progress (see docs/PANORAMA-IOS-DESIGN.md).
 ///
-/// ## Компоновка (§3)
+/// ## Composition
 ///
 /// ```
 /// TesseraPanoramaViewController
-///     ├─ TesseraParallaxLayer + UIImageView  ← фон, параллакс по смещению
-///     ├─ TesseraPanoScrollView                       ← горизонталь, снап, t
-///     │     └─ child-VC секций (окно ±1)      ← вертикальный скролл секции
-///     └─ PanoHeaderView                       ← заголовки по тому же t
+///     ├─ TesseraParallaxLayer + UIImageView  ← background, parallax by offset
+///     ├─ TesseraPanoScrollView               ← horizontal, snapping, t
+///     │     └─ section child view controllers (±1 window)  ← the section's vertical scroll
+///     └─ PanoHeaderView                      ← headers driven by the same t
 /// ```
 ///
-/// Фон лежит ниже остальных слоёв и виден в полосе «подсматривания» (peek) и в
-/// секциях с прозрачным контентом. Заголовки вынесены над полосой прокрутки:
-/// они не участвуют в горизонтальной раскладке, а двигаются собственным
-/// `transform` от того же `t` (§4, «Заголовки»).
+/// The background lies below the other layers and is visible in the peek strip and in
+/// sections with transparent content. The headers sit above the scroll strip:
+/// they do not take part in the horizontal layout and move with their own
+/// `transform` driven by the same `t`.
 ///
-/// ## Единый прогресс (§1, §4)
+/// ## A single progress value
 ///
-/// `t = contentOffset.x / itemWidth`; целая часть — индекс секции, дробная —
-/// прогресс перехода. В RTL прогресс и индекс нормализуются по направлению
-/// чтения через ``TesseraRTL``: `0` — первая секция для пользователя, а не
-/// первый физический слот. Фон и заголовки получают тот же `t`, поэтому
-/// расхождений между слоями быть не может.
+/// `t = contentOffset.x / itemWidth`; the integer part is the section index and the fractional part is
+/// the transition progress. In RTL, progress and index are normalized by the reading
+/// direction through ``TesseraRTL``: `0` is the first section for the user, not the
+/// first physical slot. The background and headers receive the same `t`, so
+/// the layers cannot disagree.
 ///
-/// ## Ленивая загрузка и prefetch (§6)
+/// ## Lazy loading and prefetch
 ///
-/// В памяти — текущая секция и соседи ±1. Окно обновляется по завершении
-/// перехода и в layout-проходе, а сосед, к которому уже летит инерция,
-/// догружается в `scrollViewWillEndDragging` — до снапа, чтобы свайп не упирался
-/// в ленивую загрузку. В `scrollViewDidScroll` иерархия не меняется.
+/// The current section and its ±1 neighbors are kept in memory. The window is updated when a
+/// transition completes and in the layout pass, and the neighbor that inertia is already heading to
+/// is loaded in `scrollViewWillEndDragging`, before the snap, so a swipe does not stall
+/// on lazy loading. The hierarchy does not change in `scrollViewDidScroll`.
 ///
-/// ## Вертикальный скролл (§5, вариант B)
+/// ## Vertical scrolling
 ///
-/// Горизонталь обрабатывает ``TesseraPanoScrollView``, вертикаль — собственный скролл
-/// секции. Контроллеры контента регистрируют свои вертикальные скролл-вью через
-/// ``registerVerticalOwner(_:)``; на время горизонтального жеста их прокрутка
-/// блокируется и восстанавливается через ``TesseraGestureArbiter``. Точка
-/// принятия решения по оси и вынужденное отклонение от §5 задокументированы в
+/// ``TesseraPanoScrollView`` handles horizontal scrolling, and the section's own scroll handles
+/// vertical. Content controllers register their vertical scroll views through
+/// ``registerVerticalOwner(_:)``; during a horizontal gesture their scrolling
+/// is blocked and restored through ``TesseraGestureArbiter``. The point where
+/// the axis decision is made and the forced deviation from the intended design are documented in
 /// ``registerVerticalOwner(_:)``.
 ///
-/// ## Accessibility (§7)
+/// ## Accessibility
 ///
-/// - **VoiceOver**: трёхпальцевый свайп обрабатывается ``TesseraPanoScrollView`` и
-///   контроллером как шаг по секциям
-///   (``TesseraAccessibility/pageStep(for:layoutDirection:)``), а по завершении
-///   перехода название секции озвучивается через
-///   ``TesseraAccessibility/announcePageChange(_:)``. Заголовок слоя заголовков —
-///   отдельный элемент с трейтом `.header`.
-/// - **Reduce Motion**: параллакс выключает сам ``TesseraParallaxLayer`` (фактор
-///   0), статичные заголовки — ``PanoHeaderView``, а программные переходы
-///   контроллер выполняет без анимации.
-/// - **Dynamic Type**: шрифты заголовков масштабируются внутри
-///   ``PanoHeaderView``; смена категории размера текста пересчитывает раскладку
-///   вне горячего пути скролла.
-/// - **RTL**: слоты секций зеркалируются, прогресс и индекс нормализуются через
-///   ``TesseraRTL`` (§7, «RTL»).
+/// ``registerVerticalOwner(_:)``.
+/// - **VoiceOver**: a three-finger swipe is handled by ``TesseraPanoScrollView`` and
+///   the controller as a step through the sections
+///   (``TesseraAccessibility/pageStep(for:layoutDirection:)``), and when the
+///   transition completes the section name is announced through
+///   ``TesseraAccessibility/announcePageChange(_:)``. The headers layer is
+///   a separate element with the `.header` trait.
+/// - **Reduce Motion**: ``TesseraParallaxLayer`` disables parallax itself (factor
+///   0), ``PanoHeaderView`` makes the headers static, and the controller performs programmatic
+///   transitions without animation.
+/// - **Dynamic Type**: the header fonts are scaled inside
+///   ``PanoHeaderView``; a change of the text size category recomputes the layout
+///   outside the scroll hot path.
+///   ``TesseraRTL`` (see the RTL notes in the design document).
 ///
-/// ## Адаптивность (§8)
+/// - **RTL**: the section slots are mirrored, and progress and index are normalized through
 ///
-/// При смене ширины/высоты (поворот, iPad, split view) `itemWidth` и `contentSize`
-/// пересчитываются, а текущая секция восстанавливается по индексу и сохранённой
-/// доле внутри секции. Смена геометрии во время активного жеста или инерции
-/// откладывается до их завершения (§8). Одна секция — без снапа и на всю ширину;
-/// пустой список — без секций и заголовков (placeholder не фабрикуется, см.
-/// примечание ниже).
+/// ## Adaptivity
+/// When the width/height changes (rotation, iPad, split view), `itemWidth` and `contentSize`
+/// are recomputed, and the current section is restored by its index and the saved
+/// fraction within the section. A geometry change during an active gesture or inertia
+/// is deferred until they finish. A single section has no snapping and takes the full width;
+/// an empty list has no sections and no headers (no placeholder is fabricated; see the
 ///
-/// - Note: **Пустой список.** ``TesseraPanoramaDelegate`` (волна 1) не имеет хука
-///   placeholder-состояния, а менять протокол вне write-скоупа нельзя. Поэтому
-///   при пустом наборе секций контроллер не показывает собственный placeholder:
-///   остаётся только фон, заголовки скрыты. Хост узнаёт о пустом состоянии по
-///   пустому `sections` в момент `reload`. Открытый вопрос для следующей волны —
-///   добавить в делегат событие пустого состояния (см. отчёт).
+/// note below).
+/// - Note: **Empty list.** ``TesseraPanoramaDelegate`` has no hook for a
+///   placeholder state. With an empty set of sections, the controller therefore
+///   shows no placeholder of its own: only the background remains and the headers are hidden. The host learns about the empty state from the
+///   empty `sections` at the moment of `reload`. An open question for a future
+///   revision is adding an empty-state event to the delegate.
 ///
-/// - Important: Только главный поток: UI-состояние не размазывается по модулям
-///   (docs/CORE-IOS-DESIGN.md §3). Делегат не удерживается.
+/// - Important: Main thread only: UI state is not spread across modules
+///   (docs/CORE-IOS-DESIGN.md). The delegate is not retained.
 public final class TesseraPanoramaViewController: UIViewController {
 
-    // MARK: - Метрики компоновки
+    // MARK: - Layout metrics
 
-    /// Геометрия, не зависящая от стиля и Dynamic Type.
+    /// Geometry that does not depend on the style or Dynamic Type.
     private enum Metrics {
-        /// Отступ от верхней safe area до слоя заголовков.
+        /// The inset from the top safe area to the headers layer.
         static let headerTopPadding: CGFloat = 8
 
-        /// Отступ от заголовков до полосы прокрутки.
+        /// The inset from the headers to the scroll strip.
         static let headerBottomSpacing: CGFloat = 8
 
-        /// Боковой отступ текста заголовков.
+        /// The side inset of the header text.
         static let headerSideInset: CGFloat = 20
 
-        /// Допуск «offset уже выровнен», в точках (доводка снапа, E9.2б).
+        /// The "offset is already aligned" tolerance, in points (settling a snap).
         static let alignmentTolerance: CGFloat = 0.5
 
-        /// Минимальный запас фонового слоя под «резину» на границах (§4).
+        /// The minimum margin of the background layer for the rubber band at the edges.
         ///
-        /// При bounce `contentOffset` уходит за край ленты, и фон сдвигается
-        /// дальше обычного диапазона. Запас нужен с обеих сторон, иначе на
-        /// упругом отскоке у края появилась бы пустая полоса.
+        /// During bounce `contentOffset` goes past the edge of the strip, and the background shifts
+        /// farther than the usual range. The margin is needed on both sides, otherwise an
+        /// empty strip would appear at the edge during an elastic bounce.
         static let backgroundBouncePadding: CGFloat = 96
     }
 
-    // MARK: - Публичная конфигурация
+    // MARK: - Public configuration
 
-    /// Текущий набор секций в порядке чтения (§3).
+    /// The current set of sections in reading order.
     ///
-    /// Меняется только через ``reload(sections:)`` (и инициализатор). Секции —
-    /// источник истины и для заголовков, и для контента: по их `id` хостинг
-    /// переиспользует child-контроллеры, а текущая секция сохраняется при
-    /// перезагрузке.
+    /// Changes only through ``reload(sections:)`` (and the initializer). The sections are
+    /// the source of truth for both the headers and the content: hosting reuses
+    /// child controllers by their `id`, and the current section is preserved
+    /// across a reload.
     public private(set) var sections: [TesseraPanoramaSection] = []
 
-    /// Внешний вид панорамы (§3).
+    /// The appearance of the panorama.
     ///
-    /// Присваивание применяется сразу: шрифт и цвета заголовков, фон и
-    /// подстройка отступов уходят в слои, а peek и раскладка — в ближайший
-    /// layout-проход (вне скролла), где текущая секция восстанавливается под
-    /// новую ширину (§8).
+    /// An assignment is applied immediately: the header font and colors, the background, and
+    /// the inset adjustment go to the layers, while the peek and layout go to the next
+    /// layout pass (outside scrolling), where the current section is restored for the
+    /// new width.
     ///
-    /// Присваивание того же стиля (все поля совпадают, картинка фона — тот же
-    /// экземпляр) ничего не делает: SwiftUI-фасад присваивает стиль на каждом
-    /// обновлении (E10.13).
+    /// Assigning the same style (all fields match, and the background image is the same
+    /// instance) does nothing: the SwiftUI facade assigns the style on every
+    /// update.
     public var style: TesseraPanoramaStyle {
         didSet {
             guard !oldValue.isEquivalent(to: style) else { return }
@@ -157,123 +157,123 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    /// Политика снапа (§4, «Снап»).
+    /// The snapping policy.
     ///
-    /// В ``TesseraPanoramaStyle`` поля снапа нет (волна 1), поэтому порог скорости и
-    /// выравнивание настраиваются здесь. Значение по умолчанию — параметры Core
-    /// (`600` pt/s, выравнивание по центру). Смена политики не требует layout и
-    /// вступает в силу со следующего жеста.
+    /// ``TesseraPanoramaStyle`` has no snapping field, so the velocity threshold and
+    /// alignment are configured here. The default is Core's parameters
+    /// (`600` pt/s, center alignment). Changing the policy needs no layout and
+    /// takes effect from the next gesture.
     public var snapPolicy: TesseraSnapPolicy {
         didSet {
             scrollView.snapPolicy = snapPolicy
         }
     }
 
-    /// Наблюдатель показа секции и прогресса.
+    /// The observer of section changes and progress.
     ///
-    /// Не удерживается (§3: делегат только читает состояние). Публичные колбэки —
+    /// Not retained (the delegate only reads state). The public callbacks are
     /// ``TesseraPanoramaDelegate``.
     public weak var delegate: TesseraPanoramaDelegate?
 
-    // MARK: - Слои (§3)
+    // MARK: - Layers
 
-    /// Горизонтальный скролл панорамы: геометрия секций, снап и `t` (§4).
+    /// The panorama's horizontal scroll: section geometry, snapping, and `t`.
     ///
-    /// Доступен на уровне модуля (`@testable`) для контрактных тестов E3.7;
-    /// в публичную поверхность не входит — программные переходы выполняются
-    /// через ``selectSection(at:animated:)``.
+    /// Available at module level (`@testable`) for contract tests;
+    /// it is not part of the public surface: programmatic transitions are performed
+    /// through ``selectSection(at:animated:)``.
     let scrollView: TesseraPanoScrollView
 
-    /// Слой заголовков секций, анимируемый по `t` (§4, «Заголовки»).
+    /// The section headers layer, animated by `t`.
     let headerView: PanoHeaderView
 
-    /// Фоновый слой с параллаксом (Core §2, PANORAMA §4).
+    /// The background layer with parallax (see the Core and Panorama design documents).
     ///
-    /// Размер и `transform` меняются только вне горячего пути: размер — в
-    /// layout-проходе, `transform` — из `scrollViewDidScroll`.
+    /// Its size and `transform` change only off the hot path: the size in the
+    /// layout pass and the `transform` from `scrollViewDidScroll`.
     let parallaxLayer = TesseraParallaxLayer()
 
-    /// Картинка фона; одна на всю панораму (§9, «Отрезано в v1»).
+    /// The background image; one for the whole panorama.
     private let backgroundImageView = UIImageView()
 
-    // MARK: - Состояние
+    // MARK: - State
 
-    /// Реестр переиспользования контроллеров контента (Core, `TesseraContentHosting`).
+    /// The reuse registry for content controllers (Core, `TesseraContentHosting`).
     private let contentHosting = TesseraContentHosting()
 
-    /// Загруженные child-контроллеры по индексу в порядке чтения (окно ±1, §6).
+    /// The loaded child controllers by reading-order index (the ±1 window).
     ///
-    /// `private(set)` на уровне модуля — для контрактных тестов E3.7.
+    /// `private(set)` at module level, for contract tests.
     private(set) var loadedSections: [Int: UIViewController] = [:]
 
-    /// Текущая секция в порядке чтения (ближайшая к прогрессу).
+    /// The current section in reading order (the nearest to the progress).
     ///
-    /// `private(set)` на уровне модуля — для контрактных тестов E3.7.
+    /// `private(set)` at module level, for contract tests.
     private(set) var currentSectionIndex: Int = 0
 
-    /// Секция, о которой уже сообщили делегату (`didShowSectionAt`).
+    /// The section already reported to the delegate (`didShowSectionAt`).
     private var lastShownSectionIndex: Int?
 
-    /// Ширина/высота последнего layout-прохода — для детекта смены геометрии (§8).
+    /// The width/height of the last layout pass, used to detect a geometry change.
     private var lastLayoutWidth: CGFloat = 0
     private var lastLayoutHeight: CGFloat = 0
 
-    /// Направление чтения последнего layout-прохода (§7, «RTL»).
+    /// The reading direction of the last layout pass.
     private var lastLayoutDirection: UIUserInterfaceLayoutDirection?
 
-    /// Нужно восстановить offset текущей секции на ближайшем layout'е
-    /// (первый layout, `reload`, смена направления чтения).
+    /// Whether the current section's offset must be restored on the next layout
+    /// (the first layout, `reload`, a reading direction change).
     private var needsOffsetRestore = true
 
-    /// Доля внутри секции, сохранённая перед сменой геометрии (§8).
+    /// The fraction within a section saved before a geometry change.
     ///
-    /// Хранится как прогресс в порядке чтения: `i + f`, где `i` — индекс, `f` —
-    /// доля перехода к следующей.
+    /// Stored as progress in reading order: `i + f`, where `i` is the index and `f` is the
+    /// fraction of the transition to the next one.
     private var savedReadingProgress: CGFloat?
 
-    /// Layout пришлось отложить из-за активного жеста/инерции (§8).
+    /// Layout had to be deferred because of an active gesture/inertia.
     private var needsDeferredLayout = false
 
-    /// Идёт программное восстановление offset'а в layout-проходе.
+    /// A programmatic offset restoration is in progress in the layout pass.
     ///
-    /// Нужно, чтобы `scrollViewDidScroll`, вызванный `setContentOffset` внутри
-    /// layout'а, не рассылал `didChangeProgress`: это не прогресс пользователя, а
-    /// следствие пересчёта геометрии. Колбэки делегата из layout-прохода ломали
-    /// бы контракт «делегат читает состояние» (§4) и, в SwiftUI-фасаде, приходили
-    /// бы во время обновления представления.
+    /// Needed so that `scrollViewDidScroll`, triggered by `setContentOffset` inside
+    /// layout, does not send `didChangeProgress`: this is not user progress but a
+    /// consequence of recomputing geometry. Delegate callbacks from the layout pass would break
+    /// the "the delegate reads state" contract and, in the SwiftUI facade, would arrive
+    /// during a view update.
     private var isRestoringGeometry = false
 
-    // MARK: - Арбитраж жестов (§5, вариант B)
+    // MARK: - Gesture arbitration
 
-    /// Слабая ссылка на вертикальный скролл-вью секции.
+    /// A weak reference to a section's vertical scroll view.
     ///
-    /// Секции загружаются лениво окном ±1 и выгружаются (§6), поэтому сильных
-    /// ссылок на их скроллы контроллер не держит.
+    /// Sections are loaded lazily in a ±1 window and unloaded, so the controller holds
+    /// no strong references to their scroll views.
     private struct WeakVerticalOwner {
         weak var scrollView: UIScrollView?
     }
 
-    /// Зарегистрированные вертикальные владельцы-дети.
+    /// The registered vertical child owners.
     private var verticalOwners: [WeakVerticalOwner] = []
 
-    /// Арбитр Core на время горизонтального жеста.
+    /// The Core arbiter for the duration of a horizontal gesture.
     ///
-    /// Живёт только между `.began` и завершением пана: он удерживает вертикальные
-    /// скролл-вью сильными ссылками, а секции пересоздаются, поэтому постоянное
-    /// удержание продлевало бы жизнь выгруженному контенту.
+    /// It lives only between `.began` and the end of the pan: it holds the vertical
+    /// scroll views by strong references, and sections are recreated, so keeping it permanently
+    /// would extend the life of unloaded content.
     private var gestureArbiter: TesseraGestureArbiter?
 
-    /// Пан скролл-вью, на который подписан контроллер (слабо: владелец — скролл).
+    /// The scroll view's pan that the controller subscribes to (weak: the owner is the scroll view).
     private weak var observedPan: UIPanGestureRecognizer?
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт панораму с готовым набором секций.
+    /// Creates a panorama with a ready set of sections.
     ///
     /// - Parameters:
-    ///   - sections: Секции в порядке чтения; пустой массив — допустимое начальное
-    ///     состояние (секции можно передать позже через ``reload(sections:)``, §8).
-    ///   - style: Внешний вид; по умолчанию системный.
+    ///   - sections: The sections in reading order; an empty array is a valid initial
+    ///     state (sections can be passed later through ``reload(sections:)``).
+    ///   - style: The appearance; the system default if omitted.
     public init(sections: [TesseraPanoramaSection] = [], style: TesseraPanoramaStyle = TesseraPanoramaStyle()) {
         let scrollView = TesseraPanoScrollView(peek: style.peek)
         scrollView.sectionCount = sections.count
@@ -290,8 +290,8 @@ public final class TesseraPanoramaViewController: UIViewController {
         super.init(nibName: nil, bundle: nil)
     }
 
-    /// Инициализация из архива/сториборда не поддерживается: компоновка строится
-    /// кодом (§3).
+    /// Initialization from an archive/storyboard is not supported: the layout is built
+    /// in code.
     @available(*, unavailable)
     public required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
@@ -302,17 +302,17 @@ public final class TesseraPanoramaViewController: UIViewController {
         observedPan?.removeTarget(self, action: #selector(scrollPanDidChange(_:)))
     }
 
-    // MARK: - Жизненный цикл
+    // MARK: - Lifecycle
 
-    /// Корневой вид, который замечает смену `semanticContentAttribute` на лету
-    /// (§7, «RTL»; E10.13).
+    /// The root view, which notices a `semanticContentAttribute` change on the fly
+    /// (see the RTL notes in the design document).
     public override func loadView() {
         view = PanoramaRootView()
     }
 
-    /// Смена направления чтения через trait-окружение перераскладывает слоты
-    /// (§7, «RTL»; E10.13). Текущая секция сохраняется по прогрессу в прежнем
-    /// направлении — см. `layoutPanorama()`.
+    /// A reading direction change through the trait environment re-lays out the slots
+    /// (RTL). The current section is preserved by progress in the previous
+    /// direction; see `layoutPanorama()`.
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard isViewLoaded,
@@ -320,30 +320,30 @@ public final class TesseraPanoramaViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// Собирает иерархию слоёв и подписки (§3).
+    /// Builds the layer hierarchy and subscriptions.
     public override func viewDidLoad() {
         super.viewDidLoad()
 
         configureSubviews()
         applyStyle()
 
-        // Заголовки могли быть заменены через `reload` до загрузки вида: сеттер
-        // слоя идемпотентен и не пересоздаёт метки, если набор не изменился.
+        // The headers may have been replaced through `reload` before the view loaded: the layer's
+        // setter is idempotent and does not recreate labels if the set is unchanged.
         headerView.setTitles(sections.map(\.title))
         scrollView.sectionCount = sections.count
         view.setNeedsLayout()
     }
 
-    /// Единственный layout-проход контроллера (§4, §6, §8).
+    /// The controller's only layout pass.
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         layoutPanorama()
     }
 
-    /// Синхронизирует индекс и окно секций с фактическим offset'ом к показу.
+    /// Synchronizes the index and the section window with the actual offset when shown.
     ///
-    /// Показ мог состояться без layout (например, нулевая ширина при добавлении
-    /// в контейнер) — здесь состояние доводится до согласованного.
+    /// The view may have been shown without a layout (for example, zero width when added
+    /// to a container); here the state is brought to a consistent form.
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
@@ -352,36 +352,36 @@ public final class TesseraPanoramaViewController: UIViewController {
         refreshLoadedSections(around: currentSectionIndex)
     }
 
-    // MARK: - Публичный API
+    // MARK: - Public API
 
-    /// Пересобирает панораму под новый набор секций.
+    /// Rebuilds the panorama for a new set of sections.
     ///
-    /// Текущая секция сохраняется по `id`, если он есть в новом наборе; иначе
-    /// сохраняется прежний индекс с зажимом в новые границы. Контроллеры
-    /// секций, чей `id` сохранился и попадает в новое окно ±1, переиспользуются
-    /// (тот же экземпляр — вертикальная позиция и `@State` не теряются;
-    /// SwiftUI-контент обновляется на месте), выгружаются только исчезнувшие и
-    /// вышедшие из окна (E10.13, как пейджер Core в W1). `contentSize` и кадры
-    /// пересчитываются в `viewDidLayoutSubviews` (единственное место layout'а, §4).
+    /// The current section is preserved by `id` if it is present in the new set; otherwise
+    /// the previous index is kept, clamped to the new bounds. Controllers
+    /// of sections whose `id` survives and falls in the new ±1 window are reused
+    /// (the same instance, so the vertical position and `@State` are not lost;
+    /// SwiftUI content is updated in place), and only those that disappeared or
+    /// left the window are unloaded (like the Core pager). `contentSize` and frames
+    /// are recomputed in `viewDidLayoutSubviews` (the only place layout happens).
     ///
-    /// - Parameter newSections: Новые секции в порядке чтения; пустой массив
-    ///   допустим (§8).
+    /// - Parameter newSections: The new sections in reading order; an empty array
+    ///   is allowed.
     public func reload(sections newSections: [TesseraPanoramaSection]) {
-        // Текущий id — из СТАРОГО набора: по нему секция ищется в новом.
+        // The current id comes from the OLD set: it is used to find the section in the new one.
         let oldSections = sections
         let previousIndex = clampedSectionIndex(currentSectionIndex)
         let previousID: AnyHashable? = oldSections.indices.contains(previousIndex)
             ? oldSections[previousIndex].id
             : nil
 
-        // Останавливаем инерцию/анимацию до выгрузки секций: `contentOffset`
-        // пишет только контроллер (§2, «Один писатель»).
+        // Stop inertia/animation before unloading sections: `contentOffset`
+        // is written only by the controller (the single-writer contract).
         if isViewLoaded {
             scrollView.setContentOffset(scrollView.contentOffset, animated: false)
         }
         _ = scrollView.consumePendingSnapOffsetX()
 
-        // Загруженные контроллеры — по id старого набора.
+        // Loaded controllers, keyed by the old set's ids.
         var survivors: [(id: AnyHashable, controller: UIViewController)] = []
         for (index, controller) in loadedSections.sorted(by: { $0.key < $1.key }) {
             if oldSections.indices.contains(index) {
@@ -403,8 +403,8 @@ public final class TesseraPanoramaViewController: UIViewController {
             currentSectionIndex = min(max(previousIndex, 0), newSections.count - 1)
         }
 
-        // Выжившие в новом окне ±1 остаются (тот же экземпляр из реестра,
-        // SwiftUI-поставщик обновляет rootView); остальные выгружаются.
+        // Survivors in the new ±1 window stay (the same instance from the registry,
+        // and the SwiftUI provider updates rootView); the rest are unloaded.
         let window = sectionWindow(around: currentSectionIndex)
         for survivor in survivors {
             if let newIndex = newSections.firstIndex(where: { $0.id == survivor.id }),
@@ -436,24 +436,23 @@ public final class TesseraPanoramaViewController: UIViewController {
         view.layoutIfNeeded()
     }
 
-    /// Доносит новый контент до секций с тем же набором `id` и заголовков
-    /// (E10.12б).
+    /// Delivers new content to sections with the same set of `id`s and titles.
     ///
-    /// Путь SwiftUI-фасада: при перерисовке ``TesseraPanoramaView`` с теми же `id` и
-    /// заголовками полный ``reload(sections:)`` не нужен (он останавливает
-    /// прокрутку и сбрасывает показ секции), но поставщики контента новые —
-    /// их замыкания захватили свежее состояние. Здесь заменяется только модель,
-    /// а загруженные контроллеры получают новый контент через
-    /// ``TesseraContentHosting``: SwiftUI-контроллер обновляет `rootView` на
-    /// месте (тот же экземпляр, позиция и `@State` сохраняются); UIKit-поставщик
-    /// обновлять произвольный контроллер не умеет — экземпляр остаётся прежним.
-    /// Невыгруженные секции создадутся из новых поставщиков при загрузке.
-    /// `contentOffset`, окно ±1 и делегат не затрагиваются.
+    /// The SwiftUI facade path: when ``TesseraPanoramaView`` is redrawn with the same `id`s and
+    /// titles, a full ``reload(sections:)`` is not needed (it stops
+    /// scrolling and resets the shown section), but the content providers are new:
+    /// their closures captured fresh state. Only the model is replaced here,
+    /// and the loaded controllers receive the new content through
+    /// ``TesseraContentHosting``: a SwiftUI controller updates its `rootView` in
+    /// place (the same instance; position and `@State` are preserved); a UIKit provider
+    /// cannot update an arbitrary controller, so the instance stays as it was.
+    /// Sections that are not loaded will be created from the new providers when they load.
+    /// `contentOffset`, the ±1 window, and the delegate are not affected.
     ///
-    /// Если набор `id`/заголовков всё же отличается, выполняется полный
+    /// If the set of `id`s/titles does differ after all, a full
     /// ``reload(sections:)``.
     ///
-    /// - Parameter newSections: Секции с тем же порядком `id` и заголовков.
+    /// - Parameter newSections: Sections with the same order of `id`s and titles.
     func updateContent(of newSections: [TesseraPanoramaSection]) {
         guard Self.haveSameIdentity(sections, newSections) else {
             reload(sections: newSections)
@@ -462,48 +461,48 @@ public final class TesseraPanoramaViewController: UIViewController {
 
         sections = newSections
         for index in loadedSections.keys where newSections.indices.contains(index) {
-            // Для валидных наборов (уникальные id) реестр вернёт тот же
-            // загруженный экземпляр, обновив его контент на месте.
+            // For valid sets (unique ids) the registry returns the same
+            // loaded instance, updating its content in place.
             let section = newSections[index]
             _ = contentHosting.viewController(for: section.id, provider: section.content)
         }
     }
 
-    /// Совпадают ли наборы секций по `id` и заголовкам (по порядку).
+    /// Whether two section sets match by `id` and titles (in order).
     ///
-    /// ``TesseraPanoramaSection`` не `Equatable`: у поставщика контента нет семантики
-    /// равенства, поэтому идентичность набора — пары `id` + `title`.
+    /// ``TesseraPanoramaSection`` is not `Equatable`: a content provider has no equality
+    /// semantics, so the identity of a set is the `id` + `title` pairs.
     ///
     /// - Parameters:
-    ///   - lhs: Первый набор.
-    ///   - rhs: Второй набор.
-    /// - Returns: `true`, если `id` и заголовки совпадают поэлементно.
+    ///   - lhs: The first set.
+    ///   - rhs: The second set.
+    /// - Returns: `true` if the `id`s and titles match element by element.
     static func haveSameIdentity(_ lhs: [TesseraPanoramaSection], _ rhs: [TesseraPanoramaSection]) -> Bool {
         guard lhs.count == rhs.count else { return false }
         return zip(lhs, rhs).allSatisfy { $0.id == $1.id && $0.title == $1.title }
     }
 
-    /// Программно переходит к секции.
+    /// Navigates to a section programmatically.
     ///
-    /// Единственный программный писатель `contentOffset` (§2, «Один писатель»).
-    /// При анимированном переходе делегат продолжает получать `didChangeProgress`
-    /// на кадрах анимации, поэтому заголовки и фон анимируются сами — отдельной
-    /// анимации слоёв нет (§4).
+    /// The only programmatic writer of `contentOffset` (the single-writer contract).
+    /// During an animated transition, the delegate keeps receiving `didChangeProgress`
+    /// on animation frames, so the headers and background animate on their own; there is no
+    /// separate layer animation.
     ///
-    /// При Reduce Motion анимация отключается принудительно (§7). Индекс
-    /// зажимается в границы набора секций.
+    /// With Reduce Motion, animation is forcibly disabled. The index
+    /// is clamped to the bounds of the section set.
     ///
-    /// Анимированный переход дальше соседней секции — «прямой прыжок», как у
-    /// пейджера Core (E10.13): окно ±1 сначала загружается вокруг цели, offset
-    /// без анимации переставляется на соседа цели со стороны текущей секции, и
-    /// анимируется один последний шаг — без пролёта пустых (невыгруженных)
-    /// слотов. Делегат получает один `didChangeProgress` со скачком на соседа
-    /// цели (прогресс всегда отражает фактический offset), затем кадры
-    /// анимации; `didShowSectionAt` — только для цели.
+    /// An animated transition farther than the adjacent section is a "direct jump", like the
+    /// Core pager: the ±1 window is first loaded around the target, the offset
+    /// is moved without animation to the target's neighbor on the side of the current section, and
+    /// one last step is animated, without flying over empty (unloaded)
+    /// slots. The delegate receives one `didChangeProgress` with a jump to the target's
+    /// neighbor (progress always reflects the actual offset), then the
+    /// animation frames; `didShowSectionAt` is sent only for the target.
     ///
     /// - Parameters:
-    ///   - index: Индекс секции в порядке чтения (в RTL — не физический слот).
-    ///   - animated: Намерение анимировать переход; Reduce Motion имеет приоритет.
+    ///   - index: The section index in reading order (in RTL, not the physical slot).
+    ///   - animated: The intent to animate the transition; Reduce Motion takes priority.
     public func selectSection(at index: Int, animated: Bool) {
         guard !sections.isEmpty else { return }
 
@@ -513,18 +512,18 @@ public final class TesseraPanoramaViewController: UIViewController {
         currentSectionIndex = targetIndex
 
         guard isViewLoaded else {
-            // До загрузки вида запоминаем намерение: первый layout поставит offset
-            // на нужную секцию без промежуточного скачка.
+            // Before the view loads, remember the intent: the first layout will place the offset
+            // on the right section without an intermediate jump.
             needsOffsetRestore = true
             return
         }
 
-        // Геометрия должна быть актуальной до расчёта offset'а. Это layout-путь,
-        // а не горячий: программный переход не выполняется внутри скролла (§6).
+        // The geometry must be current before the offset is computed. This is a layout path,
+        // not the hot one: a programmatic transition does not run inside scrolling.
         view.layoutIfNeeded()
 
-        // Ширины ещё нет (вид вне иерархии): запоминаем намерение, offset
-        // поставит первый настоящий layout — без ложного анонса секции (§8).
+        // There is no width yet (the view is outside the hierarchy): remember the intent, and the
+        // first real layout will set the offset, without a false section announcement.
         guard scrollView.bounds.width > 0 else {
             needsOffsetRestore = true
             return
@@ -532,8 +531,8 @@ public final class TesseraPanoramaViewController: UIViewController {
 
         let offset = CGPoint(x: scrollView.rawOffset(forReadingProgress: CGFloat(targetIndex)), y: 0)
         if abs(offset.x - scrollView.contentOffset.x) <= .ulpOfOne {
-            // Переход «на месте»: анимации не будет, завершение фиксируем сами —
-            // иначе `scrollViewDidEndScrollingAnimation` не придёт.
+            // An in-place transition: there will be no animation, so we record completion ourselves;
+            // otherwise `scrollViewDidEndScrollingAnimation` would never arrive.
             scrollView.setContentOffset(offset, animated: false)
             finishTransition()
             return
@@ -545,8 +544,8 @@ public final class TesseraPanoramaViewController: UIViewController {
             )
             let distance = targetIndex - fromIndex
             if abs(distance) > 1 {
-                // Окно цели — до прыжка: в кадре анимации не должно быть
-                // пустых слотов. Иерархия меняется вне горячего пути (§6).
+                // The target's window comes before the jump: the animation frame must not contain
+                // empty slots. The hierarchy changes off the hot path.
                 refreshLoadedSections(around: targetIndex)
                 let neighbourIndex = targetIndex - distance.signum()
                 scrollView.setContentOffset(
@@ -563,32 +562,32 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    /// Регистрирует вертикальный скролл-вью секции (§5, вариант B).
+    /// Registers a section's vertical scroll view.
     ///
-    /// Горизонталь принадлежит ``TesseraPanoScrollView``, вертикаль — контенту секции.
-    /// Контроллер контента вызывает метод (например, из `viewDidAppear`) и
-    /// передаёт свой вертикальный `UIScrollView`. На время горизонтального жеста
-    /// контроллер собирает ``TesseraGestureArbiter`` из зарегистрированных детей:
-    /// их прокрутка блокируется и восстанавливается в исходное состояние по
-    /// завершении жеста (`prepareForHorizontalScroll()` /
+    /// Horizontal belongs to ``TesseraPanoScrollView`` and vertical to the section's content.
+    /// A content controller calls this method (for example, from `viewDidAppear`) and
+    /// passes its vertical `UIScrollView`. For the duration of a horizontal gesture
+    /// the controller builds a ``TesseraGestureArbiter`` from the registered children:
+    /// their scrolling is blocked and restored to its original state when
+    /// the gesture ends (`prepareForHorizontalScroll()` /
     /// `endHorizontalScroll()`).
     ///
-    /// Ссылки слабые: выгруженные секции (§6) выпадают из реестра сами.
+    /// The references are weak: unloaded sections drop out of the registry on their own.
     ///
-    /// - Parameter scrollView: Вертикальный скролл-вью контента секции.
+    /// - Parameter scrollView: The vertical scroll view of the section's content.
     ///
-    /// - Note: **Отклонение от §5.** Арбитр не назначается делегатом
-    ///   `panGestureRecognizer` панорамы: подмена делегата у `UIScrollView`
-    ///   отключила бы его собственную обработку одновременных жестов (вложенные
-    ///   скроллы, системный edge-swipe). Поэтому:
-    ///   1. решение по доминирующей оси принимается на первом колбэке пана
-    ///      (`.began`) через
-    ///      ``TesseraGestureArbiter/axisDecision(forVelocity:)`` — та же чистая
-    ///      функция, что и в `gestureRecognizerShouldBegin` арбитра;
-    ///   2. дети блокируются и разблокируются методами арбитра, то есть обе
-    ///      половины контракта арбитража задействованы, но точка решения сдвинута
-    ///      с `gestureRecognizerShouldBegin` на `.began`. Это тот же компромисс,
-    ///      что принят в `TesseraPivotViewController` (E2).
+    /// - Note: **A deviation from the intended design.** The arbiter is not assigned as the delegate of the
+    ///   panorama's `panGestureRecognizer`: replacing the delegate of a `UIScrollView`
+    ///   would disable its own handling of simultaneous gestures (nested
+    ///   scrolls, the system edge swipe). Therefore:
+    ///   1. the decision by the dominant axis is made on the pan's first callback
+    ///      (`.began`) through
+    ///      ``TesseraGestureArbiter/axisDecision(forVelocity:)``, the same pure
+    ///      function used in the arbiter's `gestureRecognizerShouldBegin`;
+    ///   2. the children are blocked and unblocked by the arbiter's methods, so both
+    ///      halves of the arbitration contract are used, but the decision point is moved
+    ///      from `gestureRecognizerShouldBegin` to `.began`. This is the same compromise
+    ///      as in `TesseraPivotViewController`.
     public func registerVerticalOwner(_ scrollView: UIScrollView) {
         guard scrollView !== self.scrollView else { return }
 
@@ -597,13 +596,13 @@ public final class TesseraPanoramaViewController: UIViewController {
         verticalOwners.append(WeakVerticalOwner(scrollView: scrollView))
     }
 
-    /// Снимает регистрацию вертикального скролл-вью секции (§5).
+    /// Unregisters a section's vertical scroll view.
     ///
-    /// Вызывать не обязательно: ссылки слабые, и освобождённые скроллы выпадают из
-    /// арбитража сами. Метод нужен, когда контроллер контента перестаёт
-    /// использовать скролл-вью, но живёт дальше.
+    /// Calling this is optional: references are weak, and deallocated scroll views drop out of
+    /// arbitration on their own. The method is needed when a content controller stops
+    /// using a scroll view but stays alive.
     ///
-    /// - Parameter scrollView: Ранее зарегистрированный вертикальный скролл-вью.
+    /// - Parameter scrollView: A previously registered vertical scroll view.
     public func unregisterVerticalOwner(_ scrollView: UIScrollView) {
         verticalOwners.removeAll { owner in
             guard let registered = owner.scrollView else { return true }
@@ -611,19 +610,19 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    // MARK: - Accessibility (§7)
+    // MARK: - Accessibility
 
-    /// Пагинация секций жестом VoiceOver «три пальца» (§7, «VoiceOver»).
+    /// Section paging with the VoiceOver three-finger gesture.
     ///
-    /// Направление превращается в шаг по секциям через
-    /// ``TesseraAccessibility/pageStep(for:layoutDirection:)`` (с учётом RTL), а
-    /// переход выполняет ``selectSection(at:animated:)`` — `contentOffset`
-    /// по-прежнему пишет контроллер (§2). Метод дублирует обработку из
-    /// ``TesseraPanoScrollView``: у жеста бывает разный accessibility-фокус (слой
-    /// заголовков, контент секции), а результат обязан быть одинаковым.
+    /// The direction is converted into a step through the sections via
+    /// ``TesseraAccessibility/pageStep(for:layoutDirection:)`` (taking RTL into account), and
+    /// the transition is performed by ``selectSection(at:animated:)``, so `contentOffset`
+    /// is still written by the controller. The method duplicates the handling in
+    /// ``TesseraPanoScrollView``: the gesture can have different accessibility focus (the headers
+    /// layer, the section content), and the result must be the same.
     ///
-    /// - Parameter direction: Направление жеста VoiceOver.
-    /// - Returns: `true`, если жест обработан.
+    /// - Parameter direction: The VoiceOver gesture direction.
+    /// - Returns: `true` if the gesture was handled.
     public override func accessibilityScroll(
         _ direction: UIAccessibilityScrollDirection
     ) -> Bool {
@@ -636,9 +635,9 @@ public final class TesseraPanoramaViewController: UIViewController {
         return handleAccessibilityStep(step)
     }
 
-    // MARK: - Сборка слоёв
+    // MARK: - Assembling the layers
 
-    /// Создаёт иерархию: фон, скролл, заголовки (§3).
+    /// Creates the hierarchy: background, scroll view, headers.
     private func configureSubviews() {
         view.backgroundColor = .systemBackground
         view.clipsToBounds = true
@@ -655,19 +654,19 @@ public final class TesseraPanoramaViewController: UIViewController {
         scrollView.snapPolicy = snapPolicy
         view.addSubview(scrollView)
 
-        // Заголовки — верхний слой: они декоративны (wave 1 отключает у них
-        // пользовательские касания) и не должны перекрывать прокрутку.
+        // The headers are the top layer: they are decorative (they have user
+        // interaction disabled) and must not cover scrolling.
         view.addSubview(headerView)
 
-        // §7, E9.7: фокус VoiceOver может стоять на слое заголовков —
-        // трёхпальцевый свайп с него листает секции так же, как с контента.
+        // VoiceOver focus may rest on the headers layer:
+        // a three-finger swipe from it pages the sections just like from the content.
         headerView.accessibilityScrollHandler = { [weak self] direction in
             self?.accessibilityScroll(direction) ?? false
         }
 
         observeScrollPan()
 
-        // §7, Dynamic Type: высота заголовков зависит от размера текста.
+        // Dynamic Type: the headers' height depends on the text size.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(contentSizeCategoryDidChange),
@@ -676,11 +675,11 @@ public final class TesseraPanoramaViewController: UIViewController {
         )
     }
 
-    /// Применяет стиль к слоям (§3).
+    /// Applies the style to the layers.
     ///
-    /// `peek` здесь в скролл не пишется: его применяет layout-проход, который
-    /// до этого запоминает прогресс по прежней ширине секции — иначе секция
-    /// осталась бы между снап-точками (§8, E10.13).
+    /// `peek` is not written to the scroll view here: the layout pass applies it, and
+    /// beforehand it saves the progress by the previous section width; otherwise the section
+    /// would be left between snap points.
     private func applyStyle() {
         guard isViewLoaded else { return }
 
@@ -690,10 +689,10 @@ public final class TesseraPanoramaViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// Переносит поведение фона из стиля в слой (§3, §9).
+    /// Carries the background behavior from the style into the layer.
     ///
-    /// В v1 фон один на всю панораму: `.image` — картинка на весь слой,
-    /// `.none` — прозрачный слой, виден системный фон под панорамой.
+    /// In v1 there is one background for the whole panorama: `.image` is an image over the whole layer,
+    /// `.none` is a transparent layer, and the system background under the panorama shows through.
     private func applyBackgroundBehavior() {
         switch style.backgroundBehavior {
         case .none:
@@ -705,14 +704,14 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    /// Стиль заголовков из стиля панорамы (§3, §7).
+    /// The headers style derived from the panorama style.
     ///
-    /// `TesseraPanoramaStyle.headerFont` — базовый (немасштабированный) шрифт: слой
-    /// заголовков сам масштабирует его через `UIFontMetrics` под Dynamic Type.
+    /// `TesseraPanoramaStyle.headerFont` is the base (unscaled) font: the headers
+    /// layer scales it itself through `UIFontMetrics` for Dynamic Type.
     ///
-    /// `TesseraPanoramaStyle.headerActiveColor` уходит в слой как цвет активного
-    /// заголовка, интерполируемый по `t` (E9.7). Если он совпадает с
-    /// `headerColor`, акцент не нужен — слой не создаёт акцентных копий меток.
+    /// `TesseraPanoramaStyle.headerActiveColor` goes into the layer as the color of the active
+    /// header, interpolated by `t`. If it equals
+    /// `headerColor`, no accent is needed and the layer creates no accent copies of the labels.
     private static func makeHeaderStyle(from style: TesseraPanoramaStyle) -> PanoHeaderView.Style {
         PanoHeaderView.Style(
             textStyle: .largeTitle,
@@ -732,27 +731,27 @@ public final class TesseraPanoramaViewController: UIViewController {
         )
     }
 
-    // MARK: - Layout (единственное место раскладки)
+    // MARK: - Layout (the only place layout happens)
 
-    /// Раскладывает заголовки, скролл, секции, фон и `contentSize`.
+    /// Lays out the headers, the scroll view, the sections, the background, and `contentSize`.
     ///
-    /// Вызывается только из `viewDidLayoutSubviews` и синхронных
-    /// `layoutIfNeeded` из публичных методов. В `scrollViewDidScroll` layout'а нет
-    /// (§4, «Правило производительности»; §6).
+    /// Called only from `viewDidLayoutSubviews` and from synchronous
+    /// `layoutIfNeeded` calls in public methods. There is no layout in `scrollViewDidScroll`
+    /// (see the performance rule in the design document).
     private func layoutPanorama() {
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
 
-        // §8: при активном свайпе изменение размера лучше отложить до конца
-        // децелерации — пересборка contentSize дёргала бы offset под пальцем.
+        // During an active swipe, a size change is better deferred until the end of
+        // deceleration: rebuilding contentSize would jerk the offset under the finger.
         if scrollView.isUserScrollInFlight {
             needsDeferredLayout = true
             return
         }
 
-        // Направление чтения корневого вида — единственный источник для слоёв:
-        // `semanticContentAttribute` не наследуется subview'ами, а скролл и
-        // заголовки считают слоты/зеркалирование от собственного направления.
+        // The reading direction of the root view is the single source for the layers:
+        // `semanticContentAttribute` is not inherited by subviews, and the scroll view and
+        // headers compute slots/mirroring from their own direction.
         if scrollView.semanticContentAttribute != view.semanticContentAttribute {
             scrollView.semanticContentAttribute = view.semanticContentAttribute
         }
@@ -761,10 +760,10 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
 
         let direction = view.effectiveUserInterfaceLayoutDirection
-        // Направление, в котором сейчас разложены слоты и стоит offset.
+        // The direction in which the slots are currently laid out and the offset sits.
         let slotDirection = lastLayoutDirection ?? direction
-        // `peek` из стиля ещё не применён к скроллу: смена ширины секции на лету
-        // — такая же смена геометрии, как поворот (E10.13).
+        // The style's `peek` has not been applied to the scroll view yet: a section width change on the fly
+        // is the same kind of geometry change as a rotation.
         let peekChanged = abs(scrollView.peek - style.peek) > .ulpOfOne
         let geometryChanged = lastLayoutWidth > 0
             && (abs(bounds.width - lastLayoutWidth) > .ulpOfOne
@@ -772,11 +771,11 @@ public final class TesseraPanoramaViewController: UIViewController {
                 || slotDirection != direction
                 || peekChanged)
 
-        // §8: долю внутри секции запоминаем до смены itemWidth, иначе после
-        // пересчёта её уже не восстановить. Нормализация — по направлению, в
-        // котором offset стоит сейчас, а не по новому: при смене LTR↔RTL иначе
-        // открылась бы зеркальная секция (E10.13). Скролл здесь ещё в прежней
-        // геометрии: кадр и peek применяются ниже.
+        // The fraction within a section is saved before itemWidth changes; after
+        // the recomputation it could no longer be restored. Normalization uses the direction
+        // the offset sits in now, not the new one: otherwise, on an LTR↔RTL switch, the
+        // mirrored section would open. The scroll view is still in its previous
+        // geometry here: the frame and peek are applied below.
         if geometryChanged, sections.count > 1 {
             savedReadingProgress = scrollView.readingProgress(
                 forRawOffset: scrollView.contentOffset.x,
@@ -784,11 +783,11 @@ public final class TesseraPanoramaViewController: UIViewController {
             )
         }
 
-        // Запись кадра, contentSize и offset'а — следствие пересчёта геометрии,
-        // а не прогресс пользователя: UIKit может прислать на них
-        // `scrollViewDidScroll`, и делегат не должен получить ложный
-        // `didChangeProgress`, а текущая секция — сбиться (E10.13). Итоговый
-        // прогресс применяется один раз в конце прохода.
+        // Writing the frame, contentSize, and offset is a consequence of recomputing geometry,
+        // not user progress: UIKit may send `scrollViewDidScroll` for them,
+        // and the delegate must not receive a false
+        // `didChangeProgress`, nor the current section get lost. The final
+        // progress is applied once at the end of the pass.
         isRestoringGeometry = true
         layoutHeader(in: bounds)
 
@@ -802,9 +801,9 @@ public final class TesseraPanoramaViewController: UIViewController {
             height: max(bounds.height - contentTop, 0)
         )
 
-        // Геометрия контента: §4 — itemWidth = width − peek, contentSize по числу
-        // секций. Порядок важен: contentSize до восстановления offset'а, иначе
-        // UIKit зажмёт offset по старому размеру.
+        // Content geometry: itemWidth = width − peek, contentSize by the number of
+        // sections. Order matters: contentSize before restoring the offset, otherwise
+        // UIKit would clamp the offset to the old size.
         scrollView.peek = style.peek
         scrollView.sectionCount = sections.count
         scrollView.isScrollEnabled = sections.count > 1
@@ -824,11 +823,11 @@ public final class TesseraPanoramaViewController: UIViewController {
         needsDeferredLayout = false
     }
 
-    /// Раскладывает слой заголовков (§4, «Заголовки»).
+    /// Lays out the headers layer.
     ///
-    /// Высота — по `intrinsicContentSize`, то есть по фактическим меткам и
-    /// текущему Dynamic Type. Ширину задаём до чтения intrinsic: заголовки
-    /// считают высоту от фактической ширины (§7).
+    /// The height comes from `intrinsicContentSize`, that is, from the actual labels and
+    /// the current Dynamic Type. The width is set before reading intrinsic: the headers
+    /// compute their height from the actual width.
     private func layoutHeader(in bounds: CGRect) {
         guard !sections.isEmpty else {
             headerView.isHidden = true
@@ -838,8 +837,8 @@ public final class TesseraPanoramaViewController: UIViewController {
 
         headerView.isHidden = false
 
-        // Ширина нужна до высоты: `intrinsicContentSize` заголовков зависит от
-        // ширины слоя. Прямая запись `frame.size` не запускает layout дважды.
+        // The width is needed before the height: the headers' `intrinsicContentSize` depends on
+        // the layer's width. Writing `frame.size` directly does not trigger layout twice.
         headerView.frame.size.width = bounds.width
         let height = max(headerView.intrinsicContentSize.height, 0)
 
@@ -851,40 +850,40 @@ public final class TesseraPanoramaViewController: UIViewController {
         )
     }
 
-    /// Раскладывает фоновый слой под параллакс (§4, «Параллакс фона»).
+    /// Lays out the background layer for parallax.
     ///
-    /// Контракт Core (`docs/CORE-IOS-DESIGN.md` §2, п. «Параллакс»): слой
-    /// заведомо больше контента — `contentSize` плюс запас `extraSize`. Здесь
-    /// `contentSize` — размер контента панорамы (но не меньше вьюпорта, иначе
-    /// пустое состояние осталось бы без фона), а запас — весь ход фона
-    /// (`maximumOffsetX × factor`) плюс поля под «резину» на границах.
+    /// The Core contract (`docs/CORE-IOS-DESIGN.md`, parallax): the layer is
+    /// always larger than the content: `contentSize` plus the `extraSize` margin. Here
+    /// `contentSize` is the panorama's content size (but not smaller than the viewport, otherwise
+    /// the empty state would be left without a background), and the margin is the whole background travel
+    /// (`maximumOffsetX × factor`) plus the rubber-band margins at the edges.
     ///
-    /// Слой — сосед скролла, поэтому ``TesseraParallaxLayer/update(withContentOffset:)``
-    /// проецирует смещение фона (`backgroundOffset = offset × factor`) на экран
-    /// со знаком минус: `transform = −backgroundOffset` (E10.7). При росте offset'а
-    /// фон уезжает влево вместе с секциями, но медленнее. Начало слоя — у левого
-    /// края вьюпорта, сдвинутое влево только на поле `padding` (под «резину» до
-    /// начала ленты, где offset < 0); весь ход фона `shift` и правое поле лежат
-    /// справа от вьюпорта. Экранный левый край картинки — `−padding − offset × factor`,
-    /// правый — `width + shift + padding − offset × factor`: вьюпорт закрыт при
-    /// любом offset'е в `[−padding / factor, maximumOffsetX + padding / factor]`,
-    /// то есть ни на bounce, ни на краю ленты пустых полос нет. Сама картинка
-    /// занимает только реально посещаемое окно, а не всю площадь огромного слоя.
+    /// The layer is a sibling of the scroll view, so ``TesseraParallaxLayer/update(withContentOffset:)``
+    /// projects the background offset (`backgroundOffset = offset × factor`) onto the screen
+    /// with a minus sign: `transform = −backgroundOffset`. As the offset grows,
+    /// the background moves left together with the sections, but more slowly. The layer's origin is at the left
+    /// edge of the viewport, shifted left only by the `padding` margin (for the rubber band before
+    /// the start of the strip, where offset < 0); the whole background travel `shift` and the right margin lie
+    /// to the right of the viewport. The on-screen left edge of the image is `−padding − offset × factor`
+    /// and the right edge is `width + shift + padding − offset × factor`: the viewport is covered at
+    /// any offset in `[−padding / factor, maximumOffsetX + padding / factor]`,
+    /// so there are no empty strips either during bounce or at the edge of the strip. The image itself
+    /// covers only the window that is actually visited, not the whole area of the huge layer.
     ///
-    /// Множитель берётся из стиля, а не из действующего: при Reduce Motion
-    /// действующий фактор равен нулю (Core §2, п. 6), но запас должен остаться
-    /// достаточным, если настройку выключат на лету.
+    /// The multiplier is taken from the style, not the effective one: with Reduce Motion
+    /// the effective factor is zero, but the margin must remain
+    /// sufficient if the setting is turned off on the fly.
     private func layoutBackground() {
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
 
         let factor = style.parallaxFactor
         let shift = scrollView.maximumOffsetX * factor
-        // «Резина» уводит contentOffset за край ленты; запас с обеих сторон
-        // покрывает выход на `padding / factor`. Слагаемое `0.6 × width × factor`
-        // гарантирует не меньше 0.6 ширины экрана при любом факторе из (0, 1)
-        // (E9.7: кламп расширен с 0.4…0.6 до 0.01…0.99), остальные — прежний
-        // минимум для типичных факторов.
+        // The rubber band moves contentOffset past the edge of the strip; the margin on both sides
+        // covers an overshoot of `padding / factor`. The `0.6 × width × factor` term
+        // guarantees at least 0.6 of the screen width for any factor in (0, 1)
+        // (the clamp was widened from 0.4…0.6 to 0.01…0.99); the other terms are the previous
+        // minimum for typical factors.
         let padding = max(
             Metrics.backgroundBouncePadding,
             bounds.width * 0.35,
@@ -899,17 +898,17 @@ public final class TesseraPanoramaViewController: UIViewController {
         parallaxLayer.setContentSize(contentSize)
 
         let size = parallaxLayer.bounds.size
-        // Начало слоя уходит влево только на «резину»: слой едет влево
-        // (transform = −offset × factor, E10.7), поэтому ход фона `shift` нужен
-        // справа. Тогда при любом offset'е вьюпорт остаётся внутри картинки,
-        // прижатой к началу координат слоя.
+        // The layer's origin shifts left only by the rubber band: the layer moves left
+        // (transform = −offset × factor), so the background travel `shift` is needed
+        // on the right. Then at any offset the viewport stays inside the image,
+        // which is pinned to the layer's origin.
         parallaxLayer.center = CGPoint(
             x: -padding + size.width / 2,
             y: size.height / 2
         )
 
-        // Видимое окно фона за всю ленту: вьюпорт, ход фона и «резина» по краям.
-        // Остальную площадь огромного слоя заполнять незачем: её не видно.
+        // The visible background window for the whole strip: the viewport, the background travel, and the rubber band at the edges.
+        // There is no point filling the rest of the huge layer: it is not visible.
         backgroundImageView.frame = CGRect(
             x: 0,
             y: 0,
@@ -918,13 +917,13 @@ public final class TesseraPanoramaViewController: UIViewController {
         )
     }
 
-    /// Восстанавливает `contentOffset` текущей секции (§8).
+    /// Restores the current section's `contentOffset`.
     ///
-    /// Восстановление — программная запись `contentOffset` из layout'а:
-    /// вызывающий держит `isRestoringGeometry` поднятым, колбэки прогресса
-    /// делегату на это время выключены.
+    /// Restoration is a programmatic write of `contentOffset` from layout:
+    /// the caller keeps `isRestoringGeometry` raised, and progress callbacks to
+    /// the delegate are switched off meanwhile.
     ///
-    /// - Parameter geometryChanged: Сменилась ширина/высота/направление чтения/peek.
+    /// - Parameter geometryChanged: The width/height/reading direction/peek changed.
     private func restoreOffsetIfNeeded(geometryChanged: Bool) {
         guard !sections.isEmpty else {
             if scrollView.contentOffset != .zero {
@@ -936,8 +935,8 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
 
         if needsOffsetRestore {
-            // Первый layout, `reload` или смена направления: встаём ровно на
-            // сохранённую секцию, без доли перехода.
+            // The first layout, `reload`, or a direction change: land exactly on
+            // the saved section, with no transition fraction.
             scrollView.setContentOffset(
                 CGPoint(
                     x: scrollView.rawOffset(
@@ -953,8 +952,8 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
 
         if geometryChanged, let progress = savedReadingProgress {
-            // §8: «по индексу и сохранённому прогрессу» — доля внутри секции
-            // сохраняется, если она представима в новых границах.
+            // Restore "by index and saved progress": the fraction within a section
+            // is preserved if it is representable in the new bounds.
             scrollView.setContentOffset(
                 CGPoint(x: scrollView.rawOffset(forReadingProgress: progress), y: 0),
                 animated: false
@@ -963,7 +962,7 @@ public final class TesseraPanoramaViewController: UIViewController {
             return
         }
 
-        // Число секций могло уменьшиться — offset нужно зажать.
+        // The number of sections may have decreased, so the offset must be clamped.
         let maximum = scrollView.maximumOffsetX
         let clampedX = min(max(scrollView.contentOffset.x, 0), maximum)
         if clampedX != scrollView.contentOffset.x {
@@ -971,10 +970,10 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    /// Раскладывает кадры загруженных child-контроллеров.
+    /// Lays out the frames of the loaded child controllers.
     ///
-    /// Единственное место, где меняются их `frame`; в скролле кадры не трогаются
-    /// (§4, §6).
+    /// The only place their `frame` changes; frames are not touched during scrolling
+    /// (see the performance rule in the design document).
     private func layoutSectionFrames() {
         for (index, controller) in loadedSections {
             let frame = scrollView.rect(forReadingIndex: index)
@@ -983,17 +982,17 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    // MARK: - Прогресс (горячий путь)
+    // MARK: - Progress (the hot path)
 
-    /// Применяет текущий `contentOffset` к слоям и делегату.
+    /// Applies the current `contentOffset` to the layers and the delegate.
     ///
-    /// В горячем пути (из `scrollViewDidScroll`) меняются только `transform` и
-    /// `alpha`: `headerView.apply` и `parallaxLayer.update` не запускают layout
-    /// (§4, «Правило производительности»). `notifyDelegate: false` используется в
-    /// layout-проходе и при синхронизации состояния — там внешний прогресс не
-    /// событие.
+    /// On the hot path (from `scrollViewDidScroll`) only `transform` and
+    /// `alpha` change: `headerView.apply` and `parallaxLayer.update` do not trigger layout
+    /// (see the performance rule in the design document). `notifyDelegate: false` is used in
+    /// the layout pass and when synchronizing state, where external progress is not an
+    /// event.
     ///
-    /// - Parameter notifyDelegate: Сообщать ли `didChangeProgress` делегату.
+    /// - Parameter notifyDelegate: Whether to report `didChangeProgress` to the delegate.
     private func applyProgress(notifyDelegate: Bool) {
         let rawOffset = scrollView.contentOffset.x
         let progress = scrollView.readingProgress(forRawOffset: rawOffset)
@@ -1001,7 +1000,7 @@ public final class TesseraPanoramaViewController: UIViewController {
 
         currentSectionIndex = nearestSectionIndex(forReadingProgress: progress)
 
-        // §4: фон и заголовки анимируются от одного и того же t.
+        // The background and headers are animated from the same t.
         headerView.apply(progress: progress, activeIndex: currentSectionIndex)
         parallaxLayer.update(withContentOffset: CGPoint(x: rawOffset, y: 0))
 
@@ -1009,25 +1008,25 @@ public final class TesseraPanoramaViewController: UIViewController {
         delegate?.panorama(self, didChangeProgress: progress)
     }
 
-    /// Ближайшая к прогрессу секция в порядке чтения (§4).
+    /// The section nearest to the progress, in reading order.
     ///
-    /// Прогресс уже нормализован по направлению чтения, поэтому индекс — просто
-    /// округление с зажимом в границы набора.
+    /// The progress is already normalized by the reading direction, so the index is simply
+    /// a rounding clamped to the bounds of the set.
     private func nearestSectionIndex(forReadingProgress progress: CGFloat) -> Int {
         guard !sections.isEmpty else { return 0 }
         let last = CGFloat(sections.count - 1)
         return Int(min(max(progress, 0), last).rounded())
     }
 
-    // MARK: - Ленивая загрузка child-VC (§6)
+    // MARK: - Lazy loading of child view controllers
 
-    /// Держит в памяти текущую секцию и соседей ±1, выгружая остальные.
+    /// Keeps the current section and its ±1 neighbors in memory and unloads the rest.
     ///
-    /// Вызывается по завершении перехода, из layout'а и `viewDidAppear`, но
-    /// никогда из `scrollViewDidScroll`: добавление child-VC — изменение
-    /// иерархии, а не работа для кадра прокрутки (§4, §6).
+    /// Called when a transition completes, from layout, and from `viewDidAppear`, but
+    /// never from `scrollViewDidScroll`: adding a child view controller is a hierarchy
+    /// change, not work for a scroll frame.
     ///
-    /// - Parameter index: Секция, вокруг которой строится окно.
+    /// - Parameter index: The section around which the window is built.
     private func refreshLoadedSections(around index: Int) {
         guard !sections.isEmpty, scrollView.bounds.width > 0 else { return }
 
@@ -1048,14 +1047,14 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    /// Догружает окно вокруг цели, **не выгружая** текущую секцию (§6).
+    /// Loads the window around the target **without unloading** the current section.
     ///
-    /// Prefetch-хук вызывается из `scrollViewWillEndDragging`: цель снапа уже
-    /// известна, но видимая секция ещё в кадре, поэтому выгрузка здесь дала бы
-    /// пустой кадр. Освобождение делает ``refreshLoadedSections(around:)`` по
-    /// завершении перехода.
+    /// The prefetch hook is called from `scrollViewWillEndDragging`: the snap target is already
+    /// known, but the visible section is still in frame, so unloading here would give an
+    /// empty frame. ``refreshLoadedSections(around:)`` does the freeing when the
+    /// transition completes.
     ///
-    /// - Parameter index: Целевая секция снапа.
+    /// - Parameter index: The snap's target section.
     private func prefetchSections(around index: Int) {
         guard !sections.isEmpty, scrollView.bounds.width > 0 else { return }
 
@@ -1065,20 +1064,20 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    /// Индексы окна ±1 вокруг секции (§6); пусто для пустого набора.
+    /// The indices of the ±1 window around a section; empty for an empty set.
     private func sectionWindow(around index: Int) -> Set<Int> {
         guard !sections.isEmpty else { return [] }
         let center = clampedSectionIndex(index)
         return Set([center - 1, center, center + 1].filter { sections.indices.contains($0) })
     }
 
-    /// Создаёт контроллер секции и подключает его как child-VC.
+    /// Creates a section controller and attaches it as a child view controller.
     ///
-    /// Контроллер берётся из ``TesseraContentHosting`` по `id` секции: повторная
-    /// загрузка того же `id` переиспользует экземпляр (для SwiftUI-контента —
-    /// обновляет `rootView` на месте, §6).
+    /// The controller is taken from ``TesseraContentHosting`` by the section's `id`: loading
+    /// the same `id` again reuses the instance (for SwiftUI content it
+    /// updates `rootView` in place).
     ///
-    /// - Parameter index: Индекс секции в порядке чтения.
+    /// - Parameter index: The section index in reading order.
     private func loadSection(at index: Int) {
         guard sections.indices.contains(index) else { return }
 
@@ -1088,8 +1087,8 @@ public final class TesseraPanoramaViewController: UIViewController {
             provider: section.content
         )
 
-        // Защита от повторяющегося id: один контроллер нельзя добавить дважды.
-        // Для валидных наборов (уникальные id) ветка не выполняется.
+        // Guard against a repeated id: one controller cannot be added twice.
+        // For valid sets (unique ids) this branch does not run.
         if loadedSections.values.contains(where: { $0 === controller }) {
             controller = section.content.makeContentViewController()
         }
@@ -1101,7 +1100,7 @@ public final class TesseraPanoramaViewController: UIViewController {
         loadedSections[index] = controller
     }
 
-    /// Отсоединяет child-VC от контроллера.
+    /// Detaches a child view controller from the controller.
     private func detach(_ controller: UIViewController) {
         guard controller.parent != nil else {
             controller.view.removeFromSuperview()
@@ -1113,12 +1112,12 @@ public final class TesseraPanoramaViewController: UIViewController {
         controller.removeFromParent()
     }
 
-    // MARK: - Завершение перехода
+    // MARK: - Completing a transition
 
-    /// Фиксирует текущую секцию, обновляет окно ±1 и уведомляет делегата.
+    /// Records the current section, updates the ±1 window, and notifies the delegate.
     ///
-    /// Вызывается по завершении жеста без инерции, децелерации и программной
-    /// анимации — вне горячего пути скролла (§4, §6).
+    /// Called when a gesture without inertia, deceleration, or a programmatic
+    /// animation completes, off the scroll hot path.
     private func finishTransition() {
         guard !sections.isEmpty else { return }
 
@@ -1131,7 +1130,7 @@ public final class TesseraPanoramaViewController: UIViewController {
         applyDeferredLayoutIfNeeded()
     }
 
-    /// Сообщает делегату о смене секции и озвучивает её название (§7).
+    /// Reports a section change to the delegate and announces its name.
     private func reportCurrentSectionIfNeeded() {
         guard sections.indices.contains(currentSectionIndex) else { return }
         guard lastShownSectionIndex != currentSectionIndex else { return }
@@ -1141,13 +1140,13 @@ public final class TesseraPanoramaViewController: UIViewController {
         delegate?.panorama(self, didShowSectionAt: currentSectionIndex)
     }
 
-    /// Озвучивает название секции при смене (§7, «VoiceOver»).
+    /// Announces the section name on a change.
     ///
-    /// Вызывается по завершении перехода: во время анимации анонс перебивается
-    /// сменой accessibility-фокуса (см. ``TesseraAccessibility/announcePageChange(_:)``).
-    /// Пустой заголовок не озвучивается.
+    /// Called when a transition completes: during the animation, an announcement is interrupted
+    /// by the accessibility focus change (see ``TesseraAccessibility/announcePageChange(_:)``).
+    /// An empty title is not announced.
     ///
-    /// - Parameter index: Индекс показанной секции в порядке чтения.
+    /// - Parameter index: The index of the shown section in reading order.
     private func announceSection(at index: Int) {
         guard sections.indices.contains(index) else { return }
 
@@ -1157,12 +1156,12 @@ public final class TesseraPanoramaViewController: UIViewController {
         TesseraAccessibility.announcePageChange(title)
     }
 
-    /// Досрочно применяет отложенный из-за скролла layout (§8).
+    /// Applies early a layout that was deferred because of scrolling.
     ///
-    /// Отложенный проход уже «потратил» флаг `needsLayout` вида, поэтому
-    /// одного `layoutIfNeeded()` мало — без `setNeedsLayout()` он ничего не
-    /// делает, и новая геометрия (поворот во время свайпа) не применилась бы до
-    /// случайного следующего прохода (E10.13).
+    /// The deferred pass has already "spent" the view's `needsLayout` flag, so
+    /// a single `layoutIfNeeded()` is not enough: without `setNeedsLayout()` it does nothing,
+    /// and the new geometry (a rotation during a swipe) would not be applied until
+    /// some later pass happened to run.
     private func applyDeferredLayoutIfNeeded() {
         guard needsDeferredLayout, !scrollView.isUserScrollInFlight else { return }
 
@@ -1171,19 +1170,19 @@ public final class TesseraPanoramaViewController: UIViewController {
         view.layoutIfNeeded()
     }
 
-    /// Зажимает индекс в границы набора секций.
+    /// Clamps an index to the bounds of the section set.
     private func clampedSectionIndex(_ index: Int) -> Int {
         guard !sections.isEmpty else { return 0 }
         return min(max(index, 0), sections.count - 1)
     }
 
-    // MARK: - Арбитраж вертикального скролла (§5, вариант B)
+    // MARK: - Vertical scroll arbitration
 
-    /// Подписывается на состояния пана панорамы, не заменяя его делегата.
+    /// Subscribes to the panorama's pan states without replacing its delegate.
     ///
-    /// `addTarget` аддитивен и не ломает внутреннюю обработку `UIScrollView`, в
-    /// отличие от подмены `panGestureRecognizer.delegate` (почему она опасна —
-    /// см. ``registerVerticalOwner(_:)``).
+    /// `addTarget` is additive and does not break `UIScrollView`'s internal handling, unlike
+    /// replacing `panGestureRecognizer.delegate` (why that is dangerous:
+    /// see ``registerVerticalOwner(_:)``).
     private func observeScrollPan() {
         let pan = scrollView.panGestureRecognizer
         guard observedPan !== pan else { return }
@@ -1193,9 +1192,9 @@ public final class TesseraPanoramaViewController: UIViewController {
         observedPan = pan
     }
 
-    /// Состояния пана панорамы: блокировка и разблокировка вертикальных детей.
+    /// The panorama pan's states: blocking and unblocking the vertical children.
     ///
-    /// - Parameter pan: Пан ``TesseraPanoScrollView``.
+    /// - Parameter pan: The pan of ``TesseraPanoScrollView``.
     @objc private func scrollPanDidChange(_ pan: UIPanGestureRecognizer) {
         switch pan.state {
         case .began:
@@ -1209,15 +1208,15 @@ public final class TesseraPanoramaViewController: UIViewController {
         }
     }
 
-    /// Начинает горизонтальный жест: собирает арбитр и блокирует детей.
+    /// Begins a horizontal gesture: creates the arbiter and blocks the children.
     ///
-    /// Ось определяется по первому доступному вектору пана (при нулевой скорости —
-    /// по смещению: для сравнения модулей масштаб не важен). Если жест
-    /// вертикальный, пейджер его не ведёт, а прокрутка детей не блокируется —
-    /// иначе выключение скролла остановило бы начавшуюся вертикальную прокрутку
-    /// секции (§5).
+    /// The axis is determined from the pan's first available vector (at zero velocity,
+    /// from the translation: for comparing magnitudes the scale does not matter). If the gesture is
+    /// vertical, the pager does not lead it and the children's scrolling is not blocked;
+    /// otherwise disabling the scroll would stop a vertical scroll of the section
+    /// that has already begun.
     ///
-    /// - Parameter pan: Пан, перешедший в состояние `.began`.
+    /// - Parameter pan: The pan that entered the `.began` state.
     private func beginHorizontalScroll(with pan: UIPanGestureRecognizer) {
         let velocity = pan.velocity(in: pan.view)
         let vector = velocity == .zero ? pan.translation(in: pan.view) : velocity
@@ -1226,8 +1225,8 @@ public final class TesseraPanoramaViewController: UIViewController {
             return
         }
 
-        // Защита от наложения жестов: незавершённый арбитр сначала возвращает
-        // детям исходное состояние, иначе снимок `isScrollEnabled` потеряется.
+        // Guard against overlapping gestures: an unfinished arbiter first returns
+        // the children to their original state; otherwise the `isScrollEnabled` snapshot would be lost.
         if gestureArbiter != nil {
             endHorizontalScroll()
         }
@@ -1241,58 +1240,58 @@ public final class TesseraPanoramaViewController: UIViewController {
         gestureArbiter = arbiter
     }
 
-    /// Завершает горизонтальный жест: возвращает детям исходную прокрутку.
+    /// Ends the horizontal gesture: returns the children's scrolling to its original state.
     ///
-    /// После этого арбитр освобождается: сильных ссылок на скролл-вью секций между
-    /// жестами контроллер не держит, выгруженные секции (§6) не живут в арбитре.
+    /// After that the arbiter is released: the controller holds no strong references to the sections' scroll views
+    /// between gestures, and unloaded sections do not live on in the arbiter.
     private func endHorizontalScroll() {
         gestureArbiter?.endHorizontalScroll()
         gestureArbiter = nil
         pruneVerticalOwners()
     }
 
-    /// Живые зарегистрированные владельцы (без самого панорамного скролла).
+    /// The live registered owners (excluding the panorama's own scroll view).
     private var liveVerticalOwners: [UIScrollView] {
         verticalOwners
             .compactMap(\.scrollView)
             .filter { $0 !== scrollView }
     }
 
-    /// Убирает из реестра освобождённые скролл-вью (§6: секции живут окном ±1).
+    /// Removes released scroll views from the registry (sections live in a ±1 window).
     private func pruneVerticalOwners() {
         verticalOwners.removeAll { $0.scrollView == nil }
     }
 
-    // MARK: - Уведомления
+    // MARK: - Notifications
 
-    /// Сменился размер текста Dynamic Type — нужна новая раскладка заголовков
-    /// (§7). Сами шрифты обновляет ``PanoHeaderView``.
+    /// The Dynamic Type text size changed: the headers need a new layout
+    /// The fonts themselves are updated by ``PanoHeaderView``.
     @objc private func contentSizeCategoryDidChange() {
         guard isViewLoaded else { return }
         view.setNeedsLayout()
     }
 }
 
-// MARK: - PanoScrollViewObserving (§4, §6, §7)
+// MARK: - PanoScrollViewObserving
 
 extension TesseraPanoramaViewController: PanoScrollViewObserving {
 
-    /// Горячий путь прокрутки: только `transform`/`alpha` и колбэк делегата (§4).
+    /// The scrolling hot path: only `transform`/`alpha` and the delegate callback.
     ///
-    /// - Parameter scrollView: Источник события.
+    /// - Parameter scrollView: The event source.
     func panoScrollViewDidScroll(_ scrollView: TesseraPanoScrollView) {
-        // Запись геометрии в layout-проходе — не прогресс: итог применит сам
-        // проход (E10.13).
+        // Writing geometry in the layout pass is not progress: the pass itself will apply the
+        // result.
         guard !isRestoringGeometry else { return }
         applyProgress(notifyDelegate: true)
     }
 
-    /// Жест закончился: цель снапа известна — догружаем соседа до инерции (§6).
+    /// The gesture ended: the snap target is known, so load the neighbor before inertia.
     ///
     /// - Parameters:
-    ///   - scrollView: Источник события.
-    ///   - velocityX: Скорость жеста (не используется: решает политика снапа).
-    ///   - targetReadingIndex: Целевая секция в порядке чтения.
+    ///   - scrollView: The event source.
+    ///   - velocityX: The gesture velocity (unused: the snapping policy decides).
+    ///   - targetReadingIndex: The target section in reading order.
     func panoScrollViewWillEndDragging(
         _ scrollView: TesseraPanoScrollView,
         velocityX: CGFloat,
@@ -1301,18 +1300,18 @@ extension TesseraPanoramaViewController: PanoScrollViewObserving {
         prefetchSections(around: targetReadingIndex)
     }
 
-    /// Жест завершён без инерции: доводка снапа (E9.2б) либо завершение сразу.
+    /// The gesture finished without inertia: settle the snap, or finish at once.
     ///
-    /// При нулевой скорости UIKit не начинает инерцию и игнорирует изменённый
-    /// в `scrollViewWillEndDragging` `targetContentOffset` — offset остался бы
-    /// между снап-точками. Контроллер — программный писатель `contentOffset`
-    /// (§2, «Один писатель») — сам доводит его до цели политики анимацией и
-    /// завершает переход в `scrollViewDidEndScrollingAnimation`. При Reduce
-    /// Motion доводка мгновенная (§7).
+    /// At zero velocity UIKit does not start inertia and ignores the
+    /// `targetContentOffset` modified in `scrollViewWillEndDragging`, so the offset would stay
+    /// between snap points. The controller, as the programmatic writer of `contentOffset`
+    /// (the single-writer contract), settles it to the policy's target with an animation and
+    /// completes the transition in `scrollViewDidEndScrollingAnimation`. With Reduce
+    /// Motion the settle is instantaneous.
     ///
     /// - Parameters:
-    ///   - scrollView: Источник события.
-    ///   - decelerate: Начнётся ли инерция.
+    ///   - scrollView: The event source.
+    ///   - decelerate: Whether inertia will begin.
     func panoScrollViewDidEndDragging(
         _ scrollView: TesseraPanoScrollView,
         willDecelerate decelerate: Bool
@@ -1326,7 +1325,7 @@ extension TesseraPanoramaViewController: PanoScrollViewObserving {
             if TesseraAccessibility.isReduceMotionEnabled {
                 scrollView.setContentOffset(target, animated: false)
             } else {
-                // Переход завершит `panoScrollViewDidEndScrollingAnimation`.
+                // The transition will be completed by `panoScrollViewDidEndScrollingAnimation`.
                 scrollView.setContentOffset(target, animated: true)
                 return
             }
@@ -1334,40 +1333,40 @@ extension TesseraPanoramaViewController: PanoScrollViewObserving {
         finishTransition()
     }
 
-    /// Инерция закончилась: фиксируем показанную секцию.
+    /// Inertia ended: record the shown section.
     ///
-    /// - Parameter scrollView: Источник события.
+    /// - Parameter scrollView: The event source.
     func panoScrollViewDidEndDecelerating(_ scrollView: TesseraPanoScrollView) {
         finishTransition()
     }
 
-    /// Программная анимация завершилась: фиксируем показанную секцию.
+    /// The programmatic animation finished: record the shown section.
     ///
-    /// - Parameter scrollView: Источник события.
+    /// - Parameter scrollView: The event source.
     func panoScrollViewDidEndScrollingAnimation(_ scrollView: TesseraPanoScrollView) {
         finishTransition()
     }
 
-    /// Жест VoiceOver «три пальца» из скролл-вью (§7).
+    /// The VoiceOver three-finger gesture from the scroll view.
     ///
     /// - Parameters:
-    ///   - scrollView: Источник события.
-    ///   - step: Шаг по секциям в порядке чтения (уже с учётом RTL).
-    /// - Returns: `true`, если переход выполнен.
+    ///   - scrollView: The event source.
+    ///   - step: The step through the sections in reading order (already adjusted for RTL).
+    /// - Returns: `true` if the transition was performed.
     func panoScrollView(_ scrollView: TesseraPanoScrollView, accessibilityStep step: Int) -> Bool {
-        // Индекс берём из фактического offset'а, а не из кеша: жест мог прийти
-        // до завершения предыдущего перехода.
+        // Take the index from the actual offset, not from a cache: the gesture may have arrived
+        // before the previous transition completed.
         applyProgress(notifyDelegate: false)
         return handleAccessibilityStep(step)
     }
 
-    /// Выполняет шаг VoiceOver по секциям (§7).
+    /// Performs a VoiceOver step through the sections.
     ///
-    /// `contentOffset` пишет только контроллер — через
-    /// ``selectSection(at:animated:)`` (§2, «Один писатель»).
+    /// `contentOffset` is written only by the controller, through
+    /// ``selectSection(at:animated:)`` (the single-writer contract).
     ///
-    /// - Parameter step: `+1` — следующая секция, `-1` — предыдущая.
-    /// - Returns: `true`, если переход выполнен.
+    /// - Parameter step: `+1` is the next section and `-1` the previous one.
+    /// - Returns: `true` if the transition was performed.
     private func handleAccessibilityStep(_ step: Int) -> Bool {
         guard step != 0, sections.count > 1 else { return false }
 
@@ -1379,9 +1378,9 @@ extension TesseraPanoramaViewController: PanoScrollViewObserving {
     }
 }
 
-/// Корневой вид панорамы: смена `semanticContentAttribute` на лету помечает
-/// layout, чтобы `layoutPanorama()` перенёс направление на слои и переложил
-/// слоты, сохранив текущую секцию (§7, «RTL»; E10.13).
+/// The panorama's root view: a `semanticContentAttribute` change on the fly marks
+/// layout as needed so that `layoutPanorama()` carries the direction over to the layers and re-lays out
+/// the slots, preserving the current section.
 private final class PanoramaRootView: UIView {
     override var semanticContentAttribute: UISemanticContentAttribute {
         didSet {

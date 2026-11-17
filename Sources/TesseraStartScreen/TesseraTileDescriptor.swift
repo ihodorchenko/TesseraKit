@@ -1,9 +1,9 @@
-// Модель ярлыка рабочего стола (Start Screen).
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §3 «Плиточная сетка»
-// (модель раскладки, юнитные координаты), §14 «Уточнения MVP» п. 1 и 4
-// (D12/D15: ярлык — просто действие без поля `type`; четыре размера плиток).
-// D14 (папки и функция одобрения) описан в docs/STATE.md; модель папки —
-// в TesseraTileFolder.swift, операции с папками — в TesseraTileStore.
+// The model of a start screen tile (Start Screen).
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md — §3 (tile grid)
+// (layout model, unit coordinates) and §14 (MVP clarifications)
+// (D12/D15: a tile is just an action with no `type` field; four tile sizes).
+// D14 (folders and the approval function) is described in docs/STATE.md; the folder model is
+// in TesseraTileFolder.swift, folder operations are in TesseraTileStore.
 
 #if canImport(UIKit)
 import UIKit
@@ -11,55 +11,55 @@ import UIKit
 import CoreGraphics
 #endif
 
-/// Размер ярлыка на сетке рабочего стола в юнитах
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14 п. 4; D15 в docs/STATE.md).
+/// The size of a tile on the start screen grid, in units
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14; D15 in docs/STATE.md).
 ///
-/// Размеры заданы парами «колонки × строки»:
+/// Sizes are given as "columns × rows" pairs:
 /// - ``small`` — 1×1,
 /// - ``medium`` — 2×2,
 /// - ``wide`` — 4×2,
 /// - ``large`` — 4×4.
 ///
-/// Значения — именно размеры в юнитах, а не в точках: сетка пересчитывается
-/// под любую ширину экрана, а положение ярлыков хранится в юнитных координатах
-/// (документ §3, «Модель раскладки»). `String`-сырое значение используется
-/// персистентностью `TesseraTileStore` (E4.6). Порядок объявления случаев — порядок
-/// «по возрастанию» (`CaseIterable`), а **не** порядок цикла по тапу на стрелку
-/// размера: цикл задан явно в ``cycleOrder`` (D28, E15.3).
+/// The values are sizes in units, not in points: the grid is recomputed
+/// for any screen width, and tile positions are stored in unit coordinates
+/// (document §3, "Layout model"). The `String` raw value is used by the
+/// persistence of `TesseraTileStore`. The declaration order of the cases is the "ascending"
+/// order (`CaseIterable`) and is **not** the order of the size cycle on a tap on the size
+/// arrow: the cycle is set explicitly in ``cycleOrder`` (D28).
 public enum TesseraTileSize: String, CaseIterable, Codable, Hashable {
-    /// 1×1 юнит.
+    /// 1×1 unit.
     case small
 
-    /// 2×2 юнита; размер по умолчанию для ярлыка (D12).
+    /// 2×2 units; the default size of a tile (D12).
     case medium
 
-    /// 4×2 юнита: «широкая» плитка.
+    /// 4×2 units: a "wide" tile.
     case wide
 
-    /// 4×4 юнита: «большая» плитка.
+    /// 4×4 units: a "large" tile.
     case large
 
-    /// Порядок цикла размеров по тапу на стрелку (D28, E15.3):
-    /// малый → широкий → средний → большой → малый.
+    /// The order of the size cycle on a tap on the size arrow (D28):
+    /// small → wide → medium → large → small.
     ///
-    /// Это порядок W10M (малый → широкий → средний), к которому в конец дописан
-    /// ``large`` (набор из четырёх размеров — D15). Он задан явно и не берётся
-    /// из `allCases`: порядок объявления («по возрастанию») для цикла никто не
-    /// выбирал. Формат хранения не затронут — сохраняется сам размер.
+    /// This is the Windows 10 Mobile order (small → wide → medium), with
+    /// ``large`` appended at the end (the set of four sizes is D15). It is set explicitly and is not taken
+    /// from `allCases`: nobody chose the declaration order ("ascending") for the
+    /// cycle. The storage format is unaffected — the size itself is persisted.
     static let cycleOrder: [TesseraTileSize] = [.small, .wide, .medium, .large]
 
-    /// Следующий размер цикла среди поддерживаемых (D28, E15.3).
+    /// The next size in the cycle among the supported ones (D28).
     ///
-    /// От положения текущего размера в ``cycleOrder`` идёт вперёд по кругу и
-    /// берёт первый размер из `supported`; неподдерживаемые пропускаются.
-    /// Порядок самого списка `supported` на результат не влияет (хост задаёт
-    /// набор, а не порядок). Текущий размер не обязан входить в `supported`
-    /// (хост мог его исключить): тогда берётся ближайший поддерживаемый
-    /// дальше по циклу. Если поддерживается только сам текущий размер — цикл
-    /// замыкается на нём; если набор пуст — тоже возвращается текущий.
+    /// Starting from the position of the current size in ``cycleOrder``, it goes forward, wrapping around, and
+    /// takes the first size from `supported`; unsupported sizes are skipped.
+    /// The order of the `supported` list itself does not affect the result (the host sets
+    /// a set, not an order). The current size need not be in `supported`
+    /// (the host may have excluded it): then the nearest supported size
+    /// further along the cycle is taken. If only the current size itself is supported, the cycle
+    /// closes on it; if the set is empty, the current size is returned as well.
     ///
-    /// - Parameter supported: Поддерживаемые элементу размеры.
-    /// - Returns: Следующий размер; равен `self`, когда менять нечего.
+    /// - Parameter supported: The sizes supported for the element.
+    /// - Returns: The next size; equal to `self` when there is nothing to change.
     func next(among supported: [TesseraTileSize]) -> TesseraTileSize {
         let order = TesseraTileSize.cycleOrder
         guard let start = order.firstIndex(of: self) else { return self }
@@ -72,10 +72,10 @@ public enum TesseraTileSize: String, CaseIterable, Codable, Hashable {
         return self
     }
 
-    /// Размер ярлыка в юнитах: ширина — число колонок, высота — число строк.
+    /// The tile size in units: the width is the number of columns, the height is the number of rows.
     ///
-    /// Для всех случаев `width` и `height` — целые положительные значения;
-    /// движок раскладки использует их как целые (`unitColumns`/`unitRows`).
+    /// For all cases `width` and `height` are positive integers;
+    /// the layout engine uses them as integers (`unitColumns`/`unitRows`).
     public var unitSize: CGSize {
         switch self {
         case .small:
@@ -89,39 +89,39 @@ public enum TesseraTileSize: String, CaseIterable, Codable, Hashable {
         }
     }
 
-    /// Ширина ярлыка в юнитах (число колонок сетки).
+    /// The tile width in units (the number of grid columns).
     public var unitColumns: Int {
         Int(unitSize.width)
     }
 
-    /// Высота ярлыка в юнитах (число строк сетки).
+    /// The tile height in units (the number of grid rows).
     public var unitRows: Int {
         Int(unitSize.height)
     }
 }
 
-/// Бейдж внимания на ярлыке — красная точка или счётчик
-/// (docs/STARTSCREEN-IOS-DESIGN.md §14 п. 1; D12 в docs/STATE.md).
+/// An attention badge on a tile: a red dot or a counter
+/// (docs/STARTSCREEN-IOS-DESIGN.md §14; D12 in docs/STATE.md).
 ///
-/// Бейдж не является частью live-флипа: это отдельный элемент угла плитки
-/// (документ §4, «Бейдж»). Модель хранит намерение, а внешний вид и озвучивание
-/// для VoiceOver строит компонент.
+/// The badge is not part of the live flip: it is a separate element in a tile corner
+/// (document §4, "Badge"). The model stores the intent, while the appearance and the
+/// VoiceOver announcement are built by the component.
 public enum TesseraTileBadge: Equatable, Hashable {
-    /// Бейджа нет.
+    /// No badge.
     case none
 
-    /// Красная точка без числа — «есть что-то новое».
+    /// A red dot without a number: "there is something new".
     case dot
 
-    /// Счётчик внимания. Неположительное значение не показывается:
-    /// см. ``isVisible``.
+    /// An attention counter. A non-positive value is not shown:
+    /// see ``isVisible``.
     case count(Int)
 
-    /// Нужно ли визуально показывать бейдж.
+    /// Whether the badge should be shown visually.
     ///
-    /// `.count(0)` и отрицательные счётчики трактуются как отсутствие бейджа:
-    /// так модель не требует от вью повторной проверки знака и не показывает
-    /// пустую красную точку. `.dot` и положительный счётчик видимы.
+    /// `.count(0)` and negative counters are treated as no badge:
+    /// this way the model does not require the view to re-check the sign and does not show
+    /// an empty red dot. `.dot` and a positive counter are visible.
     public var isVisible: Bool {
         switch self {
         case .none:
@@ -133,12 +133,12 @@ public enum TesseraTileBadge: Equatable, Hashable {
         }
     }
 
-    /// Значение `accessibilityValue` для VoiceOver (D34, E15.4).
+    /// The `accessibilityValue` for VoiceOver (D34).
     ///
-    /// Положительный счётчик озвучивается числом, точка без числа —
-    /// локализованной строкой «есть уведомление» (иначе слепой пользователь
-    /// не узнал бы о наличии уведомления), `.none` и неположительный счётчик —
-    /// `nil`. Единый источник для ячейки сетки, ярлыка панели и
+    /// A positive counter is announced as a number; a dot without a number is announced as a
+    /// localized "has a notification" string (otherwise a blind user
+    /// would not learn that a notification exists); `.none` and a non-positive counter give
+    /// `nil`. A single source for the grid cell, the folder panel tile, and
     /// ``TesseraLiveTileView``.
     var accessibilityValueText: String? {
         switch self {
@@ -154,76 +154,76 @@ public enum TesseraTileBadge: Equatable, Hashable {
 
 #if canImport(UIKit)
 
-/// Ярлык рабочего стола — просто действие над плиткой
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14 п. 1; D12 в docs/STATE.md).
+/// A start screen tile is just an action on a tile
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14; D12 in docs/STATE.md).
 ///
-/// У ярлыка **нет** поля `type`: группировка по типам приложений не
-/// используется, ярлык описывается идентификатором, подписью, иконкой,
-/// действием, бейджем, размером плитки и опциональным источником живого
-/// контента. Действие — единственный способ поведения: тап по плитке вызывает
-/// ``action``, а переходы, открытие папок и прочая навигация остаются за хостом.
+/// A tile has **no** `type` field: grouping by app type is not
+/// used. A tile is described by an identifier, a title, an icon,
+/// an action, a badge, a tile size, and an optional live content
+/// source. The action is the only behavior: a tap on the tile calls
+/// ``action``, while transitions, opening folders, and other navigation are left to the host.
 ///
-/// Модель — обычное значение (`struct`): `TesseraTileStore` хранит массив ярлыков и
-/// заменяет/меняет их копии, не превращая компонент в источник глобального
-/// состояния. Живой контент (флипы, стахгер, паузы) — задача `LiveTileEngine`
-/// (E4.3, документ §4): ярлык несёт ссылку на провайдера
-/// (``liveContent``), а сетка отдаёт её движку при показе ячейки.
+/// The model is a plain value (`struct`): `TesseraTileStore` stores an array of tiles and
+/// replaces/mutates their copies without turning the component into a source of global
+/// state. Live content (flips, stagger, pauses) is the job of `LiveTileEngine`
+/// (document §4): a tile carries a reference to the provider
+/// (``liveContent``), and the grid hands it to the engine when a cell is shown.
 public struct TesseraTileDescriptor {
-    /// Стабильный идентификатор ярлыка.
+    /// A stable tile identifier.
     ///
-    /// Должен быть уникален в пределах рабочего стола: по нему `TesseraTileStore`
-    /// находит ярлык для resize, unpin и операций с папками (D14). Поведение при
-    /// повторяющихся идентификаторах не определено.
+    /// Must be unique within the start screen: `TesseraTileStore` uses it
+    /// to find the tile for resize, unpin, and folder operations (D14). Behavior with
+    /// duplicate identifiers is undefined.
     public let id: AnyHashable
 
-    /// Подпись ярлыка — статичный заголовок плитки (документ §9, «Плитка —
-    /// один элемент»).
+    /// The tile title — the static tile caption (document §9, "A tile is
+    /// a single element").
     ///
-    /// E9.8в: у live-плитки accessibility label строится из
-    /// ``liveContent``-провайдера (`frontFace.title` + `detail`), потому что
-    /// VoiceOver должен читать видимую лицевую сторону; `title` остаётся
-    /// подписью ярлыка и фолбэком для пустого фронта.
+    /// For a live tile the accessibility label is built from the
+    /// ``liveContent`` provider (`frontFace.title` + `detail`), because
+    /// VoiceOver must read the visible front face; `title` remains the
+    /// tile caption and the fallback for an empty front.
     public var title: String
 
-    /// Иконка ярлыка. `nil` допустим: плитка покажет заглушку/только подпись.
+    /// The tile icon. `nil` is allowed: the tile shows a placeholder or only the caption.
     public var icon: UIImage?
 
-    /// Действие по тапу. Вызывается на главном потоке компонентом.
+    /// The tap action. Called by the component on the main thread.
     ///
-    /// Замыкание — часть идентичности ярлыка и не заменяется при resize;
-    /// для смены поведения хост создаёт новый ``TesseraTileDescriptor``.
+    /// The closure is part of the tile's identity and is not replaced on resize;
+    /// to change the behavior, the host creates a new ``TesseraTileDescriptor``.
     public let action: () -> Void
 
-    /// Бейдж внимания — красная точка или счётчик (D12). По умолчанию `.none`.
+    /// The attention badge — a red dot or a counter (D12). `.none` by default.
     public var badge: TesseraTileBadge
 
-    /// Размер плитки в юнитах (D15). По умолчанию `.medium`.
+    /// The tile size in units (D15). `.medium` by default.
     public var size: TesseraTileSize
 
-    /// Источник живого контента плитки (§4, «Контентная модель»; D15).
+    /// The live content source of the tile (§4, "Content model"; D15).
     ///
-    /// `nil` — плитка статичная: сетка рисует иконку, заголовок и бэйдж как
-    /// раньше. Если провайдер задан, ячейка сетки показывает
-    /// ``TesseraLiveTileView`` и отдаёт контент ``TesseraLiveTileEngine``:
-    /// движок сам читает стороны, планирует флипы стахгером и ставит их на
-    /// паузу вне экрана/в фоне/при Reduce Motion.
+    /// `nil` means a static tile: the grid draws the icon, the title, and the badge as
+    /// before. If a provider is set, the grid cell shows
+    /// ``TesseraLiveTileView`` and hands the content to ``TesseraLiveTileEngine``:
+    /// the engine reads the faces itself, schedules flips with a stagger, and pauses them
+    /// off screen, in the background, and under Reduce Motion.
     ///
-    /// - Note: Провайдер — runtime-ссылка, как ``action``: `TesseraTileStore` не
-    ///   сериализует его и не сравнивает ярлыки по этому полю. Хост передаёт
-    ///   провайдера при регистрации каталога вместе с действием и иконкой.
+    /// - Note: The provider is a runtime reference, like ``action``: `TesseraTileStore` does not
+    ///   serialize it and does not compare tiles by this field. The host passes the
+    ///   provider when registering the catalog together with the action and the icon.
     public var liveContent: TesseraLiveTileContentProvider?
 
-    /// Создаёт ярлык рабочего стола.
+    /// Creates a start screen tile.
     ///
     /// - Parameters:
-    ///   - id: Уникальный идентификатор ярлыка в пределах рабочего стола.
-    ///   - title: Подпись ярлыка.
-    ///   - icon: Иконка; `nil` — без иконки.
-    ///   - action: Действие по тапу; вызывается на главном потоке.
-    ///   - badge: Бейдж внимания, по умолчанию `.none`.
-    ///   - size: Размер плитки, по умолчанию `.medium` (D12).
-    ///   - liveContent: Провайдер живого контента; по умолчанию `nil` —
-    ///     статичная плитка (D15).
+    ///   - id: A unique tile identifier within the start screen.
+    ///   - title: The tile title.
+    ///   - icon: The icon; `nil` means no icon.
+    ///   - action: The tap action; called on the main thread.
+    ///   - badge: The attention badge; `.none` by default.
+    ///   - size: The tile size; `.medium` by default (D12).
+    ///   - liveContent: The live content provider; `nil` by default —
+    ///     a static tile (D15).
     public init(
         id: AnyHashable,
         title: String,

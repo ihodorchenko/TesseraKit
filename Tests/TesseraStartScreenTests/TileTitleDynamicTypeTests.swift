@@ -2,10 +2,10 @@
 //  TileTitleDynamicTypeTests.swift
 //  TesseraStartScreenTests
 //
-//  Заголовки плиток на accessibility-размерах Dynamic Type (E12.6).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §9 «Accessibility»,
-//  п. 43: шрифт растёт, но ограничен геометрией плитки; слово не рвётся
-//  посреди символа; VoiceOver читает полный заголовок.
+//  Tile titles at accessibility Dynamic Type sizes.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §9 "Accessibility":
+//  the font grows but is bounded by the tile geometry; a word is never broken
+//  mid-character; VoiceOver reads the full title.
 //
 
 #if canImport(UIKit)
@@ -24,7 +24,7 @@ final class TileTitleDynamicTypeTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Ячейка в окне с переопределённой категорией Dynamic Type.
+    /// A cell in a window with an overridden Dynamic Type category.
     private func makeCell(
         title: String,
         side: CGFloat,
@@ -63,7 +63,7 @@ final class TileTitleDynamicTypeTests: XCTestCase {
         cell.contentView.subviews.compactMap { $0 as? UILabel }.first ?? UILabel()
     }
 
-    /// Ширина самого длинного слова в текущем шрифте подписи.
+    /// The width of the longest word in the label's current font.
     private func longestWordWidth(_ label: UILabel) -> CGFloat {
         (label.text ?? "").components(separatedBy: .whitespaces).map {
             ($0 as NSString).size(withAttributes: [.font: label.font as Any]).width
@@ -72,29 +72,29 @@ final class TileTitleDynamicTypeTests: XCTestCase {
 
     func testTitleLabelNeverBreaksByCharacter() {
         for category in [UIContentSizeCategory.large, .accessibilityExtraExtraLarge] {
-            let (_, label) = makeCell(title: "Календарь", side: 73, category: category)
+            let (_, label) = makeCell(title: "Calendar", side: 73, category: category)
             XCTAssertEqual(label.lineBreakMode, .byTruncatingTail)
         }
     }
 
     func testLongWordFitsOrFallsBackToSingleLineAtAccessibilitySize() {
         let (_, label) = makeCell(
-            title: "Календарь", side: 73, category: .accessibilityExtraExtraLarge
+            title: "Calendar", side: 73, category: .accessibilityExtraExtraLarge
         )
         let fits = longestWordWidth(label) <= label.bounds.width + 0.5
         XCTAssertTrue(
             fits || label.numberOfLines == 1,
-            "Слово либо помещается целиком, либо заголовок усекается в одну строку"
+            "Either the word fits entirely, or the title is truncated to one line"
         )
         XCTAssertGreaterThan(label.frame.width, 0)
     }
 
     func testFontCappedByTileGeometryAtAccessibilitySize() {
-        let (_, large) = makeCell(title: "Музыка", side: 73, category: .large)
+        let (_, large) = makeCell(title: "Music", side: 73, category: .large)
         let (_, accessible) = makeCell(
-            title: "Музыка", side: 73, category: .accessibilityExtraExtraExtraLarge
+            title: "Music", side: 73, category: .accessibilityExtraExtraExtraLarge
         )
-        // Потолок — доля стороны плитки (с учётом подгонки под ширину).
+        // The ceiling is a fraction of the tile side (taking fit-to-width into account).
         XCTAssertLessThanOrEqual(
             accessible.font.pointSize,
             max(12, floor(73 * TesseraTileCell.titleFontSideFraction)) + 0.5
@@ -104,31 +104,31 @@ final class TileTitleDynamicTypeTests: XCTestCase {
 
     func testFontScaleDownRespectsMinimumFactor() {
         let (_, label) = makeCell(
-            title: "Конфиденциальность", side: 73, category: .accessibilityExtraExtraExtraLarge
+            title: "Internationalization", side: 73, category: .accessibilityExtraExtraExtraLarge
         )
         let cap = max(12, floor(73 * TesseraTileCell.titleFontSideFraction))
         XCTAssertGreaterThanOrEqual(
             label.font.pointSize,
             floor(cap * TesseraTileCell.titleMinimumScaleFactor) - 1.5
         )
-        XCTAssertEqual(label.numberOfLines, 1, "Слово не влезло — одна строка с многоточием")
+        XCTAssertEqual(label.numberOfLines, 1, "The word does not fit — one line with an ellipsis")
     }
 
     func testTitleLabelStaysInsideTileAndVoiceOverLabelIsFull() {
         for side: CGFloat in [73, 150, 310] {
             let (cell, label) = makeCell(
-                title: "Календарь событий", side: side, category: .accessibilityExtraExtraLarge
+                title: "Calendar events", side: side, category: .accessibilityExtraExtraLarge
             )
             XCTAssertGreaterThanOrEqual(label.frame.minX, 0)
             XCTAssertGreaterThanOrEqual(label.frame.minY, 0)
             XCTAssertLessThanOrEqual(label.frame.maxX, cell.contentView.bounds.width + 0.5)
             XCTAssertLessThanOrEqual(label.frame.maxY, cell.contentView.bounds.height + 0.5)
-            XCTAssertEqual(cell.accessibilityLabel, "Календарь событий")
+            XCTAssertEqual(cell.accessibilityLabel, "Calendar events")
         }
     }
 
     func testNormalSizeFontUnchangedForSmallTile() {
-        let (_, label) = makeCell(title: "Почта", side: 73, category: .large)
+        let (_, label) = makeCell(title: "Mail", side: 73, category: .large)
         XCTAssertEqual(label.font.pointSize, 12, accuracy: 0.5)
     }
 }

@@ -2,22 +2,22 @@
 //  TileFolderReorderTests.swift
 //  TesseraStartScreenTests
 //
-//  Перестановка ярлыков внутри папки: модель, координатор, VoiceOver (E16.1,
-//  D40, 13.11.2026; W10M §6.5). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  «Отступления реализации (E16)», п. 65; решение D40 в docs/STATE.md.
+//  Reordering tiles inside a folder: model, coordinator, VoiceOver
+//  (D40; Windows 10 Mobile spec §6.5). Design document: docs/STARTSCREEN-IOS-DESIGN.md
+//  "Implementation deviations"; decision D40 in docs/STATE.md.
 //
-//  Проверяется:
-//  - `TesseraTileStore.moveWithinFolder(_:folderID:toIndex:)`: вперёд/назад, ужатие
-//    индекса, no-op (без `onChange` и записи), чужие идентификаторы, круг записи,
-//    одно уведомление, ячейки и размеры не меняются, одобрение хоста не
-//    спрашивается, невидимые члены (до регистрации каталога);
-//  - `TesseraTileEditCoordinator.moveWithinFolder(_:to:)`: сетка и панель
-//    показывают новый порядок, делегат `didReorderTile` ровно один раз, фокус
-//    VoiceOver на ярлыке в его новой ячейке панели;
-//  - custom actions «Переместить раньше/позже» на ярлыках панели: наличие у
-//    первого/среднего/последнего, действие, строки en/ru.
+//  What is checked:
+//  - `TesseraTileStore.moveWithinFolder(_:folderID:toIndex:)`: forward/backward, index
+//    clamping, no-op (no `onChange` and no write), foreign identifiers, write round trip,
+//    a single notification, cells and sizes do not change, host approval is not
+//    requested, invisible members (before the catalog is registered);
+//  - `TesseraTileEditCoordinator.moveWithinFolder(_:to:)`: the grid and the panel
+//    show the new order, the `didReorderTile` delegate fires exactly once, VoiceOver
+//    focus lands on the tile in its new panel cell;
+//  - the "Move earlier/later" custom actions on panel tiles: presence on the
+//    first/middle/last tile, the action itself, en/ru strings.
 //
-//  Раскладки точные (`TileStoreCellFixture`), 6 колонок для модели, 4 для сетки.
+//  Layouts are exact (`TileStoreCellFixture`): 6 columns for the model, 4 for the grid.
 //
 
 #if canImport(UIKit)
@@ -31,9 +31,9 @@ final class TileFolderReorderTests: XCTestCase {
     private let columns = 6
     private let folderID: AnyHashable = "F"
 
-    // MARK: - Помощники модели
+    // MARK: - Model helpers
 
-    /// Папка F (medium, (0,0)) из `contents` и плитка `a` справа от неё.
+    /// Folder F (medium, (0,0)) made from `contents`, and tile `a` to its right.
     private func makeStore(
         contents: [(String, TesseraTileSize)] = [("x", .small), ("y", .small), ("z", .small), ("w", .small)],
         in directory: TesseraTestDirectory,
@@ -52,7 +52,7 @@ final class TileFolderReorderTests: XCTestCase {
         store.snapshot().folders.first { $0.id == folder }?.tiles.map { $0.id } ?? []
     }
 
-    /// Считает уведомления `onChange` и запоминает порядок папки в каждом.
+    /// Counts `onChange` notifications and remembers the folder order in each.
     private final class ChangeRecorder {
         var orders: [[AnyHashable]] = []
     }
@@ -65,9 +65,9 @@ final class TileFolderReorderTests: XCTestCase {
         return recorder
     }
 
-    // MARK: - Модель: перестановка
+    // MARK: - Model: reordering
 
-    /// Ярлык идёт вперёд: порядок папки в снимке, `folderContaining` и превью.
+    /// A tile moves forward: the folder order in the snapshot, `folderContaining` and the preview.
     func testMoveForwardReordersFolder() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
@@ -78,7 +78,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(store.folderContaining("x")?.tiles.map { $0.id }, ["y", "z", "x", "w"] as [AnyHashable])
     }
 
-    /// Ярлык идёт назад.
+    /// A tile moves backward.
     func testMoveBackwardReordersFolder() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
@@ -88,7 +88,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(order(store), ["x", "w", "y", "z"] as [AnyHashable])
     }
 
-    /// Индекс вне границ ужимается к границе.
+    /// An out-of-bounds index is clamped to the bound.
     func testIndexIsClamped() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
@@ -99,12 +99,12 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertTrue(store.moveWithinFolder("y", folderID: "F", toIndex: 99))
         XCTAssertEqual(order(store), ["x", "z", "w", "y"] as [AnyHashable])
 
-        // Ужатие до текущей позиции — no-op.
+        // Clamping to the current position is a no-op.
         XCTAssertFalse(store.moveWithinFolder("y", folderID: "F", toIndex: 42))
         XCTAssertEqual(order(store), ["x", "z", "w", "y"] as [AnyHashable])
     }
 
-    /// Папка из двух ярлыков: перестановка — обмен.
+    /// A folder with two tiles: reordering is a swap.
     func testTwoTileFolderSwaps() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(contents: [("x", .small), ("y", .small)], in: directory)
@@ -114,9 +114,9 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertFalse(store.moveWithinFolder("x", folderID: "F", toIndex: 1))
     }
 
-    // MARK: - Модель: no-op и чужие идентификаторы
+    // MARK: - Model: no-op and foreign identifiers
 
-    /// Та же позиция — `false`, без `onChange` и без записи файла.
+    /// The same position gives `false`, with no `onChange` and no file write.
     func testSamePositionIsNoOpWithoutNotificationOrSave() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory, autosaves: true)
@@ -127,13 +127,13 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertFalse(store.moveWithinFolder("x", folderID: "F", toIndex: 1))
         XCTAssertFalse(store.moveWithinFolder("y", folderID: "F", toIndex: 0))
 
-        XCTAssertTrue(recorder.orders.isEmpty, "Ни одного onChange")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path), "Ничего не записано")
+        XCTAssertTrue(recorder.orders.isEmpty, "No onChange at all")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path), "Nothing was written")
         XCTAssertEqual(order(store), ["y", "x", "z", "w"] as [AnyHashable])
     }
 
-    /// Неизвестная папка, неизвестный ярлык, ярлык не из этой папки, плитка сетки
-    /// вместо папки — `false`, модель не меняется.
+    /// An unknown folder, an unknown tile, a tile not from this folder, a grid tile
+    /// instead of a folder — `false`, and the model does not change.
     func testUnknownIdentifiersAreNoOps() throws {
         let directory = TesseraTestDirectory()
         let store = try TileStoreCellFixture.makeStore(
@@ -147,20 +147,20 @@ final class TileFolderReorderTests: XCTestCase {
         )
         let recorder = record(store)
 
-        XCTAssertFalse(store.moveWithinFolder("x", folderID: "nope", toIndex: 1), "Папки нет")
-        XCTAssertFalse(store.moveWithinFolder("nope", folderID: "F", toIndex: 1), "Ярлыка нет")
-        XCTAssertFalse(store.moveWithinFolder("p", folderID: "F", toIndex: 1), "Ярлык из другой папки")
-        XCTAssertFalse(store.moveWithinFolder("a", folderID: "F", toIndex: 1), "Ярлык с рабочего стола")
-        XCTAssertFalse(store.moveWithinFolder("x", folderID: "a", toIndex: 1), "Плитка вместо папки")
+        XCTAssertFalse(store.moveWithinFolder("x", folderID: "nope", toIndex: 1), "No such folder")
+        XCTAssertFalse(store.moveWithinFolder("nope", folderID: "F", toIndex: 1), "No such tile")
+        XCTAssertFalse(store.moveWithinFolder("p", folderID: "F", toIndex: 1), "A tile from another folder")
+        XCTAssertFalse(store.moveWithinFolder("a", folderID: "F", toIndex: 1), "A tile from the desktop")
+        XCTAssertFalse(store.moveWithinFolder("x", folderID: "a", toIndex: 1), "A tile instead of a folder")
 
         XCTAssertTrue(recorder.orders.isEmpty)
         XCTAssertEqual(order(store, folder: "F"), ["x", "y"] as [AnyHashable])
         XCTAssertEqual(order(store, folder: "G"), ["p", "q"] as [AnyHashable])
     }
 
-    // MARK: - Модель: персистентность и побочные эффекты
+    // MARK: - Model: persistence and side effects
 
-    /// Круг записи: порядок переживает перезапуск; превью и снимок показывают его.
+    /// Write round trip: the order survives a restart; the preview and the snapshot show it.
     func testOrderSurvivesRoundTrip() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory, autosaves: true)
@@ -171,7 +171,7 @@ final class TileFolderReorderTests: XCTestCase {
         let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(["a", "x", "y", "z", "w"].map { tesseraTestTile($0, size: .small) })
         try fresh.load()
-        XCTAssertEqual(order(fresh), ["w", "x", "y", "z"] as [AnyHashable], "Порядок в файле")
+        XCTAssertEqual(order(fresh), ["w", "x", "y", "z"] as [AnyHashable], "The order in the file")
         XCTAssertEqual(
             fresh.snapshot().folders.first?.tiles.map { $0.id },
             store.snapshot().folders.first?.tiles.map { $0.id }
@@ -179,7 +179,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(fresh.placements, store.placements)
     }
 
-    /// Одно уведомление `onChange`, и снимок в нём уже с новым порядком.
+    /// A single `onChange` notification, and the snapshot in it already has the new order.
     func testExactlyOneChangeWithNewOrder() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
@@ -191,7 +191,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(recorder.orders.first, ["z", "x", "y", "w"] as [AnyHashable])
     }
 
-    /// Ячейки и размеры верхнего уровня и самих ярлыков не меняются.
+    /// Cells and sizes of top-level items and of the tiles themselves do not change.
     func testPlacementsAndSizesAreUntouched() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(
@@ -217,7 +217,7 @@ final class TileFolderReorderTests: XCTestCase {
         tesseraAssertCellInvariants(store, columns: columns, catalogIDs: ["a", "x", "y", "z"])
     }
 
-    /// Одобрение хоста (D14) не спрашивается: состав папки не меняется.
+    /// Host approval (D14) is not requested: the folder's composition does not change.
     func testApprovalIsNotAsked() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
@@ -233,8 +233,8 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(order(store), ["y", "z", "w", "x"] as [AnyHashable])
     }
 
-    /// Невидимые члены (файл прочитан до регистрации каталога): без каталога
-    /// перестановка отказывает; после регистрации работает по видимым ярлыкам.
+    /// Invisible members (the file is read before the catalog is registered): without a catalog
+    /// reordering is refused; after registration it works on the visible tiles.
     func testInvisibleMembersBeforeCatalogRegistration() throws {
         let directory = TesseraTestDirectory()
         let source = try makeStore(in: directory, autosaves: true)
@@ -244,7 +244,7 @@ final class TileFolderReorderTests: XCTestCase {
         try fresh.load()
         XCTAssertFalse(
             fresh.moveWithinFolder("x", folderID: "F", toIndex: 2),
-            "Каталога нет: видимых ярлыков в папке нет"
+            "No catalog: there are no visible tiles in the folder"
         )
 
         fresh.setCatalog(["a", "x", "y", "z", "w"].map { tesseraTestTile($0, size: .small) })
@@ -252,7 +252,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(order(fresh), ["y", "z", "x", "w"] as [AnyHashable])
     }
 
-    // MARK: - Помощники координатора
+    // MARK: - Coordinator helpers
 
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
         var reorders: [(tile: AnyHashable, folder: AnyHashable, index: Int)] = []
@@ -303,9 +303,9 @@ final class TileFolderReorderTests: XCTestCase {
         return try XCTUnwrap(host.host.panelCell(folderID: folderID))
     }
 
-    // MARK: - Координатор
+    // MARK: - Coordinator
 
-    /// Публичный метод: модель, сетка с закрытой панелью, делегат ровно раз.
+    /// The public method: the model, the grid with a closed panel, the delegate exactly once.
     func testCoordinatorMoveUpdatesModelGridAndDelegate() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -317,16 +317,16 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(
             host.host.grid.snapshot?.folders.first?.tiles.map { $0.id },
             ["y", "z", "x"] as [AnyHashable],
-            "Сетка показывает новый порядок"
+            "The grid shows the new order"
         )
         XCTAssertEqual(recorder.reorders.count, 1)
         XCTAssertEqual(recorder.reorders.first?.tile, "x")
         XCTAssertEqual(recorder.reorders.first?.folder, "F")
         XCTAssertEqual(recorder.reorders.first?.index, 2)
-        XCTAssertTrue(recorder.grouping.isEmpty, "Одобрение хоста не спрашивалось")
+        XCTAssertTrue(recorder.grouping.isEmpty, "Host approval was not requested")
     }
 
-    /// Ужатие индекса: делегат получает фактический индекс.
+    /// Index clamping: the delegate receives the actual index.
     func testCoordinatorReportsClampedIndex() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -337,22 +337,22 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(recorder.reorders.first?.index, 2)
     }
 
-    /// No-op и неизвестный ярлык: `false`, делегат молчит, сетка не меняется.
+    /// A no-op and an unknown tile: `false`, the delegate stays silent, the grid does not change.
     func testCoordinatorNoOpAndUnknownTile() throws {
         let host = try makeHost()
         let recorder = Recorder()
         host.coordinator.delegate = recorder
 
-        XCTAssertFalse(host.coordinator.moveWithinFolder("x", to: 0), "Позиция та же")
-        XCTAssertFalse(host.coordinator.moveWithinFolder("a", to: 0), "Ярлык не в папке")
+        XCTAssertFalse(host.coordinator.moveWithinFolder("x", to: 0), "The same position")
+        XCTAssertFalse(host.coordinator.moveWithinFolder("a", to: 0), "The tile is not in the folder")
         XCTAssertFalse(host.coordinator.moveWithinFolder("nope", to: 0))
 
         XCTAssertTrue(recorder.reorders.isEmpty)
         XCTAssertEqual(order(host.store), ["x", "y", "z"] as [AnyHashable])
     }
 
-    /// Открытая панель переконфигурируется на месте: ярлыки в слотах идут в новом
-    /// порядке, превью-иконки закрытой папки тоже.
+    /// An open panel is reconfigured in place: tiles in the slots follow the new
+    /// order, and so do the preview icons of the closed folder.
     func testOpenPanelShowsNewOrder() throws {
         let host = try makeHost()
         let panel = try openPanel(host)
@@ -360,12 +360,12 @@ final class TileFolderReorderTests: XCTestCase {
 
         XCTAssertTrue(host.coordinator.moveWithinFolder("z", to: 0))
 
-        XCTAssertEqual(panel.shortcutCells.map { $0.itemID }, ["z", "x", "y"] as [AnyHashable?], "Тот же вид панели")
-        XCTAssertEqual(host.host.grid.expandedFolderID, folderID, "Панель осталась открытой")
+        XCTAssertEqual(panel.shortcutCells.map { $0.itemID }, ["z", "x", "y"] as [AnyHashable?], "The same panel view")
+        XCTAssertEqual(host.host.grid.expandedFolderID, folderID, "The panel stayed open")
         XCTAssertEqual(host.host.grid.snapshot?.folders.first?.tiles.map { $0.id }, ["z", "x", "y"] as [AnyHashable])
     }
 
-    /// Фокус VoiceOver остаётся на переставленном ярлыке — в его новой ячейке панели.
+    /// VoiceOver focus stays on the moved tile — in its new panel cell.
     func testFocusStaysOnMovedTileInNewPanelCell() throws {
         let host = try makeHost()
         let panel = try openPanel(host)
@@ -380,11 +380,11 @@ final class TileFolderReorderTests: XCTestCase {
         let post = try XCTUnwrap(posts.posts.last)
         XCTAssertEqual(post.0, .layoutChanged)
         let focused = try XCTUnwrap(post.1 as? TesseraTileCell)
-        XCTAssertTrue(focused === panel.shortcutCells[2], "Новая ячейка панели")
+        XCTAssertTrue(focused === panel.shortcutCells[2], "The new panel cell")
         XCTAssertEqual(focused.itemID, "x")
     }
 
-    /// Во время drag публичная перестановка отказывает (модель сессии не меняется).
+    /// During a drag the public reorder is refused (the session model does not change).
     func testCoordinatorRefusesDuringDrag() throws {
         let host = try makeHost()
         host.coordinator.beginEditing()
@@ -410,7 +410,7 @@ final class TileFolderReorderTests: XCTestCase {
     private var earlier: String { TesseraStartScreenStrings.string(.a11yActionMoveEarlier) }
     private var later: String { TesseraStartScreenStrings.string(.a11yActionMoveLater) }
 
-    /// У первого ярлыка нет «раньше», у последнего — «позже», у среднего оба.
+    /// The first tile has no "earlier", the last has no "later", the middle one has both.
     func testMoveActionsPresenceAtFirstMiddleLast() throws {
         let host = try makeHost()
         let panel = try openPanel(host)
@@ -428,7 +428,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertFalse(last.contains(later))
     }
 
-    /// «Позже» двигает ярлык на одну позицию; «раньше» — обратно; делегат слышит.
+    /// "Later" moves the tile one position; "earlier" moves it back; the delegate hears it.
     func testMoveActionsMoveByOnePosition() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -440,7 +440,7 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(order(host.store), ["y", "x", "z"] as [AnyHashable])
         XCTAssertEqual(recorder.reorders.last?.index, 1)
 
-        // Отложенная сверка обновляет действия по новому положению.
+        // The deferred reconciliation updates the actions for the new position.
         XCTAssertTrue(host.waitUntil {
             self.actionNames(of: panel.shortcutCells[0]).contains(self.later)
                 && !self.actionNames(of: panel.shortcutCells[0]).contains(self.earlier)
@@ -452,8 +452,8 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertEqual(recorder.reorders.count, 2)
     }
 
-    /// После ухода ярлыка из папки набор действий пересчитывается: у нового
-    /// последнего ярлыка «позже» пропадает.
+    /// After a tile leaves the folder the action set is recomputed: the new
+    /// last tile loses "later".
     func testMoveActionsRefreshAfterFolderShrinks() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .small), ("z", .small), ("w", .small)])
         let panel = try openPanel(host)
@@ -463,10 +463,10 @@ final class TileFolderReorderTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { host.store.folderContaining("x")?.tiles.count == 3 })
         XCTAssertTrue(host.waitUntil {
             !self.actionNames(of: panel.shortcutCells[2]).contains(self.later)
-        }, "У нового последнего ярлыка «позже» нет")
+        }, "The new last tile has no \"later\"")
     }
 
-    /// Папка из двух ярлыков: у первого только «позже», у второго только «раньше».
+    /// A folder with two tiles: the first has only "later", the second only "earlier".
     func testMoveActionsInTwoTileFolder() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .small)])
         let panel = try openPanel(host)
@@ -481,7 +481,7 @@ final class TileFolderReorderTests: XCTestCase {
         )
     }
 
-    /// Вне режима редактирования действий нет.
+    /// Outside edit mode there are no actions.
     func testNoMoveActionsOutsideEditing() throws {
         let host = try makeHost()
         let folder = try XCTUnwrap(host.folders.first)
@@ -496,7 +496,7 @@ final class TileFolderReorderTests: XCTestCase {
         }
     }
 
-    // MARK: - Строки en/ru
+    // MARK: - en/ru strings
 
     func testMoveStringsExistInBothLanguages() {
         XCTAssertEqual(TesseraStartScreenStrings.string(.a11yActionMoveEarlier, language: "en"), "Move earlier")

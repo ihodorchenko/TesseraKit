@@ -2,19 +2,19 @@
 //  TesseraAccessibilityTests.swift
 //  TesseraCoreTests
 //
-//  Контрактные тесты accessibility-утилит (задача E1.7).
-//  Проектный документ: docs/Core-iOS-Design.md §1 «Состав пакета»
-//  (TesseraAccessibilityKit: пагинация, анонсы смены страницы, RTL-нормализация)
-//  и §2 «Ключевые контракты» (в RTL «вперёд» — по направлению чтения).
+//  Contract tests for the accessibility utilities.
+//  Design document: docs/CORE-IOS-DESIGN.md §1 (package composition)
+//  (TesseraAccessibilityKit: pagination, page-change announcements, RTL normalization)
+//  and §2 (key contracts: in RTL, "forward" follows the reading direction).
 //
-//  Проверяется `pageStep(for:layoutDirection:)` для всех направлений жеста
-//  VoiceOver в LTR и RTL: физические `.left`/`.right` инвертируются, порядковые
-//  `.next`/`.previous` — нет (иначе получится двойное зеркалирование).
+//  Checks `pageStep(for:layoutDirection:)` for every VoiceOver gesture direction
+//  in LTR and RTL: the physical `.left`/`.right` are inverted, the ordinal
+//  `.next`/`.previous` are not (otherwise the mirroring would be applied twice).
 //
-//  Конвенция физических направлений (E9.3): трёхпальцевый свайп влево
-//  (`.left`) в LTR листает вперёд, как системный `UIPageViewController`
-//  (его accessibility-реализация на `.left` берёт следующий контроллер,
-//  на `.right` — предыдущий).
+//  Convention for physical directions: a three-finger swipe left
+//  (`.left`) in LTR pages forward, like the system `UIPageViewController`
+//  (its accessibility implementation takes the next controller on `.left`
+//  and the previous one on `.right`).
 //
 
 #if canImport(UIKit)
@@ -28,26 +28,26 @@ final class TesseraAccessibilityTests: XCTestCase {
     private let ltr = UIUserInterfaceLayoutDirection.leftToRight
     private let rtl = UIUserInterfaceLayoutDirection.rightToLeft
 
-    // MARK: - Физические направления
+    // MARK: - Physical directions
 
-    /// LTR: свайп влево — следующая страница, вправо — предыдущая
-    /// (конвенция UIKit, как у `UIPageViewController`).
+    /// LTR: swipe left goes to the next page, swipe right to the previous one
+    /// (the UIKit convention, as in `UIPageViewController`).
     func testPhysicalDirectionsInLTR() {
         XCTAssertEqual(TesseraAccessibility.pageStep(for: .left, layoutDirection: ltr), 1)
         XCTAssertEqual(TesseraAccessibility.pageStep(for: .right, layoutDirection: ltr), -1)
     }
 
-    /// RTL: физические направления инвертируются — следующая страница по
-    /// направлению чтения лежит слева, поэтому вперёд ведёт свайп вправо.
+    /// RTL: physical directions are inverted. The next page in reading
+    /// order lies on the left, so a swipe right leads forward.
     func testPhysicalDirectionsInRTL() {
         XCTAssertEqual(TesseraAccessibility.pageStep(for: .right, layoutDirection: rtl), 1)
         XCTAssertEqual(TesseraAccessibility.pageStep(for: .left, layoutDirection: rtl), -1)
     }
 
-    // MARK: - Порядковые направления
+    // MARK: - Ordinal directions
 
-    /// `.next`/`.previous` заданы в порядке чтения и не зеркалируются повторно
-    /// в RTL (иначе жест «назад» листал бы вперёд).
+    /// `.next`/`.previous` are defined in reading order and are not mirrored again
+    /// in RTL (otherwise a "back" gesture would page forward).
     func testOrdinalDirectionsAreIndependentOfLayoutDirection() {
         for direction in [ltr, rtl] {
             XCTAssertEqual(
@@ -63,10 +63,10 @@ final class TesseraAccessibilityTests: XCTestCase {
         }
     }
 
-    // MARK: - Вертикальные направления
+    // MARK: - Vertical directions
 
-    /// Вертикальные жесты не адресованы горизонтальному пейджеру — шаг 0
-    /// в обоих направлениях раскладки.
+    /// Vertical gestures are not addressed to the horizontal pager, so the step is 0
+    /// in both layout directions.
     func testVerticalDirectionsProduceZeroStep() {
         for direction in [ltr, rtl] {
             XCTAssertEqual(
@@ -82,9 +82,9 @@ final class TesseraAccessibilityTests: XCTestCase {
         }
     }
 
-    // MARK: - Полная таблица направлений
+    // MARK: - Full direction table
 
-    /// Сводная проверка всех поддерживаемых направлений в обеих раскладках.
+    /// Combined check of all supported directions in both layout directions.
     func testPageStepTable() {
         let cases: [(direction: UIAccessibilityScrollDirection,
                      layout: UIUserInterfaceLayoutDirection,
@@ -117,14 +117,14 @@ final class TesseraAccessibilityTests: XCTestCase {
 
     // MARK: - Reduce Motion
 
-    /// Утилита Reduce Motion доступна как чтение системной настройки (тип
-    /// `Bool`); значение не кешируется и не подменяется.
+    /// The Reduce Motion utility reads the system setting (type
+    /// `Bool`); the value is neither cached nor overridden.
     func testReduceMotionFlagIsReadable() {
         let value = TesseraAccessibility.isReduceMotionEnabled
         XCTAssertEqual(value, UIAccessibility.isReduceMotionEnabled)
     }
 
-    /// Пустая строка анонса игнорируется — метод не падает и ничего не постит.
+    /// An empty announcement string is ignored: the method does not crash and posts nothing.
     func testEmptyAnnouncementIsIgnored() {
         TesseraAccessibility.announcePageChange("")
     }

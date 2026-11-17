@@ -1,61 +1,61 @@
-// Модель папки на рабочем столе (Start Screen).
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §3 «Плиточная сетка»
-// (папка — элемент сетки) и §14 «Уточнения MVP» п. 1 и 3
-// (D12: ярлыки-действия; D14: операции с папками — только через функцию
-// одобрения хоста, в docs/STATE.md). Мутации папок (создание, добавление
-// ярлыка, перемещение между папками) выполняет `TesseraTileStore`, а не эта модель.
+// The model of a start screen folder (Start Screen).
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md — §3 (tile grid)
+// (a folder is a grid element) and §14 (MVP clarifications)
+// (D12: action tiles; D14: folder operations go only through the host
+// approval function, see docs/STATE.md). Folder mutations (creation, adding
+// a tile, moving between folders) are performed by `TesseraTileStore`, not by this model.
 
 #if canImport(UIKit)
 import UIKit
 
-/// Папка рабочего стола — контейнер ярлыков, который сам является элементом
-/// плиточной сетки (docs/STARTSCREEN-IOS-DESIGN.md §3, §14 п. 1 и 3; D14).
+/// A start screen folder: a container of tiles that is itself an element of
+/// the tile grid (docs/STARTSCREEN-IOS-DESIGN.md §3, §14; D14).
 ///
-/// Папка не является ярлыком и не несёт действия: тап по папке открывает её
-/// содержимое, а навигацию/раскрытие выполняет хост. Поэтому у модели нет
-/// `action` и нет поля `type` — только идентичность, подпись, иконка-превью,
-/// состав и размер плитки на сетке.
+/// A folder is not a tile and carries no action: a tap on a folder opens its
+/// contents, and the host handles navigation and expansion. Therefore the model has no
+/// `action` and no `type` field — only identity, title, preview icon,
+/// members, and the tile size on the grid.
 ///
-/// Размер по умолчанию — ``TesseraTileSize/medium`` (2×2 юнита): папка занимает
-/// стандартную среднюю плитку. Модель допускает и другие размеры из D15;
-/// правило, какие размеры разрешены папке, задаёт `TesseraTileStore`/хост.
+/// The default size is ``TesseraTileSize/medium`` (2×2 units): a folder takes
+/// a standard medium tile. The model also allows the other sizes from D15;
+/// which sizes a folder may take is decided by `TesseraTileStore` and the host.
 ///
-/// - Note: Папка не бывает из 0 или 1 ярлыка (D45): когда в ней остаётся один
-///   ярлык, `TesseraTileStore` распускает её, и ярлык встаёт на ячейку папки со своим
-///   размером. Исключение — переходная папка `TesseraTileStore.createFolder(withTile:title:columns:)`
-///   до `addToFolder`.
+/// - Note: A folder never holds 0 or 1 tiles (D45): when one tile is left in it,
+///   `TesseraTileStore` dissolves it, and the tile takes the folder's cell with its own
+///   size. The exception is the transitional folder `TesseraTileStore.createFolder(withTile:title:columns:)`
+///   before `addToFolder`.
 ///
-/// - Note: Вложенные папки не поддерживаются: `tiles` содержит только ярлыки
-///   (``TesseraTileDescriptor``). Создание папки, добавление ярлыка и перемещение
-///   между папками проходят через функцию одобрения хоста (D14).
+/// - Note: Nested folders are not supported: `tiles` contains only tiles
+///   (``TesseraTileDescriptor``). Folder creation, adding a tile, and moving
+///   between folders go through the host approval function (D14).
 public struct TesseraTileFolder {
-    /// Стабильный идентификатор папки; уникален в пределах рабочего стола.
+    /// A stable folder identifier; unique within the start screen.
     ///
-    /// По нему `TesseraTileStore` адресует папку при добавлении ярлыка и перемещении
-    /// между папками (D14).
+    /// `TesseraTileStore` uses it to address the folder when adding a tile and moving
+    /// between folders (D14).
     public let id: AnyHashable
 
-    /// Подпись папки (заголовок на плитке и accessibility label).
+    /// The folder title (the tile caption and the accessibility label).
     public var title: String
 
-    /// Иконка-превью папки. `nil` допустим: компонент покажет превью из
-    /// содержимого или заглушку.
+    /// The folder preview icon. `nil` is allowed: the component shows a preview built from
+    /// the contents or a placeholder.
     public var icon: UIImage?
 
-    /// Ярлыки внутри папки в порядке отображения.
+    /// The tiles inside the folder, in display order.
     public var tiles: [TesseraTileDescriptor]
 
-    /// Размер папки как элемента сетки. По умолчанию `.medium` (2×2 юнита).
+    /// The folder size as a grid element. `.medium` (2×2 units) by default.
     public var size: TesseraTileSize
 
-    /// Создаёт папку рабочего стола.
+    /// Creates a start screen folder.
     ///
     /// - Parameters:
-    ///   - id: Уникальный идентификатор папки в пределах рабочего стола.
-    ///   - title: Подпись папки.
-    ///   - icon: Иконка-превью; `nil` — без иконки.
-    ///   - tiles: Ярлыки внутри папки, по умолчанию пусто.
-    ///   - size: Размер папки на сетке, по умолчанию `.medium`.
+    ///   - id: A unique folder identifier within the start screen.
+    ///   - title: The folder title.
+    ///   - icon: The preview icon; `nil` means no icon.
+    ///   - tiles: The tiles inside the folder; empty by default.
+    ///   - size: The folder size on the grid; `.medium` by default.
     public init(
         id: AnyHashable,
         title: String,
@@ -71,29 +71,28 @@ public struct TesseraTileFolder {
     }
 }
 
-// MARK: - Бэйдж папки (D44, E15.7)
+// MARK: - Folder badge (D44)
 
 extension TesseraTileFolder {
 
-    /// Бэйдж плитки папки — сумма числовых бэйджей вложенных ярлыков (D44,
-    /// E15.7).
+    /// The folder tile badge: the sum of the numeric badges of the member tiles (D44).
     ///
-    /// В W10M (§6.3) бэйдж папки не описан: это решение библиотеки. Правило:
-    /// - складываются все `.count(n)` с `n > 0`; результат — `.count(сумма)`, а
-    ///   «99+» при сумме больше 99 рисует сам бэйдж (так же, как у плитки);
-    /// - если положительных счётчиков нет, но у кого-то есть `.dot`, папка
-    ///   показывает `.dot`; счётчик сильнее точки (точка и счётчик вместе дают
-    ///   счётчик);
-    /// - `.none`, `.count(0)` и отрицательные счётчики не учитываются; если ни
-    ///   у кого нет видимого бэйджа — `.none`.
+    /// Windows 10 Mobile does not describe a folder badge (§6.3): this is a library decision. The rule:
+    /// - all `.count(n)` with `n > 0` are summed; the result is `.count(sum)`, and
+    ///   "99+" for a sum above 99 is drawn by the badge itself (as for a tile);
+    /// - if there are no positive counters but some tile has a `.dot`, the folder
+    ///   shows `.dot`; a counter outranks a dot (a dot and a counter together give a
+    ///   counter);
+    /// - `.none`, `.count(0)`, and negative counters are ignored; if no
+    ///   tile has a visible badge, the result is `.none`.
     ///
-    /// Считается один раз при применении снимка к ячейке, а не по кадрам
-    /// (контракт 5 AGENTS). Сумма насыщается на `Int.max`, а не переполняется.
-    /// Невидимых членов (вне каталога) в ``tiles`` нет: `TesseraTileStore` чистит папку
-    /// по каталогу (D45), поэтому на них хелпер не смотрит.
+    /// Computed once when a snapshot is applied to a cell, not per frame
+    /// (no per-frame work, see AGENTS.md). The sum saturates at `Int.max` instead of overflowing.
+    /// There are no invisible members (outside the catalog) in ``tiles``: `TesseraTileStore` cleans the folder
+    /// against the catalog (D45), so the helper does not look at them.
     ///
-    /// - Parameter members: Ярлыки папки.
-    /// - Returns: Бэйдж плитки папки.
+    /// - Parameter members: The folder's tiles.
+    /// - Returns: The folder tile badge.
     static func aggregateBadge(of members: [TesseraTileDescriptor]) -> TesseraTileBadge {
         var sum = 0
         var hasDot = false
@@ -112,38 +111,37 @@ extension TesseraTileFolder {
         return hasDot ? .dot : .none
     }
 
-    /// Бэйдж плитки этой папки (``aggregateBadge(of:)`` по ``tiles``).
+    /// The badge of this folder's tile (``aggregateBadge(of:)`` over ``tiles``).
     var aggregateBadge: TesseraTileBadge {
         TesseraTileFolder.aggregateBadge(of: tiles)
     }
 }
 
-// MARK: - Правила названия (D35, E15.5)
+// MARK: - Title rules (D35)
 
 extension TesseraTileFolder {
 
-    /// Предельная длина названия папки в символах (E15.5, D35).
+    /// The maximum folder title length in characters (D35).
     ///
-    /// В W10M (§6.7) ограничения по числу символов нет — название обрезается по
-    /// ширине заголовка, одна строка. Предел 64 символа — защита раскладки
-    /// (заголовок панели, подпись плитки, файл состояния), а не продуктовое
-    /// правило: на практике название всегда короче ширины заголовка и усекается
-    /// многоточием. Считаются символы (`Character`), а не байты и не UTF-16.
+    /// Windows 10 Mobile (§6.7) has no character limit — the title is truncated to
+    /// the header width, on a single line. The 64-character limit protects the layout
+    /// (the panel header, the tile caption, the state file) and is not a product
+    /// rule: in practice a title is always shorter than the header width and is truncated
+    /// with an ellipsis. Characters (`Character`) are counted, not bytes or UTF-16 units.
     public static let maximumTitleLength = 64
 
-    /// Приводит введённое название к виду, в котором его хранит `TesseraTileStore`
-    /// (E15.5).
+    /// Normalizes the entered title to the form in which `TesseraTileStore` stores it.
     ///
-    /// Переводы строк внутри названия заменяются пробелами (название — одна
-    /// строка), пробелы и переводы строк по краям отбрасываются, строка
-    /// обрезается до ``maximumTitleLength`` символов, после обрезки края
-    /// чистятся ещё раз. Пустой результат означает «вернуть название по
-    /// умолчанию» — подстановку делает вызывающий (`TesseraTileStore` и редактор: у
-    /// них разные источники умолчания).
+    /// Line breaks inside the title are replaced with spaces (a title is a single
+    /// line), leading and trailing whitespace and line breaks are dropped, the string
+    /// is truncated to ``maximumTitleLength`` characters, and after truncation the edges
+    /// are trimmed once more. An empty result means "use the default title" —
+    /// the substitution is done by the caller (`TesseraTileStore` and the editor: they
+    /// have different sources of the default).
     ///
-    /// - Parameter raw: Введённая пользователем строка.
-    /// - Returns: Нормализованное название; пустое, если ввод пуст или состоял
-    ///   из пробелов.
+    /// - Parameter raw: The string entered by the user.
+    /// - Returns: The normalized title; empty if the input is empty or consisted
+    ///   of whitespace only.
     static func normalizedTitle(_ raw: String) -> String {
         let singleLine = raw.components(separatedBy: .newlines).joined(separator: " ")
         let trimmed = singleLine.trimmingCharacters(in: .whitespacesAndNewlines)

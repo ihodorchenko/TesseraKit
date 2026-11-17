@@ -2,27 +2,27 @@
 //  TileResizePushTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты resize-выталкивания (задача E8.7).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и
-//  §5 «Режим редактирования» (resize запускает переупаковку с анимацией),
-//  §14 «Уточнения MVP» п. 4 (D15: четыре размера — 1×1, 2×2, 4×2, 4×4).
+//  Tests for resize push-down.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid" and
+//  §5 "Edit mode" (resize triggers an animated repack),
+//  §14 "MVP refinements" (D15: four sizes: 1×1, 2×2, 4×2, 4×4).
 //
-//  Спека WP: при увеличении плитки проверяется свободное место справа; если
-//  места нет или там другие плитки, они выталкиваются вниз, освобождая место
-//  для нового размера. Цикл размеров остаётся четырёхвидовым
+//  Windows Phone behavior: when a tile grows, the free space on its right is checked; if
+//  there is none or other tiles are there, they are pushed down, freeing room
+//  for the new size. The size cycle stays four-way
 //  (small → medium → wide → large → small).
 //
-//  Проверяется:
-//  - интеграция в `TesseraTileStore.resize(_:to:columns:)` и в resize-цикл
-//    координатора (`TesseraTileEditCoordinator.cycleSize(of:)`);
-//  - инварианты: набор элементов не теряется и не дублируется, цикл четырёх
-//    размеров не сломан.
+//  Checked:
+//  - integration into `TesseraTileStore.resize(_:to:columns:)` and into the resize cycle
+//    of the coordinator (`TesseraTileEditCoordinator.cycleSize(of:)`);
+//  - invariants: the set of items is neither lost nor duplicated, and the four-size
+//    cycle is not broken.
 //
-//  Чистая функция `TesseraTileLayoutEngine.resizePlacement` (порядок) удалена в E14.6
-//  вместе с тестами на неё: выталкивание вниз при росте и дыра при уменьшении
-//  проверены на размещениях — `TileLayoutEnginePlacementTests`,
-//  `TileLayoutEnginePlacementPropertyTests` (движок), `TileStoreCellOperationsTests`
-//  (хранилище).
+//  The pure function `TesseraTileLayoutEngine.resizePlacement` (order-based) was removed
+//  together with its tests: pushing down on growth and a hole on shrink are
+//  checked on placements in `TileLayoutEnginePlacementTests`,
+//  `TileLayoutEnginePlacementPropertyTests` (the engine) and `TileStoreCellOperationsTests`
+//  (the store).
 //
 
 #if canImport(UIKit)
@@ -33,15 +33,15 @@ import XCTest
 
 final class TileResizePushTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Идентификаторы элементов в порядке массива.
+    /// Item identifiers in array order.
     private func ids(_ items: [TesseraTileGridItem]) -> [AnyHashable] {
         items.map { $0.id }
     }
 
-    /// Слоты компактной упаковки по идентификатору: та же геометрия, что видит
-    /// раскладка сетки.
+    /// Compact packing slots by identifier: the same geometry the grid layout
+    /// sees.
     private func slots(
         _ items: [TesseraTileGridItem],
         columns: Int = 4
@@ -67,7 +67,7 @@ final class TileResizePushTests: XCTestCase {
         return store
     }
 
-    /// Сетка, разложенная без окна: коллекция получает bounds.
+    /// A grid laid out without a window: the collection gets its bounds.
     private func makeGrid(store: TesseraTileStore, columns: Int = 4) -> TesseraTileGridView {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
         grid.columns = columns
@@ -79,7 +79,7 @@ final class TileResizePushTests: XCTestCase {
         return grid
     }
 
-    /// Размер элемента с идентификатором в порядке.
+    /// The size of the item with the identifier in the order.
     private func size(
         of id: AnyHashable,
         in items: [TesseraTileGridItem]
@@ -87,11 +87,11 @@ final class TileResizePushTests: XCTestCase {
         items.first { $0.id == id }?.size
     }
 
-    // MARK: - Интеграция в TesseraTileStore
+    // MARK: - Integration into TesseraTileStore
 
-    /// `TesseraTileStore.resize(_:to:columns:)` меняет размер и порядок одной
-    /// операцией: конфликтующая плитка уходит вниз, снимок сразу даёт новый
-    /// порядок, повтор — no-op.
+    /// `TesseraTileStore.resize(_:to:columns:)` changes the size and the order in one
+    /// operation: the conflicting tile goes down, the snapshot immediately gives the new
+    /// order, and a repeat is a no-op.
     func testStoreResizeAppliesPushOrder() {
         let directory = TesseraTestDirectory()
         let store = makeStore([
@@ -114,13 +114,13 @@ final class TileResizePushTests: XCTestCase {
 
         XCTAssertFalse(
             store.resize("a", to: .wide, columns: 4),
-            "Повторный resize в тот же размер — no-op"
+            "A repeated resize to the same size is a no-op"
         )
         XCTAssertEqual(ids(store.snapshot().items), ["a", "c", "b"])
     }
 
-    /// Resize папки идёт той же push-семантикой; ярлык внутри папки меняет
-    /// только размер и порядок сетки не трогает.
+    /// Resizing a folder follows the same push semantics; a tile inside a folder changes
+    /// only its size and does not touch the grid order.
     func testStoreResizeFolderPushesConflictsAndKeepsLayoutOrder() throws {
         let directory = TesseraTestDirectory()
         let store = makeStore([
@@ -135,7 +135,7 @@ final class TileResizePushTests: XCTestCase {
         XCTAssertEqual(ids(store.snapshot().items), [folder.id, "c", "b"])
         XCTAssertEqual(store.snapshot().folders.first?.size, .wide)
 
-        // Ярлык внутри папки на сетке не стоит: переставлять нечего.
+        // A tile inside a folder is not on the grid: there is nothing to reorder.
         XCTAssertTrue(store.resize("a", to: .large, columns: 4))
         XCTAssertEqual(ids(store.snapshot().items), [folder.id, "c", "b"])
         XCTAssertEqual(
@@ -144,11 +144,11 @@ final class TileResizePushTests: XCTestCase {
         )
     }
 
-    // MARK: - Цикл размеров координатора
+    // MARK: - Coordinator size cycle
 
-    /// Цикл small → medium → wide → large → small не сломан: координатор
-    /// передаёт число колонок сетки, порядок переставляется push-семантикой,
-    /// набор элементов сохраняется на каждом шаге.
+    /// The cycle small → medium → wide → large → small is not broken: the coordinator
+    /// passes the grid column count, the order is rearranged with push semantics,
+    /// and the set of items is preserved at every step.
     func testCycleSizeKeepsFourSizeCycleWithPush() {
         let directory = TesseraTestDirectory()
         let store = makeStore([
@@ -160,12 +160,12 @@ final class TileResizePushTests: XCTestCase {
         let editor = TesseraTileEditCoordinator(grid: grid, store: store)
         let allIDs = Set<AnyHashable>(["a", "b", "c"])
 
-        // E15.3 (D28): полный круг D15 в порядке W10M — medium → large → small →
-        // wide → medium; набор элементов сохраняется на каждом шаге.
+        // D28: the full D15 cycle in Windows 10 Mobile order: medium → large → small →
+        // wide → medium; the set of items is preserved at every step.
         for expected in [TesseraTileSize.large, .small, .wide, .medium] {
             XCTAssertEqual(editor.cycleSize(of: "a"), expected)
-            XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs, "после \(expected)")
-            XCTAssertEqual(Set(ids(grid.items)), allIDs, "сетка после \(expected)")
+            XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs, "after \(expected)")
+            XCTAssertEqual(Set(ids(grid.items)), allIDs, "grid after \(expected)")
         }
         XCTAssertEqual(store.descriptor(withID: "a")?.size, .medium)
         XCTAssertEqual(Set(ids(store.snapshot().items)), allIDs)
@@ -173,8 +173,8 @@ final class TileResizePushTests: XCTestCase {
         XCTAssertEqual(size(of: AnyHashable("c"), in: grid.items), .small)
     }
 
-    /// Рост 2×2 → 4×2 выталкивает соседа вниз (прежняя проверка шага medium → wide:
-    /// в цикле D28 из medium следующий — large, поэтому набор сужен до medium/wide).
+    /// Growth 2×2 → 4×2 pushes the neighbor down (the former medium → wide step check:
+    /// in the D28 cycle the next size after medium is large, so the set is narrowed to medium/wide).
     func testCycleSizeMediumToWidePushesRightNeighborDown() {
         let directory = TesseraTestDirectory()
         let store = makeStore([
@@ -186,7 +186,7 @@ final class TileResizePushTests: XCTestCase {
         let editor = TesseraTileEditCoordinator(grid: grid, store: store)
         editor.supportedSizesProvider = { _ in [.medium, .wide] }
 
-        // medium → wide: b справа конфликтует и уходит вниз.
+        // medium → wide: b on the right conflicts and goes down.
         XCTAssertEqual(editor.cycleSize(of: "a"), .wide)
         XCTAssertEqual(ids(store.snapshot().items), ["a", "c", "b"])
         XCTAssertEqual(ids(grid.items), ["a", "c", "b"])

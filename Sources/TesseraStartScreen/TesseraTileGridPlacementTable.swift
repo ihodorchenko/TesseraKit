@@ -1,87 +1,81 @@
-// Таблица явных ячеек в снимке сетки — «боковой» вход раскладки (E14.3, D30).
+// The explicit cell table in a grid snapshot: the "side" input of the layout (D30).
 //
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и
-// «Отступления реализации (E14)», п. 51; решения D30–D33 в docs/STATE.md.
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 (the tile grid) and the implementation notes
+// for explicit cells; decisions D30–D33 in docs/STATE.md.
 //
-// До E14.3 раскладка была функцией порядка: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
-// строго компактно укладывал плитки по массиву снимка. Чтобы сетка могла
-// изобразить настоящие пустоты, снимок получает необязательную таблицу ячеек
-// («sidecar»): идентификатор -> ``TesseraTileGridPlacement``. Перечисление
-// ``TesseraTileGridItem`` не меняется (это source-breaking), а снимок без таблицы
-// раскладывается ровно как раньше.
+// Before explicit cells, the layout was a function of order:
+// ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` packed tiles strictly compactly by the
+// snapshot array. So that the grid can represent real holes, a snapshot gets an optional cell
+// table (a "sidecar"): identifier -> ``TesseraTileGridPlacement``. The ``TesseraTileGridItem`` enum
+// does not change (that would be source-breaking), and a snapshot without a table is laid out
+// exactly as before.
 //
-// Этот файл — чистая часть: сама таблица и правило «можно ли ей верить»
+// This file is the pure part: the table itself and the rule for whether it can be trusted
 // (``TesseraTileGridPlacementTable/resolve(items:cells:placementColumns:columns:)``).
-// Правило общее для раскладки и для вспомогательных расчётов сетки (рамки базовой
-// раскладки), чтобы они не расходились. UIKit слой не знает.
+// The rule is shared by the layout and by the grid's auxiliary calculations (base layout frames)
+// so that they never diverge. It knows nothing about UIKit.
 
 import CoreGraphics
 
-/// Таблица явных ячеек верхнеуровневых элементов, приложенная к снимку сетки
-/// (E14.3, D30).
+/// A table of explicit cells for top-level items, attached to a grid snapshot (D30).
 ///
-/// Ячейки — **логические**, как в ``TesseraTileGridPlacement``: колонка 0 — начало
-/// чтения, зеркалирование RTL делает раскладка при расчёте рамок. Таблица
-/// описывает раскладку для конкретной ширины холста: ``columns``.
+/// The cells are **logical**, as in ``TesseraTileGridPlacement``: column 0 is the reading start;
+/// the layout mirrors RTL when it computes frames. The table describes the layout for a specific
+/// canvas width: ``columns``.
 ///
-/// Раскладка принимает таблицу, только если она покрывает каждый элемент снимка
-/// (кроме панели раскрытой папки), её ширина совпадает с числом колонок сетки и
-/// набор проходит ``TesseraTileLayoutEngine/validate(_:columns:)`` (вне холста и
-/// пересечения недопустимы). Иначе таблица игнорируется целиком, и сетка
-/// раскладывается прежним ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` по
-/// порядку снимка — без частичной подстановки: полуправильная раскладка хуже
-/// честного репака.
+/// The layout accepts the table only if it covers every snapshot item (except the expanded folder
+/// panel), its width matches the grid's column count, and the set passes
+/// ``TesseraTileLayoutEngine/validate(_:columns:)`` (off-canvas cells and overlaps are invalid).
+/// Otherwise the whole table is ignored and the grid is laid out by the previous
+/// ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` in snapshot order, with no partial
+/// substitution: a half-correct layout is worse than an honest repack.
 public struct TesseraTileGridPlacementTable: Equatable {
 
-    /// Ячейки по идентификаторам верхнеуровневых элементов.
+    /// Cells keyed by top-level item identifiers.
     ///
-    /// Лишние идентификаторы (которых нет в снимке) игнорируются; недостающие
-    /// делают таблицу неполной — раскладка откатывается на упаковку по порядку.
+    /// Extra identifiers (absent from the snapshot) are ignored; missing ones make the table
+    /// incomplete, and the layout falls back to order-based packing.
     public var cells: [AnyHashable: TesseraTileGridPlacement]
 
-    /// Ширина холста в колонках, для которой рассчитаны ячейки.
+    /// Canvas width in columns the cells were computed for.
     ///
-    /// Если задана и не равна числу колонок сетки, таблица игнорируется
-    /// (хранилище отдаёт для другой ширины проекцию без дыр, D32, но проекцию
-    /// рассчитывает хост под свою ширину). `nil` — ширина не заявлена: таблицу
-    /// проверяет только `validate` на текущей ширине сетки.
+    /// If set and different from the grid's column count, the table is ignored (for another width
+    /// the store returns a projection without holes, D32, but the host computes the projection
+    /// for its own width). `nil` means the width is not declared: the table is checked only by
+    /// `validate` at the current grid width.
     public var columns: Int?
 
-    /// Создаёт таблицу.
+    /// Creates a table.
     ///
     /// - Parameters:
-    ///   - cells: Ячейки по идентификаторам элементов.
-    ///   - columns: Ширина холста, для которой рассчитаны ячейки; `nil` — не
-    ///     заявлена.
+    ///   - cells: Cells keyed by item identifiers.
+    ///   - columns: The canvas width the cells were computed for; `nil` if not declared.
     public init(cells: [AnyHashable: TesseraTileGridPlacement], columns: Int? = nil) {
         self.cells = cells
         self.columns = columns
     }
 
-    /// Применима ли таблица на сетке заданной ширины и каково итоговое
-    /// размещение (E14.3).
+    /// Whether the table is applicable on a grid of the given width, and the resulting placement.
     ///
-    /// Правило отката на упаковку по порядку (`nil`):
+    /// The rule for falling back to order-based packing (`nil`):
     ///
-    /// - таблицы нет (`cells == nil`) или набор элементов пуст;
-    /// - заявленная ширина `placementColumns` не равна `columns`;
-    /// - ячейки нет хотя бы у одного элемента (таблица неполная);
-    /// - набор не проходит ``TesseraTileLayoutEngine/validate(_:columns:)`` — след
-    ///   выходит за холст, ячейка отрицательна или следы пересекаются.
+    /// - there is no table (`cells == nil`) or the item set is empty;
+    /// - the declared width `placementColumns` differs from `columns`;
+    /// - at least one item has no cell (the table is incomplete);
+    /// - the set fails ``TesseraTileLayoutEngine/validate(_:columns:)``: a footprint leaves the
+    ///   canvas, a cell is negative, or footprints overlap.
     ///
-    /// Иначе возвращается набор размещений **в порядке `items`** с запрошенными
-    /// размерами (D15); ужатие под узкую сетку делают
-    /// ``TesseraTileLayoutEngine/slots(placements:columns:unit:fitting:)`` и `validate`.
+    /// Otherwise it returns the placements **in `items` order** with the requested sizes (D15);
+    /// shrinking to a narrow grid is done by
+    /// ``TesseraTileLayoutEngine/slots(placements:columns:unit:fitting:)`` and `validate`.
     ///
     /// - Parameters:
-    ///   - items: Элементы в порядке снимка (без панели): идентификатор и
-    ///     запрошенный размер.
-    ///   - cells: Ячейки по идентификаторам; `nil` — таблицы нет.
-    ///   - placementColumns: Заявленная ширина холста таблицы; `nil` — не
-    ///     заявлена.
-    ///   - columns: Число колонок сетки, больше нуля.
-    /// - Returns: Размещения для ``TesseraTileLayoutEngine/slots(placements:columns:unit:fitting:)``
-    ///   либо `nil` — тогда раскладывать надо упаковкой по порядку.
+    ///   - items: Items in snapshot order (without the panel): identifier and requested size.
+    ///   - cells: Cells keyed by identifiers; `nil` means there is no table.
+    ///   - placementColumns: The declared canvas width of the table; `nil` if not declared.
+    ///   - columns: The grid's column count, greater than zero.
+    /// - Returns: Placements for ``TesseraTileLayoutEngine/slots(placements:columns:unit:fitting:)``,
+    ///   or `nil`, in which case the layout must use order-based packing.
     static func resolve(
         items: [(id: AnyHashable, size: TesseraTileSize)],
         cells: [AnyHashable: TesseraTileGridPlacement]?,
@@ -102,29 +96,27 @@ public struct TesseraTileGridPlacementTable: Equatable {
     }
 }
 
-// MARK: - Порядок чтения снимка (E14.7)
+// MARK: - Snapshot reading order
 
 extension TesseraTileGridSnapshot {
 
-    /// Снимок, у которого элементы идут в порядке чтения явных ячеек (E14.7).
+    /// A snapshot whose items follow the reading order of the explicit cells.
     ///
-    /// Порядок элементов снимка — порядок индексов коллекции, а значит, и порядок
-    /// обхода VoiceOver (см. «Accessibility» в ``TesseraTileGridView``). Хост со
-    /// своей таблицей ячеек (без ``TesseraTileStore``) мог отдать элементы в любом
-    /// порядке; применимая таблица (``TesseraTileGridPlacementTable/resolve(items:cells:placementColumns:columns:)``)
-    /// задаёт, как элементы лежат на экране, и порядок приводится к ней: строка по
-    /// возрастанию, затем логическая колонка (в RTL колонки логические, порядок
-    /// тот же). Равные ячейки (их быть не может: ``TesseraTileLayoutEngine/validate(_:columns:)``)
-    /// остаются в исходном порядке.
+    /// The order of snapshot items is the collection index order, and therefore the VoiceOver
+    /// traversal order (see "Accessibility" in ``TesseraTileGridView``). A host with its own cell
+    /// table (without ``TesseraTileStore``) may supply items in any order; an applicable table
+    /// (``TesseraTileGridPlacementTable/resolve(items:cells:placementColumns:columns:)``) defines
+    /// how items lie on screen, and the order is brought in line with it: row ascending, then
+    /// logical column (in RTL columns are logical, so the order is the same). Equal cells (which
+    /// cannot occur: ``TesseraTileLayoutEngine/validate(_:columns:)``) keep the original order.
     ///
-    /// Если таблица не применима (нет, неполная, другая ширина, пересечения),
-    /// раскладка идёт упаковкой по порядку `items`, и этот порядок сохраняется
-    /// как есть. Снимок с панелью раскрытой папки в `items` тоже не трогается:
-    /// панель добавляет сама сетка уже после сортировки.
+    /// If the table is not applicable (missing, incomplete, different width, overlaps), the layout
+    /// packs by `items` order, and that order is kept as is. A snapshot with an expanded folder
+    /// panel in `items` is also left untouched: the grid adds the panel itself after sorting.
     ///
-    /// - Parameter columns: Число колонок сетки.
-    /// - Returns: `self`, если порядок уже верный или таблица не применима;
-    ///   иначе копия с переставленными элементами.
+    /// - Parameter columns: The grid's column count.
+    /// - Returns: `self` if the order is already correct or the table is not applicable;
+    ///   otherwise a copy with reordered items.
     func readingOrdered(columns: Int) -> TesseraTileGridSnapshot {
         guard placementTable != nil, !items.contains(where: { $0.isFolderPanel }),
               let placed = TesseraTileGridPlacementTable.resolve(

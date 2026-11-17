@@ -1,260 +1,252 @@
 import Foundation
 
-/// Внутренний единый источник пользовательских строк `TesseraStartScreen`.
+/// Internal single source of user-facing strings for `TesseraStartScreen`.
 ///
-/// E9.8г: до W5 строки по умолчанию жили русскими литералами прямо в коде
-/// (озвучивания VoiceOver, меню и экран папки, дефолты `TesseraAppsListTexts`,
-/// accessibility value панели). Теперь они лежат в ресурсах SPM — 
-/// `Resources/en.lproj/Localizable.strings` и `Resources/ru.lproj/Localizable.strings` —
-/// и резолвятся через `Bundle.module` по языку системы. Публичная поверхность
-/// модуля не менялась: тип internal, все прежние настройки хоста
-/// (``TesseraAppsListTexts``, `TesseraTileEditConfiguration.folderTitle`,
-/// названия страниц контроллера) по-прежнему перекрывают значения по умолчанию.
+/// Default strings used to be Russian literals directly in code (VoiceOver announcements, menus and
+/// the folder screen, the `TesseraAppsListTexts` defaults, the panel's accessibility value). They now
+/// live in SPM resources, `Resources/en.lproj/Localizable.strings` and
+/// `Resources/ru.lproj/Localizable.strings`, and are resolved through `Bundle.module` by the system
+/// language. The public surface of the module did not change: the type is internal, and all existing
+/// host settings (``TesseraAppsListTexts``, `TesseraTileEditConfiguration.folderTitle`, controller
+/// page names) still override the defaults.
 ///
-/// Резолв:
-/// - явный язык (`string(_:language:)`) — для тестов и для внутренних
-///   вызовов, которым нужен детерминированный результат;
-/// - `nil` — язык системы: первый предпочтённый язык, для которого есть
-///   таблица. Язык без перевода (например, немецкий) откатывается к базовой
-///   локали `en`, поэтому строка никогда не остаётся пустой и не превращается
-///   в технический ключ.
+/// Resolution:
+/// - an explicit language (`string(_:language:)`) is for tests and for internal calls that need a
+///   deterministic result;
+/// - `nil` means the system language: the first preferred language that has a table. A language
+///   without a translation (for example, German) falls back to the base locale `en`, so a string is
+///   never empty and never turns into a technical key.
 ///
-/// Ключи — стабильные идентификаторы: паритет таблиц en/ru и соответствие
-/// «ключ из кода ↔ ключ в таблицах» проверяют
-/// `Tests/TesseraStartScreenTests/LocalizationTests.swift`.
+/// Keys are stable identifiers: parity of the en/ru tables and the match between "key in code" and
+/// "key in tables" are checked by `Tests/TesseraStartScreenTests/LocalizationTests.swift`.
 ///
-/// - Note: `Bundle.module` в SPM существует только у target'а с ресурсами —
-///   это `TesseraStartScreen`. Тестам бандл отдаётся швом ``bundle``, чтобы
-///   они читали конкретные таблицы (`en.lproj`/`ru.lproj`), а не только
-///   локализованный результат.
+/// - Note: In SPM, `Bundle.module` exists only for a target with resources, which is
+///   `TesseraStartScreen`. Tests get the bundle through the ``bundle`` seam so that they read specific
+///   tables (`en.lproj`/`ru.lproj`), not only the localized result.
 @usableFromInline
 enum TesseraStartScreenStrings {
 
-    // MARK: - Ресурсы
+    // MARK: - Resources
 
-    /// Бандл ресурсов модуля (`Bundle.module`), в котором лежат таблицы строк.
+    /// The module's resource bundle (`Bundle.module`) that holds the string tables.
     ///
-    /// Шов для тестов: они передают этот бандл в `string(_:language:bundle:)`
-    /// и читают таблицы en/ru напрямую.
+    /// A seam for tests: they pass this bundle to `string(_:language:bundle:)` and read the en/ru
+    /// tables directly.
     static var bundle: Bundle { .module }
 
-    /// Языки, для которых в модуле есть таблица строк.
+    /// Languages that have a string table in the module.
     static let supportedLanguages: Set<String> = ["en", "ru"]
 
-    /// Базовая локаль: получает строка, если язык системы не поддержан.
+    /// The base locale: used when the system language is not supported.
     static let baseLanguage = "en"
 
-    /// Имя таблицы строк в каждом `.lproj`.
+    /// The name of the string table in each `.lproj`.
     static let tableName = "Localizable"
 
-    // MARK: - Ключи
+    // MARK: - Keys
 
-    /// Ключ строки в таблицах `Localizable.strings`.
+    /// A string key in the `Localizable.strings` tables.
     ///
-    /// Сырое значение — стабильный идентификатор: переименование ключа ломает
-    /// таблицы en/ru и паритетный тест, поэтому ключи меняются только вместе с
-    /// обоими `.strings`-файлами.
+    /// The raw value is a stable identifier: renaming a key breaks the en/ru tables and the parity
+    /// test, so keys change only together with both `.strings` files.
     enum Key: String, CaseIterable {
 
-        // MARK: Режим редактирования и VoiceOver
+        // MARK: Edit mode and VoiceOver
 
-        /// Вход в режим редактирования.
+        /// Entering edit mode.
         case a11yEditingEntered = "a11y.editing.entered"
 
-        /// Выход из режима редактирования.
+        /// Leaving edit mode.
         case a11yEditingExited = "a11y.editing.exited"
 
-        /// Ярлык откреплён с рабочего стола.
+        /// A shortcut was unpinned from the start screen.
         case a11yTileUnpinned = "a11y.tile.unpinned"
 
-        /// Новый размер плитки (`%1$@` — название размера).
+        /// The new tile size (`%1$@` is the size name).
         case a11yResizeFormat = "a11y.resize.format"
 
-        /// Название размера «маленький»/«small».
+        /// The name of the "small" size.
         case a11ySizeSmall = "a11y.size.small"
 
-        /// Название размера «средний»/«medium».
+        /// The name of the "medium" size.
         case a11ySizeMedium = "a11y.size.medium"
 
-        /// Название размера «широкий»/«wide».
+        /// The name of the "wide" size.
         case a11ySizeWide = "a11y.size.wide"
 
-        /// Название размера «большой»/«large».
+        /// The name of the "large" size.
         case a11ySizeLarge = "a11y.size.large"
 
-        // MARK: Папки
+        // MARK: Folders
 
-        /// Папка создана.
+        /// A folder was created.
         case a11yFolderCreated = "a11y.folder.created"
 
-        /// Ярлык добавлен в папку.
+        /// A shortcut was added to a folder.
         case a11yFolderTileAdded = "a11y.folder.tileAdded"
 
-        /// Ярлык перемещён в другую папку.
+        /// A shortcut was moved to another folder.
         case a11yFolderTileMoved = "a11y.folder.tileMoved"
 
-        /// Ярлык перемещён из папки на рабочий стол.
+        /// A shortcut was moved from a folder to the start screen.
         case a11yFolderTileOnStart = "a11y.folder.tileOnStart"
 
-        /// Функция одобрения хоста запретила операцию с папкой.
+        /// The host approval function forbade a folder operation.
         case a11yFolderUnavailable = "a11y.folder.unavailable"
 
-        /// Папка создана перетаскиванием одного ярлыка на другой.
+        /// A folder was created by dragging one shortcut onto another.
         case a11yFolderCreatedFromTwoTiles = "a11y.folder.createdFromTwoTiles"
 
-        /// Новая позиция ярлыка после перестановки внутри папки (`%1$d` — номер,
-        /// `%2$d` — число ярлыков, E16.1).
+        /// The new position of a shortcut after reordering within a folder (`%1$d` is the number,
+        /// `%2$d` is the shortcut count).
         case a11yFolderTilePositionFormat = "a11y.folder.tilePositionFormat"
 
-        // MARK: Перетаскивание
+        // MARK: Dragging
 
-        /// Внешнее изменение модели отменило перетаскивание.
+        /// An external model change cancelled the drag.
         case a11yDragCancelled = "a11y.drag.cancelled"
 
-        /// Удержание над папкой: отпускание добавит ярлык в папку.
+        /// Hovering over a folder: releasing adds the shortcut to the folder.
         case a11yDragHoldToAddToFolder = "a11y.drag.holdToAddToFolder"
 
-        /// Удержание над центром ярлыка: отпускание создаст папку.
+        /// Hovering over a shortcut's center: releasing creates a folder.
         case a11yDragHoldToCreateFolder = "a11y.drag.holdToCreateFolder"
 
-        // MARK: Отказ функции одобрения (D14)
+        // MARK: Approval function denial (D14)
 
-        /// Шаблон сообщения об отказе (`%1$@` — причина).
+        /// The denial message template (`%1$@` is the reason).
         case a11yGroupingFailedFormat = "a11y.grouping.failedFormat"
 
-        /// Причина отказа: добавление в папку запрещено.
+        /// Denial reason: adding to a folder is forbidden.
         case a11yGroupingReasonAddDenied = "a11y.grouping.reason.addDenied"
 
-        /// Причина отказа: создание папки запрещено.
+        /// Denial reason: creating a folder is forbidden.
         case a11yGroupingReasonCreateDenied = "a11y.grouping.reason.createDenied"
 
-        /// Причина отказа: добавление ярлыка в новую папку запрещено (E11.6:
-        /// создание откатывается целиком).
+        /// Denial reason: adding a shortcut to a new folder is forbidden (the whole creation is rolled
+        /// back).
         case a11yGroupingReasonTileAddDenied = "a11y.grouping.reason.tileAddDenied"
 
-        /// Причина отказа: перенос ярлыка из папки запрещён (E11.1).
+        /// Denial reason: moving a shortcut out of a folder is forbidden.
         case a11yGroupingReasonMoveDenied = "a11y.grouping.reason.moveDenied"
 
         // MARK: Custom actions (§9)
 
-        /// Действие «открепить ярлык».
+        /// The "unpin shortcut" action.
         case a11yActionUnpin = "a11y.action.unpin"
 
-        /// Действие «изменить размер плитки».
+        /// The "resize tile" action.
         case a11yActionResize = "a11y.action.resize"
 
-        /// Действие «переименовать папку» (плитка папки и заголовок панели,
-        /// E15.5, D35).
+        /// The "rename folder" action (the folder tile and the panel title, D35).
         case a11yActionRenameFolder = "a11y.action.renameFolder"
 
-        /// Действие «добавить ярлык в папку» (`%1$@` — название папки, E11.5).
+        /// The "add shortcut to folder" action (`%1$@` is the folder name).
         case a11yActionAddToFolderFormat = "a11y.action.addToFolderFormat"
 
-        /// Действие «убрать ярлык из папки на рабочий стол» (E11.5).
+        /// The "remove shortcut from folder to the start screen" action.
         case a11yActionRemoveFromFolder = "a11y.action.removeFromFolder"
 
-        /// Действие «переместить ярлык в другую папку» (`%1$@` — название папки, E11.5).
+        /// The "move shortcut to another folder" action (`%1$@` is the folder name).
         case a11yActionMoveToFolderFormat = "a11y.action.moveToFolderFormat"
 
-        /// Действие «переместить ярлык в панели папки на позицию раньше» (E16.1).
+        /// The "move shortcut one position earlier in the folder panel" action.
         case a11yActionMoveEarlier = "a11y.action.moveEarlier"
 
-        /// Действие «переместить ярлык в панели папки на позицию позже» (E16.1).
+        /// The "move shortcut one position later in the folder panel" action.
         case a11yActionMoveLater = "a11y.action.moveLater"
 
-        // MARK: Экран папки
+        // MARK: Folder screen
 
-        /// Кнопка закрытия экрана папки.
+        /// The folder screen close button.
         case folderScreenDone = "folderScreen.done"
 
-        /// Accessibility label кнопки закрытия.
+        /// The accessibility label of the close button.
         case folderScreenClose = "folderScreen.close"
 
-        /// Подпись папки без названия.
+        /// The caption of a folder without a name.
         case folderScreenDefaultTitle = "folderScreen.defaultTitle"
 
-        /// Accessibility label поля переименования папки в открытой панели
-        /// (E15.5, D35).
+        /// The accessibility label of the folder rename field in the open panel (D35).
         case folderNameFieldLabel = "folderName.fieldLabel"
 
-        /// VoiceOver-действие «переместить ярлык».
+        /// The VoiceOver action "move shortcut".
         case folderScreenMoveAction = "folderScreen.moveAction"
 
-        /// Заголовок меню перемещения (`%1$@` — подпись ярлыка).
+        /// The title of the move menu (`%1$@` is the shortcut caption).
         case folderScreenMoveMenuTitleFormat = "folderScreen.moveMenu.titleFormat"
 
-        /// Пункт меню перемещения в папку (`%1$@` — название папки).
+        /// A menu item to move into a folder (`%1$@` is the folder name).
         case folderScreenMoveMenuIntoFormat = "folderScreen.moveMenu.intoFormat"
 
-        /// Пункт меню «переместить на рабочий стол».
+        /// The menu item "move to the start screen".
         case folderScreenMoveMenuToStart = "folderScreen.moveMenu.toStart"
 
-        /// Подзаголовок экрана папки (`%1$ld` — число, `%2$@` — слово).
+        /// The folder screen subtitle (`%1$ld` is the count, `%2$@` is the word).
         case folderScreenTilesCountFormat = "folderScreen.tiles.countFormat"
 
-        /// Слово «ярлык» для одного ярлыка.
+        /// The word "shortcut" for a single shortcut.
         case folderScreenTilesWordOne = "folderScreen.tiles.word.one"
 
-        /// Слово «ярлык» для нескольких ярлыков (2–4 в русском).
+        /// The word "shortcut" for a few shortcuts (2-4 in Russian).
         case folderScreenTilesWordFew = "folderScreen.tiles.word.few"
 
-        /// Слово «ярлык» для многих ярлыков.
+        /// The word "shortcut" for many shortcuts.
         case folderScreenTilesWordMany = "folderScreen.tiles.word.many"
 
-        // MARK: Список приложений
+        // MARK: Apps list
 
-        /// Заголовок секции настроек.
+        /// The title of the settings section.
         case appsListSettingsSectionTitle = "appsList.settingsSectionTitle"
 
-        /// Текст пустого состояния.
+        /// The empty state text.
         case appsListEmptyTitle = "appsList.emptyTitle"
 
-        /// Действие «закрепить ярлык на рабочем столе».
+        /// The "pin shortcut to the start screen" action.
         case appsListPinActionTitle = "appsList.pinActionTitle"
 
-        /// Действие «открепить ярлык с рабочего стола».
+        /// The "unpin shortcut from the start screen" action.
         case appsListUnpinActionTitle = "appsList.unpinActionTitle"
 
-        /// Значение закреплённой строки для VoiceOver.
+        /// The VoiceOver value of a pinned row.
         case appsListPinnedValue = "appsList.pinnedValue"
 
-        // MARK: Сетка плиток
+        // MARK: Tile grid
 
-        /// Состояние раскрытой папки в accessibility value.
+        /// The expanded folder state in the accessibility value.
         case panelExpanded = "panel.expanded"
 
-        // MARK: Бейдж (§9)
+        // MARK: Badge (§9)
 
-        /// Значение VoiceOver для бэйджа-точки без числа (D34, E15.4).
+        /// The VoiceOver value of a dot badge without a number (D34).
         case a11yBadgeDot = "a11y.badge.dot"
 
-        // MARK: Общие
+        // MARK: Common
 
-        /// Кнопка отмены в меню.
+        /// The cancel button in a menu.
         case commonCancel = "common.cancel"
     }
 
-    // MARK: - Резолв
+    // MARK: - Resolution
 
-    /// Возвращает строку по ключу для языка системы.
+    /// Returns the string for a key in the system language.
     ///
-    /// - Parameter key: Ключ таблицы.
-    /// - Returns: Локализованная строка (язык системы или базовая локаль).
+    /// - Parameter key: The table key.
+    /// - Returns: The localized string (system language or the base locale).
     static func string(_ key: Key) -> String {
         string(key, language: nil)
     }
 
-    /// Возвращает строку по ключу для явного языка.
+    /// Returns the string for a key in an explicit language.
     ///
     /// - Parameters:
-    ///   - key: Ключ таблицы.
-    ///   - language: Код языка (`"en"`, `"ru"`, допустим полный тег `ru-RU`)
-    ///     или `nil` — язык системы. Неподдержанный язык откатывается к
-    ///     ``baseLanguage``.
-    ///   - bundle: Бандл ресурсов; по умолчанию ``bundle`` модуля. Параметр —
-    ///     шов для тестов, а не публичная настройка.
-    /// - Returns: Строка из таблицы; если таблица/ключ недоступны — базовый
-    ///   язык, затем сырой ключ (видно в отладке).
+    ///   - key: The table key.
+    ///   - language: A language code (`"en"`, `"ru"`; a full tag such as `ru-RU` is allowed) or `nil`
+    ///     for the system language. An unsupported language falls back to ``baseLanguage``.
+    ///   - bundle: The resource bundle; the module's ``bundle`` by default. The parameter is a seam
+    ///     for tests, not a public setting.
+    /// - Returns: The string from the table; if the table or key is unavailable, the base language,
+    ///   then the raw key (visible while debugging).
     static func string(
         _ key: Key,
         language: String?,
@@ -279,26 +271,26 @@ enum TesseraStartScreenStrings {
         return key.rawValue
     }
 
-    /// Язык резолва для строк по умолчанию.
+    /// The resolution language for default strings.
     ///
-    /// - Returns: `"ru"`, `"en"` или другой поддержанный код; для системы без
-    ///   поддержанного языка — ``baseLanguage``.
+    /// - Returns: `"ru"`, `"en"` or another supported code; for a system without a supported
+    ///   language, ``baseLanguage``.
     static func resolvedLanguage() -> String {
         resolvedLanguage(nil, bundle: bundle)
     }
 
-    /// Резолвит код языка с учётом доступных таблиц.
+    /// Resolves a language code against the available tables.
     ///
     /// - Parameters:
-    ///   - language: Явный код языка или `nil` — система.
-    ///   - bundle: Бандл ресурсов.
-    /// - Returns: Поддержанный код языка.
+    ///   - language: An explicit language code, or `nil` for the system language.
+    ///   - bundle: The resource bundle.
+    /// - Returns: A supported language code.
     static func resolvedLanguage(_ language: String?, bundle: Bundle) -> String {
         if let language {
-            // Явный язык — детерминированно: неподдержанный откатывается к базе.
+            // An explicit language is deterministic: an unsupported one falls back to the base.
             return languageCode(from: language, available: availableLanguages(in: bundle)) ?? baseLanguage
         }
-        // Язык системы: первый предпочтённый, для которого есть таблица.
+        // The system language: the first preferred one that has a table.
         for preferred in Locale.preferredLanguages {
             if let code = languageCode(
                 from: preferred,
@@ -310,15 +302,15 @@ enum TesseraStartScreenStrings {
         return baseLanguage
     }
 
-    /// Приводит язык устройства к коду, для которого есть таблица.
+    /// Maps a device language to a code that has a table.
     ///
-    /// `Locale(identifier:)` знает полные теги (`ru-RU`, `en_US`) и исторические
-    /// (`ru-RU` → `ru`); для незнакомых строк остаётся префикс до дефиса.
+    /// `Locale(identifier:)` knows full tags (`ru-RU`, `en_US`) and legacy ones (`ru-RU` -> `ru`);
+    /// for unknown strings the prefix before the hyphen is kept.
     ///
     /// - Parameters:
-    ///   - identifier: Код языка или полный тег.
-    ///   - available: Коды, для которых в бандле есть таблица.
-    /// - Returns: Подходящий код или `nil`.
+    ///   - identifier: A language code or a full tag.
+    ///   - available: The codes that have a table in the bundle.
+    /// - Returns: A matching code or `nil`.
     private static func languageCode(
         from identifier: String,
         available: Set<String>
@@ -337,22 +329,22 @@ enum TesseraStartScreenStrings {
         return nil
     }
 
-    /// Языки, для которых в бандле есть `.lproj`-таблица.
+    /// Languages that have an `.lproj` table in the bundle.
     ///
-    /// - Parameter bundle: Бандл ресурсов.
-    /// - Returns: Коды языков; пустое множество заменяется ``supportedLanguages``.
+    /// - Parameter bundle: The resource bundle.
+    /// - Returns: Language codes; an empty set is replaced with ``supportedLanguages``.
     static func availableLanguages(in bundle: Bundle) -> Set<String> {
         let localizations = Set(bundle.localizations.map { $0.lowercased() })
         let supported = localizations.intersection(supportedLanguages)
         return supported.isEmpty ? supportedLanguages : supported
     }
 
-    /// Бандл конкретной локали внутри бандла ресурсов.
+    /// The bundle of a specific locale inside the resource bundle.
     ///
     /// - Parameters:
-    ///   - code: Код языка.
-    ///   - bundle: Бандл ресурсов модуля.
-    /// - Returns: Бандл `xx.lproj` или `nil`, если локализации нет.
+    ///   - code: A language code.
+    ///   - bundle: The module's resource bundle.
+    /// - Returns: The `xx.lproj` bundle, or `nil` if there is no localization.
     static func localizedBundle(for code: String, in bundle: Bundle) -> Bundle? {
         guard let resourceURL = bundle.resourceURL else { return nil }
         let url = resourceURL.appendingPathComponent("\(code).lproj", isDirectory: true)
@@ -360,22 +352,20 @@ enum TesseraStartScreenStrings {
         return Bundle(url: url)
     }
 
-    // MARK: - Склонение числа ярлыков
+    // MARK: - Pluralization of the shortcut count
 
-    /// Слово «ярлык» в нужной числовой форме.
+    /// The word "shortcut" in the right plural form.
     ///
-    /// Русский язык использует три формы (1 ярлык, 2 ярлыка, 5 ярлыков,
-    /// 11 ярлыков), английский — две (1 shortcut, 2 shortcuts). Формы — в
-    /// таблицах строк; правила выбора — здесь, потому что `.strings` не умеет
-    /// plural-варианты (для этого нужен `.stringsdict`, а по решению W5 формат —
-    /// обычные `Localizable.strings`).
+    /// Russian uses three forms (the word takes different endings for 1, 2-4 and 5+ shortcuts, with
+    /// 11-14 behaving like 5+), English uses two (1 shortcut, 2 shortcuts). The forms live in the
+    /// string tables; the selection rules live here, because `.strings` cannot express plural
+    /// variants (that needs `.stringsdict`, and the format here is plain `Localizable.strings`).
     ///
     /// - Parameters:
-    ///   - count: Число ярлыков (неотрицательное).
-    ///   - language: Код языка или `nil` — язык системы. Параметр — шов для
-    ///     тестов: правила форм проверяются для конкретного языка, а не для
-    ///     локали симулятора.
-    /// - Returns: Локализованное слово в нужной форме.
+    ///   - count: The shortcut count (non-negative).
+    ///   - language: A language code, or `nil` for the system language. The parameter is a seam for
+    ///     tests: the form rules are checked for a specific language, not for the simulator locale.
+    /// - Returns: The localized word in the right form.
     static func folderTilesWord(for count: Int, language: String? = nil) -> String {
         let code = resolvedLanguage(language, bundle: bundle)
         if code == "ru" {
@@ -398,12 +388,12 @@ enum TesseraStartScreenStrings {
         )
     }
 
-    /// Подзаголовок экрана папки: «3 ярлыка» / "3 shortcuts".
+    /// The folder screen subtitle: "3 shortcuts" in English, the Russian plural form in Russian.
     ///
     /// - Parameters:
-    ///   - count: Число ярлыков.
-    ///   - language: Код языка или `nil` — язык системы (шов для тестов).
-    /// - Returns: Готовое число с локализованным словом в нужной форме.
+    ///   - count: The shortcut count.
+    ///   - language: A language code, or `nil` for the system language (a seam for tests).
+    /// - Returns: The number with the localized word in the right form.
     static func folderTilesCountText(_ count: Int, language: String? = nil) -> String {
         String(
             format: string(.folderScreenTilesCountFormat, language: language),
@@ -412,42 +402,41 @@ enum TesseraStartScreenStrings {
         )
     }
 
-    // MARK: - Значения по умолчанию для `TesseraAppsListTexts`
+    // MARK: - Defaults for `TesseraAppsListTexts`
 
-    /// Значения по умолчанию для ``TesseraAppsListTexts``, доступные из
-    /// default-аргументов публичного инициализатора.
+    /// Defaults for ``TesseraAppsListTexts``, available from the default arguments of the public
+    /// initializer.
     ///
-    /// `@usableFromInline` — единственный способ оставить публичной сигнатуру
-    /// `TesseraAppsListTexts.init(settingsSectionTitle:..., ...)` без изменения
-    /// и при этом резолвить значения в рантайме: default-аргумент публичного
-    /// API не может ссылаться на обычный internal-символ. Тип и его члены
-    /// остаются internal — публичная поверхность модуля не растёт.
+    /// `@usableFromInline` is the only way to keep the public signature
+    /// `TesseraAppsListTexts.init(settingsSectionTitle:..., ...)` unchanged and still resolve values
+    /// at runtime: a default argument of a public API cannot reference an ordinary internal symbol.
+    /// The type and its members stay internal, so the module's public surface does not grow.
 
-    /// Заголовок секции настроек.
+    /// The title of the settings section.
     @usableFromInline
     static var appsListSettingsSectionTitle: String {
         string(.appsListSettingsSectionTitle)
     }
 
-    /// Текст пустого состояния.
+    /// The empty state text.
     @usableFromInline
     static var appsListEmptyTitle: String {
         string(.appsListEmptyTitle)
     }
 
-    /// Действие «закрепить».
+    /// The "pin" action.
     @usableFromInline
     static var appsListPinActionTitle: String {
         string(.appsListPinActionTitle)
     }
 
-    /// Действие «открепить».
+    /// The "unpin" action.
     @usableFromInline
     static var appsListUnpinActionTitle: String {
         string(.appsListUnpinActionTitle)
     }
 
-    /// Значение закреплённой строки для VoiceOver.
+    /// The VoiceOver value of a pinned row.
     @usableFromInline
     static var appsListPinnedValue: String {
         string(.appsListPinnedValue)

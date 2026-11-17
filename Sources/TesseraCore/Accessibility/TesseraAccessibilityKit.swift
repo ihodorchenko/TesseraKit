@@ -1,55 +1,55 @@
 import UIKit
 
-/// Утилиты доступности общего слоя `TesseraCore`.
+/// Accessibility utilities of the shared `TesseraCore` layer.
 ///
-/// Состав соответствует §1 и §3 проектного документа `docs/Core-iOS-Design.md`:
-/// запросы Reduce Motion, анонсы смены страницы и преобразование
-/// `UIAccessibilityScrollDirection` в шаг по страницам с учётом направления чтения.
+/// Covers the accessibility contract in `docs/CORE-IOS-DESIGN.md`:
+/// Reduce Motion queries, page-change announcements, and conversion of
+/// `UIAccessibilityScrollDirection` into a page step that respects the reading direction.
 ///
-/// Публичная поверхность намеренно минимальна (§4: стабильность API) и состоит
-/// только из чистых функций и одного чтения системной настройки. Единственный
-/// побочный эффект — постановка VoiceOver-анонса в ``announcePageChange(_:)``.
-/// Состояние не кешируется: компонент спрашивает значение в момент решения
-/// (включение Reduce Motion во время работы приложения должно срабатывать сразу).
+/// The public surface is intentionally minimal (API stability) and consists
+/// only of pure functions and one read of a system setting. The only
+/// side effect is posting a VoiceOver announcement in ``announcePageChange(_:)``.
+/// No state is cached: the component asks for the value at the moment of the decision
+/// (turning on Reduce Motion while the app is running must take effect immediately).
 ///
-/// Разделение ответственности за анонсы: `TesseraPagerViewController` смену
-/// страницы **не озвучивает** — анонс является обязанностью хоста (компонента
-/// или приложения, встроившего пейджер). Только хост знает, что именно
-/// произносить (заголовок секции, «Страница 2 из 5», локализованное имя),
-/// и только он может избежать двойного анонса, если текст уже озвучен
-/// иначе (например, сменой accessibility-фокуса на заголовок).
+/// Responsibility for announcements: `TesseraPagerViewController` does **not**
+/// announce page changes. The announcement is the host's job (the component
+/// or app that embeds the pager). Only the host knows what exactly to say
+/// (a section title, "Page 2 of 5", a localized name),
+/// and only it can avoid a double announcement when the text is already spoken
+/// another way (for example, by moving the accessibility focus to the title).
 public enum TesseraAccessibility {
 
-    /// Включён ли в системе режим «Уменьшение движения» (Reduce Motion).
+    /// Whether the system "Reduce Motion" setting is on.
     ///
-    /// Контракт §1 и §2 `docs/Core-iOS-Design.md`: при `true` компоненты отключают
-    /// параллакс (фактор 0), флипы плиток и «желе» при редактировании; вместо
-    /// самодвижущихся анимаций остаётся статичное состояние. Непрерывный прогресс,
-    /// который повторяет жест пользователя, Reduce Motion не отключает.
+    /// Per the contract in `docs/CORE-IOS-DESIGN.md`: when `true`, components disable
+    /// parallax (factor 0), tile flips, and the jiggle in edit mode; a static state
+    /// remains instead of self-driven animations. Continuous progress that follows
+    /// the user's gesture is not disabled by Reduce Motion.
     public static var isReduceMotionEnabled: Bool {
         UIAccessibility.isReduceMotionEnabled
     }
 
-    /// Озвучивает смену страницы через VoiceOver.
+    /// Announces a page change through VoiceOver.
     ///
-    /// Отправляет системное уведомление `.announcement` — «анонсы смены страницы»
-    /// из §1 `docs/Core-iOS-Design.md`. Вызывать по завершении перехода: анонс во
-    /// время анимации перебивается сменой accessibility-фокуса, и пользователь
-    /// слышит обрывок.
+    /// Posts the system `.announcement` notification (the page-change announcements
+    /// from `docs/CORE-IOS-DESIGN.md`). Call it when the transition finishes: an announcement made
+    /// during the animation is interrupted by the accessibility focus change, and the user
+    /// hears a fragment.
     ///
-    /// Вызывает **хост** пейджера, а не сам пейджер: `TesseraPagerViewController`
-    /// анонсов не отправляет. Типичная точка вызова — колбэк делегата
-    /// `pager(_:didShowPageAt:)` (он приходит по завершении перехода, в том числе
-    /// после листания жестом VoiceOver через `accessibilityScroll`). Так поступают
-    /// Pivot, Panorama и StartScreen.
+    /// Called by the pager's **host**, not by the pager itself: `TesseraPagerViewController`
+    /// does not send announcements. A typical call site is the delegate callback
+    /// `pager(_:didShowPageAt:)` (it fires when the transition completes, including
+    /// after a VoiceOver paging gesture via `accessibilityScroll`). Pivot, Panorama,
+    /// and StartScreen work this way.
     ///
-    /// - Parameter announcement: готовая локализованная строка, например
-    ///   «Страница 2 из 5». Метод не форматирует и не переводит текст: строки
-    ///   и их локализация — ответственность компонента. Пустая строка игнорируется.
+    /// - Parameter announcement: A ready, localized string, for example
+    ///   "Page 2 of 5". The method neither formats nor translates the text: strings
+    ///   and their localization are the component's responsibility. An empty string is ignored.
     ///
-    /// `UIAccessibility.post` должен выполняться в главном потоке; если метод
-    /// вызван не из главного, уведомление переадресуется на главный поток, чтобы
-    /// не нарушать правило «вся работа на главном потоке UI» (§3).
+    /// `UIAccessibility.post` must run on the main thread; if the method is
+    /// called from another thread, the notification is forwarded to the main thread so that
+    /// the rule "all UI work happens on the main thread" is not violated.
     public static func announcePageChange(_ announcement: String) {
         guard !announcement.isEmpty else { return }
 
@@ -64,38 +64,38 @@ public enum TesseraAccessibility {
         }
     }
 
-    /// Шаг по страницам для жеста VoiceOver «три пальца» (`accessibilityScroll`).
+    /// The page step for the VoiceOver three-finger gesture (`accessibilityScroll`).
     ///
-    /// Возвращает `+1` — следующая страница в порядке чтения, `-1` — предыдущая,
-    /// `0` — жест не относится к горизонтальной пагинации. Готовое значение
-    /// складывается с текущим индексом страницы; пейджер остаётся единственным
-    /// писателем `contentOffset` (§2), утилита лишь вычисляет намерение.
+    /// Returns `+1` for the next page in reading order, `-1` for the previous one,
+    /// and `0` if the gesture does not apply to horizontal paging. The result
+    /// is added to the current page index; the pager remains the only
+    /// writer of `contentOffset`, and this utility only computes the intent.
     ///
-    /// Правила:
-    /// - `.left` / `.right` — физические направления трёхпальцевого свайпа
-    ///   VoiceOver (направление движения пальцев). Конвенция UIKit: свайп влево
-    ///   (`.left`) листает **вперёд** — контент уезжает влево и справа
-    ///   появляется следующая страница, как при обычном перелистывании пальцем.
-    ///   Поэтому в LTR `.left` даёт `+1`, `.right` — `-1`. Так же ведёт себя
-    ///   системный `UIPageViewController`: его accessibility-реализация
-    ///   `accessibilityScroll(_:)` на `.left` берёт контроллер «после»
-    ///   (следующий), на `.right` — «до» (предыдущий). В RTL знак
-    ///   инвертируется: следующая страница по направлению чтения лежит слева,
-    ///   и «вперёд» ведёт свайп вправо (`t` нормализуется от направления
-    ///   чтения, §2).
-    /// - `.next` / `.previous` — не физические, а порядковые направления: они уже
-    ///   заданы в порядке чтения, поэтому `.next` всегда даёт `+1`, а `.previous`
-    ///   всегда `-1` независимо от `layoutDirection`. Инвертировать их ещё раз
-    ///   в RTL нельзя — получится двойное зеркалирование и жест «назад» будет
-    ///   листать вперёд.
-    /// - `.up` / `.down` и любые будущие значения — вертикальные жесты;
-    ///   горизонтальному пейджеру они не адресованы, поэтому `0` (компонент
-    ///   передаёт жест ребёнку или игнорирует).
+    /// Rules:
+    /// - `.left` / `.right` are the physical directions of the VoiceOver three-finger
+    ///   swipe (the direction the fingers move). UIKit convention: a swipe left
+    ///   (`.left`) pages **forward**: the content moves left and the next page
+    ///   appears from the right, like an ordinary finger swipe.
+    ///   So in LTR `.left` gives `+1` and `.right` gives `-1`. The system
+    ///   `UIPageViewController` behaves the same way: its accessibility implementation
+    ///   `accessibilityScroll(_:)` picks the "after" controller (the next one)
+    ///   on `.left` and the "before" controller (the previous one) on `.right`. In RTL the sign
+    ///   is inverted: the next page in reading order lies to the left,
+    ///   and a swipe right goes "forward" (`t` is normalized by the reading
+    ///   direction).
+    /// - `.next` / `.previous` are ordinal rather than physical directions: they are already
+    ///   expressed in reading order, so `.next` always gives `+1` and `.previous`
+    ///   always gives `-1` regardless of `layoutDirection`. They must not be inverted again
+    ///   in RTL: that would mirror twice, and the "back" gesture would
+    ///   page forward.
+    /// - `.up` / `.down` and any future values are vertical gestures;
+    ///   they are not addressed to a horizontal pager, so the result is `0` (the component
+    ///   passes the gesture to the child or ignores it).
     ///
     /// - Parameters:
-    ///   - direction: Направление из `accessibilityScroll(_:)`.
-    ///   - layoutDirection: Направление раскладки интерфейса.
-    /// - Returns: `+1`, `-1` или `0`.
+    ///   - direction: The direction from `accessibilityScroll(_:)`.
+    ///   - layoutDirection: The interface layout direction.
+    /// - Returns: `+1`, `-1`, or `0`.
     public static func pageStep(
         for direction: UIAccessibilityScrollDirection,
         layoutDirection: UIUserInterfaceLayoutDirection
@@ -104,10 +104,10 @@ public enum TesseraAccessibility {
 
         switch direction {
         case .left:
-            // Свайп влево — вперёд в LTR (конвенция UIKit, см. выше).
+            // A swipe left goes forward in LTR (UIKit convention, see above).
             return isRightToLeft ? -1 : 1
         case .right:
-            // Свайп вправо — назад в LTR.
+            // A swipe right goes back in LTR.
             return isRightToLeft ? 1 : -1
         case .next:
             return 1

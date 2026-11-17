@@ -2,144 +2,144 @@
 //  PanoHeaderView.swift
 //  TesseraPanorama
 //
-//  Слой заголовков секций панорамы.
-//  Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 (PanoHeaderView),
-//  §4 «Заголовки» (кусочно-линейная интерполяция по дробной части t),
-//  §6 (дисциплина производительности), §7 (Reduce Motion, Dynamic Type, RTL).
+//  The section headers layer of the panorama.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md (PanoHeaderView;
+//  headers: piecewise-linear interpolation by the fractional part of t;
+//  performance discipline; accessibility: Reduce Motion, Dynamic Type, RTL).
 //
 
 import TesseraCore
 import UIKit
 
-/// Слой заголовков секций панорамы.
+/// The section headers layer of the panorama.
 ///
-/// По §3 `docs/PANORAMA-IOS-DESIGN.md` это отдельный слой над секциями: он не
-/// владеет `contentOffset` и получает прогресс `t` снаружи. Каждый заголовок —
-/// `UILabel` на текстовом стиле Dynamic Type; видимость и сдвиг метки считаются
-/// от одной и той же фазы, поэтому смена секций — непрерывное «перетекание»,
-/// а не жёсткое переключение (§4).
+/// Per `docs/PANORAMA-IOS-DESIGN.md`, this is a separate layer above the sections: it does not
+/// own `contentOffset` and receives the progress `t` from outside. Each header is a
+/// `UILabel` using a Dynamic Type text style; a label's visibility and shift are computed
+/// from the same phase, so switching sections is a continuous "flow"
+/// rather than a hard switch.
 ///
-/// ## Модель фазы
+/// ## The phase model
 ///
-/// Для метки секции `i` при прогрессе `t` (в порядке чтения):
+/// For the label of section `i` at progress `t` (in reading order):
 ///
 /// ```
 /// phase = 0.5 + (i - t) / 2
 /// ```
 ///
-/// - `phase == 0.5` — секция активна: заголовок в центре, альфа 1, сдвиг 0;
-/// - `phase` в `0...0.5` — соседняя секция позади по порядку чтения;
-/// - `phase` в `0.5...1` — соседняя секция впереди.
+/// - `phase == 0.5`: the section is active: the header is centered, alpha 1, shift 0;
+/// - `phase` in `0...0.5`: a neighboring section behind in reading order;
+/// - `phase` in `0.5...1`: a neighboring section ahead.
 ///
-/// Альфа и сдвиг берутся из ``keyframeAlpha(progress:)`` и
-/// ``keyframeOffset(progress:travel:)`` — кусочно-линейно между кадрами
-/// `0`, `0.5`, `1` (§4). На середине перехода (`frac(t) == 0.5`) видны обе
-/// соседние метки с альфой 0.5; к целому `t` остаётся ровно одна активная.
-/// На стыках секций значения непрерывны — скачка нет.
+/// Alpha and shift come from ``keyframeAlpha(progress:)`` and
+/// ``keyframeOffset(progress:travel:)``, piecewise-linear between the keyframes
+/// `0`, `0.5`, `1`. In the middle of a transition (`frac(t) == 0.5`) both
+/// neighboring labels are visible with alpha 0.5; at an integer `t` exactly one remains active.
+/// Values are continuous at section boundaries, so there is no jump.
 ///
-/// Для `t = i + f`, `f` в `0...1`, формулы соседних секций сводятся к линейным:
+/// For `t = i + f`, with `f` in `0...1`, the formulas of neighboring sections reduce to linear ones:
 ///
 /// ```
-/// секция i    (активная): alpha = 1 − f,  offset = −(f/2)·travel
-/// секция i+1  (следующая): alpha = f,     offset = ((1 − f)/2)·travel
+/// section i    (active):  alpha = 1 − f,  offset = −(f/2)·travel
+/// section i+1  (next):    alpha = f,     offset = ((1 − f)/2)·travel
 /// ```
 ///
-/// Это удобная форма для контрактных тестов E3.7: на `f = 0` видна только
-/// секция `i`, на `f = 1` — только `i + 1`.
+/// This is a convenient form for contract tests: at `f = 0` only
+/// section `i` is visible, and at `f = 1` only `i + 1`.
 ///
-/// ## Производительность
+/// ## Performance
 ///
-/// ``apply(progress:activeIndex:)`` вызывается из `scrollViewDidScroll` и меняет
-/// только `alpha`/`transform`; ни `setNeedsLayout`, ни `sizeThatFits` в этом пути
-/// нет (§4, §6). Единственное исключение — текст accessibility-элемента, и то
-/// лишь на границе секций. Раскладка меток выполняется один раз в
-/// `layoutSubviews` — при создании и смене размера; там же сбрасывается и заново
-/// считается transform.
+/// ``apply(progress:activeIndex:)`` is called from `scrollViewDidScroll` and changes
+/// only `alpha`/`transform`; there is no `setNeedsLayout` or `sizeThatFits` on this path.
+/// The only exception is the accessibility element's text, and only
+/// at a section boundary. Label layout happens once in
+/// `layoutSubviews`, on creation and on a size change; the transform is also reset
+/// and recomputed there.
 ///
-/// ## Доступность (§7)
+/// ## Accessibility
 ///
-/// - **Reduce Motion** — провайдер ``isReduceMotionEnabled`` (по умолчанию
-///   системная настройка через `TesseraAccessibility`). При `true` заголовки
-///   статичны: виден только активный, без сдвига и фейдов.
-/// - **Dynamic Type** — `UIFont.preferredFont(forTextStyle:)` либо базовый
-///   шрифт, масштабированный через `UIFontMetrics`, плюс
-///   `adjustsFontForContentSizeCategory`; при смене размера текста вид
-///   пересчитывает раскладку (вне скролла).
-/// - **RTL** — `t` приходит нормализованным по направлению чтения (см.
-///   `TesseraRTL.normalizedProgress`). Знак горизонтального сдвига, отступы и
-///   выравнивание текста зеркалятся по `effectiveUserInterfaceLayoutDirection`.
-/// - **VoiceOver** — вид является одним accessibility-элементом с трейтом
-///   `.header` и текстом активной секции. Сами метки для VoiceOver скрыты,
-///   чтобы угасающий сосед не читался как отдельный заголовок.
+/// - **Reduce Motion**: the ``isReduceMotionEnabled`` provider (by default
+///   the system setting via `TesseraAccessibility`). When `true`, the headers are
+///   static: only the active one is visible, with no shift or fades.
+/// - **Dynamic Type**: `UIFont.preferredFont(forTextStyle:)` or the base
+///   font scaled through `UIFontMetrics`, plus
+///   `adjustsFontForContentSizeCategory`; when the text size changes, the view
+///   recomputes its layout (outside scrolling).
+/// - **RTL**: `t` arrives normalized by the reading direction (see
+///   `TesseraRTL.normalizedProgress`). The sign of the horizontal shift, the insets, and
+///   the text alignment are mirrored according to `effectiveUserInterfaceLayoutDirection`.
+/// - **VoiceOver**: the view is a single accessibility element with the `.header`
+///   trait and the text of the active section. The labels themselves are hidden from VoiceOver
+///   so that a fading neighbor is not read as a separate header.
 ///
-/// - Note: `t` — прогресс пейджера в порядке чтения; вид не пишет
-///   `contentOffset` (§2 `docs/CORE-IOS-DESIGN.md`), а только читает его
-///   производную.
+/// - Note: `t` is the pager's progress in reading order; the view does not write
+///   `contentOffset` (see the single-writer contract in `docs/CORE-IOS-DESIGN.md`) and only reads its
+///   derivative.
 ///
-/// Внутримодульное имя из §3 — `PanoHeaderView` (`typealias` ниже); публичное
-/// имя несёт префикс `Tessera` по правилу `AGENTS.md`.
+/// The module-internal name from the design document is `PanoHeaderView` (a `typealias` below); the public
+/// name carries the `Tessera` prefix.
 public final class TesseraPanoHeaderView: UIView {
 
-    // MARK: - Стиль
+    // MARK: - Style
 
-    /// Стиль заголовков секций.
+    /// The style of the section headers.
     ///
-    /// Намеренно минимален: типографика задана текстовым стилем Dynamic Type
-    /// (или базовым шрифтом, который масштабирует `UIFontMetrics`), а не
-    /// абсолютным размером (§7 `docs/PANORAMA-IOS-DESIGN.md`).
+    /// Intentionally minimal: typography is set by a Dynamic Type text style
+    /// (or by a base font scaled by `UIFontMetrics`) rather than by an
+    /// absolute size (see the Dynamic Type notes in `docs/PANORAMA-IOS-DESIGN.md`).
     public struct Style {
 
-        /// Текстовый стиль, по метрикам которого масштабируется шрифт
-        /// заголовков (Dynamic Type, §7).
+        /// The text style whose metrics scale the headers' font
+        /// (Dynamic Type).
         ///
-        /// По умолчанию `.largeTitle` — крупный заголовок секции в духе
+        /// The default is `.largeTitle`, a large section header in the style of
         /// Windows Phone Panorama.
         public var textStyle: UIFont.TextStyle
 
-        /// Базовый (немасштабированный) шрифт заголовков.
+        /// The base (unscaled) font of the headers.
         ///
-        /// Если задан, вид масштабирует его через
-        /// `UIFontMetrics(forTextStyle:).scaledFont(for:)` — именно так
-        /// `TesseraPanoramaStyle.headerFont` из §3 попадает в заголовки.
-        /// `nil` означает «взять `UIFont.preferredFont(forTextStyle:)`».
+        /// If set, the view scales it through
+        /// `UIFontMetrics(forTextStyle:).scaledFont(for:)`; this is how
+        /// `TesseraPanoramaStyle.headerFont` ends up in the headers.
+        /// `nil` means "use `UIFont.preferredFont(forTextStyle:)`".
         ///
-        /// - Important: Передавайте немасштабированный шрифт. Если передать
-        ///   уже масштабированный (например, `preferredFont`), Dynamic Type
-        ///   применится дважды.
+        /// - Important: Pass an unscaled font. If you pass an
+        ///   already scaled one (for example, `preferredFont`), Dynamic Type
+        ///   is applied twice.
         public var baseFont: UIFont?
 
-        /// Цвет текста заголовков. Прозрачность (фейд) задаётся альфой метки,
-        /// поэтому цвет может быть любым, включая акцентный.
+        /// The text color of the headers. Transparency (the fade) is set by the label's alpha,
+        /// so the color can be anything, including an accent color.
         public var textColor: UIColor
 
-        /// Цвет активного заголовка (`TesseraPanoramaStyle.headerActiveColor`, E9.7).
+        /// The color of the active header (`TesseraPanoramaStyle.headerActiveColor`).
         ///
-        /// `nil` — заголовки одного цвета ``textColor``. Иначе цвет
-        /// интерполируется по прогрессу `t`: вес акцента у заголовка равен его
-        /// «активности» — той же кусочно-линейной функции фазы, что и альфа
-        /// (``TesseraPanoHeaderView/keyframeAlpha(progress:)``): `1` на целом `t`
-        /// своей секции, `0` у соседа на целом `t`. Интерполяция выполняется
-        /// альфой акцентной копии метки поверх основной, поэтому горячий путь
-        /// по-прежнему трогает только `alpha`/`transform` (§4, §6).
+        /// `nil` means all headers share the color ``textColor``. Otherwise the color
+        /// is interpolated by the progress `t`: the accent weight of a header equals its
+        /// "activity", the same piecewise-linear function of the phase as the alpha
+        /// (``TesseraPanoHeaderView/keyframeAlpha(progress:)``): `1` at an integer `t`
+        /// of its own section and `0` for a neighbor at an integer `t`. Interpolation is done
+        /// with the alpha of an accent copy of the label on top of the main one, so the hot path
+        /// still touches only `alpha`/`transform`.
         public var activeTextColor: UIColor?
 
-        /// Амплитуда горизонтального сдвига как доля ширины вида.
+        /// The amplitude of the horizontal shift as a fraction of the view's width.
         ///
-        /// Полный размах сдвига — `travel = width * travelRatio`; заголовок
-        /// уезжает на `±travel/2` при полном угасании. Отрицательные значения
-        /// при инициализации приводятся к нулю.
+        /// The full range of the shift is `travel = width * travelRatio`; a header
+        /// moves by `±travel/2` when fully faded. Negative values
+        /// are clamped to zero at initialization.
         public var travelRatio: CGFloat
 
-        /// Отступы содержимого; в RTL левый и правый меняются местами.
+        /// The content insets; in RTL the left and right swap places.
         public var contentInsets: UIEdgeInsets
 
-        /// Максимальное число строк заголовка; `0` — без ограничения.
+        /// The maximum number of header lines; `0` means no limit.
         ///
-        /// При больших размерах Dynamic Type многострочный заголовок не
-        /// обрезается по словам (§7).
+        /// At large Dynamic Type sizes, a multi-line header is not
+        /// truncated mid-word.
         public var numberOfLines: Int
 
-        /// Создаёт стиль заголовков.
+        /// Creates a header style.
         public init(
             textStyle: UIFont.TextStyle = .largeTitle,
             baseFont: UIFont? = nil,
@@ -159,74 +159,74 @@ public final class TesseraPanoHeaderView: UIView {
         }
     }
 
-    // MARK: - Состояние
+    // MARK: - State
 
-    /// Провайдер настройки Reduce Motion.
+    /// The Reduce Motion setting provider.
     ///
-    /// Инжектируется для тестов и для хостов, у которых своё представление о
-    /// движении. По умолчанию читает системную настройку в момент вызова
-    /// (значение не кешируется: включение Reduce Motion во время работы
-    /// приложения срабатывает сразу). См. §7 `docs/PANORAMA-IOS-DESIGN.md`.
+    /// Injected for tests and for hosts with their own notion of
+    /// motion. By default it reads the system setting at call time
+    /// (the value is not cached: turning on Reduce Motion while the
+    /// app is running takes effect immediately). See the accessibility notes in `docs/PANORAMA-IOS-DESIGN.md`.
     public var isReduceMotionEnabled: () -> Bool = {
         TesseraAccessibility.isReduceMotionEnabled
     }
 
-    /// Заголовки секций в порядке чтения (индекс 0 — первая секция).
+    /// The section headers in reading order (index 0 is the first section).
     ///
-    /// Меняются только через ``setTitles(_:)``: пересоздание меток — это
-    /// раскладка, поэтому его нельзя вызывать во время скролла.
+    /// They change only through ``setTitles(_:)``: recreating the labels is
+    /// layout work, so it must not be called during scrolling.
     public private(set) var titles: [String]
 
-    /// Стиль заголовков. Изменение применяется сразу (вне скролла).
+    /// The headers style. A change is applied immediately (outside scrolling).
     public var style: Style {
         didSet {
             applyStyleToLabels()
             invalidateIntrinsicContentSize()
             setNeedsLayout()
-            // Размер шрифта мог измениться — сдвиг зависит от ширины вида,
-            // поэтому пересчитываем transform уже после ближайшей раскладки.
+            // The font size may have changed, and the shift depends on the view's width,
+            // so recompute the transform after the next layout.
             applyCurrentState()
         }
     }
 
-    /// Метки по одной на секцию; порядок совпадает с ``titles``.
+    /// The labels, one per section; the order matches ``titles``.
     private var labels: [UILabel] = []
 
-    /// Акцентные копии меток (``Style/activeTextColor``), по одной на секцию.
+    /// The accent copies of the labels (``Style/activeTextColor``), one per section.
     ///
-    /// Каждая лежит **внутри** своей метки (subview) с тем же текстом и
-    /// кадром `bounds` метки: сдвиг и фейд метки применяются к ней автоматически
-    /// (групповая прозрачность слоя), а вес акцента — её собственная альфа.
-    /// Непрозрачный акцент поверх непрозрачного глифа даёт ровно линейную
-    /// интерполяцию цветов. Пусто, если акцентный цвет не задан.
+    /// Each lies **inside** its label (as a subview) with the same text and
+    /// the label's `bounds` as its frame: the label's shift and fade apply to it automatically
+    /// (the layer's group opacity), and the accent weight is its own alpha.
+    /// An opaque accent over an opaque glyph gives exactly linear
+    /// color interpolation. Empty if no accent color is set.
     private var accentLabels: [UILabel] = []
 
-    /// Маршрут VoiceOver-жеста «три пальца» с заголовка (E9.7).
+    /// The route of the VoiceOver three-finger gesture from the header.
     ///
-    /// Слой заголовков — отдельный accessibility-элемент, и фокус VoiceOver
-    /// может стоять на нём; без маршрута трёхпальцевый свайп с заголовка не
-    /// листал бы секции. Обработчик задаёт контроллер панорамы: направление
-    /// он превращает в шаг по секциям и пишет `contentOffset` сам (§2,
-    /// «Один писатель»). `nil` — жест уходит системе.
+    /// The headers layer is a separate accessibility element, and VoiceOver focus
+    /// may rest on it; without a route, a three-finger swipe from the header would not
+    /// page through the sections. The handler is set by the panorama controller: it turns the
+    /// direction into a section step and writes `contentOffset` itself (the single-writer
+    /// contract). `nil` means the gesture goes to the system.
     var accessibilityScrollHandler: ((UIAccessibilityScrollDirection) -> Bool)?
 
-    /// Последний прогресс из ``apply(progress:activeIndex:)`` — чтобы
-    /// переприменить состояние после раскладки, смены стиля или Reduce Motion.
+    /// The last progress from ``apply(progress:activeIndex:)``, so the state can be
+    /// reapplied after layout, a style change, or a Reduce Motion change.
     private var storedProgress: CGFloat = 0
 
-    /// Последний индекс активной секции из ``apply(progress:activeIndex:)``.
+    /// The last active section index from ``apply(progress:activeIndex:)``.
     private var storedActiveIndex: Int = 0
 
-    /// Индекс, для которого уже выставлен `accessibilityLabel`.
+    /// The index for which `accessibilityLabel` has already been set.
     private var accessibilityTitleIndex: Int = -1
 
-    // MARK: - Жизненный цикл
+    // MARK: - Lifecycle
 
-    /// Создаёт слой заголовков.
+    /// Creates the headers layer.
     ///
     /// - Parameters:
-    ///   - titles: Заголовки секций в порядке чтения.
-    ///   - style: Стиль заголовков.
+    ///   - titles: The section titles in reading order.
+    ///   - style: The headers style.
     public init(titles: [String], style: Style = Style()) {
         self.titles = titles
         self.style = style
@@ -234,10 +234,10 @@ public final class TesseraPanoHeaderView: UIView {
         commonInit()
     }
 
-    /// Не поддерживается: вид создаётся только из кода.
-    @available(*, unavailable, message: "Используйте init(titles:style:)")
+    /// Not supported: the view is created only from code.
+    @available(*, unavailable, message: "Use init(titles:style:)")
     public required init?(coder: NSCoder) {
-        fatalError("TesseraPanoHeaderView не поддерживает загрузку из Interface Builder")
+        fatalError("TesseraPanoHeaderView does not support loading from Interface Builder")
     }
 
     deinit {
@@ -246,8 +246,8 @@ public final class TesseraPanoHeaderView: UIView {
 
     private func commonInit() {
         backgroundColor = .clear
-        // Заголовки — декоративный слой над контентом: касания должны уходить
-        // в пейджер и секции. VoiceOver при этом продолжает видеть элемент.
+        // The headers are a decorative layer above the content: touches must pass
+        // through to the pager and the sections. VoiceOver still sees the element.
         isUserInteractionEnabled = false
         isAccessibilityElement = true
         accessibilityTraits = .header
@@ -270,14 +270,14 @@ public final class TesseraPanoHeaderView: UIView {
         apply(progress: 0, activeIndex: 0)
     }
 
-    // MARK: - Публичный API
+    // MARK: - Public API
 
-    /// Заменяет набор заголовков.
+    /// Replaces the set of headers.
     ///
-    /// Пересоздаёт метки и запускает раскладку, поэтому вызывать метод можно
-    /// только вне `scrollViewDidScroll` (§6 `docs/PANORAMA-IOS-DESIGN.md`).
+    /// Recreates the labels and triggers layout, so the method may be called
+    /// only outside `scrollViewDidScroll` (see the performance discipline in `docs/PANORAMA-IOS-DESIGN.md`).
     ///
-    /// - Parameter titles: Заголовки секций в порядке чтения.
+    /// - Parameter titles: The section titles in reading order.
     public func setTitles(_ titles: [String]) {
         guard titles != self.titles else { return }
         self.titles = titles
@@ -285,64 +285,64 @@ public final class TesseraPanoHeaderView: UIView {
         applyCurrentState()
     }
 
-    /// Применяет прогресс свайпа к заголовкам.
+    /// Applies the swipe progress to the headers.
     ///
-    /// Вызывается из `scrollViewDidScroll` пейджера и меняет **только**
-    /// `alpha` и `transform` меток — без раскладки, без создания представлений
-    /// и без записи `contentOffset` (§4, §6 `docs/PANORAMA-IOS-DESIGN.md`).
-    /// Дополнительно на границе секций обновляется `accessibilityLabel`
-    /// заголовка (см. §7), чтобы VoiceOver читал актуальную секцию; это не
-    /// геометрия и не вызывает layout-прохода.
+    /// Called from the pager's `scrollViewDidScroll` and changes **only**
+    /// the labels' `alpha` and `transform`: no layout, no view creation,
+    /// and no `contentOffset` writes (see the performance discipline in `docs/PANORAMA-IOS-DESIGN.md`).
+    /// Additionally, at a section boundary the header's `accessibilityLabel` is updated
+    /// so that VoiceOver reads the current section; this is not
+    /// geometry and does not trigger a layout pass.
     ///
-    /// Контракт параметров:
-    /// - `t` — глобальный прогресс `contentOffset.x / itemWidth`, уже
-    ///   нормализованный по направлению чтения (`TesseraRTL.normalizedProgress`).
-    ///   Целая часть — индекс секции, дробная — прогресс перехода.
-    /// - `activeIndex` — индекс активной секции (целая часть `t`). Используется
-    ///   для статичного режима Reduce Motion и текста VoiceOver; непрерывные
-    ///   transform/alpha считаются от `t`, поэтому заголовки остаются плавными
-    ///   даже при расхождении аргументов на кадр.
+    /// The parameter contract:
+    /// - `t` is the global progress `contentOffset.x / itemWidth`, already
+    ///   normalized by the reading direction (`TesseraRTL.normalizedProgress`).
+    ///   The integer part is the section index and the fractional part is the transition progress.
+    /// - `activeIndex` is the index of the active section (the integer part of `t`). It is used
+    ///   for the static Reduce Motion mode and the VoiceOver text; the continuous
+    ///   transform/alpha are computed from `t`, so the headers stay smooth
+    ///   even if the arguments disagree by a frame.
     ///
-    /// При включённом Reduce Motion (§7) движение отключается: показывается
-    /// только заголовок `activeIndex`, остальные скрыты, сдвига нет.
+    /// With Reduce Motion on, motion is disabled: only the
+    /// header at `activeIndex` is shown, the others are hidden, and there is no shift.
     ///
     /// - Parameters:
-    ///   - t: Прогресс пейджера в порядке чтения.
-    ///   - activeIndex: Индекс активной секции.
+    ///   - t: The pager's progress in reading order.
+    ///   - activeIndex: The index of the active section.
     public func apply(progress t: CGFloat, activeIndex: Int) {
         storedProgress = t
         storedActiveIndex = activeIndex
         applyCurrentState()
     }
 
-    // MARK: - Чистая математика (публичная для контрактных тестов E3.7)
+    // MARK: - Pure math (public for contract tests)
 
-    /// Альфа заголовка по его фазе.
+    /// A header's alpha by its phase.
     ///
-    /// Ключевые кадры §4 `docs/PANORAMA-IOS-DESIGN.md`:
+    /// The keyframes in `docs/PANORAMA-IOS-DESIGN.md`:
     ///
     /// ```
     /// 0 → 0, 0.5 → 1, 1 → 0
     /// ```
     ///
-    /// Кусочно-линейная интерполяция (`x` — аргумент, зажатый в `0...1`):
+    /// Piecewise-linear interpolation (`x` is the argument clamped to `0...1`):
     ///
     /// ```
     /// x ≤ 0.5:  alpha = 2x
     /// x > 0.5:  alpha = 2 − 2x
     /// ```
     ///
-    /// Пик приходится ровно на фазу 0.5 — момент, когда секция находится
-    /// в центре вида. На краях фазы заголовок полностью прозрачен: соседняя
-    /// секция ещё не вошла (или уже ушла).
+    /// The peak falls exactly on phase 0.5, the moment the section is
+    /// at the center of the view. At the edges of the phase, the header is fully transparent: the neighboring
+    /// section has not yet entered (or has already left).
     ///
-    /// Функция чистая: не читает состояние вида, не требует главного потока,
-    /// не вызывает side effects. Защитные случаи: `NaN` даёт `0`, бесконечности
-    /// зажимаются границами.
+    /// The function is pure: it reads no view state, does not require the main thread,
+    /// and has no side effects. Defensive cases: `NaN` gives `0` and infinities
+    /// are clamped to the bounds.
     ///
-    /// - Parameter frac: Фаза заголовка (`0...1`; значения вне диапазона
-    ///   зажимаются).
-    /// - Returns: Альфа в `0...1`.
+    /// - Parameter frac: The header's phase (`0...1`; values outside the range
+    ///   are clamped).
+    /// - Returns: The alpha in `0...1`.
     public static func keyframeAlpha(progress frac: CGFloat) -> CGFloat {
         guard !frac.isNaN else { return 0 }
 
@@ -353,32 +353,32 @@ public final class TesseraPanoHeaderView: UIView {
         return 2 - 2 * x
     }
 
-    /// Горизонтальный сдвиг заголовка по его фазе.
+    /// A header's horizontal shift by its phase.
     ///
-    /// Ключевые кадры:
+    /// The keyframes:
     ///
     /// ```
     /// 0 → −travel/2, 0.5 → 0, 1 → +travel/2
     /// ```
     ///
-    /// Формула (линейная интерполяция, `x` — аргумент, зажатый в `0...1`):
+    /// The formula (linear interpolation, `x` is the argument clamped to `0...1`):
     ///
     /// ```
     /// offset = (x − 0.5) · travel
     /// ```
     ///
-    /// В кадре 0.5 (активный заголовок) сдвиг нулевой — метка стоит на своём
-    /// месте; максимальное отклонение `±travel/2` достигается на краях, где
-    /// альфа уже равна нулю. Знак направления задаёт вызывающий: в RTL сдвиг
-    /// зеркалится, потому что «следующая секция» приходит слева.
+    /// At keyframe 0.5 (the active header) the shift is zero: the label stays in its
+    /// place; the maximum deviation of `±travel/2` is reached at the edges, where
+    /// alpha is already zero. The sign of the direction is set by the caller: in RTL the shift
+    /// is mirrored because the "next section" arrives from the left.
     ///
-    /// Функция чистая; `NaN` даёт `0`, бесконечности зажимаются границами,
-    /// отрицательный `travel` просто меняет знак сдвига.
+    /// The function is pure; `NaN` gives `0`, infinities are clamped to the bounds,
+    /// and a negative `travel` simply flips the sign of the shift.
     ///
     /// - Parameters:
-    ///   - frac: Фаза заголовка (`0...1`; значения вне диапазона зажимаются).
-    ///   - travel: Полный размах сдвига в точках.
-    /// - Returns: Сдвиг по горизонтали в точках.
+    ///   - frac: The header's phase (`0...1`; values outside the range are clamped).
+    ///   - travel: The full range of the shift in points.
+    /// - Returns: The horizontal shift in points.
     public static func keyframeOffset(progress frac: CGFloat, travel: CGFloat) -> CGFloat {
         guard !frac.isNaN else { return 0 }
 
@@ -386,30 +386,30 @@ public final class TesseraPanoHeaderView: UIView {
         return (x - 0.5) * travel
     }
 
-    /// Фаза заголовка секции `index` для прогресса `t`.
+    /// The phase of the header of section `index` for progress `t`.
     ///
-    /// `phase = 0.5 + (index − t) / 2`; в кадре 0.5 метка стоит в центре.
-    /// Шаг фазы между соседними секциями — 0.5, поэтому уже вторая соседняя
-    /// секция полностью прозрачна.
+    /// `phase = 0.5 + (index − t) / 2`; at keyframe 0.5 the label stands at the center.
+    /// The phase step between neighboring sections is 0.5, so already the second neighboring
+    /// section is fully transparent.
     private static func phase(index: Int, progress t: CGFloat) -> CGFloat {
         0.5 + (CGFloat(index) - t) * 0.5
     }
 
-    /// Вес акцентного цвета заголовка секции `index` при прогрессе `t` (E9.7).
+    /// The accent color weight of the header of section `index` at progress `t`.
     ///
-    /// `weight = max(0, 1 − |index − t|)` — «активность» секции; совпадает с
-    /// ``keyframeAlpha(progress:)`` её фазы. Видимый цвет заголовка —
+    /// `weight = max(0, 1 − |index − t|)` is the section's "activity"; it matches
+    /// ``keyframeAlpha(progress:)`` of its phase. The visible color of the header is
     /// `lerp(textColor, activeTextColor, weight)`.
     ///
     /// - Parameters:
-    ///   - index: Индекс секции в порядке чтения.
-    ///   - t: Прогресс в порядке чтения.
-    /// - Returns: Вес в `0...1`.
+    ///   - index: The section index in reading order.
+    ///   - t: The progress in reading order.
+    /// - Returns: The weight in `0...1`.
     static func activeColorWeight(index: Int, progress t: CGFloat) -> CGFloat {
         keyframeAlpha(progress: phase(index: index, progress: t))
     }
 
-    // MARK: - Применение состояния
+    // MARK: - Applying state
 
     private func applyCurrentState() {
         guard !labels.isEmpty else { return }
@@ -421,8 +421,8 @@ public final class TesseraPanoHeaderView: UIView {
             return
         }
 
-        // Прогресс за пределы ленты выходит только на bounce. Дробную часть
-        // зажимаем, чтобы крайний заголовок не «затухал» при упругом отскоке.
+        // Progress goes beyond the strip only on bounce. Clamp the fractional part
+        // so the edge header does not fade during the elastic bounce.
         let maxProgress = CGFloat(max(labels.count - 1, 0))
         let progress = storedProgress.isNaN
             ? CGFloat(activeIndex)
@@ -436,25 +436,25 @@ public final class TesseraPanoHeaderView: UIView {
             let alpha = Self.keyframeAlpha(progress: phase)
             let offset = Self.keyframeOffset(progress: phase, travel: travel)
 
-            // Строго только alpha/transform: никакой геометрии и раскладки.
+            // Strictly only alpha/transform: no geometry or layout.
             label.alpha = alpha
             label.transform = CGAffineTransform(translationX: direction * offset, y: 0)
-            // Вес акцента — «активность» заголовка: та же функция фазы, что и
-            // альфа (1 на целом t своей секции, 0 у соседа). Только alpha.
+            // The accent weight is the header's "activity": the same phase function as
+            // the alpha (1 at an integer t of its own section, 0 for a neighbor). Alpha only.
             if accentLabels.indices.contains(index) {
                 accentLabels[index].alpha = Self.activeColorWeight(index: index, progress: progress)
             }
         }
 
-        // Единственное, что apply трогает помимо alpha/transform, — текст
-        // accessibility-элемента при смене активной секции (§7). Это не
-        // раскладка и не геометрия; обновление происходит только на границе
-        // секций, а не на каждом кадре.
+        // The only thing apply touches besides alpha/transform is the text of the
+        // accessibility element when the active section changes. This is neither
+        // layout nor geometry; the update happens only at a section
+        // boundary, not on every frame.
         updateAccessibilityTitle(for: activeIndex)
     }
 
-    /// Статичное состояние для Reduce Motion (§7): только активный заголовок,
-    /// без сдвига и фейдов.
+    /// The static state for Reduce Motion: only the active header,
+    /// with no shift or fades.
     private func applyStaticState(activeIndex: Int) {
         for (index, label) in labels.enumerated() {
             label.alpha = index == activeIndex ? 1 : 0
@@ -467,8 +467,8 @@ public final class TesseraPanoHeaderView: UIView {
         updateAccessibilityTitle(for: activeIndex)
     }
 
-    /// Пересчитывает `accessibilityLabel` только при смене активной секции,
-    /// чтобы не трогать accessibility-дерево на каждом кадре скролла.
+    /// Recomputes `accessibilityLabel` only when the active section changes,
+    /// so the accessibility tree is not touched on every scroll frame.
     private func updateAccessibilityTitle(for index: Int) {
         guard titles.indices.contains(index) else {
             accessibilityTitleIndex = -1
@@ -486,7 +486,7 @@ public final class TesseraPanoHeaderView: UIView {
         return min(max(index, 0), labels.count - 1)
     }
 
-    // MARK: - Раскладка
+    // MARK: - Layout
 
     public override func layoutSubviews() {
         super.layoutSubviews()
@@ -499,10 +499,10 @@ public final class TesseraPanoHeaderView: UIView {
         let height = max(content.height, 0)
 
         for label in labels {
-            // Frame и transform смешивать нельзя (UIKit не гарантирует
-            // результат), поэтому на время раскладки сдвиг сбрасывается,
-            // а после установки frame применяется заново из сохранённого
-            // прогресса. Раскладка происходит вне scrollViewDidScroll.
+            // Frame and transform must not be mixed (UIKit does not guarantee
+            // the result), so the shift is reset for the duration of layout
+            // and reapplied after the frame is set, from the saved
+            // progress. Layout happens outside scrollViewDidScroll.
             label.transform = .identity
 
             let fitting = label.sizeThatFits(
@@ -551,13 +551,13 @@ public final class TesseraPanoHeaderView: UIView {
         )
     }
 
-    /// Отступы с учётом направления раскладки: в RTL левый и правый
-    /// меняются местами, чтобы у заголовка был один и тот же «ведущий» край.
+    /// The insets with the layout direction taken into account: in RTL the left and right
+    /// swap places so the header has the same "leading" edge.
     private func resolvedContentInsets() -> UIEdgeInsets {
         var insets = style.contentInsets
         if effectiveUserInterfaceLayoutDirection == .rightToLeft {
-            // Обмен через локальную переменную: прямые два inout-доступа
-            // к свойствам одной структуры нарушают эксклюзивность Swift.
+            // Swap through a local variable: two direct inout accesses
+            // to properties of the same struct violate Swift's exclusivity.
             let left = insets.left
             insets.left = insets.right
             insets.right = left
@@ -569,11 +569,11 @@ public final class TesseraPanoHeaderView: UIView {
         return insets
     }
 
-    // MARK: - Метки
+    // MARK: - Labels
 
     private func rebuildLabels() {
         labels.forEach { $0.removeFromSuperview() }
-        // Акцентные копии лежат внутри старых меток и уходят вместе с ними.
+        // The accent copies lie inside the old labels and leave together with them.
         accentLabels = []
         labels = titles.map(Self.makeLabel(text:))
         labels.forEach { addSubview($0) }
@@ -588,7 +588,7 @@ public final class TesseraPanoHeaderView: UIView {
         setNeedsLayout()
     }
 
-    /// Метка заголовка: только визуал, для VoiceOver скрыта (§7).
+    /// The header label: visual only, hidden from VoiceOver.
     private static func makeLabel(text: String) -> UILabel {
         let label = UILabel()
         label.text = text
@@ -598,9 +598,9 @@ public final class TesseraPanoHeaderView: UIView {
         return label
     }
 
-    /// Создаёт или убирает акцентные копии меток под ``Style/activeTextColor``.
+    /// Creates or removes the accent copies of the labels under ``Style/activeTextColor``.
     ///
-    /// Вызывается при пересоздании меток и при смене стиля — вне скролла.
+    /// Called when the labels are recreated and when the style changes, outside scrolling.
     private func syncAccentLabels() {
         let needsAccent = style.activeTextColor != nil
         let isInSync = needsAccent
@@ -639,7 +639,7 @@ public final class TesseraPanoHeaderView: UIView {
         }
     }
 
-    /// Типографика метки (основной и акцентной — одинаковая, кроме цвета).
+    /// The label typography (the same for the main and the accent label, except for color).
     private static func configure(
         _ label: UILabel,
         font: UIFont,
@@ -647,23 +647,23 @@ public final class TesseraPanoHeaderView: UIView {
         numberOfLines: Int
     ) {
         label.font = font
-        // Шрифт получен из UIFontMetrics/preferredFont, поэтому метка сама
-        // пересчитает его при смене категории Dynamic Type (§7).
+        // The font comes from UIFontMetrics/preferredFont, so the label
+        // recomputes it itself when the Dynamic Type category changes.
         label.adjustsFontForContentSizeCategory = true
         label.textColor = color
         label.numberOfLines = numberOfLines
         label.textAlignment = .natural
     }
 
-    // MARK: - Accessibility (§7)
+    // MARK: - Accessibility
 
-    /// Трёхпальцевый свайп VoiceOver с фокусом на заголовке (E9.7).
+    /// The VoiceOver three-finger swipe with focus on the header.
     ///
-    /// Жест уходит в ``accessibilityScrollHandler`` (контроллер панорамы); без
-    /// обработчика или при отказе — системе.
+    /// The gesture goes to ``accessibilityScrollHandler`` (the panorama controller); without a
+    /// handler, or if it declines, to the system.
     ///
-    /// - Parameter direction: Направление жеста VoiceOver.
-    /// - Returns: `true`, если жест обработан.
+    /// - Parameter direction: The VoiceOver gesture direction.
+    /// - Returns: `true` if the gesture was handled.
     public override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
         if let accessibilityScrollHandler, accessibilityScrollHandler(direction) {
             return true
@@ -671,11 +671,11 @@ public final class TesseraPanoHeaderView: UIView {
         return super.accessibilityScroll(direction)
     }
 
-    /// Шрифт заголовков под текущую категорию Dynamic Type.
+    /// The headers font for the current Dynamic Type category.
     ///
-    /// - если задан ``Style/baseFont`` — `UIFontMetrics` масштабирует его
-    ///   (интеграция с `TesseraPanoramaStyle.headerFont`, §3);
-    /// - иначе берётся системный `preferredFont(forTextStyle:)`.
+    /// - if ``Style/baseFont`` is set, `UIFontMetrics` scales it
+    ///   (integration with `TesseraPanoramaStyle.headerFont`);
+    /// - otherwise the system `preferredFont(forTextStyle:)` is used.
     private var scaledFont: UIFont {
         let metrics = UIFontMetrics(forTextStyle: style.textStyle)
         guard let baseFont = style.baseFont else {
@@ -684,21 +684,21 @@ public final class TesseraPanoHeaderView: UIView {
         return metrics.scaledFont(for: baseFont, compatibleWith: traitCollection)
     }
 
-    // MARK: - Системные изменения
+    // MARK: - System changes
 
-    /// Reduce Motion включили/выключили — переприменяем сохранённый прогресс.
+    /// Reduce Motion was turned on or off: reapply the saved progress.
     @objc private func reduceMotionStatusDidChange() {
         applyCurrentState()
     }
 
-    /// Сменился размер текста Dynamic Type — нужна новая раскладка меток.
-    /// Сами шрифты обновляет `adjustsFontForContentSizeCategory`.
+    /// The Dynamic Type text size changed: the labels need a new layout.
+    /// The fonts themselves are updated by `adjustsFontForContentSizeCategory`.
     @objc private func contentSizeCategoryDidChange() {
         invalidateIntrinsicContentSize()
         setNeedsLayout()
     }
 }
 
-/// Архитектурное имя слоя из §3 `docs/PANORAMA-IOS-DESIGN.md`.
-/// Остаётся внутренним: публичный тип несёт префикс `Tessera`.
+/// The architectural name of the layer from `docs/PANORAMA-IOS-DESIGN.md`.
+/// It stays internal: the public type carries the `Tessera` prefix.
 typealias PanoHeaderView = TesseraPanoHeaderView

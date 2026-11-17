@@ -2,13 +2,13 @@
 //  TestSupport.swift
 //  TesseraStartScreenTests
 //
-//  Общие детерминированные помощники тестов рабочего стола (E4.7).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»
-//  (тесты на случайных конфигурациях плиток), §5 «Режим редактирования»
-//  (персистентность TesseraTileStore), §14 «Уточнения MVP» (D12–D15).
+//  Shared deterministic helpers for the start screen tests.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid"
+//  (tests on random tile configurations), §5 "Edit mode"
+//  (TesseraTileStore persistence), §14 "MVP refinements" (D12–D15).
 //
-//  Все помощники — только для тестов: публичного API target'а они не касаются.
-//  «Случайность» всегда seeded, поэтому прогон воспроизводим и не флакует.
+//  All helpers are test-only: they do not touch the target's public API.
+//  "Randomness" is always seeded, so a run is reproducible and not flaky.
 //
 
 #if canImport(UIKit)
@@ -17,53 +17,53 @@ import Foundation
 import XCTest
 @testable import TesseraStartScreen
 
-// MARK: - Детерминированный генератор
+// MARK: - Deterministic generator
 
-/// Простой seeded-генератор для «случайных» конфигураций раскладки (§3).
+/// A simple seeded generator for "random" layout configurations (§3).
 ///
-/// Не использует `SystemRandomNumberGenerator`: тест обязан давать одну и ту
-/// же конфигурацию при каждом запуске. Реализация намеренно не совпадает с
-/// production-генератором стахгера `TesseraSeededGenerator`, чтобы тест
-/// раскладки не зависел от внутренностей Live-движка.
+/// It does not use `SystemRandomNumberGenerator`: a test must produce the same
+/// configuration on every run. The implementation intentionally differs from the
+/// production stagger generator `TesseraSeededGenerator`, so the layout
+/// test does not depend on the Live engine's internals.
 struct TesseraTestSeededGenerator {
 
-    /// Состояние LCG.
+    /// LCG state.
     private var state: UInt64
 
-    /// Создаёт генератор.
+    /// Creates a generator.
     ///
-    /// - Parameter seed: Зерно; одинаковое зерно даёт одинаковую последовательность.
+    /// - Parameter seed: The seed; the same seed gives the same sequence.
     init(seed: UInt64) {
         state = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
     }
 
-    /// Следующее псевдослучайное значение.
+    /// The next pseudo-random value.
     mutating func next() -> UInt64 {
         state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
         return state
     }
 
-    /// Значение `0..<upperBound`.
+    /// A value in `0..<upperBound`.
     ///
-    /// - Parameter upperBound: Положительная граница.
+    /// - Parameter upperBound: A positive bound.
     mutating func int(upperBound: Int) -> Int {
-        precondition(upperBound > 0, "upperBound должен быть положительным")
+        precondition(upperBound > 0, "upperBound must be positive")
         return Int((next() >> 33) % UInt64(upperBound))
     }
 }
 
-// MARK: - Временная директория
+// MARK: - Temporary directory
 
-/// Временный каталог для тестов персистентности `TesseraTileStore`.
+/// A temporary directory for `TesseraTileStore` persistence tests.
 ///
-/// Каталог удаляется в `deinit`: тесты не оставляют мусор в песочнице
-/// симулятора и не зависят от порядка прогона.
+/// The directory is removed in `deinit`: tests leave no garbage in the simulator
+/// sandbox and do not depend on run order.
 final class TesseraTestDirectory {
 
-    /// Путь каталога.
+    /// The directory path.
     let url: URL
 
-    /// Создаёт описание каталога (сам каталог создаётся по необходимости).
+    /// Creates the directory description (the directory itself is created on demand).
     init() {
         url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TesseraStartScreenTests-\(UUID().uuidString)", isDirectory: true)
@@ -73,21 +73,21 @@ final class TesseraTestDirectory {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// Создаёт каталог на диске.
+    /// Creates the directory on disk.
     func create() throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
 }
 
-// MARK: - Модель ярлыка
+// MARK: - Tile model
 
-/// Ярлык для тестов: действие-заглушка и настраиваемые размер/бейдж (D12/D15).
+/// A tile for tests: a stub action and configurable size/badge (D12/D15).
 ///
 /// - Parameters:
-///   - id: Идентификатор ярлыка.
-///   - size: Размер плитки, по умолчанию `.medium` (D12).
-///   - badge: Бейдж внимания, по умолчанию `.none`.
-/// - Returns: Готовый `TesseraTileDescriptor`.
+///   - id: The tile identifier.
+///   - size: The tile size, `.medium` by default (D12).
+///   - badge: The attention badge, `.none` by default.
+/// - Returns: A ready `TesseraTileDescriptor`.
 func tesseraTestTile(
     _ id: String,
     size: TesseraTileSize = .medium,
@@ -102,22 +102,22 @@ func tesseraTestTile(
     )
 }
 
-/// Идентификаторы элементов снимка в порядке отображения.
+/// Identifiers of the snapshot items in display order.
 ///
-/// - Parameter items: Элементы сетки.
-/// - Returns: Идентификаторы в том же порядке.
+/// - Parameter items: The grid items.
+/// - Returns: The identifiers in the same order.
 func tesseraTestIDs(_ items: [TesseraTileGridItem]) -> [AnyHashable] {
     items.map { $0.id }
 }
 
-/// Папка для тестов: заголовок, число ярлыков small и размер (D17/D15).
+/// A folder for tests: a title, the number of small tiles and a size (D17/D15).
 ///
 /// - Parameters:
-///   - id: Идентификатор папки.
-///   - tileCount: Число ярлыков в папке.
-///   - title: Подпись; по умолчанию — идентификатор.
-///   - size: Размер папки на сетке, по умолчанию `.medium`.
-/// - Returns: Модель папки.
+///   - id: The folder identifier.
+///   - tileCount: The number of tiles in the folder.
+///   - title: The label; the identifier by default.
+///   - size: The folder size on the grid, `.medium` by default.
+/// - Returns: The folder model.
 func tesseraTestFolder(
     _ id: String,
     tileCount: Int = 4,
@@ -132,41 +132,41 @@ func tesseraTestFolder(
     )
 }
 
-// MARK: - Live-контент (E9.8в, E10.4)
+// MARK: - Live content
 
-/// Провайдер live-контента для тестов: стороны задаются напрямую, подписки нет.
+/// A live content provider for tests: the faces are set directly, with no subscription.
 ///
-/// Наследование протокола использует его дефолтные реализации: бэк — заданный
-/// при создании, подписка на обновления не нужна (v1, §10).
+/// The protocol conformance uses its default implementations: the back is the one set
+/// at creation, and no update subscription is needed (v1, §10).
 final class TesseraTestLiveProvider: TesseraLiveTileContentProvider {
 
-    /// Содержимое фронта.
+    /// The front content.
     var frontFace: TesseraLiveTileFace
 
-    /// Содержимое бэка; `nil` — флипов нет.
+    /// The back content; `nil` means no flips.
     var backFace: TesseraLiveTileFace?
 
-    /// Создаёт провайдера.
+    /// Creates a provider.
     ///
     /// - Parameters:
-    ///   - frontFace: Содержимое фронта.
-    ///   - backFace: Содержимое бэка; `nil` — статичная плитка.
+    ///   - frontFace: The front content.
+    ///   - backFace: The back content; `nil` means a static tile.
     init(frontFace: TesseraLiveTileFace, backFace: TesseraLiveTileFace? = nil) {
         self.frontFace = frontFace
         self.backFace = backFace
     }
 }
 
-/// Живой ярлык для тестов: провайдер с заданными сторонами и действием-заглушкой.
+/// A live tile for tests: a provider with the given faces and a stub action.
 ///
 /// - Parameters:
-///   - id: Идентификатор ярлыка.
-///   - front: Содержимое фронта.
-///   - back: Содержимое бэка; `nil` — флипов нет.
-///   - badge: Бейдж внимания.
-///   - size: Размер плитки.
-///   - action: Действие ярлыка (по умолчанию пустое).
-/// - Returns: Готовый `TesseraTileDescriptor` с live-контентом.
+///   - id: The tile identifier.
+///   - front: The front content.
+///   - back: The back content; `nil` means no flips.
+///   - badge: The attention badge.
+///   - size: The tile size.
+///   - action: The tile action (empty by default).
+/// - Returns: A ready `TesseraTileDescriptor` with live content.
 func tesseraTestLiveTile(
     _ id: String,
     front: TesseraLiveTileFace,
@@ -185,34 +185,34 @@ func tesseraTestLiveTile(
     )
 }
 
-// MARK: - Окно с сеткой (E10.2, E10.4)
+// MARK: - Window with a grid
 
-/// Сетка в реальном окне для тестов, которым нужны анимации панели папки и
-/// настоящие ячейки (E10.2, E10.4).
+/// A grid in a real window for tests that need the folder panel animations and
+/// real cells.
 ///
-/// В окне `UIViewPropertyAnimator` раскрытия панели и batch-обновления
-/// UICollectionView выполняются по-настоящему, поэтому тесты дожидаются
-/// завершения перехода прокруткой run loop (`waitForFolderTransition`), а не
-/// фиксированной задержкой. Окно принадлежит хосту и снимается в `deinit`.
+/// In a window, the panel-expansion `UIViewPropertyAnimator` and the UICollectionView
+/// batch updates run for real, so tests wait for
+/// the transition to finish by spinning the run loop (`waitForFolderTransition`) rather than with a
+/// fixed delay. The window belongs to the host and is removed in `deinit`.
 final class TesseraTestWindowedGrid {
 
-    /// Размер окна по умолчанию (ширина класса iPhone 13/14/15/17).
+    /// The default window size (the width class of iPhone 13/14/15/17).
     static let defaultSize = CGSize(width: 390, height: 844)
 
-    /// Окно, в которое встроена сетка.
+    /// The window the grid is embedded in.
     let window: UIWindow
 
-    /// Сетка под тестом.
+    /// The grid under test.
     let grid: TesseraTileGridView
 
-    /// Создаёт окно с сеткой и применяет первый снимок.
+    /// Creates a window with a grid and applies the first snapshot.
     ///
     /// - Parameters:
-    ///   - items: Элементы снимка в порядке отображения.
-    ///   - snapshot: Готовый снимок (например, `TesseraTileStore.snapshot(columns:)` с
-    ///     таблицей ячеек, E14.5); вместо `items`, если задан.
-    ///   - columns: Число колонок сетки.
-    ///   - size: Размер окна и сетки.
+    ///   - items: The snapshot items in display order.
+    ///   - snapshot: A ready snapshot (for example, `TesseraTileStore.snapshot(columns:)` with
+    ///     a cell table); used instead of `items` when set.
+    ///   - columns: The grid column count.
+    ///   - size: The window and grid size.
     init(
         items: [TesseraTileGridItem] = [],
         snapshot: TesseraTileGridSnapshot? = nil,
@@ -233,38 +233,38 @@ final class TesseraTestWindowedGrid {
         window.isHidden = true
     }
 
-    /// Коллекция внутри сетки.
+    /// The collection inside the grid.
     var collectionView: UICollectionView? {
         grid.subviews.compactMap { $0 as? UICollectionView }.first
     }
 
-    /// Доводит раскладку сетки и коллекции: ячейки и рамки актуальны.
+    /// Brings the grid and collection layout up to date: cells and frames are current.
     func layout() {
         grid.layoutIfNeeded()
         collectionView?.layoutIfNeeded()
     }
 
-    /// Применяет снимок без анимации и доводит раскладку.
+    /// Applies a snapshot without animation and brings the layout up to date.
     ///
-    /// - Parameter items: Новые элементы снимка.
+    /// - Parameter items: The new snapshot items.
     func reload(_ items: [TesseraTileGridItem]) {
         grid.reload(snapshot: TesseraTileGridSnapshot(items: items, unpinned: []))
         layout()
     }
 
-    /// Прокручивает run loop заданное время (ожидание таймеров, а не анимаций).
+    /// Spins the run loop for the given time (waiting for timers, not animations).
     ///
-    /// - Parameter seconds: Длительность ожидания в секундах.
+    /// - Parameter seconds: The wait duration in seconds.
     func spin(_ seconds: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    /// Ждёт выполнения условия, прокручивая run loop (без фиксированной паузы).
+    /// Waits for a condition by spinning the run loop (without a fixed pause).
     ///
     /// - Parameters:
-    ///   - timeout: Максимальное ожидание в секундах.
-    ///   - condition: Условие готовности.
-    /// - Returns: `true`, если условие выполнилось до таймаута.
+    ///   - timeout: The maximum wait in seconds.
+    ///   - condition: The readiness condition.
+    /// - Returns: `true` if the condition held before the timeout.
     @discardableResult
     func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
@@ -275,27 +275,27 @@ final class TesseraTestWindowedGrid {
         return condition()
     }
 
-    /// Ждёт завершения анимации панели папки (E10.2).
+    /// Waits for the folder panel animation to finish.
     ///
-    /// - Parameter timeout: Максимальное ожидание в секундах.
-    /// - Returns: `true`, если переход завершился до таймаута.
+    /// - Parameter timeout: The maximum wait in seconds.
+    /// - Returns: `true` if the transition finished before the timeout.
     @discardableResult
     func waitForFolderTransition(timeout: TimeInterval = 2) -> Bool {
         waitUntil(timeout: timeout) { !self.grid.isFolderChangeAnimating }
     }
 
-    /// Видимая ячейка элемента.
+    /// The visible cell of an item.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Ячейка или `nil`, если элемента нет на экране.
+    /// - Parameter id: The tile or folder identifier.
+    /// - Returns: The cell, or `nil` if the item is not on screen.
     func cell(_ id: AnyHashable) -> TesseraTileCell? {
         grid.cellView(forItemID: id) as? TesseraTileCell
     }
 
-    /// Видимая ячейка-панель раскрытой папки.
+    /// The visible panel cell of the expanded folder.
     ///
-    /// - Parameter folderID: Идентификатор раскрытой папки.
-    /// - Returns: Панель или `nil`, если она вне экрана.
+    /// - Parameter folderID: The identifier of the expanded folder.
+    /// - Returns: The panel, or `nil` if it is off screen.
     func panelCell(folderID: AnyHashable) -> TesseraFolderPanelCell? {
         guard let collectionView,
               let index = grid.displayItems.firstIndex(where: {
@@ -308,12 +308,12 @@ final class TesseraTestWindowedGrid {
         ) as? TesseraFolderPanelCell
     }
 
-    /// Первый подвид заданного типа в иерархии.
+    /// The first subview of the given type in the hierarchy.
     ///
     /// - Parameters:
-    ///   - type: Тип подвида.
-    ///   - root: Корень поиска; по умолчанию — сетка.
-    /// - Returns: Найденный вид или `nil`.
+    ///   - type: The subview type.
+    ///   - root: The search root; the grid by default.
+    /// - Returns: The found view, or `nil`.
     func firstSubview<T: UIView>(of type: T.Type, in root: UIView? = nil) -> T? {
         func find(in view: UIView) -> T? {
             if let match = view as? T { return match }
@@ -326,25 +326,25 @@ final class TesseraTestWindowedGrid {
     }
 }
 
-// MARK: - Стенд drag-сессий (E10.5)
+// MARK: - Drag session rig
 
-/// Элемент раскладки стенда, упакованной как до E14 (`TesseraTestDragHost(packed:)`).
+/// A rig layout item packed as before explicit cells (`TesseraTestDragHost(packed:)`).
 enum TesseraTestPackedEntry {
 
-    /// Ярлык верхнего уровня.
+    /// A top-level tile.
     case tile(String, TesseraTileSize)
 
-    /// Папка верхнего уровня с содержимым (размеры ярлыков внутри).
+    /// A top-level folder with content (sizes of the tiles inside).
     case folder(String, TesseraTileSize, [(String, TesseraTileSize)])
 
-    /// Идентификатор элемента.
+    /// The item identifier.
     var id: String {
         switch self {
         case let .tile(id, _), let .folder(id, _, _): return id
         }
     }
 
-    /// Запрошенный размер элемента.
+    /// The requested item size.
     var size: TesseraTileSize {
         switch self {
         case let .tile(_, size), let .folder(_, size, _): return size
@@ -352,40 +352,40 @@ enum TesseraTestPackedEntry {
     }
 }
 
-/// Стенд windowed-drag-сессий: окно с сеткой, `TesseraTileStore` и живым
-/// координатором редактирования (E10.5).
+/// A rig for windowed drag sessions: a window with a grid, a `TesseraTileStore` and a live
+/// edit coordinator.
 ///
-/// Сетка строится из снимка хранилища с таблицей ячеек
-/// (`TesseraTileStore.snapshot(columns:)`, E14.5), поэтому проверки координатора «модель
-/// и снимок согласованы» проходят штатно. Анимации настоящие: завершение
-/// ожидается прокруткой run loop (`waitUntil`), без фиксированных пауз.
+/// The grid is built from a store snapshot with a cell table
+/// (`TesseraTileStore.snapshot(columns:)`), so the coordinator's "model
+/// and snapshot are consistent" checks pass normally. The animations are real: completion
+/// is awaited by spinning the run loop (`waitUntil`), with no fixed pauses.
 final class TesseraTestDragHost {
 
-    /// Временный каталог хранилища (удаляется в `deinit`).
+    /// The store's temporary directory (removed in `deinit`).
     let directory: TesseraTestDirectory
 
-    /// Единственный писатель модели.
+    /// The model's only writer.
     let store: TesseraTileStore
 
-    /// Окно с сеткой.
+    /// The window with the grid.
     let host: TesseraTestWindowedGrid
 
-    /// Drag-координатор.
+    /// The drag coordinator.
     let coordinator: TesseraTileEditCoordinator
 
-    /// Создаёт стенд.
+    /// Creates the rig.
     ///
     /// - Parameters:
-    ///   - descriptors: Каталог ярлыков; порядок = порядок закрепления.
-    ///   - columns: Число колонок сетки.
-    ///   - configuration: Параметры редактирования («желе», drag, папки).
-    ///   - autosaves: Автосохранение хранилища; по умолчанию выключено, чтобы
-    ///     тесты не писали на диск.
-    ///   - windowSize: Размер окна и сетки (ширина экрана для проверок геометрии).
-    ///   - prepare: Подготовка модели до постройки сетки (например, создание
-    ///     папки через `TesseraTileStore`); получает хранилище и ширину сетки для
-    ///     операций по ячейкам (E14.6). Раскладка до `prepare` — упаковка
-    ///     каталога (`placeItems`), операции работают по ячейкам: дыры остаются.
+    ///   - descriptors: The tile catalog; order = pin order.
+    ///   - columns: The grid column count.
+    ///   - configuration: Edit parameters (jiggle, drag, folders).
+    ///   - autosaves: Store autosave; off by default so that
+    ///     tests do not write to disk.
+    ///   - windowSize: The window and grid size (the screen width for geometry checks).
+    ///   - prepare: Model preparation before the grid is built (for example, creating a
+    ///     folder through `TesseraTileStore`); receives the store and the grid width for
+    ///     cell-based operations. The layout before `prepare` is the packed
+    ///     catalog (`placeItems`); operations work by cells: holes stay.
     convenience init(
         descriptors: [TesseraTileDescriptor],
         columns: Int = 4,
@@ -410,16 +410,16 @@ final class TesseraTestDragHost {
         )
     }
 
-    /// Создаёт стенд с точной раскладкой по ячейкам (E14.5): файл схемы версии 2
-    /// с дырами (`TileStoreCellFixture`) загружается в `TesseraTileStore`, а сетка
-    /// строится из `snapshot(columns:)`.
+    /// Creates a rig with an exact cell layout: a version 2 schema file
+    /// with holes (`TileStoreCellFixture`) is loaded into `TesseraTileStore`, and the grid
+    /// is built from `snapshot(columns:)`.
     ///
     /// - Parameters:
-    ///   - tiles: Ярлыки верхнего уровня с ячейками.
-    ///   - folders: Папки верхнего уровня с содержимым.
-    ///   - unpinned: Ярлыки каталога вне сетки.
-    ///   - columns: Число колонок сетки (и ширина холста файла).
-    ///   - configuration: Параметры редактирования.
+    ///   - tiles: Top-level tiles with cells.
+    ///   - folders: Top-level folders with content.
+    ///   - unpinned: Catalog tiles outside the grid.
+    ///   - columns: The grid column count (and the file's canvas width).
+    ///   - configuration: Edit parameters.
     convenience init(
         cells tiles: [CellFixtureTile],
         folders: [CellFixtureFolder] = [],
@@ -443,18 +443,18 @@ final class TesseraTestDragHost {
         self.init(directory: directory, store: store, columns: columns, configuration: configuration)
     }
 
-    /// Создаёт стенд с раскладкой, **упакованной как до E14** (E14.6): элементы в
-    /// порядке массива упаковываются `TesseraTileLayoutEngine.packCompact` для `columns`,
-    /// результат записывается файлом версии 2 (`TileStoreCellFixture`), так что
-    /// ячейки точные, а порядок модели — порядок чтения. Для тестов, чья геометрия
-    /// была рассчитана на компактную раскладку, которую раньше давали операции по
-    /// порядку.
+    /// Creates a rig with a layout **packed as before explicit cells**: items in
+    /// array order are packed by `TesseraTileLayoutEngine.packCompact` for `columns`,
+    /// and the result is written as a version 2 file (`TileStoreCellFixture`), so
+    /// the cells are exact and the model order is the reading order. For tests whose geometry
+    /// was calculated for the compact layout that order-based operations used to
+    /// produce.
     ///
     /// - Parameters:
-    ///   - entries: Ярлыки и папки верхнего уровня в порядке упаковки.
-    ///   - columns: Число колонок сетки (и ширина холста файла).
-    ///   - unpinned: Ярлыки каталога вне сетки.
-    ///   - configuration: Параметры редактирования.
+    ///   - entries: Top-level tiles and folders in packing order.
+    ///   - columns: The grid column count (and the file's canvas width).
+    ///   - unpinned: Catalog tiles outside the grid.
+    ///   - configuration: Edit parameters.
     convenience init(
         packed entries: [TesseraTestPackedEntry],
         columns: Int = 4,
@@ -494,7 +494,7 @@ final class TesseraTestDragHost {
         )
     }
 
-    /// Общая часть: окно с сеткой из снимка хранилища и живой координатор.
+    /// Shared part: a window with a grid from a store snapshot and a live coordinator.
     private init(
         directory: TesseraTestDirectory,
         store: TesseraTileStore,
@@ -504,7 +504,7 @@ final class TesseraTestDragHost {
     ) {
         self.directory = directory
         self.store = store
-        // E14.5: хост строит сетку из `snapshot(columns:)` — с таблицей ячеек.
+        // The host builds the grid from `snapshot(columns:)`, with a cell table.
         host = TesseraTestWindowedGrid(
             snapshot: store.snapshot(columns: columns),
             columns: columns,
@@ -516,34 +516,34 @@ final class TesseraTestDragHost {
             store: store,
             configuration: configuration
         )
-        // Детерминизм: тесты проверяют анимированные ветки, не завися от
-        // системной настройки Reduce Motion хоста прогона.
+        // Determinism: the tests exercise the animated branches without depending on
+        // the run host's system Reduce Motion setting.
         host.grid.isReduceMotionEnabled = { false }
         coordinator.isReduceMotionEnabled = { false }
     }
 
-    /// Точка внутри рамки элемента в координатах сетки.
+    /// A point inside an item's frame in grid coordinates.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор ярлыка или папки.
-    ///   - fx: Доля ширины: 0 — левый край, 0.5 — центр, 1 — правый край.
-    ///   - fy: Доля высоты.
-    /// - Returns: Точка или `nil`, если элемента нет в снимке/раскладке.
+    ///   - id: The tile or folder identifier.
+    ///   - fx: The fraction of the width: 0 is the left edge, 0.5 the center, 1 the right edge.
+    ///   - fy: The fraction of the height.
+    /// - Returns: The point, or `nil` if the item is not in the snapshot/layout.
     func point(_ id: AnyHashable, fx: CGFloat = 0.5, fy: CGFloat = 0.5) -> CGPoint? {
         guard let frame = host.grid.frame(forItemID: id) else { return nil }
         return CGPoint(x: frame.minX + frame.width * fx, y: frame.minY + frame.height * fy)
     }
 
-    /// Начинает drag элемента: long-press в точке его рамки.
+    /// Starts an item drag: a long press at a point of its frame.
     ///
-    /// Встроенный жест координатора делает то же самое; метод вызывает тот же
-    /// вход напрямую, чтобы тест не симулировал касания.
+    /// The coordinator's built-in gesture does the same; the method calls the same
+    /// entry point directly, so the test does not simulate touches.
     ///
     /// - Parameters:
-    ///   - id: Идентификатор элемента.
-    ///   - fx: Доля ширины точки захвата.
-    ///   - fy: Доля высоты точки захвата.
-    /// - Returns: `true`, если drag действительно начался.
+    ///   - id: The item identifier.
+    ///   - fx: The fraction of the width of the grab point.
+    ///   - fy: The fraction of the height of the grab point.
+    /// - Returns: `true` if the drag actually started.
     @discardableResult
     func startDrag(_ id: AnyHashable, fx: CGFloat = 0.5, fy: CGFloat = 0.5) -> Bool {
         guard let item = host.grid.items.first(where: { $0.id == id }),
@@ -554,48 +554,48 @@ final class TesseraTestDragHost {
         return coordinator.isDragging
     }
 
-    /// Идентификаторы элементов в порядке, который видит пользователь.
+    /// Identifiers of the items in the order the user sees.
     var gridIDs: [AnyHashable] {
         host.grid.items.map { $0.id }
     }
 
-    /// Идентификаторы элементов в порядке модели.
+    /// Identifiers of the items in model order.
     var storeIDs: [AnyHashable] {
         store.snapshot().items.map { $0.id }
     }
 
-    /// Папки в порядке сетки.
+    /// Folders in grid order.
     var folders: [TesseraTileFolder] {
         store.snapshot().folders
     }
 
-    /// Идентификатор первой папки в модели.
+    /// The identifier of the first folder in the model.
     var firstFolderID: AnyHashable? {
         folders.first?.id
     }
 
-    /// Прокручивает run loop, пока условие не выполнится.
+    /// Spins the run loop until the condition holds.
     ///
     /// - Parameters:
-    ///   - timeout: Максимальное ожидание в секундах.
-    ///   - condition: Условие готовности.
-    /// - Returns: `true`, если условие выполнилось до таймаута.
+    ///   - timeout: The maximum wait in seconds.
+    ///   - condition: The readiness condition.
+    /// - Returns: `true` if the condition held before the timeout.
     @discardableResult
     func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) -> Bool {
         host.waitUntil(timeout: timeout, condition)
     }
 
-    /// Прокручивает run loop заданное время (ожидание таймеров, не анимаций).
+    /// Spins the run loop for the given time (waiting for timers, not animations).
     ///
-    /// - Parameter seconds: Длительность в секундах.
+    /// - Parameter seconds: The duration in seconds.
     func spin(_ seconds: TimeInterval) {
         host.spin(seconds)
     }
 
-    /// Ждёт, пока завершится уборка отменённого drag (ячейка снова видима).
+    /// Waits for the cleanup of a cancelled drag (the cell is visible again).
     ///
-    /// - Parameter id: Идентификатор перетаскиваемого элемента.
-    /// - Returns: `true`, если уборка завершилась до таймаута.
+    /// - Parameter id: The identifier of the dragged item.
+    /// - Returns: `true` if the cleanup finished before the timeout.
     @discardableResult
     func waitForDragCleanup(_ id: AnyHashable, timeout: TimeInterval = 2) -> Bool {
         waitUntil(timeout: timeout) {
@@ -603,15 +603,15 @@ final class TesseraTestDragHost {
         }
     }
 
-    /// Геометрия клеток базовой раскладки (E14.5): точка внутри клетки малой
-    /// плитки `(строка, колонка)` в координатах сетки, колонка логическая.
+    /// Base layout cell geometry: a point inside the cell of a small
+    /// tile `(row, column)` in grid coordinates, with a logical column.
     ///
     /// - Parameters:
-    ///   - row: Строка.
-    ///   - column: Логическая колонка (0 — начало чтения).
-    ///   - fx: Доля клетки по ширине.
-    ///   - fy: Доля клетки по высоте.
-    /// - Returns: Точка или `nil`, если геометрию не посчитать.
+    ///   - row: The row.
+    ///   - column: The logical column (0 is the reading start).
+    ///   - fx: The fraction of the cell width.
+    ///   - fy: The fraction of the cell height.
+    /// - Returns: The point, or `nil` if the geometry cannot be computed.
     func cellPoint(row: Int, column: Int, fx: CGFloat = 0.5, fy: CGFloat = 0.5) -> CGPoint? {
         guard let frame = host.grid.baseFrame(
             forCell: TesseraTileGridPlacement(row: row, column: column),
@@ -622,12 +622,12 @@ final class TesseraTestDragHost {
         return CGPoint(x: frame.minX + frame.width * fx, y: frame.minY + frame.height * fy)
     }
 
-    /// Рамка клетки малой плитки `(строка, колонка)` в координатах сетки.
+    /// The frame of a small tile cell `(row, column)` in grid coordinates.
     func cellFrame(row: Int, column: Int, size: TesseraTileSize = .small) -> CGRect? {
         host.grid.baseFrame(forCell: TesseraTileGridPlacement(row: row, column: column), size: size)
     }
 
-    /// Ячейки, которые сейчас показывает сетка (таблица снимка сетки).
+    /// The cells the grid is currently showing (the grid snapshot's table).
     var gridCells: [AnyHashable: TesseraTileGridPlacement]? {
         host.grid.snapshot?.placementTable?.cells
     }

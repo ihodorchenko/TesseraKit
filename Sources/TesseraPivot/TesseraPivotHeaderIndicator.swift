@@ -2,76 +2,75 @@
 //  TesseraPivotHeaderIndicator.swift
 //  TesseraPivot
 //
-//  Индикатор активного заголовка пивота.
-//  Контракт: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (лента заголовков +
-//  индикатор), §4 «Математика ядра» (индикатор = lerp(центров соседних
-//  заголовков); окраска — по расстоянию от `t`), §7 «Производительность»
-//  (индикатор — отдельный слой, гоняется только трансформом), §8
+//  The indicator of the pivot's active header.
+//  Contract: docs/PIVOT-IOS-DESIGN.md (architecture: header strip +
+//  indicator; core math: indicator = lerp(centers of neighboring
+//  headers), with coloring by the distance from `t`; performance:
+//  the indicator is a separate layer driven only by a transform; accessibility
 //  «Accessibility» (RTL, Reduce Motion).
-//  Задача плана: E2.2.
 //
-//  Дисциплина производительности (§4, §7): в горячем пути скролла меняется
-//  только `transform`. Базовая позиция (`bounds`/`center`) задаётся один раз
-//  за layout-проход ленты — `placeBar(inStripBounds:)`. Чистые функции не
-//  читают состояние и не требуют главного потока: их использует и лента, и
-//  контрактные тесты E2.7.
+//  Performance discipline: on the scroll hot path only `transform` changes.
+//  The base position (`bounds`/`center`) is set once
+//  per strip layout pass, in `placeBar(inStripBounds:)`. The pure functions
+//  read no state and do not require the main thread: they are used by both the strip and
+//  the contract tests.
 //
 
 #if canImport(UIKit)
 import UIKit
 
-/// Подчёркивание под активным заголовком ленты.
+/// An underline under the strip's active header.
 ///
-/// Отдельный слой поверх `UICollectionView` заголовков (§3, §7): ячейки
-/// переиспользуются и перекрашиваются, а индикатор живёт сам по себе и потому
-/// может непрерывно ехать между заголовками разной ширины (§4, «Важная
-/// тонкость» — интерполируются именно центры, а не `t × constWidth`).
+/// A separate layer above the headers' `UICollectionView` (see the performance notes in the design document):
+/// cells are reused and recolored, while the indicator lives on its own and can therefore
+/// move continuously between headers of different widths (the important subtlety:
+/// the centers are interpolated, not `t × constWidth`).
 ///
-/// Положение меняется только через ``placeBar(inStripBounds:)`` (layout-проход)
-/// и ``move(toCenterX:)`` (`transform` в горячем пути). Размер `bounds` в
-/// горячем пути не трогается, `setNeedsLayout` не вызывается.
+/// The position changes only through ``placeBar(inStripBounds:)`` (the layout pass)
+/// and ``move(toCenterX:)`` (`transform` on the hot path). The size of `bounds` is
+/// not touched on the hot path, and `setNeedsLayout` is not called.
 ///
-/// Порядок использования — только через ``TesseraPivotHeaderStripView``: он владеет
-/// геометрией ленты и содержимым ячеек. Публичная поверхность самого индикатора
-/// ограничена видом (цвет, толщина, ширина) и чистыми функциями для тестов.
+/// Usage: only through ``TesseraPivotHeaderStripView``, which owns the
+/// strip geometry and the cell content. The public surface of the indicator itself
+/// is limited to its appearance (color, thickness, width) and pure functions for tests.
 ///
 /// ## Reduce Motion
 ///
-/// Индикатор не анимируется сам по себе: он повторяет жест пользователя, пока
-/// палец двигает пейджер (§8). Поэтому Reduce Motion его не отключает —
-/// отключаются только самодвижущиеся анимации (например, автоцентрирование
-/// ленты, см. `TesseraPivotHeaderStripView.scrollToCenter(index:animated:)`).
+/// The indicator does not animate on its own: it follows the user's gesture while the
+/// finger moves the pager. Reduce Motion therefore does not disable it;
+/// only self-driven animations are disabled (for example, the strip's auto-centering,
+/// see `TesseraPivotHeaderStripView.scrollToCenter(index:animated:)`).
 public final class TesseraPivotHeaderIndicator: UIView {
 
-    // MARK: - Чистые функции (математика §4)
+    // MARK: - Pure functions (the math)
 
-    /// Центр индикатора для прогресса `t` (docs/PIVOT-IOS-DESIGN.md §4).
+    /// The indicator center for progress `t` (see docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// `indicatorCenter = lerp(center[i], center[i + 1], frac)`, где
-    /// `i = clamp(floor(t), 0, count - 2)`. Ширины заголовков разные, поэтому
-    /// интерполируются центры, а не множитель ширины: иначе индикатор
-    /// «уплывает» от текста на середине свайпа (§4).
+    /// `indicatorCenter = lerp(center[i], center[i + 1], frac)`, where
+    /// `i = clamp(floor(t), 0, count - 2)`. Header widths differ, so
+    /// the centers are interpolated, not a width multiplier: otherwise the indicator
+    /// "drifts" away from the text in the middle of a swipe.
     ///
-    /// Границы и защита от мусорных значений:
-    /// - `centers` пуст — `0` (ленты нет, индикатор скрыт);
-    /// - один центр (`count < 2`) — он же: интерполировать не с чем;
-    /// - `t <= 0` — первый центр, `t >= count - 1` — последний: при bounce
-    ///   прогресс уходит за диапазон, а индикатор не должен уезжать за крайние
-    ///   заголовки;
-    /// - `NaN` — первый центр (неопределённый прогресс = начало ленты);
-    /// - бесконечности зажимаются границами, поэтому приведение к `Int` ниже
-    ///   никогда не переполняется.
+    /// Bounds and protection against garbage values:
+    /// - `centers` is empty: `0` (there is no strip, the indicator is hidden);
+    /// - a single center (`count < 2`): that center, since there is nothing to interpolate with;
+    /// - `t <= 0` gives the first center and `t >= count - 1` the last: during bounce
+    ///   the progress goes out of range, and the indicator must not move past the outermost
+    ///   headers;
+    /// - `NaN` gives the first center (undefined progress means the start of the strip);
+    /// - infinities are clamped to the bounds, so the conversion to `Int` below
+    ///   never overflows.
     ///
-    /// Дробная часть берётся от **зажатого** прогресса: на `t = count - 1` это
-    /// даёт ровно последний центр, а не «первый из последней пары» — типовая
-    /// ошибка `frac(t)` от незажатого `t`.
+    /// The fractional part is taken from the **clamped** progress: at `t = count - 1` this
+    /// gives exactly the last center, not "the first of the last pair", which is the typical
+    /// mistake of taking `frac(t)` of an unclamped `t`.
     ///
     /// - Parameters:
-    ///   - centers: Центры заголовков в координатах контента ленты, в порядке
-    ///     чтения (в RTL — уже зеркалированные, см. `TesseraPivotHeaderStripView`).
-    ///   - t: Нормализованный по направлению чтения прогресс
-    ///     `contentOffset.x / pageWidth` (§4).
-    /// - Returns: Центр индикатора в тех же координатах, что и `centers`.
+    ///   - centers: The header centers in the strip's content coordinates, in
+    ///     reading order (already mirrored in RTL; see `TesseraPivotHeaderStripView`).
+    ///   - t: The progress normalized by the reading direction
+    ///     `contentOffset.x / pageWidth`.
+    /// - Returns: The indicator center in the same coordinates as `centers`.
     public static func indicatorCenter(centers: [CGFloat], progress t: CGFloat) -> CGFloat {
         guard let firstCenter = centers.first else { return 0 }
         guard centers.count > 1 else { return firstCenter }
@@ -88,25 +87,25 @@ public final class TesseraPivotHeaderIndicator: UIView {
         return lowerCenter + (upperCenter - lowerCenter) * fraction
     }
 
-    /// Насколько заголовок «активен» по расстоянию от прогресса (§4, «Окраска
-    /// текста»).
+    /// How "active" a header is by its distance from the progress (the text
+    /// coloring weight).
     ///
-    /// `factor = 1 - clamp(|distance| / span, 0, 1)`; `span` по умолчанию `1` —
-    /// расстояние в единицах индексов страниц. `distance` считается как
-    /// `index - t` (знак не важен, берётся модуль). Возвращает `1` в точке `t`,
-    /// `0` на расстоянии `span` и дальше — так лента плавно «передаёт акцент»
-    /// от уходящего заголовка к приходящему, а не переключает его скачком.
+    /// `factor = 1 - clamp(|distance| / span, 0, 1)`; `span` is `1` by default,
+    /// a distance in page index units. `distance` is computed as
+    /// `index - t` (the sign does not matter, the absolute value is taken). Returns `1` at the point `t`
+    /// and `0` at a distance of `span` and beyond, so the strip smoothly "hands over the accent"
+    /// from the outgoing header to the incoming one rather than switching abruptly.
     ///
-    /// Защитные случаи: `span <= 0` — «размывать нечего»: `1` при нулевом
-    /// расстоянии, иначе `0`; `NaN` в любом аргументе и бесконечное расстояние —
-    /// `0` (неизвестный заголовок считается неактивным).
+    /// Defensive cases: `span <= 0` means "nothing to blur": `1` at zero
+    /// distance, otherwise `0`; `NaN` in any argument and an infinite distance give
+    /// `0` (an unknown header is considered inactive).
     ///
     /// - Parameters:
-    ///   - distance: Расстояние заголовка от прогресса в единицах индексов
+    ///   - distance: The header's distance from the progress in index units
     ///     (`index - t`).
-    ///   - span: Радиус подсветки; значения `<= 0` трактуются как «без
-    ///     размывания».
-    /// - Returns: Коэффициент в `0...1`, где `1` — полный акцентный цвет.
+    ///   - span: The highlight radius; values `<= 0` are treated as "no
+    ///     blurring".
+    /// - Returns: A coefficient in `0...1`, where `1` is the full accent color.
     public static func blendFactor(distanceFromProgress distance: CGFloat, span: CGFloat = 1) -> CGFloat {
         guard !distance.isNaN, !span.isNaN else { return 0 }
         guard span > 0 else { return distance == 0 ? 1 : 0 }
@@ -116,13 +115,13 @@ public final class TesseraPivotHeaderIndicator: UIView {
         return max(0, 1 - min(ratio, 1))
     }
 
-    // MARK: - Вид
+    // MARK: - Appearance
 
-    /// Цвет подчёркивания — акцентный цвет стиля (§3: «вид индикатора —
-    /// подчёркивание и/или акцентный цвет текста»).
+    /// The underline color is the style's accent color (the indicator style is
+    /// an underline and/or an accent text color).
     ///
-    /// Лента выставляет его из ``TesseraPivotHeaderStripView/activeColor``. Динамические
-    /// системные цвета работают как есть: подчёркивание — фон вью, тему меняет
+    /// The strip sets it from ``TesseraPivotHeaderStripView/activeColor``. Dynamic
+    /// system colors work as is: the underline is the view's background, and the theme is changed by
     /// UIKit.
     public var activeColor: UIColor {
         didSet {
@@ -131,12 +130,12 @@ public final class TesseraPivotHeaderIndicator: UIView {
         }
     }
 
-    /// Ширина подчёркивания в точках.
+    /// The underline width in points.
     ///
-    /// Подчёркивание не повторяет ширину активного заголовка: его ширина
-    /// фиксирована, а меняются только центр и толщина. Изменение размера
-    /// применяется на ближайшем layout-проходе ленты (пометка `setNeedsLayout`
-    /// у супервью), в горячем пути свайпа размер не меняется (§4, §7).
+    /// The underline does not copy the width of the active header: its width is
+    /// fixed, and only the center and thickness change. A size change
+    /// is applied on the strip's next layout pass (`setNeedsLayout` is marked
+    /// on the superview); the size does not change on the swipe hot path.
     public var barWidth: CGFloat = 24 {
         didSet {
             guard barWidth != oldValue else { return }
@@ -144,8 +143,8 @@ public final class TesseraPivotHeaderIndicator: UIView {
         }
     }
 
-    /// Толщина подчёркивания в точках (по умолчанию 3 pt — узнаваемая толщина
-    /// WP-акцента).
+    /// The underline thickness in points (3 pt by default, the recognizable thickness
+    /// of the Windows Phone accent).
     public var barHeight: CGFloat = 3 {
         didSet {
             guard barHeight != oldValue else { return }
@@ -153,30 +152,30 @@ public final class TesseraPivotHeaderIndicator: UIView {
         }
     }
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт индикатор с акцентным цветом.
+    /// Creates an indicator with an accent color.
     ///
-    /// - Parameter activeColor: Цвет подчёркивания; по умолчанию `.systemBlue` —
-    ///   дефолт ``TesseraPivotStyle/activeColor``.
+    /// - Parameter activeColor: The underline color; `.systemBlue` by default,
+    ///   the default of ``TesseraPivotStyle/activeColor``.
     public init(activeColor: UIColor = .systemBlue) {
         self.activeColor = activeColor
         super.init(frame: .zero)
         configure()
     }
 
-    /// Создаёт индикатор из архива/сториборда.
+    /// Creates an indicator from an archive/storyboard.
     ///
-    /// - Parameter coder: Декодер архива.
+    /// - Parameter coder: The archive decoder.
     public required init?(coder: NSCoder) {
         self.activeColor = .systemBlue
         super.init(coder: coder)
         configure()
     }
 
-    /// Общая настройка: слой декоративный, событий не ловит и в
-    /// accessibility-дерево не входит — VoiceOver озвучивает заголовки-кнопки
-    /// (§8), а не подчёркивание.
+    /// Common setup: the layer is decorative, catches no events, and is
+    /// not part of the accessibility tree; VoiceOver reads the header buttons,
+    /// not the underline.
     private func configure() {
         isUserInteractionEnabled = false
         isAccessibilityElement = false
@@ -185,16 +184,16 @@ public final class TesseraPivotHeaderIndicator: UIView {
         isHidden = true
     }
 
-    // MARK: - Позиционирование (внутренний контракт с лентой)
+    // MARK: - Positioning (an internal contract with the strip)
 
-    /// Раскладывает подчёркивание на базовую позицию внутри ленты.
+    /// Lays the underline out at its base position inside the strip.
     ///
-    /// Вызывается только из layout-прохода ``TesseraPivotHeaderStripView`` (§7). Здесь
-    /// допустим `bounds`/`center`; после этого ``move(toCenterX:)`` сдвигает
-    /// подчёркивание одним `transform` и layout больше не трогает.
+    /// Called only from the layout pass of ``TesseraPivotHeaderStripView``. `bounds`/`center` are
+    /// allowed here; after that ``move(toCenterX:)`` shifts the
+    /// underline with a single `transform` and layout is not touched again.
     ///
-    /// - Parameter stripBounds: `bounds` ленты в её собственной системе координат:
-    ///   индикатор прижат к нижней кромке.
+    /// - Parameter stripBounds: The strip's `bounds` in its own coordinate system:
+    ///   the indicator is pressed to the bottom edge.
     internal func placeBar(inStripBounds stripBounds: CGRect) {
         transform = .identity
         bounds = CGRect(x: 0, y: 0, width: barWidth, height: barHeight)
@@ -205,16 +204,16 @@ public final class TesseraPivotHeaderIndicator: UIView {
         layer.cornerRadius = barHeight / 2
     }
 
-    /// Сдвигает подчёркивание к центру `centerX` в координатах ленты.
+    /// Shifts the underline to the center `centerX` in the strip's coordinates.
     ///
-    /// Только `transform`: ни `frame`, ни `bounds`, ни `setNeedsLayout` (§4, §7).
-    /// Так как базовая позиция после ``placeBar(inStripBounds:)`` — левый край
-    /// (`origin.x == 0`), сдвиг `centerX - barWidth / 2` ставит центр
-    /// подчёркивания ровно в `centerX`.
+    /// Only `transform`: no `frame`, no `bounds`, no `setNeedsLayout`.
+    /// Since the base position after ``placeBar(inStripBounds:)`` is the left edge
+    /// (`origin.x == 0`), the shift `centerX - barWidth / 2` puts the underline's
+    /// center exactly at `centerX`.
     ///
-    /// - Parameter centerX: Центр в координатах ленты (обычно из
-    ///   ``indicatorCenter(centers:progress:)``, пересчитанный на текущий
-    ///   `contentOffset` ленты).
+    /// - Parameter centerX: The center in the strip's coordinates (usually from
+    ///   ``indicatorCenter(centers:progress:)``, converted to the strip's current
+    ///   `contentOffset`).
     internal func move(toCenterX centerX: CGFloat) {
         let translation = CGAffineTransform(translationX: centerX - barWidth / 2, y: 0)
         guard transform != translation else { return }

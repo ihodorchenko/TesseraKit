@@ -1,58 +1,58 @@
-// Делегат пейджера TesseraCore.
-// Проектный документ: docs/Core-iOS-Design.md — §2 «Ключевые контракты»
-// (инвариант прогресса, один писатель contentOffset) и §3 «Концептуальная
-// поверхность API» (TesseraPagerDelegate — didShowPage, didChangeProgress).
+// Delegate of the TesseraCore pager.
+// Design document: docs/CORE-IOS-DESIGN.md (key contracts:
+// the progress invariant and the single writer of contentOffset; conceptual
+// API surface: TesseraPagerDelegate has didShowPage and didChangeProgress).
 
 #if canImport(UIKit)
 import UIKit
 
-/// Наблюдатель состояния `TesseraPagerViewController`.
+/// Observes the state of `TesseraPagerViewController`.
 ///
-/// Делегат только читает состояние: `contentOffset` пишут исключительно жест
-/// пейджера и программный переход контроллера
-/// (docs/Core-iOS-Design.md §2, «Один писатель»). Возвращать значения или
-/// записывать offset из колбэков нельзя — это создаёт цикл обратной связи.
+/// The delegate only reads state: `contentOffset` is written exclusively by the pager's
+/// gesture and the controller's programmatic transition
+/// (see the single-writer contract in docs/CORE-IOS-DESIGN.md). Returning values or
+/// writing the offset from callbacks is not allowed because it creates a feedback loop.
 ///
-/// Оба метода вызываются на главном потоке. Реализации по умолчанию пусты,
-/// чтобы делегат мог подписаться только на нужное событие.
+/// Both methods are called on the main thread. The default implementations are empty
+/// so that a delegate can subscribe only to the event it needs.
 public protocol TesseraPagerDelegate: AnyObject {
-    /// Пейджер завершил переход и показывает страницу `index`.
+    /// The pager finished a transition and is showing the page at `index`.
     ///
-    /// Индекс — в порядке чтения: `0` — первая страница для пользователя,
-    /// независимо от LTR/RTL (нормализация через `TesseraRTL`).
-    /// Вызывается по завершении перехода
+    /// The index is in reading order: `0` is the first page for the user,
+    /// regardless of LTR/RTL (normalized through `TesseraRTL`).
+    /// Called when a transition completes
     /// (`scrollViewDidEndDecelerating` / `scrollViewDidEndScrollingAnimation`),
-    /// а также после мгновенного `go(toPage:animated: false)`. Показ начальной
-    /// страницы без перехода отдельным событием не является.
+    /// and also after an instant `go(toPage:animated: false)`. Showing the initial
+    /// page without a transition is not a separate event.
     ///
     /// - Parameters:
-    ///   - pager: Пейджер-источник события.
-    ///   - index: Индекс показанной страницы в порядке чтения.
+    ///   - pager: The pager that emitted the event.
+    ///   - index: The index of the shown page in reading order.
     func pager(_ pager: TesseraPagerViewController, didShowPageAt index: Int)
 
-    /// Непрерывный прогресс прокрутки изменился.
+    /// The continuous scroll progress changed.
     ///
-    /// Значение нормализовано по направлению чтения
-    /// (docs/Core-iOS-Design.md §2, «Инвариант прогресса»): `0` — первая
-    /// страница, `pageCount - 1` — последняя. Целая часть — индекс страницы,
-    /// дробная — прогресс перехода. При оттягивании за край (`bounce`) значение
-    /// может выходить за пределы диапазона — потребитель сам решает, как его
-    /// ограничить.
+    /// The value is normalized by the reading direction
+    /// (see the progress invariant in docs/CORE-IOS-DESIGN.md): `0` is the first
+    /// page and `pageCount - 1` is the last. The integer part is the page index
+    /// and the fractional part is the transition progress. When pulling past an edge (`bounce`) the value
+    /// may fall outside the range; the consumer decides how to
+    /// clamp it.
     ///
-    /// Метод вызывается из `scrollViewDidScroll`; layout в этот момент не
-    /// выполняется (docs/Core-iOS-Design.md §2, «Дисциплина производительности»).
+    /// The method is called from `scrollViewDidScroll`; no layout is
+    /// performed at that point (see the performance discipline in docs/CORE-IOS-DESIGN.md).
     ///
     /// - Parameters:
-    ///   - pager: Пейджер-источник события.
-    ///   - t: Нормализованный прогресс `t = contentOffset.x / pageWidth`.
+    ///   - pager: The pager that emitted the event.
+    ///   - t: The normalized progress `t = contentOffset.x / pageWidth`.
     func pager(_ pager: TesseraPagerViewController, didChangeProgress t: CGFloat)
 }
 
 public extension TesseraPagerDelegate {
-    /// Реализация по умолчанию: смена страницы не интересует делегата.
+    /// Default implementation: the delegate is not interested in page changes.
     func pager(_ pager: TesseraPagerViewController, didShowPageAt index: Int) {}
 
-    /// Реализация по умолчанию: прогресс не интересует делегата.
+    /// Default implementation: the delegate is not interested in progress.
     func pager(_ pager: TesseraPagerViewController, didChangeProgress t: CGFloat) {}
 }
 #endif

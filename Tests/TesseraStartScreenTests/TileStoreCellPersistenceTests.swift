@@ -2,14 +2,14 @@
 //  TileStoreCellPersistenceTests.swift
 //  TesseraStartScreenTests
 //
-//  Персистентность и граничные случаи операций `TesseraTileStore` по ячейкам (E14.4).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 и «Отступления
-//  реализации (E14)»; решения D31–D33 в docs/STATE.md.
+//  Persistence and edge cases of `TesseraTileStore` cell operations.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 and "Implementation
+//  deviations"; decisions D31–D33 in docs/STATE.md.
 //
-//  Проверяются: круг записи/чтения с дырами, принятие холста новой ширины
-//  первой же успешной операцией (D32) и сохранность файла при отказе,
-//  невидимые ключи вне коллизий (E14.1), автосохранение выключено — файл не
-//  пишется, ошибки ввода без побочных эффектов.
+//  Checked: the write/read round trip with holes, adopting a canvas of a new width
+//  by the very first successful operation (D32) and keeping the file safe on refusal,
+//  invisible keys outside collisions, autosave off so the file is
+//  not written, and input errors without side effects.
 //
 
 #if canImport(UIKit)
@@ -32,9 +32,9 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         return try XCTUnwrap(object["items"] as? [[String: Any]])
     }
 
-    // MARK: - Круг записи и чтения
+    // MARK: - Write/read round trip
 
-    /// Дыры переживают сохранение и загрузку; порядок модели — порядок чтения.
+    /// Holes survive saving and loading; the model order is the reading order.
     func testRoundTripKeepsHoles() throws {
         let directory = TesseraTestDirectory()
         let tiles = [
@@ -62,38 +62,38 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertEqual(fresh.snapshot().unpinned.map { $0.id }, ["b"])
         tesseraAssertCellInvariants(fresh, columns: 6, catalogIDs: ["a", "b", "c", "d"])
 
-        // Файл: ширина холста и ячейки каждого элемента в порядке чтения.
+        // File: the canvas width and the cells of each item in reading order.
         let items = try fileItems(store)
         XCTAssertEqual(items.compactMap { $0["key"] as? String }, ["s:c", "s:d", "s:a"])
         XCTAssertEqual(items.compactMap { $0["row"] as? Int }, [1, 3, 5])
     }
 
-    /// Папка и вынос из неё переживают круг записи.
+    /// A folder and a take-out from it survive the write round trip.
     func testRoundTripWithFolderOperations() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("t", .small, 2, 2), CellFixtureTile("s", .small, 0, 5), CellFixtureTile("k", .small, 4, 0)]
         let store = try TileStoreCellFixture.makeStore(columns: 6, tiles: tiles, in: directory)
 
-        guard case .created(let folder) = store.createFolder(from: "s", onto: "t", title: "Игры", columns: 6) else {
-            return XCTFail("папка должна создаться")
+        guard case .created(let folder) = store.createFolder(from: "s", onto: "t", title: "Games", columns: 6) else {
+            return XCTFail("the folder must be created")
         }
-        // D45: чтобы после выноса папка пережила круг записи, в ней три ярлыка.
+        // D45: so that the folder survives the write round trip after a take-out, it has three tiles.
         XCTAssertTrue(store.addToFolder("k", folderID: folder.id, columns: 6))
         XCTAssertTrue(store.extractFromFolder("s", toCell: tesseraCell(6, 3), columns: 6))
         let expected = store.placements
 
         let fresh = try reload(store, catalog: ["t", "s", "k"], in: directory)
         XCTAssertEqual(fresh.placements, expected)
-        XCTAssertEqual(fresh.snapshot().folders.first?.title, "Игры")
+        XCTAssertEqual(fresh.snapshot().folders.first?.title, "Games")
         XCTAssertEqual(fresh.snapshot().folders.first?.id, folder.id)
         XCTAssertEqual(fresh.snapshot().folders.first?.tiles.map { $0.id }, ["t", "k"])
         tesseraAssertCellInvariants(fresh, columns: 6, catalogIDs: ["t", "s", "k"])
     }
 
-    // MARK: - Ширина хоста (D32)
+    // MARK: - Host width (D32)
 
-    /// Операция при другой ширине хоста: первая успешная принимает проекцию
-    /// как новый холст и применяет правку; возврат к 6 колонкам дыр уже не даёт.
+    /// An operation at a different host width: the first successful one adopts the projection
+    /// as the new canvas and applies the edit; returning to 6 columns no longer yields holes.
     func testWidthMismatchAdoptsProjectionAsCanvasOnFirstMutation() throws {
         let directory = TesseraTestDirectory()
         let tiles = [
@@ -104,7 +104,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         let store = try TileStoreCellFixture.makeStore(columns: 6, tiles: tiles, in: directory)
         let original = try Data(contentsOf: store.fileURL)
 
-        // Проекция на 4 колонки: репак по порядку чтения без дыр; файл не тронут.
+        // Projection onto 4 columns: a repack in reading order without holes; the file is untouched.
         let projection = store.placements(forColumns: 4)
         XCTAssertEqual(projection["a"], tesseraCell(0, 0))
         XCTAssertEqual(projection["b"], tesseraCell(0, 1))
@@ -113,10 +113,10 @@ final class TileStoreCellPersistenceTests: XCTestCase {
 
         XCTAssertTrue(store.moveItem("c", toCell: tesseraCell(0, 1), columns: 4))
 
-        XCTAssertEqual(store.canvasColumns, 4, "первая правка принимает холст новой ширины")
+        XCTAssertEqual(store.canvasColumns, 4, "the first edit adopts the canvas of the new width")
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(0, 1))
-        XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 0), "a из проекции не двигался")
-        XCTAssertEqual(store.placement(of: "b"), tesseraCell(2, 1), "b вытолкнут под c")
+        XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 0), "a did not move from the projection")
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(2, 1), "b pushed under c")
         tesseraAssertCellInvariants(store, columns: 4, catalogIDs: ["a", "b", "c"])
         XCTAssertNotEqual(try Data(contentsOf: store.fileURL), original)
 
@@ -128,7 +128,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertEqual(object["columns"] as? Int, 4)
     }
 
-    /// Отказ при несовпадающей ширине холст не принимает и файл не пишет.
+    /// On a width mismatch the canvas is not adopted and the file is not written.
     func testFailedOperationOnMismatchedWidthKeepsCanvasAndHoles() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 3, 5)]
@@ -143,13 +143,13 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertFalse(store.collapseEmptyRows(columns: 4))
 
         XCTAssertEqual(store.canvasColumns, 6)
-        XCTAssertEqual(store.placement(of: "b"), tesseraCell(3, 5), "дыры на месте")
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(3, 5), "holes in place")
         XCTAssertEqual(try Data(contentsOf: store.fileURL), original)
         XCTAssertEqual(notifications, 0)
     }
 
-    /// Холст отсутствует (нераскладочное состояние): операция назначает ячейки
-    /// упаковкой порядка и применяет правку.
+    /// There is no canvas (a non-layout state): the operation assigns cells
+    /// by packing the order and applies the edit.
     func testOperationBeforeCanvasExistsAdoptsPackedLayout() throws {
         let directory = TesseraTestDirectory()
         let store = TesseraTileStore(directoryURL: directory.url)
@@ -159,15 +159,15 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertTrue(store.moveItem("a", toCell: tesseraCell(4, 0), columns: 6))
 
         XCTAssertEqual(store.canvasColumns, 6)
-        XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 1), "упаковка порядка, без репака после правки")
+        XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 1), "order packing, no repack after the edit")
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(0, 2))
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(4, 0))
         tesseraAssertCellInvariants(store, columns: 6, catalogIDs: ["a", "b", "c"])
     }
 
-    // MARK: - Невидимые ключи
+    // MARK: - Invisible keys
 
-    /// Невидимый ярлык вне каталога хранит ячейку и не участвует в коллизиях.
+    /// An invisible tile outside the catalog keeps a cell and does not take part in collisions.
     func testInvisibleItemsKeepCellsAndAreIgnoredByCollisions() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .medium, 0, 0), CellFixtureTile("b", .small, 0, 4)]
@@ -177,7 +177,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertTrue(store.moveItem("b", toCell: tesseraCell(0, 0), columns: 6))
 
         XCTAssertEqual(store.placement(of: "b"), tesseraCell(0, 0))
-        XCTAssertEqual(store.placement(of: "a"), tesseraCell(1, 0), "a вытолкнут b, призрак не мешал")
+        XCTAssertEqual(store.placement(of: "a"), tesseraCell(1, 0), "a pushed out by b, the ghost did not interfere")
         XCTAssertNil(store.placement(of: "ghost"))
         XCTAssertFalse(store.placements.keys.contains(AnyHashable("ghost")))
         tesseraAssertCellInvariants(store, columns: 6, catalogIDs: ["a", "b"])
@@ -187,8 +187,8 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertEqual(ghostRecord["column"] as? Int, 0)
     }
 
-    /// Невидимый ключ, которому не хватило ширины новой сетки, получает место в
-    /// конце; видимые элементы это не затрагивает.
+    /// An invisible key that did not fit the new grid width gets a place at
+    /// the end; visible items are not affected.
     func testInvisibleItemOutsideNarrowCanvasGetsNewCell() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -201,12 +201,12 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(2, 1))
         let ghostRecord = try XCTUnwrap(try fileItems(store).first { $0["key"] as? String == "s:ghost" })
         let column = try XCTUnwrap(ghostRecord["column"] as? Int)
-        XCTAssertLessThan(column, 4, "призрак помещён в новую ширину холста")
+        XCTAssertLessThan(column, 4, "the ghost is placed within the new canvas width")
     }
 
-    // MARK: - Побочные эффекты
+    // MARK: - Side effects
 
-    /// Автосохранение выключено: операция меняет модель, файл не пишется.
+    /// Autosave is off: the operation changes the model, and the file is not written.
     func testAutosaveOffDoesNotWriteButSaveKeepsHoles() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0), CellFixtureTile("b", .small, 2, 2)]
@@ -222,7 +222,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
         XCTAssertEqual(fresh.placement(of: "b"), tesseraCell(2, 2))
     }
 
-    /// Ошибочный ввод всех операций: состояние, файл и уведомления не меняются.
+    /// Invalid input to all operations: state, file and notifications do not change.
     func testInvalidInputHasNoSideEffects() throws {
         let directory = TesseraTestDirectory()
         let tiles = [CellFixtureTile("a", .small, 0, 0)]
@@ -245,7 +245,7 @@ final class TileStoreCellPersistenceTests: XCTestCase {
             XCTAssertFalse(store.pinTile("u", columns: columns))
             XCTAssertFalse(store.collapseEmptyRows(columns: columns))
         }
-        XCTAssertFalse(store.moveItemToNewRow("u", columns: 6), "ярлык вне сетки")
+        XCTAssertFalse(store.moveItemToNewRow("u", columns: 6), "tile outside the grid")
         XCTAssertFalse(store.moveItem("u", toCell: tesseraCell(1, 1), columns: 6))
 
         XCTAssertEqual(store.placements, before)

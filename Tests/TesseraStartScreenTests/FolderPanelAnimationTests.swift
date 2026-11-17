@@ -2,31 +2,31 @@
 //  FolderPanelAnimationTests.swift
 //  TesseraStartScreenTests
 //
-//  Анимации панели раскрытой папки (E10.2, волна W3 плана E9/E10).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»,
-//  §5 «Режим редактирования» (блокировка прокрутки), §9 «Accessibility»
-//  (озвучивание состояния, `.layoutChanged`, Dynamic Type); D17/D18 в
-//  docs/STATE.md — панель раскрывается инлайн, одновременно открыта максимум
-//  одна папка.
+//  Animations of the expanded folder panel.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, section "Tile grid",
+//  section "Edit mode" (scroll locking), section "Accessibility"
+//  (state announcements, `.layoutChanged`, Dynamic Type); D17/D18 in
+//  docs/STATE.md: the panel expands inline, at most one folder is
+//  open at a time.
 //
-//  Проверяется сериализация переходов панели:
-//  - смена папки A → B не смешивает `reloadData` и `performBatchUpdates` в
-//    одном проходе runloop (иначе `NSInternalInconsistencyException`);
-//  - `update(snapshot:)` посреди открытия/закрытия запоминается и применяется
-//    после завершения перехода;
-//  - `isScrollEnabled` имеет одного владельца: блокировка drag-координатора
-//    переживает завершение анимации панели;
-//  - `clampContentOffsetAfterCollapse` работает и в неанимированной ветке
-//    закрытия;
-//  - `.layoutChanged` публикуется во всех четырёх ветках (open/close ×
-//    animated/не animated), включая Reduce Motion;
-//  - `accessibilityValue` папки сообщает «раскрыта», не теряя число ярлыков;
-//  - шрифт заголовка панели масштабируется Dynamic Type и укладывается в
-//    фиксированную высоту строки панели.
+//  These tests cover the serialization of panel transitions:
+//  - switching folder A -> B does not mix `reloadData` and `performBatchUpdates` in
+//    one run loop pass (otherwise `NSInternalInconsistencyException`);
+//  - `update(snapshot:)` in the middle of an open/close is remembered and applied
+//    after the transition finishes;
+//  - `isScrollEnabled` has a single owner: the drag coordinator's lock
+//    survives the end of the panel animation;
+//  - `clampContentOffsetAfterCollapse` also works in the non-animated close
+//    branch;
+//  - `.layoutChanged` is posted in all four branches (open/close ×
+//    animated/non-animated), including Reduce Motion;
+//  - the folder's `accessibilityValue` reports "expanded" without losing the tile count;
+//  - the panel title font scales with Dynamic Type and fits into the
+//    fixed row height of the panel.
 //
-//  Анимации настоящие (UIViewPropertyAnimator + batch-обновления), поэтому
-//  тесты с окном: `TesseraTestWindowedGrid`. Завершение перехода ожидается
-//  прокруткой run loop (`waitForFolderTransition`), без фиксированных пауз.
+//  The animations are real (UIViewPropertyAnimator + batch updates), so the
+//  tests use a window: `TesseraTestWindowedGrid`. Transition completion is awaited by
+//  spinning the run loop (`waitForFolderTransition`), without fixed pauses.
 //
 
 #if canImport(UIKit)
@@ -37,12 +37,12 @@ import XCTest
 
 final class FolderPanelAnimationTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Сетка вне окна: неанимированные ветки и геометрия без UI-цикла.
+    /// Grid without a window: non-animated branches and geometry without the UI loop.
     ///
-    /// - Parameter items: Элементы снимка в порядке отображения.
-    /// - Returns: Разложенная сетка.
+    /// - Parameter items: Snapshot items in display order.
+    /// - Returns: The laid-out grid.
     private func makeGrid(_ items: [TesseraTileGridItem]) -> TesseraTileGridView {
         let grid = TesseraTileGridView(
             frame: CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -53,9 +53,9 @@ final class FolderPanelAnimationTests: XCTestCase {
         return grid
     }
 
-    /// Прогоняет layout сетки и её коллекции: ячейки и рамки актуальны.
+    /// Runs layout of the grid and its collection: cells and frames are up to date.
     ///
-    /// - Parameter grid: Сетка.
+    /// - Parameter grid: Grid.
     private func layout(_ grid: TesseraTileGridView) {
         grid.layoutIfNeeded()
         grid.subviews
@@ -63,20 +63,20 @@ final class FolderPanelAnimationTests: XCTestCase {
             .forEach { $0.layoutIfNeeded() }
     }
 
-    /// Индексы панелей раскрытой папки в наборе коллекции.
+    /// Indices of the expanded folder panels in the collection's set.
     ///
-    /// - Parameter grid: Сетка.
-    /// - Returns: Индексы элементов `folderContent`.
+    /// - Parameter grid: Grid.
+    /// - Returns: Indices of the `folderContent` items.
     private func panelIndices(in grid: TesseraTileGridView) -> [Int] {
         grid.displayItems.indices.filter { grid.displayItems[$0].isFolderPanel }
     }
 
-    // MARK: - Смена папки A → B (E10.2)
+    // MARK: - Switching folder A -> B
 
-    /// Пока открыта папка A, повторный тап по B не должен запускать
-    /// `reloadData` и `performBatchUpdates` в одном проходе runloop: A
-    /// сворачивается мгновенно, B открывается следующим проходом. Итог — открыта
-    /// ровно одна папка, события хоста идут парой «закрылась A — открылась B».
+    /// While folder A is open, a repeated tap on B must not trigger
+    /// `reloadData` and `performBatchUpdates` in one run loop pass: A
+    /// collapses immediately, B opens on the next pass. The result is exactly
+    /// one open folder, and the host events come as a pair "A closed, B opened".
     func testOpeningAnotherFolderSerializesTransitions() {
         let first = tesseraTestFolder("first", tileCount: 4)
         let second = tesseraTestFolder("second", tileCount: 4)
@@ -88,30 +88,30 @@ final class FolderPanelAnimationTests: XCTestCase {
         }
 
         host.grid.openFolder(first)
-        XCTAssertTrue(host.waitForFolderTransition(), "Открытие A завершилось")
+        XCTAssertTrue(host.waitForFolderTransition(), "Opening A finished")
         XCTAssertEqual(host.grid.expandedFolderID, first.id)
 
         host.grid.openFolder(second)
         XCTAssertTrue(
             host.waitUntil { host.grid.expandedFolderID == second.id },
-            "Отложенное открытие B выполнилось"
+            "Deferred opening of B was performed"
         )
-        XCTAssertTrue(host.waitForFolderTransition(), "Открытие B завершилось")
+        XCTAssertTrue(host.waitForFolderTransition(), "Opening B finished")
         host.layout()
 
         XCTAssertEqual(host.grid.expandedFolderID, second.id)
-        XCTAssertEqual(panelIndices(in: host.grid).count, 1, "Панель только у B")
+        XCTAssertEqual(panelIndices(in: host.grid).count, 1, "Only B has a panel")
         let panels = panelIndices(in: host.grid)
         XCTAssertEqual(host.grid.displayItems[panels[0]].id, second.id)
         XCTAssertEqual(events.map { $0.id }, [first.id, first.id, second.id])
         XCTAssertEqual(events.map { $0.expanded }, [true, false, true])
     }
 
-    // MARK: - Снимок посреди анимации (E10.2)
+    // MARK: - Snapshot in the middle of an animation
 
-    /// `update(snapshot:)` во время открытия панели не теряется и не попадает
-    /// внутрь незавершённого batch-обновления: применяется после перехода,
-    /// раскрытие сохраняется, новый элемент появляется в наборе.
+    /// `update(snapshot:)` during the panel opening is not lost and does not land
+    /// inside an unfinished batch update: it is applied after the transition,
+    /// the expansion is kept, and the new item appears in the set.
     func testUpdateDuringOpeningAppliesAfterTransition() {
         let folder = tesseraTestFolder("folder", tileCount: 3)
         let tile = tesseraTestTile("a", size: .small)
@@ -122,9 +122,9 @@ final class FolderPanelAnimationTests: XCTestCase {
         host.grid.onFolderExpansionChanged = { _, expanded in events.append(expanded) }
 
         host.grid.openFolder(folder)
-        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Анимация открытия идёт")
+        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Opening animation is running")
 
-        // Снимок приходит посреди 280 мс: набор занят batch-вставкой панели.
+        // The snapshot arrives in the middle of the 280 ms: the set is busy with the batch insertion of the panel.
         host.grid.update(
             snapshot: TesseraTileGridSnapshot(
                 items: [.tile(tile), .folder(folder), .tile(extra)],
@@ -134,21 +134,21 @@ final class FolderPanelAnimationTests: XCTestCase {
         )
         XCTAssertFalse(
             host.grid.items.contains { $0.id == extra.id },
-            "Снимок ждёт завершения перехода, а не применяется поверх batch"
+            "The snapshot waits for the transition to finish instead of being applied on top of the batch"
         )
 
-        XCTAssertTrue(host.waitForFolderTransition(), "Переход завершился")
+        XCTAssertTrue(host.waitForFolderTransition(), "Transition finished")
         host.layout()
 
-        XCTAssertEqual(host.grid.expandedFolderID, folder.id, "Раскрытие сохранено")
+        XCTAssertEqual(host.grid.expandedFolderID, folder.id, "Expansion is kept")
         XCTAssertEqual(host.grid.items.count, 3)
         XCTAssertTrue(host.grid.items.contains { $0.id == extra.id })
         XCTAssertEqual(panelIndices(in: host.grid).count, 1)
-        XCTAssertEqual(events, [true], "Отложенный снимок не закрыл папку")
+        XCTAssertEqual(events, [true], "The deferred snapshot did not close the folder")
     }
 
-    /// `update(snapshot:)` во время закрытия панели применяется после перехода:
-    /// панель уходит, обновлённый состав и событие закрытия не теряются.
+    /// `update(snapshot:)` during the panel closing is applied after the transition:
+    /// the panel goes away, and the updated contents and the close event are not lost.
     func testUpdateDuringClosingAppliesAfterTransition() {
         let folder = tesseraTestFolder("folder", tileCount: 3)
         let tile = tesseraTestTile("a", size: .small)
@@ -165,26 +165,26 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertEqual(host.grid.expandedFolderID, folder.id)
 
         host.grid.closeFolder()
-        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Анимация закрытия идёт")
+        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Closing animation is running")
 
         host.grid.update(
             snapshot: TesseraTileGridSnapshot(items: [.tile(tile), .folder(folder)], unpinned: []),
             animated: false
         )
 
-        XCTAssertTrue(host.waitForFolderTransition(), "Закрытие завершилось")
+        XCTAssertTrue(host.waitForFolderTransition(), "Closing finished")
         host.layout()
 
         XCTAssertNil(host.grid.expandedFolderID)
         XCTAssertEqual(panelIndices(in: host.grid).count, 0)
-        XCTAssertEqual(host.grid.items.count, 2, "Отложенный снимок применён")
+        XCTAssertEqual(host.grid.items.count, 2, "The deferred snapshot was applied")
         XCTAssertEqual(events, [true, false])
     }
 
-    /// M1: если отложенный снимок применился через `reloadData` (fallback при
-    /// смене порядка общих элементов), отложенная цель панели не исполняется в
-    /// том же стеке — иначе снова получили бы `reloadData` + `performBatchUpdates`
-    /// в одном проходе runloop. Цель переоткладывается на следующий проход.
+    /// If the deferred snapshot was applied through `reloadData` (a fallback when
+    /// the order of shared items changes), the deferred panel target is not executed in
+    /// the same stack: otherwise `reloadData` + `performBatchUpdates` would again occur
+    /// in one run loop pass. The target is rescheduled to the next pass.
     func testDeferredSnapshotAndFolderTargetDoNotShareRunLoopPass() {
         let first = tesseraTestFolder("first", tileCount: 3)
         let second = tesseraTestFolder("second", tileCount: 3)
@@ -195,10 +195,10 @@ final class FolderPanelAnimationTests: XCTestCase {
         )
 
         host.grid.openFolder(first)
-        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Открытие A идёт")
+        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Opening A is running")
 
-        // Пока идёт переход: цель панели (B) и снимок, который уберёт A и
-        // переставит общие ярлыки — то есть применится fallback-ом через
+        // While the transition runs: the panel target (B) and a snapshot that removes A and
+        // reorders the shared tiles, so it is applied through the fallback via
         // reloadData.
         host.grid.openFolder(second)
         host.grid.update(
@@ -214,7 +214,7 @@ final class FolderPanelAnimationTests: XCTestCase {
                 host.grid.expandedFolderID == second.id
                     && !host.grid.isFolderChangeAnimating
             },
-            "Снимок и цель панели применяются последовательно, без падения"
+            "The snapshot and the panel target are applied sequentially, without a crash"
         )
         host.layout()
 
@@ -224,8 +224,8 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertFalse(host.grid.isFolderChangeAnimating)
     }
 
-    /// m4/E10.2: повторный тап по папке в первые ~0.12 с закрытия — цель
-    /// «открыть снова», а не потерянный тап: последняя цель побеждает.
+    /// A repeated tap on a folder within the first ~0.12 s of closing is a target
+    /// "open again", not a lost tap: the last target wins.
     func testRetapWhileClosingReopensFolder() {
         let folder = tesseraTestFolder("folder", tileCount: 3)
         let tile = tesseraTestTile("a", size: .small)
@@ -236,10 +236,10 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertEqual(host.grid.expandedFolderID, folder.id)
 
         host.grid.closeFolder()
-        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Закрытие идёт")
+        XCTAssertTrue(host.grid.isFolderChangeAnimating, "Closing is running")
 
-        // Папка ещё числится раскрытой (иконки гаснут), но пользователь уже
-        // передумал: повторный тап обязан запланировать открытие.
+        // The folder is still counted as expanded (icons fade), but the user has already
+        // changed their mind: the repeated tap must schedule an opening.
         host.grid.toggleFolder(folder)
 
         XCTAssertTrue(
@@ -247,16 +247,16 @@ final class FolderPanelAnimationTests: XCTestCase {
                 host.grid.expandedFolderID == folder.id
                     && !host.grid.isFolderChangeAnimating
             },
-            "Повторный тап во время закрытия возвращает панель"
+            "A repeated tap during closing brings the panel back"
         )
         host.layout()
         XCTAssertEqual(panelIndices(in: host.grid).count, 1)
     }
 
-    // MARK: - Владелец isScrollEnabled (E10.2)
+    // MARK: - Owner of isScrollEnabled
 
-    /// Блокировка прокрутки drag-координатором переживает завершение анимации
-    /// панели: сетка не восстанавливает устаревший снимок `isScrollEnabled`.
+    /// The drag coordinator's scroll lock survives the end of the panel
+    /// animation: the grid does not restore a stale `isScrollEnabled` snapshot.
     func testScrollLockSurvivesDragLockDuringPanelAnimation() {
         let folder = tesseraTestFolder("folder", tileCount: 4)
         let host = TesseraTestWindowedGrid(items: [.folder(folder)])
@@ -264,24 +264,24 @@ final class FolderPanelAnimationTests: XCTestCase {
         host.grid.openFolder(folder)
         XCTAssertFalse(
             host.grid.isScrollEnabled,
-            "На время анимации панели прокрутка заблокирована"
+            "Scrolling is locked for the duration of the panel animation"
         )
 
-        // Drag-координатор включил блокировку, пока панель ещё растёт.
+        // The drag coordinator enabled the lock while the panel is still growing.
         host.grid.isScrollEnabled = false
-        XCTAssertTrue(host.waitForFolderTransition(), "Открытие завершилось")
+        XCTAssertTrue(host.waitForFolderTransition(), "Opening finished")
 
         XCTAssertFalse(
             host.grid.isScrollEnabled,
-            "Снятие блокировки панели не должно включать прокрутку против drag"
+            "Releasing the panel's lock must not enable scrolling against the drag"
         )
 
         host.grid.isScrollEnabled = true
         XCTAssertTrue(host.grid.isScrollEnabled)
     }
 
-    /// Без внешней блокировки прокрутка возвращается сразу после анимации
-    /// панели, а не остаётся выключенной навсегда.
+    /// Without an external lock, scrolling returns right after the panel
+    /// animation instead of staying disabled forever.
     func testScrollRestoredAfterPanelAnimation() {
         let folder = tesseraTestFolder("folder", tileCount: 4)
         let host = TesseraTestWindowedGrid(items: [.folder(folder)])
@@ -291,11 +291,11 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertTrue(host.grid.isScrollEnabled)
     }
 
-    // MARK: - Кламп contentOffset (E10.2)
+    // MARK: - contentOffset clamp
 
-    /// Неанимированное закрытие панели (Reduce Motion / вне окна) тоже зажимает
-    /// `contentOffset`: контент стал короче, позиция прокрутки не остаётся за
-    /// его концом.
+    /// A non-animated panel close (Reduce Motion / no window) also clamps
+    /// `contentOffset`: the content became shorter, and the scroll position does not stay beyond
+    /// its end.
     func testNonAnimatedCloseClampsContentOffset() {
         let folder = tesseraTestFolder("big", tileCount: 64)
         let grid = makeGrid([.folder(folder)])
@@ -304,7 +304,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         layout(grid)
 
         let expandedMaximum = max(0, grid.contentSize.height - grid.bounds.height)
-        XCTAssertGreaterThan(expandedMaximum, 0, "Панель обязана удлинить контент")
+        XCTAssertGreaterThan(expandedMaximum, 0, "The panel must make the content longer")
 
         grid.setContentOffset(
             CGPoint(x: 0, y: expandedMaximum),
@@ -320,15 +320,15 @@ final class FolderPanelAnimationTests: XCTestCase {
             grid.contentOffset.y,
             collapsedMaximum,
             accuracy: 0.5,
-            "Неанимированное закрытие зажимает offset"
+            "Non-animated close clamps the offset"
         )
         XCTAssertLessThan(grid.contentOffset.y, expandedMaximum)
     }
 
-    // MARK: - .layoutChanged во всех ветках (E10.2)
+    // MARK: - .layoutChanged in all branches
 
-    /// `.layoutChanged` публикуется и в анимированных, и в неанимированных
-    /// ветках раскрытия/закрытия, включая Reduce Motion.
+    /// `.layoutChanged` is posted in both the animated and the non-animated
+    /// expand/collapse branches, including Reduce Motion.
     func testLayoutChangedPostedInAllExpansionBranches() {
         let folder = tesseraTestFolder("folder", tileCount: 4)
         let host = TesseraTestWindowedGrid(items: [.folder(folder)])
@@ -340,26 +340,26 @@ final class FolderPanelAnimationTests: XCTestCase {
             arguments.append(argument)
         }
 
-        // Анимированное открытие.
+        // Animated opening.
         host.grid.openFolder(folder)
         XCTAssertTrue(host.waitForFolderTransition())
         XCTAssertEqual(posts.count, 1)
-        XCTAssertNotNil(arguments.first ?? nil, "Фокус переводится на панель")
+        XCTAssertNotNil(arguments.first ?? nil, "Focus moves to the panel")
 
-        // Анимированное закрытие.
+        // Animated closing.
         host.grid.closeFolder()
         XCTAssertTrue(host.waitForFolderTransition())
         XCTAssertEqual(posts.count, 2)
-        XCTAssertNotNil(arguments.last ?? nil, "Фокус возвращается на папку")
+        XCTAssertNotNil(arguments.last ?? nil, "Focus returns to the folder")
 
-        // Неанимированные открытие и закрытие.
+        // Non-animated opening and closing.
         host.grid.openFolder(folder, animated: false)
         XCTAssertEqual(posts.count, 3)
         host.grid.closeFolder(animated: false)
         XCTAssertEqual(posts.count, 4)
 
-        // Reduce Motion: анимированный вызов идёт неанимированной веткой, но
-        // уведомление и событие хосту обязательны.
+        // Reduce Motion: the animated call goes through the non-animated branch, but
+        // the notification and the host event are required.
         host.grid.isReduceMotionEnabled = { true }
         host.grid.openFolder(folder, animated: true)
         XCTAssertEqual(posts.count, 5)
@@ -373,10 +373,10 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertFalse(host.grid.isFolderChangeAnimating)
     }
 
-    // MARK: - Озвучивание «папка раскрыта» (E10.2)
+    // MARK: - Announcing "folder expanded"
 
-    /// `accessibilityValue` папки сообщает «раскрыта», не теряя число ярлыков;
-    /// закрытие возвращает прежнее значение.
+    /// The folder's `accessibilityValue` reports "expanded" without losing the tile count;
+    /// closing restores the previous value.
     func testFolderAccessibilityValueAnnouncesExpanded() {
         let folder = tesseraTestFolder("folder", tileCount: 3)
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
@@ -391,7 +391,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         cell.setFolderExpanded(false)
         XCTAssertEqual(cell.accessibilityValue, "3")
 
-        // Пустая папка: числа нет, состояние озвучивается отдельно.
+        // Empty folder: there is no count, the state is announced separately.
         let empty = TesseraTileFolder(id: "empty", title: "empty")
         cell.configure(with: .folder(empty), liveTileEngine: nil, isVisible: false)
         XCTAssertNil(cell.accessibilityValue)
@@ -399,8 +399,8 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertEqual(cell.accessibilityValue, TesseraStartScreenStrings.string(.panelExpanded))
     }
 
-    /// Та же пара «число ярлыков + раскрыта» приходит на реальной ячейке после
-    /// раскрытия панели в сетке.
+    /// The same pair "tile count + expanded" arrives on a real cell after
+    /// the panel is expanded in the grid.
     func testFolderCellValueAfterExpansionInGrid() {
         let folder = tesseraTestFolder("folder", tileCount: 5)
         let host = TesseraTestWindowedGrid(items: [.folder(folder)])
@@ -414,11 +414,11 @@ final class FolderPanelAnimationTests: XCTestCase {
         )
     }
 
-    // MARK: - Dynamic Type заголовка панели (E10.2)
+    // MARK: - Dynamic Type of the panel title
 
-    /// Шрифт заголовка панели масштабируется Dynamic Type, но не выходит за
-    /// потолок и укладывается в фиксированную высоту строки заголовка панели —
-    /// иначе заголовок обрезался бы на accessibility-размерах.
+    /// The panel title font scales with Dynamic Type but does not exceed
+    /// the ceiling and fits into the fixed height of the panel title row,
+    /// otherwise the title would be clipped at accessibility sizes.
     func testPanelTitleFontScalesWithinHeaderHeight() {
         let defaultFont = TesseraFolderPanelCell.makeTitleFont(compatibleWith: nil)
         let smallFont = TesseraFolderPanelCell.makeTitleFont(
@@ -436,7 +436,7 @@ final class FolderPanelAnimationTests: XCTestCase {
         XCTAssertLessThanOrEqual(
             accessibilityFont.lineHeight,
             TesseraTileLayoutEngine.panelHeaderHeight + 0.001,
-            "Строка заголовка обязана уместиться в высоту панели"
+            "The title row must fit into the panel height"
         )
         XCTAssertLessThanOrEqual(
             defaultFont.lineHeight,

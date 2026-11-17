@@ -2,18 +2,18 @@
 //  FolderToggleTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты state-машины раскрытия папки (задача E7.4, решение D17).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»;
-//  D17 в docs/STATE.md — одновременно раскрыта максимум одна папка, панель
-//  вставляется отдельным элементом под плитку папки (плитка остаётся видимой),
-//  закрытие повторным тапом/явным вызовом хоста.
+//  Tests for the folder expansion state machine (D17).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, section "Tile grid";
+//  D17 in docs/STATE.md: at most one folder is expanded at a time, the panel
+//  is inserted as a separate item below the folder tile (the tile stays visible),
+//  and it is closed by a repeated tap or an explicit call from the host.
 //
-//  Чистой функции open/close в API нет: состоянием владеет `TesseraTileGridView`
-//  (`expandedFolderID`), а методы `openFolder`/`toggleFolder`/`closeFolder`
-//  работают и без окна. Вне окна `canAnimateFolderChange` = false, поэтому
-//  сетка проходит неанимированную ветку синхронно — UI-цикл и таймеры не нужны.
-//  Набор коллекции читается по внутреннему `displayItems` (панель — UI-слой,
-//  не данные), данные — по публичному `items`.
+//  There is no pure open/close function in the API: the state is owned by `TesseraTileGridView`
+//  (`expandedFolderID`), and the `openFolder`/`toggleFolder`/`closeFolder` methods
+//  work without a window too. Outside a window `canAnimateFolderChange` is false, so
+//  the grid goes through the non-animated branch synchronously: no UI loop or timers needed.
+//  The collection's set is read through the internal `displayItems` (the panel is a UI layer,
+//  not data), the data through the public `items`.
 //
 
 #if canImport(UIKit)
@@ -24,33 +24,33 @@ import XCTest
 
 final class FolderToggleTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Ширина сетки в тестах (как у iPhone 13/14).
+    /// Grid width in the tests (like an iPhone 13/14).
     private let gridWidth: CGFloat = 390
 
-    /// Внешние поля сетки по умолчанию (по 16 pt).
+    /// Default outer insets of the grid (16 pt each).
     private let gridInsets: CGFloat = 16
 
-    /// Зазор между юнитами по умолчанию.
+    /// Default gap between units.
     private let gridSpacing: CGFloat = 8
 
-    /// Ширина контента сетки (без внешних полей).
+    /// Width of the grid content (without outer insets).
     private var contentWidth: CGFloat {
         gridWidth - gridInsets * 2
     }
 
-    /// Юнит сетки при ширине `contentWidth`, четырёх колонках и зазоре 8.
+    /// Grid unit at `contentWidth` width, four columns and a gap of 8.
     private var unit: CGFloat {
         (contentWidth - gridSpacing * 3) / 4
     }
 
-    /// Папка с одним ярлыком (или с заданными ярлыками).
+    /// A folder with one tile (or with the given tiles).
     ///
     /// - Parameters:
-    ///   - id: Идентификатор папки.
-    ///   - tiles: Ярлыки внутри папки.
-    /// - Returns: Модель папки.
+    ///   - id: Folder identifier.
+    ///   - tiles: Tiles inside the folder.
+    /// - Returns: The folder model.
     private func makeFolder(
         _ id: String,
         tiles: [TesseraTileDescriptor] = [tesseraTestTile("f-tile")]
@@ -58,12 +58,12 @@ final class FolderToggleTests: XCTestCase {
         TesseraTileFolder(id: id, title: id, tiles: tiles)
     }
 
-    /// Сетка, разложенная вручную: окно не нужно, коллекция получает bounds.
+    /// A grid laid out manually: no window needed, the collection gets bounds.
     ///
     /// - Parameters:
-    ///   - items: Элементы снимка в порядке отображения.
-    ///   - columns: Число колонок сетки.
-    /// - Returns: Готовая сетка без окна.
+    ///   - items: Snapshot items in display order.
+    ///   - columns: Number of grid columns.
+    /// - Returns: The ready grid without a window.
     private func makeGrid(_ items: [TesseraTileGridItem], columns: Int = 4) -> TesseraTileGridView {
         let grid = TesseraTileGridView(
             frame: CGRect(x: 0, y: 0, width: gridWidth, height: 844)
@@ -74,9 +74,9 @@ final class FolderToggleTests: XCTestCase {
         return grid
     }
 
-    /// Прогоняет layout сетки и её коллекции: ячейки и рамки актуальны.
+    /// Runs layout of the grid and its collection: cells and frames are up to date.
     ///
-    /// - Parameter grid: Сетка.
+    /// - Parameter grid: Grid.
     private func layout(_ grid: TesseraTileGridView) {
         grid.layoutIfNeeded()
         grid.subviews
@@ -84,23 +84,23 @@ final class FolderToggleTests: XCTestCase {
             .forEach { $0.layoutIfNeeded() }
     }
 
-    /// Коллекция внутри сетки.
+    /// The collection inside the grid.
     ///
-    /// - Parameter grid: Сетка.
-    /// - Returns: Коллекция или `nil`, если иерархия сломана.
+    /// - Parameter grid: Grid.
+    /// - Returns: The collection, or `nil` if the hierarchy is broken.
     private func collectionView(in grid: TesseraTileGridView) -> UICollectionView? {
         grid.subviews.compactMap { $0 as? UICollectionView }.first
     }
 
-    /// Фактическая рамка элемента коллекции в координатах контента.
+    /// The actual frame of a collection item in content coordinates.
     ///
-    /// Берётся из атрибутов раскладки: ячейка за пределами экрана могла ещё не
-    /// создаться, а рамка панели нужна и для проверок геометрии.
+    /// Taken from the layout attributes: an off-screen cell may not have been
+    /// created yet, while the panel frame is also needed for geometry checks.
     ///
     /// - Parameters:
-    ///   - grid: Сетка.
-    ///   - index: Индекс элемента в наборе коллекции.
-    /// - Returns: Рамка или `nil`.
+    ///   - grid: Grid.
+    ///   - index: Index of the item in the collection's set.
+    /// - Returns: The frame, or `nil`.
     private func frame(in grid: TesseraTileGridView, at index: Int) -> CGRect? {
         guard let collectionView = collectionView(in: grid) else { return nil }
         return collectionView.collectionViewLayout
@@ -108,47 +108,47 @@ final class FolderToggleTests: XCTestCase {
             .frame
     }
 
-    /// Индексы панелей раскрытой папки в наборе коллекции.
+    /// Indices of the expanded folder panels in the collection's set.
     ///
-    /// - Parameter grid: Сетка.
-    /// - Returns: Индексы элементов `folderContent`.
+    /// - Parameter grid: Grid.
+    /// - Returns: Indices of the `folderContent` items.
     private func panelIndices(in grid: TesseraTileGridView) -> [Int] {
         grid.displayItems.indices.filter { grid.displayItems[$0].isFolderPanel }
     }
 
-    /// Есть ли в наборе панель указанной папки.
+    /// Whether the set contains the panel of the given folder.
     ///
     /// - Parameters:
-    ///   - grid: Сетка.
-    ///   - id: Идентификатор папки.
-    /// - Returns: `true`, если панель вставлена.
+    ///   - grid: Grid.
+    ///   - id: Folder identifier.
+    /// - Returns: `true` if the panel is inserted.
     private func hasPanel(in grid: TesseraTileGridView, folderID: AnyHashable) -> Bool {
         grid.displayItems.contains { $0.isFolderPanel && $0.id == folderID }
     }
 
-    /// Индекс плитки-папки в наборе (панель пропускается).
+    /// Index of the folder tile in the set (the panel is skipped).
     ///
     /// - Parameters:
-    ///   - grid: Сетка.
-    ///   - id: Идентификатор папки.
-    /// - Returns: Индекс в `displayItems` или `nil`.
+    ///   - grid: Grid.
+    ///   - id: Folder identifier.
+    /// - Returns: Index in `displayItems`, or `nil`.
     private func folderIndex(in grid: TesseraTileGridView, folderID: AnyHashable) -> Int? {
         grid.displayItems.firstIndex { !$0.isFolderPanel && $0.folder?.id == folderID }
     }
 
-    /// Ячейка папки в сетке.
+    /// The folder cell in the grid.
     ///
     /// - Parameters:
-    ///   - grid: Сетка.
-    ///   - id: Идентификатор папки.
-    /// - Returns: Ячейка или `nil`, если папка не на экране.
+    ///   - grid: Grid.
+    ///   - id: Folder identifier.
+    /// - Returns: The cell, or `nil` if the folder is not on screen.
     private func folderCell(in grid: TesseraTileGridView, id: AnyHashable) -> TesseraTileCell? {
         grid.cellView(forItemID: id) as? TesseraTileCell
     }
 
-    // MARK: - Открытие
+    // MARK: - Opening
 
-    /// Открытие вставляет панель в набор коллекции, но не в данные снимка.
+    /// Opening inserts the panel into the collection's set, but not into the snapshot data.
     func testOpenFolderExpandsPanelOnlyInDisplayItems() {
         let folder = makeFolder("f")
         let grid = makeGrid([.tile(tesseraTestTile("a")), .folder(folder)])
@@ -160,15 +160,15 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(grid.expandedFolderID, folder.id)
         XCTAssertTrue(hasPanel(in: grid, folderID: folder.id))
         XCTAssertEqual(panelIndices(in: grid).count, 1)
-        // Панель — UI-состояние: в данных её нет.
+        // The panel is UI state: it is not in the data.
         XCTAssertFalse(grid.items.contains { $0.isFolderPanel })
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events.first?.0, folder.id)
         XCTAssertEqual(events.first?.1, true)
     }
 
-    /// Панель вставляется отдельным элементом сразу после плитки папки: плитка
-    /// остаётся в наборе, число элементов растёт на один.
+    /// The panel is inserted as a separate item right after the folder tile: the tile
+    /// stays in the set, and the item count grows by one.
     func testOpenFolderInsertsPanelAfterFolderTile() {
         let folder = makeFolder("f")
         let tileA = tesseraTestTile("a")
@@ -182,15 +182,15 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(index, 1)
         XCTAssertEqual(grid.displayItems.count, items.count + 1)
         guard let index else { return }
-        // Плитка папки на месте, панель — следующей строкой набора.
+        // The folder tile is in place, the panel is the next row of the set.
         XCTAssertEqual(grid.displayItems[index].folder?.id, folder.id)
         XCTAssertFalse(grid.displayItems[index].isFolderPanel)
         XCTAssertEqual(panelIndices(in: grid), [index + 1])
         XCTAssertEqual(grid.displayItems[index + 1].panelFolder?.id, folder.id)
     }
 
-    /// Повторное открытие уже открытой папки ничего не меняет и не дублирует
-    /// событие.
+    /// Opening an already open folder again changes nothing and does not duplicate
+    /// the event.
     func testOpenFolderIsIdempotent() {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -205,7 +205,7 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(events.count, 1)
     }
 
-    /// Папки нет в текущем снимке — вызов игнорируется.
+    /// The folder is not in the current snapshot: the call is ignored.
     func testOpenFolderIgnoresFolderMissingFromSnapshot() {
         let other = makeFolder("other")
         let missing = makeFolder("missing")
@@ -220,10 +220,10 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(events, 0)
     }
 
-    // MARK: - Геометрия панели под папкой
+    // MARK: - Panel geometry below the folder
 
-    /// Плитка папки остаётся на месте и видна, а панель начинается строкой ниже
-    /// и сдвигает вниз всё, что начиналось ниже папки.
+    /// The folder tile stays in place and visible, and the panel starts one row below
+    /// and pushes down everything that started below the folder.
     func testPanelIsInsertedBelowFolderAndPushesContentBelow() throws {
         let folder = makeFolder("f", tiles: (0..<9).map { tesseraTestTile("t\($0)") })
         let wide = tesseraTestTile("wide", size: .wide)
@@ -232,12 +232,12 @@ final class FolderToggleTests: XCTestCase {
 
         let folderFrame = try XCTUnwrap(grid.frame(forItemID: folder.id))
         let wideBefore = try XCTUnwrap(grid.frame(forItemID: wide.id))
-        let panelIndex = 1 // панель вставляется сразу после папки
+        let panelIndex = 1 // the panel is inserted right after the folder
 
         grid.openFolder(folder, animated: false)
         layout(grid)
 
-        // Плитка папки никуда не исчезла и не переехала.
+        // The folder tile has not disappeared or moved.
         XCTAssertEqual(try XCTUnwrap(grid.frame(forItemID: folder.id)), folderFrame)
         XCTAssertEqual(panelIndices(in: grid), [panelIndex])
 
@@ -248,7 +248,7 @@ final class FolderToggleTests: XCTestCase {
             columns: 4
         )
 
-        // Панель — полноширинная строка сразу после последней строки папки.
+        // The panel is a full-width row right after the last row of the folder.
         XCTAssertEqual(panelFrame.minX, gridInsets, accuracy: 0.5)
         XCTAssertEqual(panelFrame.width, contentWidth, accuracy: 0.5)
         XCTAssertEqual(
@@ -258,7 +258,7 @@ final class FolderToggleTests: XCTestCase {
         )
         XCTAssertEqual(panelFrame.height, panelHeight, accuracy: 0.5)
 
-        // Всё, что начиналось ниже папки, встаёт под панелью.
+        // Everything that started below the folder goes under the panel.
         let wideAfter = try XCTUnwrap(grid.frame(forItemID: wide.id))
         XCTAssertEqual(
             wideAfter.minY,
@@ -268,8 +268,8 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertGreaterThan(wideAfter.minY, wideBefore.minY)
     }
 
-    /// Сосед в строке папки остаётся на месте: панель начинается после строки,
-    /// в которой заканчивается папка, а не с её верхнего края.
+    /// A neighbor in the folder row stays in place: the panel starts after the row
+    /// where the folder ends, not at its top edge.
     func testNeighbourInFolderRowStaysInPlace() throws {
         let folder = makeFolder("f")
         let small = tesseraTestTile("small", size: .small)
@@ -286,8 +286,8 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(smallAfter.minY, smallBefore.minY, accuracy: 0.5)
     }
 
-    /// Элемент, заканчивающийся выше строки папки, остаётся на месте: панель
-    /// встаёт после строки папки и ниже ничего не задевает.
+    /// An item that ends above the folder row stays in place: the panel
+    /// starts after the folder row and does not touch anything below.
     func testPanelKeepsItemsAboveFolderInPlace() throws {
         let folder = makeFolder("f", tiles: (0..<9).map { tesseraTestTile("t\($0)") })
         let wide = tesseraTestTile("wide", size: .wide)
@@ -303,14 +303,14 @@ final class FolderToggleTests: XCTestCase {
         let wideAfter = try XCTUnwrap(grid.frame(forItemID: wide.id))
         XCTAssertEqual(wideAfter.minY, wideFrame.minY, accuracy: 0.5)
         XCTAssertEqual(wideAfter.minX, wideFrame.minX, accuracy: 0.5)
-        // Панель не поднимается выше папки и не двигает её.
+        // The panel does not rise above the folder and does not move it.
         let panelFrame = try XCTUnwrap(frame(in: grid, at: 2))
         XCTAssertGreaterThan(panelFrame.minY, folderFrame.minY)
     }
 
-    // MARK: - Переключение и закрытие
+    // MARK: - Toggle and close
 
-    /// Toggle закрывает открытую папку и убирает панель из набора.
+    /// Toggle closes an open folder and removes the panel from the set.
     func testToggleClosesOpenFolder() {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -325,7 +325,7 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(events.map { $0.1 }, [true, false])
     }
 
-    /// Toggle открывает закрытую папку (та же ветка, что у тапа по папке).
+    /// Toggle opens a closed folder (the same branch as a tap on the folder).
     func testToggleOpensClosedFolder() {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -336,8 +336,8 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertTrue(hasPanel(in: grid, folderID: folder.id))
     }
 
-    /// Явное закрытие возвращает набор к данным снимка: панель удаляется,
-    /// плитка папки остаётся на прежнем индексе.
+    /// An explicit close returns the set to the snapshot data: the panel is removed,
+    /// and the folder tile stays at its previous index.
     func testCloseFolderRestoresDataItems() {
         let folder = makeFolder("f")
         let items: [TesseraTileGridItem] = [
@@ -367,7 +367,7 @@ final class FolderToggleTests: XCTestCase {
         }
     }
 
-    /// Закрытие при отсутствии раскрытой папки — no-op без события.
+    /// Closing when no folder is expanded is a no-op without an event.
     func testCloseFolderWithoutExpandedFolderIsNoOp() {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -380,8 +380,8 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(events, 0)
     }
 
-    /// Одновременно раскрыта максимум одна папка: открытие второй закрывает
-    /// первую и сообщает об этом хосту.
+    /// At most one folder is expanded at a time: opening a second one closes
+    /// the first and reports it to the host.
     func testOpeningAnotherFolderClosesPrevious() {
         let first = makeFolder("first")
         let second = makeFolder("second")
@@ -396,14 +396,14 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertFalse(hasPanel(in: grid, folderID: first.id))
         XCTAssertTrue(hasPanel(in: grid, folderID: second.id))
         XCTAssertEqual(panelIndices(in: grid).count, 1)
-        // Обе папки остаются плитками в наборе.
+        // Both folders remain tiles in the set.
         XCTAssertEqual(grid.displayItems.first?.folder?.id, first.id)
         XCTAssertEqual(events.map { $0.0 }, [first.id, first.id, second.id])
         XCTAssertEqual(events.map { $0.1 }, [true, false, true])
     }
 
-    /// Папка исчезла из нового снимка — раскрытие снимается, хост получает
-    /// событие закрытия (D17: панель без папки остаться не может).
+    /// The folder disappeared from the new snapshot: the expansion is cleared, and the host gets
+    /// a close event (D17: a panel cannot remain without its folder).
     func testReloadWithoutExpandedFolderClosesPanel() {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder), .tile(tesseraTestTile("a"))])
@@ -418,10 +418,10 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertEqual(events.map { $0.1 }, [true, false])
     }
 
-    // MARK: - Мини-ярлыки превью (D17)
+    // MARK: - Preview mini-tiles (D17)
 
-    /// Закрытая папка показывает мини-ярлыки превью; раскрытая — прячет их,
-    /// оставляя подложку и заголовок; закрытие возвращает мини-ярлыки.
+    /// A closed folder shows the preview mini-tiles; an expanded one hides them,
+    /// keeping the backing and the title; closing brings the mini-tiles back.
     func testExpandedFolderHidesAndRestoresPreviewShortcuts() throws {
         let folder = makeFolder("f", tiles: (0..<4).map { tesseraTestTile("t\($0)") })
         let grid = makeGrid([.folder(folder)])
@@ -436,8 +436,8 @@ final class FolderToggleTests: XCTestCase {
 
         let expandedCell = try XCTUnwrap(folderCell(in: grid, id: folder.id))
         let expandedPreview = try XCTUnwrap(expandedCell.folderPreviewView)
-        // Скрыт именно блок мини-ярлыков: сами они на месте и вернутся при
-        // закрытии без пересоздания.
+        // Exactly the mini-tile block is hidden: the tiles themselves are in place and come back
+        // on close without being recreated.
         XCTAssertTrue(expandedPreview.isHidden)
         XCTAssertEqual(expandedPreview.miniTileViews.count, 4)
 
@@ -448,8 +448,8 @@ final class FolderToggleTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(collapsedCell.folderPreviewView).isHidden)
     }
 
-    /// Состояние скрытого превью переживает переиспользование ячейки: чужая
-    /// папка не наследует ни скрытое, ни показанное превью.
+    /// The hidden preview state survives cell reuse: another
+    /// folder inherits neither the hidden nor the shown preview.
     func testPreviewVisibilitySurvivesCellReuse() {
         let folder = makeFolder("f")
         let cell = TesseraTileCell(frame: CGRect(x: 0, y: 0, width: 160, height: 160))

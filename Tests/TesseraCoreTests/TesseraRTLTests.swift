@@ -2,14 +2,14 @@
 //  TesseraRTLTests.swift
 //  TesseraCoreTests
 //
-//  Контрактные тесты нормализации прогресса по направлению чтения (задача E1.7).
-//  Проектный документ: docs/Core-iOS-Design.md §2 «Ключевые контракты»
-//  («Инвариант прогресса: t = offset.x / pageWidth; в RTL t нормализуется от
-//  направления чтения») и §3 «Концептуальная поверхность API»
-//  (TesseraAccessibility / TesseraRTL — утилиты).
+//  Contract tests for progress normalization by reading direction.
+//  Design document: docs/CORE-IOS-DESIGN.md §2 (key contracts:
+//  "Progress invariant: t = offset.x / pageWidth; in RTL, t is normalized by
+//  the reading direction") and §3 (conceptual API surface:
+//  TesseraAccessibility / TesseraRTL utilities).
 //
-//  Проверяются обе чистые функции: непрерывный `normalizedProgress` и дискретный
-//  `pageIndex` — в LTR и RTL, на границах и для `pageCount <= 1`.
+//  Both pure functions are checked: the continuous `normalizedProgress` and the discrete
+//  `pageIndex`, in LTR and RTL, at the boundaries and for `pageCount <= 1`.
 //
 
 #if canImport(UIKit)
@@ -25,8 +25,8 @@ final class TesseraRTLTests: XCTestCase {
 
     // MARK: - normalizedProgress: LTR
 
-    /// В LTR сырой прогресс отдаётся без изменений, включая дробные значения
-    /// и выход за диапазон при bounce.
+    /// In LTR the raw progress is returned unchanged, including fractional values
+    /// and out-of-range values during a bounce.
     func testNormalizedProgressIsIdentityInLTR() {
         let values: [CGFloat] = [-0.5, 0, 0.25, 1, 1.5, 2, 3.75, 4, 4.5]
 
@@ -34,15 +34,15 @@ final class TesseraRTLTests: XCTestCase {
             XCTAssertEqual(
                 TesseraRTL.normalizedProgress(value, pageCount: 5, layoutDirection: ltr),
                 value,
-                "LTR не должен менять прогресс \(value)"
+                "LTR must not change the progress \(value)"
             )
         }
     }
 
     // MARK: - normalizedProgress: RTL
 
-    /// В RTL прогресс зеркалится относительно середины ленты:
-    /// `pageCount - 1 - t`; непрерывность и знак сохраняются.
+    /// In RTL the progress is mirrored about the middle of the strip:
+    /// `pageCount - 1 - t`; continuity and sign are preserved.
     func testNormalizedProgressMirrorsInRTL() {
         let cases: [(input: CGFloat, expected: CGFloat)] = [
             (0, 4),
@@ -64,12 +64,12 @@ final class TesseraRTLTests: XCTestCase {
                     layoutDirection: rtl
                 ),
                 entry.expected,
-                "RTL-зеркалирование прогресса \(entry.input)"
+                "RTL progress mirroring \(entry.input)"
             )
         }
     }
 
-    /// Для двух страниц RTL-зеркалирование сводится к `1 - t`.
+    /// For two pages, RTL mirroring reduces to `1 - t`.
     func testNormalizedProgressMirrorsTwoPagesInRTL() {
         XCTAssertEqual(
             TesseraRTL.normalizedProgress(0, pageCount: 2, layoutDirection: rtl),
@@ -85,8 +85,8 @@ final class TesseraRTLTests: XCTestCase {
         )
     }
 
-    /// `pageCount <= 1` — нормализовать нечего: прогресс возвращается как есть
-    /// в обоих направлениях.
+    /// `pageCount <= 1`: there is nothing to normalize, so the progress is returned as is
+    /// in both directions.
     func testNormalizedProgressWithSinglePageIsIdentity() {
         for count in [1, 0, -3] {
             for direction in [ltr, rtl] {
@@ -101,7 +101,7 @@ final class TesseraRTLTests: XCTestCase {
 
     // MARK: - pageIndex: LTR
 
-    /// LTR: индекс — целая часть прогресса с клампом в `0...pageCount - 1`.
+    /// LTR: the index is the integer part of the progress, clamped to `0...pageCount - 1`.
     func testPageIndexInLTRFloorsAndClamps() {
         let cases: [(input: CGFloat, expected: Int)] = [
             (0, 0),
@@ -119,15 +119,15 @@ final class TesseraRTLTests: XCTestCase {
             XCTAssertEqual(
                 TesseraRTL.pageIndex(for: entry.input, pageCount: 5, layoutDirection: ltr),
                 entry.expected,
-                "LTR-индекс для t=\(entry.input)"
+                "LTR index for t=\(entry.input)"
             )
         }
     }
 
     // MARK: - pageIndex: RTL
 
-    /// RTL: сначала берётся физический индекс (floor + кламп), затем он
-    /// зеркалится в порядок чтения: `pageCount - 1 - index`.
+    /// RTL: first the physical index is taken (floor + clamp), then it
+    /// is mirrored into reading order: `pageCount - 1 - index`.
     func testPageIndexInRTLMirrorsPhysicalIndex() {
         let cases: [(input: CGFloat, expected: Int)] = [
             (0, 4),
@@ -147,12 +147,12 @@ final class TesseraRTLTests: XCTestCase {
             XCTAssertEqual(
                 TesseraRTL.pageIndex(for: entry.input, pageCount: 5, layoutDirection: rtl),
                 entry.expected,
-                "RTL-индекс для t=\(entry.input)"
+                "RTL index for t=\(entry.input)"
             )
         }
     }
 
-    /// Для двух страниц RTL-индекс — это `1 - floor(t)` в границах.
+    /// For two pages the RTL index is `1 - floor(t)` within bounds.
     func testPageIndexWithTwoPagesInRTL() {
         XCTAssertEqual(TesseraRTL.pageIndex(for: 0, pageCount: 2, layoutDirection: rtl), 1)
         XCTAssertEqual(TesseraRTL.pageIndex(for: 0.9, pageCount: 2, layoutDirection: rtl), 1)
@@ -160,10 +160,10 @@ final class TesseraRTLTests: XCTestCase {
         XCTAssertEqual(TesseraRTL.pageIndex(for: 1.5, pageCount: 2, layoutDirection: rtl), 0)
     }
 
-    // MARK: - pageIndex: защитные случаи
+    // MARK: - pageIndex: defensive cases
 
-    /// `pageCount <= 1`: индекс всегда 0 — единственная страница одновременно
-    /// первая и последняя.
+    /// `pageCount <= 1`: the index is always 0, since the single page is both
+    /// the first and the last.
     func testPageIndexWithSinglePageIsAlwaysZero() {
         for count in [1, 0, -3] {
             for direction in [ltr, rtl] {
@@ -176,7 +176,7 @@ final class TesseraRTLTests: XCTestCase {
         }
     }
 
-    /// `NaN` в LTR трактуется как первая страница (0).
+    /// `NaN` in LTR is treated as the first page (0).
     func testPageIndexNaNIsZeroInLTR() {
         XCTAssertEqual(
             TesseraRTL.pageIndex(for: .nan, pageCount: 5, layoutDirection: ltr),
@@ -184,7 +184,7 @@ final class TesseraRTLTests: XCTestCase {
         )
     }
 
-    /// Бесконечности зажимаются границами без переполнения `Int`.
+    /// Infinities are clamped to the bounds without `Int` overflow.
     func testPageIndexInfinityClampsToBoundaries() {
         XCTAssertEqual(
             TesseraRTL.pageIndex(for: .infinity, pageCount: 5, layoutDirection: ltr),

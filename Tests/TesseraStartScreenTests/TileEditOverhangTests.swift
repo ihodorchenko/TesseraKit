@@ -2,12 +2,12 @@
 //  TileEditOverhangTests.swift
 //  TesseraStartScreenTests
 //
-//  Выступ кнопок правки 4 pt (D48): кнопки «открепить» и «размер» выступают за
-//  рамку плитки на `cornerOverhang` = 4 pt — ровно половину зазора сетки (8 pt),
-//  поэтому круги кнопок соседних плиток (стрелка верхней и открепление нижней в
-//  одной колонке) касаются, но не перекрываются (при 6 pt перекрытие было 4 pt).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации
-//  (E15)», п. 60; решение D48 в docs/STATE.md.
+//  A 4 pt overhang of the edit buttons (D48): the "unpin" and "resize" buttons protrude beyond
+//  the tile frame by `cornerOverhang` = 4 pt, exactly half the grid gap (8 pt),
+//  so the button circles of adjacent tiles (the arrow of the upper one and the unpin of the lower one in
+//  the same column) touch but do not overlap (with 6 pt the overlap was 4 pt).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
+//  decision D48 in docs/STATE.md.
 //
 
 #if canImport(UIKit)
@@ -18,7 +18,7 @@ import XCTest
 
 final class TileEditOverhangTests: XCTestCase {
 
-    // MARK: - Помощники
+    // MARK: - Helpers
 
     private struct Circle {
         let center: CGPoint
@@ -29,7 +29,7 @@ final class TileEditOverhangTests: XCTestCase {
             diameter = frame.width
         }
 
-        /// Зазор между краями кругов (отрицательный — перекрытие).
+        /// The gap between the circle edges (negative means overlap).
         func gap(to other: Circle) -> CGFloat {
             hypot(center.x - other.center.x, center.y - other.center.y) - (diameter + other.diameter) / 2
         }
@@ -37,7 +37,7 @@ final class TileEditOverhangTests: XCTestCase {
 
     private let screenWidths: [CGFloat] = [375, 390, 402, 414]
 
-    /// Стенд: правка включена; плитки одного размера в ряд по 6 колонок.
+    /// Fixture: edit mode on; tiles of one size in a row of 6 columns.
     private func makeHost(
         descriptors: [TesseraTileDescriptor],
         width: CGFloat,
@@ -67,12 +67,12 @@ final class TileEditOverhangTests: XCTestCase {
         return host
     }
 
-    /// Круги кнопок плитки: (открепление, стрелка) в координатах сетки.
+    /// The button circles of a tile: (unpin, arrow) in grid coordinates.
     private func circles(
         of id: AnyHashable,
         in host: TesseraTestDragHost
     ) throws -> (unpin: Circle, resize: Circle) {
-        let control = try XCTUnwrap(host.coordinator.editControls[id], "оверлей \(id)")
+        let control = try XCTUnwrap(host.coordinator.editControls[id], "overlay \(id)")
         control.layoutIfNeeded()
         return (
             Circle(frame: control.convert(control.unpinButtonFrame, to: host.host.grid)),
@@ -98,28 +98,28 @@ final class TileEditOverhangTests: XCTestCase {
                         worst = min(worst, gap)
                         XCTAssertGreaterThanOrEqual(
                             gap, -0.01,
-                            "круги \(first).\(nameA) и \(second).\(nameB) перекрываются на \(-gap) pt: \(label)",
+                            "circles \(first).\(nameA) and \(second).\(nameB) overlap by \(-gap) pt: \(label)",
                             file: file, line: line
                         )
                     }
                 }
             }
         }
-        print("[D48] \(label): наименьший зазор между кругами соседей \(worst) pt")
+        print("[D48] \(label): smallest gap between neighbor circles \(worst) pt")
     }
 
-    // MARK: - Константа и формула
+    // MARK: - Constant and formula
 
-    /// Выступ — 4 pt, то есть половина зазора сетки по умолчанию (8 pt).
+    /// The overhang is 4 pt, that is half the default grid gap (8 pt).
     func testOverhangIsHalfOfDefaultGridSpacing() {
         XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4)
-        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang * 2, 8, "2 × выступ = зазор сетки")
+        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang * 2, 8, "2 × overhang = grid gap")
     }
 
-    /// Чистая формула: плитки одного размера друг над другом (и рядом) с зазором
-    /// 8 pt; стрелка верхней и открепление нижней — в одной колонке, круги
-    /// касаются (зазор 0), для всех диаметров и обоих направлений. С прежним
-    /// выступом 6 pt круги перекрывались бы на 2 × 6 − 8 = 4 pt.
+    /// Pure formula: tiles of one size one above another (and side by side) with a gap of
+    /// 8 pt; the arrow of the upper one and the unpin of the lower one are in the same column, the circles
+    /// touch (gap 0), for all diameters and both directions. With the previous
+    /// 6 pt overhang the circles would overlap by 2 × 6 − 8 = 4 pt.
     func testNeighbouringCirclesTouchButDoNotOverlap() {
         let spacing: CGFloat = 8
         for tileSide in [CGFloat(50), 55, 62, 120] {
@@ -129,19 +129,19 @@ final class TileEditOverhangTests: XCTestCase {
                 let upperResize = Circle(frame: TesseraTileEditControlView.resizeButtonFrame(
                     inTileBounds: bounds, side: side, isRightToLeft: rtl
                 ))
-                // Нижняя плитка сдвинута на сторону + зазор (рамки кнопок считаются
-                // от начала координат оверлея, поэтому сдвигаем результат).
+                // The lower tile is shifted by the side + gap (button frames are computed
+                // from the overlay origin, so the result is shifted).
                 let lowerOffset = CGPoint(x: 0, y: tileSide + spacing)
                 let lowerUnpin = Circle(frame: TesseraTileEditControlView.unpinButtonFrame(
                     inTileBounds: bounds, side: side, isRightToLeft: rtl
                 ).offsetBy(dx: lowerOffset.x, dy: lowerOffset.y))
                 XCTAssertEqual(
                     upperResize.gap(to: lowerUnpin), 0, accuracy: 0.001,
-                    "вертикальные соседи: плитка \(tileSide) rtl=\(rtl)"
+                    "vertical neighbors: tile \(tileSide) rtl=\(rtl)"
                 )
 
-                // Соседи по горизонтали: кнопки каждой плитки — у её конца строки,
-                // поэтому круг соседа не ближе, чем на зазор минус выступ.
+                // Horizontal neighbors: the buttons of each tile are at the end of its row,
+                // so a neighbor's circle is no closer than the gap minus the overhang.
                 let shift = tileSide + spacing
                 func button(_ frame: CGRect, dx: CGFloat) -> Circle { Circle(frame: frame.offsetBy(dx: dx, dy: 0)) }
                 let unpinFrame = TesseraTileEditControlView.unpinButtonFrame(inTileBounds: bounds, side: side, isRightToLeft: rtl)
@@ -150,18 +150,18 @@ final class TileEditOverhangTests: XCTestCase {
                 let neighbourCircles = [button(unpinFrame, dx: shift), button(resizeFrame, dx: shift)]
                 for own in ownCircles {
                     for other in neighbourCircles {
-                        XCTAssertGreaterThanOrEqual(own.gap(to: other), -0.001, "горизонтальные соседи: плитка \(tileSide)")
+                        XCTAssertGreaterThanOrEqual(own.gap(to: other), -0.001, "horizontal neighbors: tile \(tileSide)")
                     }
                 }
             }
         }
     }
 
-    // MARK: - Настоящая сетка
+    // MARK: - A real grid
 
-    /// Шесть средних плиток (два ряда по три): круги всех кнопок разных плиток не
-    /// перекрываются — по вертикали, горизонтали и диагонали, при всех четырёх
-    /// ширинах, LTR и RTL.
+    /// Six medium tiles (two rows of three): the circles of all buttons of different tiles do not
+    /// overlap, vertically, horizontally and diagonally, at all four
+    /// widths, in LTR and RTL.
     func testCirclesOfNeighbouringMediumTilesDoNotOverlapInRealGrid() throws {
         let ids = (0..<6).map { "m\($0)" }
         for width in screenWidths {
@@ -177,7 +177,7 @@ final class TileEditOverhangTests: XCTestCase {
         }
     }
 
-    /// Малые плитки: два ряда по шесть; круги 20 pt на плитках 50…57 pt.
+    /// Small tiles: two rows of six; 20 pt circles on 50…57 pt tiles.
     func testCirclesOfNeighbouringSmallTilesDoNotOverlapInRealGrid() throws {
         let ids = (0..<12).map { "s\($0)" }
         for width in screenWidths {
@@ -193,8 +193,8 @@ final class TileEditOverhangTests: XCTestCase {
         }
     }
 
-    /// Круги вертикальных соседей в настоящей сетке: ровно касаются (зазор
-    /// сетки 8 pt = 2 × 4 pt), а не перекрываются.
+    /// The circles of vertical neighbors in a real grid: they exactly touch (the grid
+    /// gap of 8 pt = 2 × 4 pt) instead of overlapping.
     func testVerticalNeighboursTouchExactlyInRealGrid() throws {
         let ids = (0..<6).map { "m\($0)" }
         let host = makeHost(
@@ -204,17 +204,17 @@ final class TileEditOverhangTests: XCTestCase {
         for column in 0..<3 {
             let upper = try circles(of: AnyHashable("m\(column)"), in: host)
             let lower = try circles(of: AnyHashable("m\(column + 3)"), in: host)
-            XCTAssertEqual(upper.resize.gap(to: lower.unpin), 0, accuracy: 0.01, "колонка \(column)")
+            XCTAssertEqual(upper.resize.gap(to: lower.unpin), 0, accuracy: 0.01, "column \(column)")
         }
         host.coordinator.endEditing()
     }
 
-    // MARK: - Зоны касания
+    // MARK: - Touch areas
 
-    /// Зоны касания на плитках 50/55/62/120 pt (LTR и RTL): детерминированны,
-    /// не заходят за вертикальную ось плитки, зона открепления — верхняя
-    /// половина, стрелки — нижняя. Размеры при выступе 4 pt: 50 pt — 40 × 41,
-    /// 55 pt — 42,5 × 43,5, от 62 pt — полные 44 × 44.
+    /// Touch areas on 50/55/62/120 pt tiles (LTR and RTL): deterministic,
+    /// they do not cross the tile's vertical axis; the unpin area is the upper
+    /// half, the arrow area is the lower one. Sizes with a 4 pt overhang: 50 pt is 40 × 41,
+    /// 55 pt is 42.5 × 43.5, from 62 pt it is the full 44 × 44.
     func testHitZonesAtSampledTileSizes() {
         let expected: [(side: CGFloat, width: CGFloat, height: CGFloat)] = [
             (50, 40, 41), (55, 42.5, 43.5), (62, 44, 44), (120, 44, 44),
@@ -226,7 +226,7 @@ final class TileEditOverhangTests: XCTestCase {
                 control.frame = CGRect(x: 0, y: 0, width: item.side, height: item.side)
                 control.tileSize = control.frame.size
                 control.layoutIfNeeded()
-                let label = "плитка \(item.side) rtl=\(rtl)"
+                let label = "tile \(item.side) rtl=\(rtl)"
                 let unpin = control.unpinHitFrame
                 let resize = control.resizeHitFrame
 
@@ -237,23 +237,23 @@ final class TileEditOverhangTests: XCTestCase {
                 XCTAssertLessThanOrEqual(unpin.maxY, item.side / 2 + 0.001, label)
                 XCTAssertGreaterThanOrEqual(resize.minY, item.side / 2 - 0.001, label)
                 if rtl {
-                    XCTAssertLessThan(unpin.maxX, item.side / 2, "не через ось: \(label)")
-                    XCTAssertLessThan(resize.maxX, item.side / 2, "не через ось: \(label)")
+                    XCTAssertLessThan(unpin.maxX, item.side / 2, "does not cross the axis: \(label)")
+                    XCTAssertLessThan(resize.maxX, item.side / 2, "does not cross the axis: \(label)")
                 } else {
-                    XCTAssertGreaterThan(unpin.minX, item.side / 2, "не через ось: \(label)")
-                    XCTAssertGreaterThan(resize.minX, item.side / 2, "не через ось: \(label)")
+                    XCTAssertGreaterThan(unpin.minX, item.side / 2, "does not cross the axis: \(label)")
+                    XCTAssertGreaterThan(resize.minX, item.side / 2, "does not cross the axis: \(label)")
                 }
-                XCTAssertFalse(unpin.intersects(resize), "зоны кнопок одной плитки не пересекаются: \(label)")
-                // Видимая кнопка внутри своей зоны.
+                XCTAssertFalse(unpin.intersects(resize), "button areas of one tile do not intersect: \(label)")
+                // The visible button is inside its area.
                 XCTAssertTrue(unpin.contains(CGPoint(x: control.unpinButtonFrame.midX, y: control.unpinButtonFrame.midY)), label)
                 XCTAssertTrue(resize.contains(CGPoint(x: control.resizeButtonFrame.midX, y: control.resizeButtonFrame.midY)), label)
             }
         }
     }
 
-    /// Зоны соседних плиток одной колонки пересекаются, но выбор детерминирован:
-    /// центр каждой кнопки принадлежит ей самой (с выступом 4 pt центры стали
-    /// дальше от зазора, чем при 6 pt).
+    /// The areas of adjacent tiles in one column intersect, but the choice is deterministic:
+    /// the center of each button belongs to the button itself (with a 4 pt overhang the centers are
+    /// farther from the gap than with 6 pt).
     func testCentreOfEveryButtonStillBelongsToItself() throws {
         let ids = (0..<6).map { "m\($0)" }
         let host = makeHost(descriptors: ids.map { tesseraTestTile($0, size: .medium) }, width: 390)
@@ -263,11 +263,11 @@ final class TileEditOverhangTests: XCTestCase {
             for button in [control.unpinButtonFrame, control.resizeButtonFrame] {
                 let centre = control.convert(CGPoint(x: button.midX, y: button.midY), to: container)
                 let hit = control.hitTest(control.convert(centre, from: container), with: nil)
-                XCTAssertNotNil(hit, "центр кнопки \(id)")
-                // Окно решает по всей иерархии: касание достаётся кнопке своего оверлея.
+                XCTAssertNotNil(hit, "button center \(id)")
+                // The window decides over the whole hierarchy: the touch goes to the button of its own overlay.
                 let window = host.host.window
                 let windowHit = window.hitTest(container.convert(centre, to: window), with: nil)
-                XCTAssertTrue(windowHit?.superview === control, "центр кнопки \(id) принадлежит её оверлею")
+                XCTAssertTrue(windowHit?.superview === control, "button center \(id) belongs to its overlay")
             }
         }
         host.coordinator.endEditing()

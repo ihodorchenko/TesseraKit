@@ -2,17 +2,17 @@
 //  TileFolderBadgeTests.swift
 //  TesseraStartScreenTests
 //
-//  Бэйдж плитки папки — сумма числовых бэйджей вложенных ярлыков (D44, E15.7).
-//  Нет числовых, но есть точка — точка; сумма больше 99 — «99+» (рисует сам
-//  бэйдж, как у плитки). Бэйдж папки подчиняется тем же правилам размещения, что и
-//  бэйдж плитки (E15.1): нижний угол у конца строки, обход стрелки размера в
-//  правке, скрытие «99+» на 1×1 в правке. Малая папка (1×1) с бэйджем не рисует
-//  подпись (как малая плитка с иконкой, D47): мини-сетка стоит над рядом бэйджа.
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации
-//  (E15)», п. 64; решения D44 и D47 в docs/STATE.md.
+//  A folder tile's badge is the sum of the numeric badges of the nested tiles (D44).
+//  If there are no numeric ones but there is a dot, it is a dot; a sum over 99 is "99+" (drawn by
+//  the badge itself, as on a tile). The folder badge follows the same placement rules as
+//  a tile badge: the bottom corner at the end of the line, avoiding the resize arrow in
+//  edit mode, hiding "99+" on 1×1 in edit mode. A small folder (1×1) with a badge does not draw
+//  a title (like a small tile with an icon, D47): the mini grid sits above the badge row.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md (the "Implementation deviations"
+//  section); decisions D44 and D47 in docs/STATE.md.
 //
-//  Ширины экрана 375/414 pt при 6 колонках (поля 16, зазор 8): малая плитка
-//  50,3 / 57 pt.
+//  Screen widths 375/414 pt with 6 columns (margins 16, gap 8): a small tile is
+//  50.3 / 57 pt.
 //
 
 #if canImport(UIKit)
@@ -31,7 +31,7 @@ final class TileFolderBadgeTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Стенд
+    // MARK: - Rig
 
     private let screenWidths: [CGFloat] = [375, 414]
 
@@ -45,7 +45,7 @@ final class TileFolderBadgeTests: XCTestCase {
         (screenWidth - 32 - 5 * 8) / 6
     }
 
-    /// Размеры папки для ширины экрана при 6 колонках, полях 16 и зазоре 8.
+    /// Folder sizes for a screen width with 6 columns, margins 16 and gap 8.
     private func folderSizes(screenWidth: CGFloat) -> [(TesseraTileSize, CGSize)] {
         let unit = unit(screenWidth)
         return [
@@ -59,11 +59,11 @@ final class TileFolderBadgeTests: XCTestCase {
         max(6, min(12, min(size.width, size.height) * 0.08))
     }
 
-    /// Папка с двумя ярлыками: бэйдж первого задан, второго нет; другой состав —
-    /// через `members`.
+    /// A folder with two tiles: the first has a badge, the second does not; another composition
+    /// goes through `members`.
     private func folder(
         id: String = "F",
-        title: String = "Работа",
+        title: String = "Work",
         size: TesseraTileSize = .medium,
         members: [TesseraTileDescriptor]? = nil,
         badge: TesseraTileBadge = .count(3)
@@ -79,7 +79,7 @@ final class TileFolderBadgeTests: XCTestCase {
         )
     }
 
-    /// Ячейка с папкой в окне с заданными Dynamic Type и направлением.
+    /// A cell with a folder in a window with the given Dynamic Type and direction.
     private func makeCell(
         size: CGSize,
         folder: TesseraTileFolder,
@@ -133,7 +133,7 @@ final class TileFolderBadgeTests: XCTestCase {
         badgeView.subviews.compactMap { $0 as? UILabel }.first?.text
     }
 
-    // MARK: - Помощник агрегата (D44)
+    // MARK: - Aggregate helper (D44)
 
     private func aggregate(_ badges: [TesseraTileBadge]) -> TesseraTileBadge {
         TesseraTileFolder.aggregateBadge(of: badges.enumerated().map {
@@ -141,28 +141,28 @@ final class TileFolderBadgeTests: XCTestCase {
         })
     }
 
-    /// Пустая папка и папка без бэйджей — `.none`.
+    /// An empty folder and a folder without badges give `.none`.
     func testAggregateIsNoneForEmptyAndBadgeless() {
         XCTAssertEqual(TesseraTileFolder.aggregateBadge(of: []), .none)
         XCTAssertEqual(aggregate([.none, .none, .none]), .none)
         XCTAssertEqual(folder(members: []).aggregateBadge, .none)
     }
 
-    /// Счётчики складываются; один ярлык — его счётчик.
+    /// Counters add up; a single tile gives its counter.
     func testAggregateSumsPositiveCounts() {
         XCTAssertEqual(aggregate([.count(3)]), .count(3))
         XCTAssertEqual(aggregate([.count(3), .count(4), .none, .count(1)]), .count(8))
         XCTAssertEqual(aggregate([.count(1), .count(1)]), .count(2))
     }
 
-    /// Нулевые и отрицательные счётчики не учитываются; из них одних — `.none`.
+    /// Zero and negative counters are ignored; if only those exist, the result is `.none`.
     func testAggregateIgnoresZeroAndNegativeCounts() {
         XCTAssertEqual(aggregate([.count(0), .count(-5)]), .none)
         XCTAssertEqual(aggregate([.count(-5), .count(2), .count(0)]), .count(2))
-        XCTAssertEqual(aggregate([.count(-100), .count(3)]), .count(3), "отрицательный не вычитается")
+        XCTAssertEqual(aggregate([.count(-100), .count(3)]), .count(3), "a negative count is not subtracted")
     }
 
-    /// Точка без положительных счётчиков — точка; точка с `.count(0)` — тоже.
+    /// A dot without positive counters is a dot; a dot with `.count(0)` is too.
     func testAggregateDotOnlyWhenNoPositiveCount() {
         XCTAssertEqual(aggregate([.dot]), .dot)
         XCTAssertEqual(aggregate([.none, .dot, .dot]), .dot)
@@ -170,32 +170,32 @@ final class TileFolderBadgeTests: XCTestCase {
         XCTAssertEqual(aggregate([.count(-1), .dot]), .dot)
     }
 
-    /// Точка и счётчик вместе: побеждает счётчик (точка не прибавляет единицу).
+    /// A dot together with a counter: the counter wins (the dot does not add one).
     func testAggregateCountWinsOverDot() {
         XCTAssertEqual(aggregate([.dot, .count(3)]), .count(3))
         XCTAssertEqual(aggregate([.count(2), .dot, .count(5)]), .count(7))
     }
 
-    /// Сумма больше 99 остаётся числом (подпись «99+» рисует бэйдж); большая
-    /// сумма насыщается и не переполняется.
+    /// A sum over 99 stays a number (the badge draws the "99+" label); a large
+    /// sum saturates and does not overflow.
     func testAggregateOverNinetyNineAndSaturation() {
         XCTAssertEqual(aggregate([.count(60), .count(60)]), .count(120))
         XCTAssertEqual(aggregate([.count(99), .count(1)]), .count(100))
-        XCTAssertEqual(aggregate([.count(Int.max), .count(5)]), .count(Int.max), "без переполнения")
+        XCTAssertEqual(aggregate([.count(Int.max), .count(5)]), .count(Int.max), "no overflow")
         XCTAssertEqual(aggregate([.count(Int.max - 1), .count(1), .count(1)]), .count(Int.max))
     }
 
-    /// Порядок и позиция ярлыка не влияют; считаются все ярлыки, а не только
-    /// четыре, видимые в превью.
+    /// The order and position of a tile do not matter; all tiles are counted, not just
+    /// the four visible in the preview.
     func testAggregateCountsAllMembersNotJustPreviewFour() {
         let members = (0..<6).map { tesseraTestTile("m\($0)", size: .small, badge: .count(10)) }
         XCTAssertEqual(TesseraTileFolder.aggregateBadge(of: members), .count(60))
         XCTAssertEqual(TesseraTileFolder.aggregateBadge(of: members.reversed()), .count(60))
     }
 
-    // MARK: - Бэйдж на ячейке сетки
+    // MARK: - Badge on a grid cell
 
-    /// Капсула со счётчиком, «99+» и точка — виджет виден, текст правильный.
+    /// A capsule with a counter, "99+" and a dot: the widget is visible and the text is correct.
     func testFolderCellShowsAggregateCapsuleDotAnd99Plus() {
         let size = CGSize(width: 110, height: 110)
         let sum = makeCell(size: size, folder: folder(members: [
@@ -223,7 +223,7 @@ final class TileFolderBadgeTests: XCTestCase {
         XCTAssertEqual(badgeView(of: dot).frame.size, CGSize(width: 10, height: 10))
     }
 
-    /// Ни у кого нет бэйджа — виджет скрыт, рамки нет (прежнее поведение).
+    /// Nobody has a badge: the widget is hidden and there is no frame (the previous behavior).
     func testFolderCellHidesBadgeWhenNoMemberHasOne() {
         let cell = makeCell(
             size: CGSize(width: 110, height: 110),
@@ -237,8 +237,8 @@ final class TileFolderBadgeTests: XCTestCase {
         XCTAssertFalse(titleLabel(of: cell).isHidden)
     }
 
-    /// Переиспользованная ячейка не наследует чужой бэйдж: ни после папки с
-    /// бэйджем, ни при смене на плитку или на папку без бэйджа.
+    /// A reused cell does not inherit another's badge: neither after a folder with a
+    /// badge nor when switching to a tile or to a folder without a badge.
     func testReusedCellDoesNotInheritFolderBadge() {
         let cell = makeCell(size: CGSize(width: 110, height: 110), folder: folder())
         XCTAssertEqual(badgeView(of: cell).badge, .count(3))
@@ -257,14 +257,14 @@ final class TileFolderBadgeTests: XCTestCase {
             isVisible: false
         )
         cell.layoutIfNeeded()
-        XCTAssertEqual(badgeView(of: cell).badge, .count(2), "бэйдж ярлыка — его собственный")
+        XCTAssertEqual(badgeView(of: cell).badge, .count(2), "the tile's badge is its own")
     }
 
-    // MARK: - Угол и раскладка по размерам
+    // MARK: - Corner and layout by size
 
-    /// Бэйдж папки — внизу у конца строки (справа в LTR, слева в RTL) на папках
-    /// 1×1, 2×2 и 4×2; подпись и превью его не перекрывают, превью не пропадает;
-    /// малая папка с бэйджем не рисует подпись.
+    /// The folder badge is at the bottom at the end of the line (right in LTR, left in RTL) on
+    /// 1×1, 2×2 and 4×2 folders; the title and preview do not overlap it, and the preview does not disappear;
+    /// a small folder with a badge does not draw a title.
     func testBadgeSitsBottomTrailingAndDoesNotOverlapTitleOrPreview() throws {
         for width in screenWidths {
             for (tileSize, size) in folderSizes(screenWidth: width) {
@@ -280,33 +280,33 @@ final class TileFolderBadgeTests: XCTestCase {
                         let frame = badgeView.frame
                         XCTAssertFalse(badgeView.isHidden, label)
                         XCTAssertEqual(badgeView.alpha, 1, accuracy: 0.001, label)
-                        XCTAssertTrue(bounds.insetBy(dx: -0.5, dy: -0.5).contains(frame), "внутри плитки: \(label)")
-                        XCTAssertEqual(frame.maxY, bounds.height - inset, accuracy: 0.5, "у низа: \(label)")
+                        XCTAssertTrue(bounds.insetBy(dx: -0.5, dy: -0.5).contains(frame), "inside the tile: \(label)")
+                        XCTAssertEqual(frame.maxY, bounds.height - inset, accuracy: 0.5, "at the bottom: \(label)")
                         if rtl {
-                            XCTAssertEqual(frame.minX, inset, accuracy: 0.5, "слева в RTL: \(label)")
+                            XCTAssertEqual(frame.minX, inset, accuracy: 0.5, "on the left in RTL: \(label)")
                         } else {
-                            XCTAssertEqual(frame.maxX, bounds.width - inset, accuracy: 0.5, "справа в LTR: \(label)")
+                            XCTAssertEqual(frame.maxX, bounds.width - inset, accuracy: 0.5, "on the right in LTR: \(label)")
                         }
 
                         let preview = try XCTUnwrap(cell.folderPreviewView, label)
                         XCTAssertFalse(preview.isHidden, label)
-                        XCTAssertGreaterThanOrEqual(preview.frame.width, 12, "превью не пропало: \(label)")
+                        XCTAssertGreaterThanOrEqual(preview.frame.width, 12, "the preview did not disappear: \(label)")
                         XCTAssertTrue(bounds.insetBy(dx: -0.5, dy: -0.5).contains(preview.frame), label)
-                        XCTAssertFalse(preview.frame.intersects(frame), "превью × бэйдж: \(label)")
+                        XCTAssertFalse(preview.frame.intersects(frame), "preview × badge: \(label)")
 
                         let title = titleLabel(of: cell)
                         if tileSize == .small {
-                            XCTAssertTrue(title.isHidden, "1×1 с бэйджем без подписи: \(label)")
-                            // Превью — по центру над рядом бэйджа.
+                            XCTAssertTrue(title.isHidden, "1×1 with a badge has no title: \(label)")
+                            // The preview is centered above the badge row.
                             XCTAssertEqual(preview.frame.midX, bounds.midX, accuracy: 1, label)
                             XCTAssertLessThanOrEqual(preview.frame.maxY, frame.minY, label)
                         } else {
                             XCTAssertFalse(title.isHidden, label)
-                            XCTAssertFalse(title.frame.intersects(frame), "подпись × бэйдж: \(label)")
+                            XCTAssertFalse(title.frame.intersects(frame), "title × badge: \(label)")
                             XCTAssertLessThanOrEqual(
-                                preview.frame.maxY, min(title.frame.minY, frame.minY), "превью над рядом: \(label)"
+                                preview.frame.maxY, min(title.frame.minY, frame.minY), "preview above the row: \(label)"
                             )
-                            // Превью по-прежнему прижато к верхнему углу по направлению чтения.
+                            // The preview is still pinned to the top corner in reading direction.
                             XCTAssertEqual(preview.frame.minY, inset, accuracy: 0.5, label)
                             XCTAssertEqual(
                                 rtl ? bounds.width - preview.frame.maxX : preview.frame.minX, inset,
@@ -319,8 +319,8 @@ final class TileFolderBadgeTests: XCTestCase {
         }
     }
 
-    /// Папка без бэйджа раскладывается как до E15.7: подпись видна на любом размере
-    /// (в том числе 1×1) во всю ширину, превью прижато к верхнему углу, подпись — к низу.
+    /// A folder without a badge is laid out as before badges: the title is visible at any size
+    /// (including 1×1) at full width, the preview is pinned to the top corner and the title to the bottom.
     func testFolderWithoutBadgeKeepsItsLookAtAllSizes() throws {
         for width in screenWidths {
             for (tileSize, size) in folderSizes(screenWidth: width) {
@@ -331,10 +331,10 @@ final class TileFolderBadgeTests: XCTestCase {
                     let inset = inset(for: size)
                     let title = titleLabel(of: cell)
                     let preview = try XCTUnwrap(cell.folderPreviewView, label)
-                    XCTAssertFalse(title.isHidden, "подпись видна: \(label)")
+                    XCTAssertFalse(title.isHidden, "the title is visible: \(label)")
                     XCTAssertEqual(title.frame.minX, inset, accuracy: 0.5, label)
                     XCTAssertEqual(
-                        title.frame.width, bounds.width - inset * 2, accuracy: 0.5, "подпись во всю ширину: \(label)"
+                        title.frame.width, bounds.width - inset * 2, accuracy: 0.5, "the title spans the full width: \(label)"
                     )
                     XCTAssertEqual(title.frame.maxY, bounds.height - inset, accuracy: 0.5, label)
                     XCTAssertEqual(preview.frame.minY, inset, accuracy: 0.5, label)
@@ -345,7 +345,7 @@ final class TileFolderBadgeTests: XCTestCase {
         }
     }
 
-    /// Подпись папки 2×2 уступает бэйджу рядом: становится уже, а не выше.
+    /// A 2×2 folder's title yields to the badge beside it: it gets narrower, not taller.
     func testTitleOfMediumFolderYieldsToBadgeBeside() {
         let size = CGSize(width: 110, height: 110)
         let plain = makeCell(size: size, folder: folder(badge: .none))
@@ -354,7 +354,7 @@ final class TileFolderBadgeTests: XCTestCase {
         XCTAssertLessThanOrEqual(titleLabel(of: withBadge).frame.height, titleLabel(of: plain).frame.height + 0.5)
     }
 
-    /// Dynamic Type: на XXL и AX5 бэйдж не наезжает на подпись и превью.
+    /// Dynamic Type: at XXL and AX5 the badge does not run into the title and preview.
     func testBadgeDoesNotOverlapAtLargeDynamicType() {
         let categories: [UIContentSizeCategory] = [.extraExtraLarge, .accessibilityExtraExtraExtraLarge]
         for category in categories {
@@ -366,20 +366,20 @@ final class TileFolderBadgeTests: XCTestCase {
                     let title = titleLabel(of: cell)
                     XCTAssertTrue(cell.contentView.bounds.insetBy(dx: -0.5, dy: -0.5).contains(frame), label)
                     if !title.isHidden {
-                        XCTAssertFalse(title.frame.intersects(frame), "подпись × бэйдж: \(label)")
+                        XCTAssertFalse(title.frame.intersects(frame), "title × badge: \(label)")
                     }
                     if let preview = cell.folderPreviewView, preview.frame.width > 0 {
-                        XCTAssertFalse(preview.frame.intersects(frame), "превью × бэйдж: \(label)")
+                        XCTAssertFalse(preview.frame.intersects(frame), "preview × badge: \(label)")
                     }
                 }
             }
         }
     }
 
-    // MARK: - Правка: обход стрелки размера
+    // MARK: - Edit mode: avoiding the resize arrow
 
-    /// В правке бэйдж папки обходит стрелку размера, а подпись и превью его не
-    /// перекрывают; «99+» на 1×1 в правке скрыт.
+    /// In edit mode the folder badge avoids the resize arrow, and the title and preview do not
+    /// overlap it; "99+" on 1×1 is hidden in edit mode.
     func testEditModeSlidesFolderBadgeAwayFromResizeArrow() {
         for width in screenWidths {
             for (tileSize, size) in folderSizes(screenWidth: width) {
@@ -395,7 +395,7 @@ final class TileFolderBadgeTests: XCTestCase {
                         let editBadge = badgeView(of: editing)
                         let normalBadge = badgeView(of: normal)
                         let isHidden = tileSize == .small && badgeName == "count 99+"
-                        XCTAssertEqual(editBadge.alpha, isHidden ? 0 : 1, accuracy: 0.001, "«99+» на 1×1: \(label)")
+                        XCTAssertEqual(editBadge.alpha, isHidden ? 0 : 1, accuracy: 0.001, "'99+' on 1×1: \(label)")
                         if isHidden { continue }
 
                         let arrow = TesseraTileEditControlView.resizeButtonFrame(
@@ -404,16 +404,16 @@ final class TileFolderBadgeTests: XCTestCase {
                             isRightToLeft: rtl
                         )
                         let frame = editBadge.frame
-                        XCTAssertFalse(frame.intersects(arrow), "бэйдж × стрелка: \(label)")
-                        XCTAssertEqual(frame.maxY, normalBadge.frame.maxY, accuracy: 0.5, "тот же ряд: \(label)")
+                        XCTAssertFalse(frame.intersects(arrow), "badge × arrow: \(label)")
+                        XCTAssertEqual(frame.maxY, normalBadge.frame.maxY, accuracy: 0.5, "same row: \(label)")
                         let moved = rtl
                             ? frame.minX - normalBadge.frame.minX
                             : normalBadge.frame.maxX - frame.maxX
-                        XCTAssertGreaterThan(moved, 0, "сдвинулся от угла: \(label)")
+                        XCTAssertGreaterThan(moved, 0, "moved away from the corner: \(label)")
                         let title = titleLabel(of: editing)
-                        if !title.isHidden { XCTAssertFalse(title.frame.intersects(frame), "подпись: \(label)") }
+                        if !title.isHidden { XCTAssertFalse(title.frame.intersects(frame), "title: \(label)") }
                         if let preview = editing.folderPreviewView {
-                            XCTAssertFalse(preview.frame.intersects(frame), "превью: \(label)")
+                            XCTAssertFalse(preview.frame.intersects(frame), "preview: \(label)")
                         }
                     }
                 }
@@ -421,9 +421,9 @@ final class TileFolderBadgeTests: XCTestCase {
         }
     }
 
-    /// Живой координатор: в правке бэйдж папки не пересекает стрелку размера, а
-    /// после выхода возвращается в угол (сдвиг считает координатор для папки так же,
-    /// как для плитки).
+    /// A live coordinator: in edit mode the folder badge does not intersect the resize arrow, and
+    /// after leaving it returns to the corner (the coordinator computes the shift for a folder the same way
+    /// as for a tile).
     func testCoordinatorEditModeKeepsFolderBadgeClearOfArrow() throws {
         let host = TesseraTestDragHost(
             descriptors: [
@@ -434,7 +434,7 @@ final class TileFolderBadgeTests: XCTestCase {
             columns: 6,
             windowSize: CGSize(width: 375, height: 844),
             prepare: { store, columns in
-                guard let created = store.createFolder(withTile: "a", title: "Работа", columns: columns) else { return }
+                guard let created = store.createFolder(withTile: "a", title: "Work", columns: columns) else { return }
                 _ = store.addToFolder("b", folderID: created.id, columns: columns)
             }
         )
@@ -447,7 +447,7 @@ final class TileFolderBadgeTests: XCTestCase {
         let cell = try XCTUnwrap(host.host.cell(folder.id))
         cell.layoutIfNeeded()
         let badgeView = badgeView(of: cell)
-        XCTAssertEqual(badgeView.badge, .count(3), "точка и счётчик: побеждает счётчик")
+        XCTAssertEqual(badgeView.badge, .count(3), "dot and counter: the counter wins")
         let control = try XCTUnwrap(host.coordinator.editControls[folder.id])
         control.layoutIfNeeded()
         let tile = try XCTUnwrap(host.host.grid.frame(forItemID: folder.id))
@@ -455,7 +455,7 @@ final class TileFolderBadgeTests: XCTestCase {
         let badgeFrame = cell.contentView.convert(badgeView.frame, to: host.host.grid)
         let resize = control.convert(control.resizeButtonFrame, to: host.host.grid)
         XCTAssertTrue(tile.insetBy(dx: -0.5, dy: -0.5).contains(badgeFrame))
-        XCTAssertFalse(badgeFrame.intersects(resize), "бэйдж × стрелка")
+        XCTAssertFalse(badgeFrame.intersects(resize), "badge × arrow")
 
         host.coordinator.endEditing()
         host.spin(0.05)
@@ -468,10 +468,10 @@ final class TileFolderBadgeTests: XCTestCase {
         )
     }
 
-    // MARK: - Живое обновление
+    // MARK: - Live update
 
-    /// Смена бэйджа члена папки доходит до плитки папки через снимок сетки: сумма,
-    /// точка и скрытие обновляются на той же ячейке, без перезагрузки.
+    /// A change of a folder member's badge reaches the folder tile through the grid snapshot: the sum,
+    /// the dot and hiding are updated on the same cell, without a reload.
     func testMemberBadgeChangeUpdatesFolderBadgeThroughSnapshot() throws {
         func snapshot(mail: TesseraTileBadge, other: TesseraTileBadge = .none) -> TesseraTileGridSnapshot {
             TesseraTileGridSnapshot(items: [
@@ -488,7 +488,7 @@ final class TileFolderBadgeTests: XCTestCase {
 
         host.grid.update(snapshot: snapshot(mail: .count(3)), animated: false)
         host.layout()
-        XCTAssertTrue(host.cell("F") === cell, "та же ячейка")
+        XCTAssertTrue(host.cell("F") === cell, "the same cell")
         XCTAssertEqual(badgeView(of: cell).badge, .count(3))
         XCTAssertFalse(badgeView(of: cell).isHidden)
         XCTAssertGreaterThan(badgeView(of: cell).frame.width, 0)
@@ -509,7 +509,7 @@ final class TileFolderBadgeTests: XCTestCase {
         XCTAssertEqual(cell.accessibilityValue, "2")
     }
 
-    /// Бэйдж меняется и при анимированном применении снимка.
+    /// The badge also changes when a snapshot is applied with animation.
     func testMemberBadgeChangeUpdatesFolderBadgeWithAnimatedSnapshot() throws {
         func snapshot(_ mail: TesseraTileBadge) -> TesseraTileGridSnapshot {
             TesseraTileGridSnapshot(items: [
@@ -526,9 +526,9 @@ final class TileFolderBadgeTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { self.badgeView(of: cell).badge == .count(5) })
     }
 
-    /// Хранилище: уход члена из каталога (невидимый не считается), открепление и
-    /// распад папки (D45) пересчитывают бэйдж; после распада оставшийся ярлык
-    /// показывает свой бэйдж плиткой.
+    /// Store: a member leaving the catalog (an invisible one is not counted), unpinning and
+    /// folder dissolution (D45) recompute the badge; after dissolution the remaining tile
+    /// shows its own badge as a tile.
     func testStoreDissolveAndCatalogPruneRecomputeAggregate() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -541,7 +541,7 @@ final class TileFolderBadgeTests: XCTestCase {
         let all: [(String, TesseraTileBadge)] = [("a", .count(3)), ("b", .count(4)), ("c", .dot), ("solo", .none)]
         store.setCatalog(catalog(all))
         store.placeItems(columns: columns)
-        let created = try XCTUnwrap(store.createFolder(withTile: "a", title: "Работа", columns: columns))
+        let created = try XCTUnwrap(store.createFolder(withTile: "a", title: "Work", columns: columns))
         XCTAssertTrue(store.addToFolder("b", folderID: created.id, columns: columns))
         XCTAssertTrue(store.addToFolder("c", folderID: created.id, columns: columns))
         XCTAssertEqual(store.snapshot(columns: columns).folders.first?.aggregateBadge, .count(7))
@@ -550,25 +550,25 @@ final class TileFolderBadgeTests: XCTestCase {
         let cell = try XCTUnwrap(host.cell(created.id))
         XCTAssertEqual(badgeView(of: cell).badge, .count(7))
 
-        // Член ушёл из каталога: он невидим и не считается (D45).
+        // The member left the catalog: it is invisible and not counted (D45).
         store.setCatalog(catalog(all.filter { $0.0 != "b" }))
         host.grid.update(snapshot: store.snapshot(columns: columns), animated: false)
         host.layout()
         XCTAssertEqual(store.snapshot(columns: columns).folders.first?.tiles.count, 2)
-        XCTAssertEqual(badgeView(of: cell).badge, .count(3), "невидимый член не считается")
+        XCTAssertEqual(badgeView(of: cell).badge, .count(3), "an invisible member is not counted")
 
-        // Открепление члена: в папке остаётся один ярлык — папка распускается.
+        // Unpinning a member: one tile remains in the folder, so the folder is dissolved.
         XCTAssertTrue(store.unpin("a", columns: columns))
         let dissolved = store.snapshot(columns: columns)
-        XCTAssertTrue(dissolved.folders.isEmpty, "D45: папка из одного ярлыка распущена")
+        XCTAssertTrue(dissolved.folders.isEmpty, "D45: a one-tile folder is dissolved")
         host.grid.update(snapshot: dissolved, animated: false)
         host.layout()
         let tileCell = try XCTUnwrap(host.cell("c"))
-        XCTAssertEqual(badgeView(of: tileCell).badge, .dot, "оставшийся ярлык — со своим бэйджем")
+        XCTAssertEqual(badgeView(of: tileCell).badge, .dot, "the remaining tile keeps its own badge")
         XCTAssertEqual(tileCell.accessibilityValue, TesseraStartScreenStrings.string(.a11yBadgeDot))
     }
 
-    /// Папка из трёх: открепление одного пересчитывает агрегат по оставшимся.
+    /// A folder of three: unpinning one recomputes the aggregate from the remaining ones.
     func testUnpinOneOfThreeRecomputesAggregate() throws {
         let directory = TesseraTestDirectory()
         try directory.create()
@@ -590,18 +590,18 @@ final class TileFolderBadgeTests: XCTestCase {
         XCTAssertEqual(store.snapshot(columns: columns).folders.first?.aggregateBadge, .count(6))
     }
 
-    // MARK: - Доступность
+    // MARK: - Accessibility
 
-    /// Value папки отражает агрегат тем же помощником, что и плитка: число для
-    /// суммы, «есть уведомление» для точки; label — название; число ярлыков и
-    /// «раскрыта» сохраняются; без бэйджа value прежнее.
+    /// The folder's value reflects the aggregate through the same helper as a tile: a number for
+    /// a sum, "has a notification" for a dot; the label is the title; the tile count and
+    /// "expanded" are kept; without a badge the value is as before.
     func testFolderAccessibilityValueReflectsAggregate() {
         let size = CGSize(width: 110, height: 110)
         let dotText = TesseraStartScreenStrings.string(.a11yBadgeDot)
         let expanded = TesseraStartScreenStrings.string(.panelExpanded)
 
         let sum = makeCell(size: size, folder: folder(badge: .count(3)))
-        XCTAssertEqual(sum.accessibilityLabel, "Работа", "label — название папки")
+        XCTAssertEqual(sum.accessibilityLabel, "Work", "the label is the folder title")
         XCTAssertEqual(sum.accessibilityValue, "3, 2")
         sum.setFolderExpanded(true)
         XCTAssertEqual(sum.accessibilityValue, "3, 2, \(expanded)")
@@ -615,17 +615,17 @@ final class TileFolderBadgeTests: XCTestCase {
             tesseraTestTile("a", size: .small, badge: .count(70)),
             tesseraTestTile("b", size: .small, badge: .count(40)),
         ]))
-        XCTAssertEqual(many.accessibilityValue, "110, 2", "озвучивается число, а не «99+»")
+        XCTAssertEqual(many.accessibilityValue, "110, 2", "the number is spoken, not '99+'")
 
         let plain = makeCell(size: size, folder: folder(badge: .none))
-        XCTAssertEqual(plain.accessibilityValue, "2", "без бэйджа — как раньше")
+        XCTAssertEqual(plain.accessibilityValue, "2", "without a badge, as before")
         XCTAssertTrue(plain.isAccessibilityElement)
     }
 
-    // MARK: - Панель и раскрытая папка
+    // MARK: - Panel and expanded folder
 
-    /// На плитке раскрытой папки бэйдж остаётся, а у шапки панели своего бэйджа нет
-    /// (бэйджи есть только у ярлыков панели — как раньше).
+    /// On an expanded folder's tile the badge stays, while the panel header has no badge of its own
+    /// (badges exist only on the panel's tiles, as before).
     func testPanelHeaderHasNoBadgeAndFolderTileKeepsOneWhenExpanded() throws {
         let folder = folder(members: [
             tesseraTestTile("mail", size: .small, badge: .count(3)),
@@ -640,7 +640,7 @@ final class TileFolderBadgeTests: XCTestCase {
         host.layout()
 
         let tileCell = try XCTUnwrap(host.cell(folder.id))
-        XCTAssertEqual(badgeView(of: tileCell).badge, .count(3), "плитка раскрытой папки сохраняет бэйдж")
+        XCTAssertEqual(badgeView(of: tileCell).badge, .count(3), "the expanded folder's tile keeps its badge")
         XCTAssertEqual(tileCell.accessibilityValue, "3, 2, \(TesseraStartScreenStrings.string(.panelExpanded))")
 
         let panel = try XCTUnwrap(host.panelCell(folderID: folder.id))
@@ -653,15 +653,15 @@ final class TileFolderBadgeTests: XCTestCase {
             }
             return result
         }
-        XCTAssertTrue(ownBadges(in: panel).isEmpty, "у шапки панели бэйджа нет")
+        XCTAssertTrue(ownBadges(in: panel).isEmpty, "the panel header has no badge")
         XCTAssertEqual(
-            panel.shortcutCells.map { badgeView(of: $0).badge }, [.count(3), .dot], "бэйджи ярлыков панели прежние"
+            panel.shortcutCells.map { badgeView(of: $0).badge }, [.count(3), .dot], "the panel tiles' badges are unchanged"
         )
     }
 
-    // MARK: - Превью
+    // MARK: - Preview
 
-    /// Мини-иконки превью сохраняют свои бэйджи рядом с бэйджем папки.
+    /// The preview's mini icons keep their own badges next to the folder badge.
     func testPreviewMiniTilesKeepTheirOwnBadges() throws {
         let cell = makeCell(size: CGSize(width: 110, height: 110), folder: folder(members: [
             tesseraTestTile("a", size: .small, badge: .dot),
@@ -670,7 +670,7 @@ final class TileFolderBadgeTests: XCTestCase {
         ]))
         let preview = try XCTUnwrap(cell.folderPreviewView)
         XCTAssertEqual(preview.miniTileViews.map { $0.badge }, [.dot, .count(3), .none])
-        XCTAssertEqual(badgeView(of: cell).badge, .count(3), "сумма: точка не прибавляет")
+        XCTAssertEqual(badgeView(of: cell).badge, .count(3), "sum: the dot does not add")
     }
 }
 

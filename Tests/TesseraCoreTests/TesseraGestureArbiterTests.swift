@@ -2,15 +2,15 @@
 //  TesseraGestureArbiterTests.swift
 //  TesseraCoreTests
 //
-//  Контрактные тесты арбитража жестов (задача E1.7).
-//  Проектный документ: docs/Core-iOS-Design.md §2 «Ключевые контракты»
-//  (пункт «Арбитраж»: горизонталь — пейджеру, вертикаль — ребёнку; решение по
-//  доминирующей оси) и §3 «Концептуальная поверхность API»
-//  (TesseraGestureArbiter — регистрация детей, решение по осям).
+//  Contract tests for gesture arbitration.
+//  Design document: docs/CORE-IOS-DESIGN.md §2 (key contracts,
+//  "Arbitration": horizontal goes to the pager, vertical to the child; the decision is made by the
+//  dominant axis) and §3 (conceptual API surface:
+//  TesseraGestureArbiter registers children and decides by axis).
 //
-//  Проверяются чистое решение по оси, блокировка нескольких вертикальных
-//  детей на время горизонтального жеста и восстановление исходных значений
-//  `isScrollEnabled` без UI-цикла.
+//  Checks the pure axis decision, blocking of several vertical
+//  children for the duration of a horizontal gesture, and restoring the original
+//  `isScrollEnabled` values without a UI run loop.
 //
 
 #if canImport(UIKit)
@@ -27,10 +27,10 @@ final class TesseraGestureArbiterTests: XCTestCase {
         return scrollView
     }
 
-    // MARK: - axisDecision: чистое решение по оси
+    // MARK: - axisDecision: the pure axis decision
 
-    /// Горизонталь побеждает, когда модуль `dx` строго больше модуля `dy`.
-    /// Знак скорости на выбор оси не влияет — сравниваются модули.
+    /// Horizontal wins when the magnitude of `dx` is strictly greater than that of `dy`.
+    /// The sign of the velocity does not affect the axis choice; magnitudes are compared.
     func testHorizontalDominatesWhenAbsDXIsGreater() {
         let velocities: [CGPoint] = [
             CGPoint(x: 10, y: 3),
@@ -44,12 +44,12 @@ final class TesseraGestureArbiterTests: XCTestCase {
             XCTAssertEqual(
                 TesseraGestureArbiter.axisDecision(forVelocity: velocity),
                 .horizontal,
-                "Ожидалась горизонталь для velocity \(velocity)"
+                "Expected horizontal for velocity \(velocity)"
             )
         }
     }
 
-    /// Вертикаль побеждает, когда модуль `dy` строго больше модуля `dx`.
+    /// Vertical wins when the magnitude of `dy` is strictly greater than that of `dx`.
     func testVerticalDominatesWhenAbsDYIsGreater() {
         let velocities: [CGPoint] = [
             CGPoint(x: 3, y: 10),
@@ -63,13 +63,13 @@ final class TesseraGestureArbiterTests: XCTestCase {
             XCTAssertEqual(
                 TesseraGestureArbiter.axisDecision(forVelocity: velocity),
                 .vertical,
-                "Ожидалась вертикаль для velocity \(velocity)"
+                "Expected vertical for velocity \(velocity)"
             )
         }
     }
 
-    /// При равенстве модулей (включая нулевую скорость) осознанно выбирается
-    /// горизонталь: без данных о доминировании жест остаётся у пейджера.
+    /// When magnitudes are equal (including zero velocity), horizontal is chosen
+    /// deliberately: with no dominance data the gesture stays with the pager.
     func testEqualMagnitudesChooseHorizontal() {
         let velocities: [CGPoint] = [
             .zero,
@@ -84,16 +84,16 @@ final class TesseraGestureArbiterTests: XCTestCase {
             XCTAssertEqual(
                 TesseraGestureArbiter.axisDecision(forVelocity: velocity),
                 .horizontal,
-                "Ожидалась горизонталь при равенстве модулей \(velocity)"
+                "Expected horizontal for equal magnitudes \(velocity)"
             )
         }
     }
 
-    // MARK: - Блокировка нескольких вертикальных детей
+    // MARK: - Blocking several vertical children
 
-    /// `prepareForHorizontalScroll` блокирует всех детей, а
-    /// `endHorizontalScroll` возвращает каждому исходное значение: изначально
-    /// выключенный ребёнок остаётся выключенным.
+    /// `prepareForHorizontalScroll` blocks all children, and
+    /// `endHorizontalScroll` restores each one's original value: a child that
+    /// was disabled initially stays disabled.
     func testPrepareBlocksAllChildrenAndEndRestoresStates() {
         let owner = makeScrollView()
         let first = makeScrollView(enabled: true)
@@ -115,8 +115,8 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertTrue(third.isScrollEnabled)
     }
 
-    /// Горизонтальный владелец исключается из списка детей: его прокрутка не
-    /// блокируется даже если он передан в `verticalOwners`.
+    /// The horizontal owner is excluded from the child list: its scrolling is not
+    /// blocked even if it is passed in `verticalOwners`.
     func testHorizontalOwnerIsNeverBlocked() {
         let owner = makeScrollView(enabled: true)
         let child = makeScrollView(enabled: true)
@@ -135,8 +135,8 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertTrue(child.isScrollEnabled)
     }
 
-    /// Повторный `prepareForHorizontalScroll` идемпотентен: снимок не
-    /// перезаписывается, исходные значения не теряются.
+    /// A repeated `prepareForHorizontalScroll` is idempotent: the snapshot is not
+    /// overwritten and the original values are not lost.
     func testPrepareIsIdempotent() {
         let owner = makeScrollView()
         let child = makeScrollView(enabled: true)
@@ -150,7 +150,7 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertTrue(child.isScrollEnabled)
     }
 
-    /// `endHorizontalScroll` без предшествующего `prepare` — no-op.
+    /// `endHorizontalScroll` without a preceding `prepare` is a no-op.
     func testEndWithoutPrepareIsNoOp() {
         let owner = makeScrollView()
         let child = makeScrollView(enabled: true)
@@ -161,8 +161,8 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertTrue(child.isScrollEnabled)
     }
 
-    /// Повторный `endHorizontalScroll` — no-op: состояние детей после
-    /// восстановления больше не перезаписывается.
+    /// A repeated `endHorizontalScroll` is a no-op: the children's state is no longer
+    /// overwritten after restoration.
     func testEndTwiceIsNoOp() {
         let owner = makeScrollView()
         let child = makeScrollView(enabled: true)
@@ -177,7 +177,7 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertTrue(child.isScrollEnabled)
     }
 
-    /// Дубли одного и того же ребёнка не ломают восстановление состояния.
+    /// Duplicates of the same child do not break state restoration.
     func testDuplicateChildrenAreSafe() {
         let owner = makeScrollView()
         let child = makeScrollView(enabled: false)
@@ -193,15 +193,15 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertFalse(child.isScrollEnabled)
     }
 
-    /// Пустой список детей: блокировка и восстановление — no-op, владелец
-    /// остаётся активным.
+    /// An empty child list: blocking and restoring are no-ops, and the owner
+    /// stays active.
     func testEmptyVerticalOwnersAreSafe() {
         let owner = makeScrollView()
         let arbiter = TesseraGestureArbiter(horizontalOwner: owner, verticalOwners: [])
 
         arbiter.prepareForHorizontalScroll()
 
-        // Владелец не входит в список детей и не блокируется.
+        // The owner is not in the child list and is not blocked.
         XCTAssertTrue(owner.isScrollEnabled)
 
         arbiter.endHorizontalScroll()
@@ -210,7 +210,7 @@ final class TesseraGestureArbiterTests: XCTestCase {
 
     // MARK: - UIGestureRecognizerDelegate
 
-    /// Чужие жесты арбитр не ограничивает: возвращается `true`.
+    /// The arbiter does not restrict foreign gestures: it returns `true`.
     func testShouldBeginReturnsTrueForForeignGesture() {
         let owner = makeScrollView()
         let arbiter = TesseraGestureArbiter(horizontalOwner: owner, verticalOwners: [])
@@ -220,8 +220,8 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertTrue(arbiter.gestureRecognizerShouldBegin(tap))
     }
 
-    /// Пан горизонтального владельца без движения трактуется как горизонталь
-    /// (правило равенства модулей) — жест разрешён.
+    /// A pan of the horizontal owner without movement is treated as horizontal
+    /// (the equal-magnitude rule), so the gesture is allowed.
     func testShouldBeginForIdleOwnerPanDefaultsToHorizontal() {
         let owner = makeScrollView()
         let arbiter = TesseraGestureArbiter(horizontalOwner: owner, verticalOwners: [])
@@ -230,7 +230,7 @@ final class TesseraGestureArbiterTests: XCTestCase {
         XCTAssertTrue(arbiter.gestureRecognizerShouldBegin(owner.panGestureRecognizer))
     }
 
-    /// Блокировка детей не выключает прокрутку самого пейджера.
+    /// Blocking children does not disable scrolling of the pager itself.
     func testPrepareDoesNotDisableHorizontalOwner() {
         let owner = makeScrollView(enabled: true)
         let child = makeScrollView(enabled: true)

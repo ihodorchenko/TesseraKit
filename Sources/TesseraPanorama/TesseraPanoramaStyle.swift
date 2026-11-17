@@ -1,46 +1,46 @@
-// Конфигурация внешнего вида панорамы.
-// Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная архитектура»
-// (TesseraPanoramaStyle: ширина секции (peek), множитель параллакса, шрифты/цвета
-// заголовков, поведение фона), §4 «Геометрия и математика ядра»
+// Appearance configuration of the panorama.
+// Design document: docs/PANORAMA-IOS-DESIGN.md (conceptual architecture:
+// TesseraPanoramaStyle: section width (peek), parallax factor, header fonts/colors,
+// background behavior), core geometry and math
 // (itemWidth = screenWidth − peek, peek 16–64 pt; backgroundOffset =
-// offset.x × parallaxFactor, типично 0.4–0.6), §7 «Accessibility» (Dynamic Type,
-// Reduce Motion) и §9 «Объём MVP» (в v1 — одна картинка на весь фон).
+// offset.x × parallaxFactor, typically 0.4–0.6), accessibility (Dynamic Type,
+// Reduce Motion) and the MVP scope (in v1, a single image for the whole background).
 
 #if canImport(UIKit)
 import UIKit
 
-/// Внешний вид панорамы: ширина «холста» с peek, множитель параллакса,
-/// оформление заголовков и поведение фона (docs/PANORAMA-IOS-DESIGN.md §3).
+/// The appearance of the panorama: the width of the "canvas" with its peek, the parallax factor,
+/// header styling, and background behavior (see docs/PANORAMA-IOS-DESIGN.md).
 ///
-/// Тип — конфиг-структура с дефолтами у всех полей: достаточно создать
-/// `TesseraPanoramaStyle()`, чтобы получить системный вид. Стиль не хранит состояние и
-/// не зависит от иерархии представлений — это снимок настроек, который компонент
-/// читает при применении.
+/// A configuration struct with defaults for every field: creating
+/// `TesseraPanoramaStyle()` is enough to get the system look. The style holds no state and
+/// does not depend on the view hierarchy; it is a snapshot of settings that the component
+/// reads when applying it.
 ///
-/// - Note: Значения читаются на главном потоке: цвета и шрифты — UIKit-объекты.
-/// - Note: Reduce Motion не входит в стиль: это системная настройка, а не
-///   предпочтение оформления. При `isReduceMotionEnabled` компонент отключает
-///   параллакс и анимации заголовков, оставляя простой снап
-///   (docs/PANORAMA-IOS-DESIGN.md §7).
+/// - Note: Values are read on the main thread: colors and fonts are UIKit objects.
+/// - Note: Reduce Motion is not part of the style: it is a system setting, not an
+///   appearance preference. When `isReduceMotionEnabled` is on, the component disables
+///   parallax and header animations, leaving plain snapping
+///   (see docs/PANORAMA-IOS-DESIGN.md).
 public struct TesseraPanoramaStyle {
 
-    /// Поведение фона панорамы (docs/PANORAMA-IOS-DESIGN.md §3, §9).
+    /// The behavior of the panorama background (see docs/PANORAMA-IOS-DESIGN.md).
     ///
-    /// В v1 фон один на всю панораму: произвольный фон для каждой секции
-    /// сознательно отрезан (§9, «Отрезано в v1»). Перечисление намеренно не
-    /// содержит случая «свой фон у секции».
+    /// In v1 there is one background for the whole panorama: an arbitrary background for each section
+    /// is deliberately out of scope. The enumeration intentionally
+    /// has no "per-section background" case.
     public enum BackgroundBehavior {
-        /// Фон не рисуется: за секциями виден системный/прозрачный фон.
+        /// No background is drawn: the system/transparent background shows behind the sections.
         case none
 
-        /// Одна картинка на весь фон панорамы.
+        /// A single image for the whole panorama background.
         ///
-        /// `nil` допустим, пока изображение не подготовлено: слой фона остаётся
-        /// пустым (прозрачным), и визуально панорама выглядит как при `.none`.
-        /// Параллакс при этом не рисует ничего, пока картинка не задана.
+        /// `nil` is allowed until the image is ready: the background layer stays
+        /// empty (transparent), and the panorama looks the same as with `.none`.
+        /// Parallax draws nothing until an image is set.
         case image(UIImage?)
 
-        /// Совпадает ли поведение с другим; картинки — по идентичности.
+        /// Whether the behavior matches another one; images are compared by identity.
         func isIdentical(to other: BackgroundBehavior) -> Bool {
             switch (self, other) {
             case (.none, .none):
@@ -53,108 +53,108 @@ public struct TesseraPanoramaStyle {
         }
     }
 
-    /// Ширина зоны «подсматривания» следующей секции со стороны направления
-    /// чтения (в LTR — справа), в точках.
+    /// The width of the zone that peeks at the next section on the side of the reading
+    /// direction (the right in LTR), in points.
     ///
-    /// Ширина секции считается как `itemWidth = screenWidth − peek`
-    /// (документ §4, «Ширина секции»), поэтому значение всегда удерживается в
-    /// диапазоне `16...64`: кламп применяется в ``init(peek:parallaxFactor:headerFont:headerColor:headerActiveColor:backgroundBehavior:)``
-    /// и при каждой последующей записи. Нечисловые значения (`NaN`, `±∞`)
-    /// трактуются как дефолт `48`.
+    /// The section width is computed as `itemWidth = screenWidth − peek`
+    /// (see the section width notes in the design document), so the value is always kept in
+    /// the range `16...64`: the clamp is applied in ``init(peek:parallaxFactor:headerFont:headerColor:headerActiveColor:backgroundBehavior:)``
+    /// and on every later write. Non-finite values (`NaN`, `±∞`)
+    /// are treated as the default `48`.
     public var peek: CGFloat {
         didSet { peek = Self.clampedPeek(peek) }
     }
 
-    /// Множитель скорости фона относительно контента.
+    /// The multiplier of the background speed relative to the content.
     ///
-    /// Смещение фона — `backgroundOffset = contentOffset.x × parallaxFactor`
-    /// (документ §4, «Параллакс фона»: `0 < parallaxFactor < 1`, типично
-    /// `0.4–0.6`). Значение всегда удерживается в открытом интервале `(0, 1)` —
-    /// практически в `0.01...0.99`: кламп применяется в инициализаторе и при
-    /// каждой последующей записи. Нечисловые значения (`NaN`, `±∞`) трактуются
-    /// как дефолт `0.5`.
+    /// The background offset is `backgroundOffset = contentOffset.x × parallaxFactor`
+    /// (see the background parallax notes in the design document: `0 < parallaxFactor < 1`, typically
+    /// `0.4–0.6`). The value is always kept within the open interval `(0, 1)`,
+    /// in practice `0.01...0.99`: the clamp is applied in the initializer and on
+    /// every later write. Non-finite values (`NaN`, `±∞`) are treated
+    /// as the default `0.5`.
     ///
-    /// - Note: `0` (фон стоит) и `1` (фон едет вместе с контентом) недостижимы:
-    ///   это уже не параллакс. Отключение параллакса — прерогатива
-    ///   Reduce Motion, а не стиля (§7).
+    /// - Note: `0` (the background stands still) and `1` (the background moves with the content) are unreachable:
+    ///   that is no longer parallax. Disabling parallax is the job of
+    ///   Reduce Motion, not of the style.
     public var parallaxFactor: CGFloat {
         didSet { parallaxFactor = Self.clampedParallaxFactor(parallaxFactor) }
     }
 
-    /// Базовый шрифт заголовков секций.
+    /// The base font of the section headers.
     ///
-    /// По умолчанию — системный bold 34 pt (базовый размер `.largeTitle`).
-    /// Это именно немасштабированный шрифт: компонент масштабирует его под
-    /// текущую категорию Dynamic Type через `UIFontMetrics` и пересчитывает при
-    /// изменении категории (документ §7, «Dynamic Type»).
+    /// The default is the system bold 34 pt (the base size of `.largeTitle`).
+    /// This is deliberately an unscaled font: the component scales it for the
+    /// current Dynamic Type category through `UIFontMetrics` and recomputes it when the
+    /// category changes (see the Dynamic Type notes in the design document).
     ///
-    /// Если передать уже масштабированный шрифт, он будет масштабирован
-    /// повторно; для точного контроля передавайте базовый размер.
+    /// If you pass an already scaled font, it will be scaled
+    /// again; pass the base size for precise control.
     public var headerFont: UIFont
 
-    /// Цвет заголовка секции в неактивном состоянии.
+    /// The color of a section header in the inactive state.
     ///
-    /// По умолчанию — `.label`: цвет адаптируется к светлой и тёмной теме.
-    /// На фоновой картинке контраст заголовка обеспечивает компонент
-    /// (документ §6, «Фон»).
+    /// The default is `.label`: the color adapts to the light and dark themes.
+    /// On a background image, the component ensures header contrast
+    /// (see the background notes in the design document).
     public var headerColor: UIColor
 
-    /// Акцентный цвет заголовка текущей (активной) секции.
+    /// The accent color of the current (active) section's header.
     ///
-    /// По умолчанию — `.systemBlue`. Цвет интерполируется по прогрессу `t`
-    /// вместе с фейдом заголовков (§4): на целом `t` активный заголовок целиком
-    /// окрашен этим цветом, а на переходе уходящий заголовок плавно возвращается
-    /// к ``headerColor``, входящий — набирает акцент. Если задать то же значение,
-    /// что и ``headerColor``, заголовки визуально не выделяются цветом.
+    /// The default is `.systemBlue`. The color is interpolated by the progress `t`
+    /// together with the header fade: at an integer `t` the active header is fully
+    /// tinted with this color, and during a transition the outgoing header smoothly returns
+    /// to ``headerColor`` while the incoming one gains the accent. If you set the same value
+    /// as ``headerColor``, the headers are not highlighted by color.
     public var headerActiveColor: UIColor
 
-    /// Поведение фона. По умолчанию `.none`.
+    /// The background behavior. The default is `.none`.
     public var backgroundBehavior: BackgroundBehavior
 
-    /// Поведение системной подстройки отступов горизонтальной полосы секций
-    /// (документ §8, «Navigation bar»).
+    /// The behavior of the system adjustment of the insets of the horizontal strip of sections
+    /// (see the navigation bar notes in the design document).
     ///
-    /// По умолчанию `.never`: кадр полосы задаёт панорама (под слоем
-    /// заголовков), а safe area получают сами контроллеры секций; фон при этом
-    /// лежит под баром на всю высоту вида. Иные значения нужны, когда хост хочет,
-    /// чтобы UIKit сам отступил от бара/home-индикатора.
+    /// The default is `.never`: the panorama sets the strip's frame (under the layer of
+    /// headers), and the section controllers get the safe area themselves; the background
+    /// lies under the bar across the full height of the view. Other values are for when the host wants
+    /// UIKit to inset the content from the bar/home indicator itself.
     ///
-    /// - Important: Геометрия снапа и прогресс `t` считаются от `contentOffset`
-    ///   без учёта горизонтальных `adjustedContentInset`: значения, дающие
-    ///   боковые отступы (`.always`, а в альбомной ориентации с вырезом — и
-    ///   `.automatic`/`.scrollableAxes`), сдвигают ленту на величину бокового
-    ///   safe area. Для полноэкранной панорамы оставляйте `.never`.
+    /// - Important: Snapping geometry and the progress `t` are computed from `contentOffset`
+    ///   without the horizontal `adjustedContentInset`: values that produce
+    ///   side insets (`.always`, and in landscape with a cutout also
+    ///   `.automatic`/`.scrollableAxes`) shift the strip by the side
+    ///   safe area. Keep `.never` for a full-screen panorama.
     public var contentInsetAdjustmentBehavior: UIScrollView.ContentInsetAdjustmentBehavior
 
-    /// Нижняя и верхняя границы ``peek`` (документ §4, «Ширина секции»).
+    /// The lower and upper bounds of ``peek`` (see the section width notes in the design document).
     private static let peekRange: ClosedRange<CGFloat> = 16...64
 
-    /// Границы ``parallaxFactor``: открытый интервал `(0, 1)` из §4
-    /// («Параллакс фона»), представленный замкнутым `0.01...0.99`.
+    /// The bounds of ``parallaxFactor``: the open interval `(0, 1)` from the design document
+    /// (background parallax), represented by the closed `0.01...0.99`.
     static let parallaxFactorRange: ClosedRange<CGFloat> = 0.01...0.99
 
-    /// Дефолт ``peek``; используется при нечисловом входе.
+    /// The default of ``peek``; used for non-finite input.
     private static let defaultPeek: CGFloat = 48
 
-    /// Дефолт ``parallaxFactor``; используется при нечисловом входе.
+    /// The default of ``parallaxFactor``; used for non-finite input.
     private static let defaultParallaxFactor: CGFloat = 0.5
 
-    /// Создаёт стиль панорамы; у всех параметров есть системные дефолты.
+    /// Creates a panorama style; every parameter has a system default.
     ///
     /// - Parameters:
-    ///   - peek: Ширина зоны подсматривания следующей секции, по умолчанию `48`.
-    ///     Значения вне `16...64` приводятся к ближайшей границе.
-    ///   - parallaxFactor: Множитель параллакса фона, по умолчанию `0.5`.
-    ///     Значения вне открытого интервала `(0, 1)` приводятся к ближайшей
-    ///     границе `0.01...0.99` (§4).
-    ///   - headerFont: Базовый (немасштабированный) шрифт заголовков, по
-    ///     умолчанию системный bold 34 pt.
-    ///   - headerColor: Цвет неактивного заголовка, по умолчанию `.label`.
-    ///   - headerActiveColor: Акцентный цвет активного заголовка,
-    ///     по умолчанию `.systemBlue`.
-    ///   - backgroundBehavior: Поведение фона, по умолчанию `.none`.
-    ///   - contentInsetAdjustmentBehavior: Подстройка отступов полосы секций
-    ///     под safe area, по умолчанию `.never` (§8).
+    ///   - peek: The width of the zone peeking at the next section, `48` by default.
+    ///     Values outside `16...64` are clamped to the nearest bound.
+    ///   - parallaxFactor: The background parallax multiplier, `0.5` by default.
+    ///     Values outside the open interval `(0, 1)` are clamped to the nearest
+    ///     bound of `0.01...0.99`.
+    ///   - headerFont: The base (unscaled) font of the headers, the
+    ///     system bold 34 pt by default.
+    ///   - headerColor: The color of an inactive header, `.label` by default.
+    ///   - headerActiveColor: The accent color of the active header,
+    ///     `.systemBlue` by default.
+    ///   - backgroundBehavior: The background behavior, `.none` by default.
+    ///   - contentInsetAdjustmentBehavior: The adjustment of the section strip's insets
+    ///     to the safe area, `.never` by default.
     public init(
         peek: CGFloat = 48,
         parallaxFactor: CGFloat = 0.5,
@@ -164,9 +164,9 @@ public struct TesseraPanoramaStyle {
         backgroundBehavior: BackgroundBehavior = .none,
         contentInsetAdjustmentBehavior: UIScrollView.ContentInsetAdjustmentBehavior = .never
     ) {
-        // Кламп в инициализаторе обязателен: наблюдатели свойств не вызываются
-        // при первой записи в init, поэтому без него инвариант диапазона
-        // нарушился бы до первого внешнего присваивания.
+        // The clamp in the initializer is required: property observers are not called
+        // on the first write in init, so without it the range invariant
+        // would be broken until the first external assignment.
         self.peek = Self.clampedPeek(peek)
         self.parallaxFactor = Self.clampedParallaxFactor(parallaxFactor)
         self.headerFont = headerFont
@@ -176,15 +176,15 @@ public struct TesseraPanoramaStyle {
         self.contentInsetAdjustmentBehavior = contentInsetAdjustmentBehavior
     }
 
-    /// Совпадает ли стиль с другим по всем полям (E10.13).
+    /// Whether the style matches another one in every field.
     ///
-    /// Нужен, чтобы контроллер не переприменял тот же стиль на каждом
-    /// обновлении SwiftUI. Публичного `Equatable` нет: картинка фона сравнивается
-    /// по идентичности (`===`), а не по содержимому — для пропуска лишней работы
-    /// этого достаточно, но как общая семантика равенства это было бы неожиданно.
+    /// Lets the controller avoid reapplying the same style on every
+    /// SwiftUI update. There is no public `Equatable`: the background image is compared
+    /// by identity (`===`), not by content. That is enough to skip redundant work,
+    /// but as general equality semantics it would be surprising.
     ///
-    /// - Parameter other: Стиль для сравнения.
-    /// - Returns: `true`, если применение `other` вместо `self` ничего не меняет.
+    /// - Parameter other: The style to compare with.
+    /// - Returns: `true` if applying `other` instead of `self` changes nothing.
     func isEquivalent(to other: TesseraPanoramaStyle) -> Bool {
         peek == other.peek
             && parallaxFactor == other.parallaxFactor
@@ -195,14 +195,14 @@ public struct TesseraPanoramaStyle {
             && backgroundBehavior.isIdentical(to: other.backgroundBehavior)
     }
 
-    /// Приводит ``peek`` к диапазону `16...64`; нечисловой вход — к дефолту.
+    /// Clamps ``peek`` to the range `16...64`; non-finite input becomes the default.
     private static func clampedPeek(_ value: CGFloat) -> CGFloat {
         guard value.isFinite else { return defaultPeek }
         return min(max(value, peekRange.lowerBound), peekRange.upperBound)
     }
 
-    /// Приводит ``parallaxFactor`` к интервалу `(0, 1)` (`0.01...0.99`);
-    /// нечисловой вход — к дефолту.
+    /// Clamps ``parallaxFactor`` to the interval `(0, 1)` (`0.01...0.99`);
+    /// non-finite input becomes the default.
     private static func clampedParallaxFactor(_ value: CGFloat) -> CGFloat {
         guard value.isFinite else { return defaultParallaxFactor }
         return min(max(value, parallaxFactorRange.lowerBound), parallaxFactorRange.upperBound)

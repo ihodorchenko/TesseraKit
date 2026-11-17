@@ -2,15 +2,15 @@
 //  TesseraGestureTargetRetentionTests.swift
 //  TesseraCoreTests
 //
-//  Доказательный тест к E9.1 (К1 ревью): удерживает ли `UIGestureRecognizer`
-//  свой таргет. Pivot, Panorama и StartScreen подписываются на пан скролл-вью
-//  пейджера через `pan.addTarget(self, …)` и снимают таргет в `deinit`. Если бы
-//  UIKit удерживал таргет сильно, получился бы цикл «контроллер → пейджер →
-//  скролл-вью → пан → контроллер», и `deinit` был бы недостижим.
+//  Evidence test: does `UIGestureRecognizer` retain
+//  its target? Pivot, Panorama and StartScreen subscribe to the pan of the pager's scroll view
+//  via `pan.addTarget(self, …)` and remove the target in `deinit`. If
+//  UIKit retained the target strongly, there would be a cycle "controller -> pager ->
+//  scroll view -> pan -> controller", and `deinit` would be unreachable.
 //
-//  Вывод (зафиксирован тестами ниже): UIKit таргет НЕ удерживает — ссылка
-//  слабая и обнуляемая; цикла нет, `deinit` контроллера вызывается. Поэтому
-//  слабый proxy-таргет в Core не нужен.
+//  Conclusion (fixed by the tests below): UIKit does NOT retain the target. The reference is
+//  weak and zeroing; there is no cycle and the controller's `deinit` runs. So a
+//  weak proxy target is not needed in Core.
 //
 
 #if canImport(UIKit)
@@ -19,19 +19,19 @@ import XCTest
 import UIKit
 @testable import TesseraCore
 
-/// Таргет-пустышка: только принимает action.
+/// A placeholder target: it only accepts the action.
 private final class TargetProbe: NSObject {
     @objc func handle(_ sender: UIGestureRecognizer) {}
 }
 
-/// Хост реального сценария: встраивает пейджер Core и подписывается на пан его
-/// скролл-вью ровно так, как это делают контроллеры компонентов
-/// (`addTarget(self, …)` + `removeTarget` в `deinit`).
+/// A host for the real scenario: it embeds the Core pager and subscribes to the pan of its
+/// scroll view exactly as the component controllers do
+/// (`addTarget(self, …)` + `removeTarget` in `deinit`).
 private final class PagerHostProbe: UIViewController {
     let pager = TesseraPagerViewController(
         mode: .paged,
         pages: (0..<3).map { index in
-            TesseraPageDescriptor(id: index, title: "Страница \(index)") { UIViewController() }
+            TesseraPageDescriptor(id: index, title: "Page \(index)") { UIViewController() }
         }
     )
     private weak var observedPan: UIPanGestureRecognizer?
@@ -43,7 +43,7 @@ private final class PagerHostProbe: UIViewController {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) не поддерживается") }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -53,8 +53,8 @@ private final class PagerHostProbe: UIViewController {
         pager.didMove(toParent: self)
     }
 
-    /// Находит скролл-вью пейджера (тот же обход, что в Pivot/StartScreen)
-    /// и подписывается на его пан.
+    /// Finds the pager's scroll view (the same traversal as in Pivot/StartScreen)
+    /// and subscribes to its pan.
     func attachToPagerPan() -> Bool {
         guard let scrollView = pager.view.subviews.compactMap({ $0 as? UIScrollView }).first else {
             return false
@@ -75,10 +75,10 @@ private final class PagerHostProbe: UIViewController {
 
 final class TesseraGestureTargetRetentionTests: XCTestCase {
 
-    // MARK: - Поведение UIKit
+    // MARK: - UIKit behavior
 
-    /// `addTarget(_:action:)` не удерживает таргет: после выхода из пула
-    /// таргет освобождается, хотя распознаватель жив и таргет не снят.
+    /// `addTarget(_:action:)` does not retain the target: after leaving the pool
+    /// the target is released although the recognizer is alive and the target was not removed.
     func testGestureRecognizerDoesNotRetainAddedTarget() {
         let pan = UIPanGestureRecognizer()
         weak var weakTarget: TargetProbe?
@@ -89,11 +89,11 @@ final class TesseraGestureTargetRetentionTests: XCTestCase {
             pan.addTarget(target, action: #selector(TargetProbe.handle(_:)))
         }
 
-        XCTAssertNil(weakTarget, "UIGestureRecognizer не должен удерживать таргет")
+        XCTAssertNil(weakTarget, "UIGestureRecognizer must not retain its target")
         withExtendedLifetime(pan) {}
     }
 
-    /// То же для таргета, переданного в `init(target:action:)`.
+    /// The same for a target passed to `init(target:action:)`.
     func testGestureRecognizerDoesNotRetainInitTarget() {
         var pan: UIPanGestureRecognizer?
         weak var weakTarget: TargetProbe?
@@ -105,11 +105,11 @@ final class TesseraGestureTargetRetentionTests: XCTestCase {
         }
 
         XCTAssertNotNil(pan)
-        XCTAssertNil(weakTarget, "init(target:action:) не должен удерживать таргет")
+        XCTAssertNil(weakTarget, "init(target:action:) must not retain its target")
     }
 
-    /// Встроенный пан `UIScrollView` ведёт себя так же: внешний таргет,
-    /// добавленный аддитивно, не удерживается.
+    /// The built-in `UIScrollView` pan behaves the same way: an external target
+    /// added additively is not retained.
     func testScrollViewPanDoesNotRetainAddedTarget() {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         weak var weakTarget: TargetProbe?
@@ -120,12 +120,12 @@ final class TesseraGestureTargetRetentionTests: XCTestCase {
             scrollView.panGestureRecognizer.addTarget(target, action: #selector(TargetProbe.handle(_:)))
         }
 
-        XCTAssertNil(weakTarget, "Пан UIScrollView не должен удерживать внешний таргет")
+        XCTAssertNil(weakTarget, "The UIScrollView pan must not retain an external target")
         withExtendedLifetime(scrollView) {}
     }
 
-    /// Освобождённый таргет не мешает дальнейшей работе распознавателя:
-    /// снятие таргетов и повторное добавление не падают.
+    /// A released target does not interfere with the recognizer's further operation:
+    /// removing targets and adding them again does not crash.
     func testRecognizerStaysUsableAfterTargetDeallocates() {
         let pan = UIPanGestureRecognizer()
 
@@ -140,11 +140,11 @@ final class TesseraGestureTargetRetentionTests: XCTestCase {
         pan.removeTarget(survivor, action: #selector(TargetProbe.handle(_:)))
     }
 
-    // MARK: - Реальный сценарий E9.1
+    // MARK: - The real scenario
 
-    /// Контроллер, встроивший пейджер Core и подписавшийся таргетом на пан его
-    /// скролл-вью, освобождается: цикла удержания нет, `deinit` достижим
-    /// (и снимает таргет). Проверяется и вне окна, и в окне.
+    /// A controller that embeds the Core pager and subscribes with a target to the pan of its
+    /// scroll view is released: there is no retain cycle, `deinit` is reachable
+    /// (and removes the target). Checked both outside a window and inside one.
     func testHostSubscribedToPagerPanIsDeallocated() throws {
         for inWindow in [false, true] {
             var deinitCalled = false
@@ -170,9 +170,9 @@ final class TesseraGestureTargetRetentionTests: XCTestCase {
                 }
             }
 
-            XCTAssertTrue(attached, "Скролл-вью пейджера должен находиться обходом иерархии (inWindow=\(inWindow))")
-            XCTAssertNil(weakHost, "Хост с таргетом на пане пейджера должен освобождаться (inWindow=\(inWindow))")
-            XCTAssertTrue(deinitCalled, "deinit хоста должен быть достижим (inWindow=\(inWindow))")
+            XCTAssertTrue(attached, "The pager's scroll view must be found by walking the hierarchy (inWindow=\(inWindow))")
+            XCTAssertNil(weakHost, "A host with a target on the pager's pan must be released (inWindow=\(inWindow))")
+            XCTAssertTrue(deinitCalled, "The host's deinit must be reachable (inWindow=\(inWindow))")
         }
     }
 }

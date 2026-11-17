@@ -1,62 +1,62 @@
-// Делегат панорамы.
-// Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная архитектура»
-// (TesseraPanoramaDelegate — didShowSection, didChangeProgress) и §4 «Геометрия и
-// математика ядра» (единый прогресс t, никакого layout в scrollViewDidScroll).
+// The Panorama delegate.
+// Design document: docs/PANORAMA-IOS-DESIGN.md (conceptual architecture:
+// TesseraPanoramaDelegate has didShowSection and didChangeProgress; core geometry
+// and math: a single progress t, no layout in scrollViewDidScroll).
 
 #if canImport(UIKit)
 import UIKit
 
-/// Наблюдатель состояния панорамы.
+/// Observes the state of the panorama.
 ///
-/// Делегат только читает состояние: `contentOffset` пишут исключительно жест
-/// панорамы и программный переход контроллера (docs/PANORAMA-IOS-DESIGN.md §4,
-/// «Правило производительности» и инвариант одного писателя из
-/// docs/CORE-IOS-DESIGN.md §2). Возвращать значения или записывать offset из
-/// колбэков нельзя — это создаёт цикл обратной связи: фон и заголовки уже
-/// анимируются от того же `t`.
+/// The delegate only reads state: `contentOffset` is written exclusively by the panorama's
+/// gesture and the controller's programmatic transition (see the performance rule in
+/// docs/PANORAMA-IOS-DESIGN.md and the single-writer invariant in
+/// docs/CORE-IOS-DESIGN.md). Returning values or writing the offset from
+/// callbacks is not allowed because it creates a feedback loop: the background and headers are already
+/// animated from the same `t`.
 ///
-/// Все методы вызываются на главном потоке. Оба метода — опциональные события:
-/// в расширении ниже есть пустые реализации по умолчанию, поэтому делегат
-/// вправе реализовать только нужные ему события.
+/// All methods are called on the main thread. Both methods are optional events:
+/// the extension below provides empty default implementations, so a delegate
+/// may implement only the events it needs.
 public protocol TesseraPanoramaDelegate: AnyObject {
 
-    /// Панорама показала секцию `index`.
+    /// The panorama showed the section at `index`.
     ///
-    /// Индекс — в порядке чтения: `0` — первая секция для пользователя,
-    /// независимо от LTR/RTL (документ §7, «RTL»). Вызывается по завершении
-    /// перехода (жестом или программно), когда активной стала секция `index`;
-    /// удобен для озвучивания заголовка секции (документ §7, «VoiceOver») и для
-    /// внешней аналитики.
+    /// The index is in reading order: `0` is the first section for the user,
+    /// regardless of LTR/RTL (see the RTL notes in the design document). Called when a transition
+    /// completes (by gesture or programmatically) and the section at `index` becomes active;
+    /// convenient for announcing the section title (see the VoiceOver notes in the design document) and for
+    /// external analytics.
     ///
     /// - Parameters:
-    ///   - panorama: Панорама-источник события.
-    ///   - index: Индекс показанной секции в порядке чтения.
+    ///   - panorama: The panorama that emitted the event.
+    ///   - index: The index of the shown section in reading order.
     func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int)
 
-    /// Непрерывный прогресс прокрутки изменился.
+    /// The continuous scroll progress changed.
     ///
-    /// Значение нормализовано по направлению чтения (документ §7, «RTL»):
-    /// `0` — первая секция, `sectionCount - 1` — последняя. Целая часть —
-    /// индекс секции, дробная — прогресс перехода; шаг секции —
-    /// `itemWidth = screenWidth − peek` (документ §4, «Ширина секции»).
-    /// При оттягивании за край (`bounce`) значение может выходить за пределы
-    /// диапазона — потребитель сам решает, как его ограничить.
+    /// The value is normalized by the reading direction (see the RTL notes in the design document):
+    /// `0` is the first section and `sectionCount - 1` is the last. The integer part is
+    /// the section index and the fractional part is the transition progress; the section step is
+    /// `itemWidth = screenWidth − peek` (see the section width notes in the design document).
+    /// When pulling past an edge (`bounce`) the value may fall outside the
+    /// range; the consumer decides how to clamp it.
     ///
-    /// Метод вызывается из `scrollViewDidScroll`; в этот момент выполняется
-    /// только `frame`/`transform`/`alpha`, layout не запускается
-    /// (документ §4, «Правило производительности»).
+    /// The method is called from `scrollViewDidScroll`; at that point only
+    /// `frame`/`transform`/`alpha` change and no layout is triggered
+    /// (see the performance rule in the design document).
     ///
     /// - Parameters:
-    ///   - panorama: Панорама-источник события.
-    ///   - t: Нормализованный прогресс `t = contentOffset.x / itemWidth`.
+    ///   - panorama: The panorama that emitted the event.
+    ///   - t: The normalized progress `t = contentOffset.x / itemWidth`.
     func panorama(_ panorama: TesseraPanoramaViewController, didChangeProgress t: CGFloat)
 }
 
 public extension TesseraPanoramaDelegate {
-    /// Реализация по умолчанию: показ секции не интересует делегата.
+    /// Default implementation: the delegate is not interested in section changes.
     func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int) {}
 
-    /// Реализация по умолчанию: прогресс не интересует делегата.
+    /// Default implementation: the delegate is not interested in progress.
     func panorama(_ panorama: TesseraPanoramaViewController, didChangeProgress t: CGFloat) {}
 }
 #endif

@@ -1,7 +1,7 @@
 import XCTest
 @testable import TesseraPanorama
 
-/// Санити-тест скелета пакета (E0). Заменяется/дополняется тестами E3.7.
+/// Sanity test for the package skeleton. Complemented by the component tests.
 final class TesseraPanoramaSanityTests: XCTestCase {
     func testModuleSkeletonExists() {
         _ = TesseraPanorama.self

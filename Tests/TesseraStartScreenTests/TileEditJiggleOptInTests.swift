@@ -2,17 +2,17 @@
 //  TileEditJiggleOptInTests.swift
 //  TesseraStartScreenTests
 //
-//  «Желе» режима редактирования — параметр хоста, по умолчанию выключен
-//  (E15.6, D39).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим редактирования»
-//  (п. 1: «желе» выключено по умолчанию, включается
+//  Edit mode jiggle is a host parameter, off by default
+//  (D39).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode"
+//  (jiggle is off by default and enabled by
 //  `TesseraTileEditConfiguration.isJiggleEnabled`), §9 (Reduce Motion
-//  выключает «желе» при любом значении параметра); docs/W10M-STARTSCREEN.md
-//  §5 (в W10M сетка в правке статична).
+//  turns jiggle off for any value of the parameter); docs/W10M-STARTSCREEN.md
+//  §5 (in Windows 10 Mobile the grid is static in edit mode).
 //
-//  Параметр читается при каждой сверке контролов, поэтому его можно менять на
-//  лету: `configuration.didSet` пересобирает контролы и навешивает либо снимает
-//  анимации (B4).
+//  The parameter is read on every reconciliation of the controls, so it can be changed
+//  on the fly: `configuration.didSet` rebuilds the controls and attaches or removes
+//  the animations.
 //
 
 #if canImport(UIKit)
@@ -23,9 +23,9 @@ import XCTest
 
 final class TileEditJiggleOptInTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Считает открепления.
+    /// Counts unpins.
     private final class UnpinRecorder: TesseraTileEditCoordinatorDelegate {
         var unpins: [AnyHashable] = []
 
@@ -56,21 +56,21 @@ final class TileEditJiggleOptInTests: XCTestCase {
         return host
     }
 
-    /// «Желе» на слое контента ячейки.
+    /// Jiggle on the cell content layer.
     private func cellJiggle(_ id: AnyHashable, in host: TesseraTestDragHost) -> CAAnimation? {
         host.host.cell(id)?.contentView.layer.animation(
             forKey: TesseraTileEditCoordinator.jiggleKey
         )
     }
 
-    /// «Желе» на оверлее кнопок.
+    /// Jiggle on the button overlay.
     private func controlJiggle(_ id: AnyHashable, in host: TesseraTestDragHost) -> CAAnimation? {
         host.coordinator.editControls[id]?.layer.animation(
             forKey: TesseraTileEditCoordinator.jiggleKey
         )
     }
 
-    /// Нет ни одного покачивания на видимых ячейках и оверлеях.
+    /// There is no wobble on any visible cell or overlay.
     private func assertNoJiggle(
         in host: TesseraTestDragHost,
         _ message: String,
@@ -78,26 +78,26 @@ final class TileEditJiggleOptInTests: XCTestCase {
         line: UInt = #line
     ) {
         for id in host.gridIDs {
-            XCTAssertNil(cellJiggle(id, in: host), "\(message): ячейка \(id)", file: file, line: line)
-            XCTAssertNil(controlJiggle(id, in: host), "\(message): контрол \(id)", file: file, line: line)
+            XCTAssertNil(cellJiggle(id, in: host), "\(message): cell \(id)", file: file, line: line)
+            XCTAssertNil(controlJiggle(id, in: host), "\(message): control \(id)", file: file, line: line)
             for layer in [host.host.cell(id)?.contentView.layer, host.coordinator.editControls[id]?.layer] {
                 guard let layer else { continue }
                 XCTAssertNil(
                     layer.animation(forKey: "transform.rotation.z"),
-                    "\(message): поворот \(id)", file: file, line: line
+                    "\(message): rotation \(id)", file: file, line: line
                 )
                 XCTAssertTrue(
                     CATransform3DIsIdentity(layer.transform),
-                    "\(message): остаточный transform \(id)", file: file, line: line
+                    "\(message): residual transform \(id)", file: file, line: line
                 )
             }
         }
     }
 
-    // MARK: - Значение по умолчанию
+    // MARK: - Default value
 
-    /// D39: «желе» выключено по умолчанию; прежние значения амплитуды, цикла и
-    /// seed сохранены для хостов, которые его включают.
+    /// D39: jiggle is off by default; the previous amplitude, cycle and
+    /// seed values are kept for hosts that enable it.
     func testJiggleIsOffByDefaultAndKeepsParameters() {
         let configuration = TesseraTileEditConfiguration()
         XCTAssertFalse(configuration.isJiggleEnabled)
@@ -106,10 +106,10 @@ final class TileEditJiggleOptInTests: XCTestCase {
         XCTAssertEqual(configuration.seed, 0xE4_0004_0000_0001)
     }
 
-    // MARK: - Выключено (по умолчанию)
+    // MARK: - Off (default)
 
-    /// После входа в правку у плиток и оверлеев нет анимации; `isJiggling` ложен,
-    /// а дим и кнопки на месте.
+    /// After entering edit mode the tiles and overlays have no animation; `isJiggling` is false,
+    /// while the dim and the buttons are in place.
     func testNoJiggleAfterEnteringEditWhenOffByDefault() {
         let host = makeHost()
         host.coordinator.beginEditing()
@@ -117,13 +117,13 @@ final class TileEditJiggleOptInTests: XCTestCase {
 
         XCTAssertTrue(host.coordinator.isEditing)
         XCTAssertFalse(host.coordinator.isJiggling)
-        XCTAssertEqual(host.coordinator.editControls.count, 3, "Кнопки на месте")
-        assertNoJiggle(in: host, "Вход в edit")
+        XCTAssertEqual(host.coordinator.editControls.count, 3, "Buttons are in place")
+        assertNoJiggle(in: host, "Entering edit")
         host.coordinator.endEditing()
     }
 
-    /// Drag, resize, unpin и создание папки (с переприменением после render, B5)
-    /// не оставляют на слоях никакого покачивания.
+    /// Drag, resize, unpin and folder creation (with reapplication after render)
+    /// leave no wobble on the layers.
     func testNoJiggleAfterDragResizeUnpinAndRenderWhenOff() throws {
         let host = makeHost()
         let recorder = UnpinRecorder()
@@ -131,38 +131,38 @@ final class TileEditJiggleOptInTests: XCTestCase {
         host.coordinator.beginEditing()
         host.spin(0.05)
 
-        // Drag: подъём, отпускание.
+        // Drag: lift, release.
         XCTAssertTrue(host.startDrag("a"))
-        assertNoJiggle(in: host, "Во время drag")
+        assertNoJiggle(in: host, "During drag")
         host.coordinator.finishDrag(commit: true)
         XCTAssertTrue(host.waitUntil { host.coordinator.editControls["a"] != nil })
         host.spin(0.05)
-        assertNoJiggle(in: host, "После drag")
+        assertNoJiggle(in: host, "After drag")
 
         // Resize.
         XCTAssertNotNil(host.coordinator.cycleSize(of: "b"))
         host.host.layout()
         host.spin(0.05)
-        assertNoJiggle(in: host, "После resize")
+        assertNoJiggle(in: host, "After resize")
 
         // Unpin.
         host.coordinator.unpin("c")
         XCTAssertTrue(host.waitUntil { recorder.unpins.count == 1 })
         host.host.layout()
         host.spin(0.05)
-        assertNoJiggle(in: host, "После unpin")
+        assertNoJiggle(in: host, "After unpin")
 
-        // Создание папки: ячейки пересоздаются, сетка переприменяет дим (B5).
+        // Folder creation: cells are recreated, the grid reapplies the dim.
         let folder = try XCTUnwrap(host.coordinator.createFolder(withTile: "a"))
         host.host.layout()
         XCTAssertTrue(host.waitUntil { host.host.cell(folder.id) != nil })
         host.spin(0.05)
-        assertNoJiggle(in: host, "После создания папки")
+        assertNoJiggle(in: host, "After folder creation")
         XCTAssertFalse(host.coordinator.isJiggling)
         host.coordinator.endEditing()
     }
 
-    /// Выход из правки при выключенном «желе»: слои чистые.
+    /// Leaving edit mode with jiggle off: the layers are clean.
     func testNoResidualTransformAfterLeavingEditWhenOff() {
         let host = makeHost()
         host.coordinator.beginEditing()
@@ -171,20 +171,20 @@ final class TileEditJiggleOptInTests: XCTestCase {
         host.spin(0.05)
 
         XCTAssertFalse(host.coordinator.isEditing)
-        assertNoJiggle(in: host, "После выхода")
+        assertNoJiggle(in: host, "After leaving")
     }
 
-    // MARK: - Включено
+    // MARK: - On
 
-    /// Явное включение: анимация на ячейке и на оверлее каждой плитки, как раньше
-    /// (синусоида ±1,2°, цикл около 0,4 с), `isJiggling` истинен.
+    /// Explicit enabling: an animation on the cell and on the overlay of every tile, as before
+    /// (a sine wave of ±1.2°, a cycle of about 0.4 s), `isJiggling` is true.
     func testJiggleInstalledWhenEnabled() throws {
         let host = makeHost(jiggle: true)
         host.coordinator.beginEditing()
 
         XCTAssertTrue(host.waitUntil {
             self.ids.allSatisfy { self.cellJiggle($0, in: host) != nil }
-        }, "Ячейки получили «желе»")
+        }, "The cells got the jiggle")
         XCTAssertTrue(host.coordinator.isJiggling)
         for id in ids {
             let animation = try XCTUnwrap(controlJiggle(id, in: host) as? CAKeyframeAnimation, "\(id)")
@@ -196,8 +196,8 @@ final class TileEditJiggleOptInTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// При включённом параметре выход из правки снимает покачивание и не
-    /// оставляет повёрнутого слоя.
+    /// With the parameter enabled, leaving edit mode removes the wobble and does not
+    /// leave a rotated layer.
     func testNoResidualTransformAfterLeavingEditWhenOn() {
         let host = makeHost(jiggle: true)
         host.coordinator.beginEditing()
@@ -208,13 +208,13 @@ final class TileEditJiggleOptInTests: XCTestCase {
         host.spin(0.05)
 
         XCTAssertFalse(host.coordinator.isEditing)
-        assertNoJiggle(in: host, "После выхода")
+        assertNoJiggle(in: host, "After leaving")
     }
 
     // MARK: - Reduce Motion
 
-    /// Reduce Motion побеждает параметр: «желе» не ставится, `isJiggling` ложен,
-    /// кнопки остаются.
+    /// Reduce Motion overrides the parameter: jiggle is not applied, `isJiggling` is false,
+    /// the buttons remain.
     func testReduceMotionBeatsEnabledParameter() {
         let host = makeHost(jiggle: true, reduceMotion: true)
         host.coordinator.beginEditing()
@@ -222,37 +222,37 @@ final class TileEditJiggleOptInTests: XCTestCase {
 
         XCTAssertFalse(host.coordinator.isJiggling)
         XCTAssertEqual(host.coordinator.editControls.count, 3)
-        assertNoJiggle(in: host, "Reduce Motion при включённом параметре")
+        assertNoJiggle(in: host, "Reduce Motion with the parameter enabled")
         host.coordinator.endEditing()
     }
 
-    // MARK: - Смена параметра на лету
+    // MARK: - Changing the parameter on the fly
 
-    /// Параметр можно менять во время правки: включение навешивает «желе»,
-    /// выключение снимает без остаточного transform.
+    /// The parameter can be changed during edit mode: enabling attaches the jiggle,
+    /// disabling removes it without a residual transform.
     func testTogglingParameterWhileEditingInstallsAndRemovesJiggle() {
         let host = makeHost(jiggle: false)
         host.coordinator.beginEditing()
         host.spin(0.05)
-        assertNoJiggle(in: host, "До включения")
+        assertNoJiggle(in: host, "Before enabling")
 
         var configuration = host.coordinator.configuration
         configuration.isJiggleEnabled = true
         host.coordinator.configuration = configuration
         XCTAssertTrue(host.waitUntil {
             self.ids.allSatisfy { self.cellJiggle($0, in: host) != nil }
-        }, "Включили на лету")
+        }, "Enabled on the fly")
         XCTAssertTrue(host.coordinator.isJiggling)
 
         configuration.isJiggleEnabled = false
         host.coordinator.configuration = configuration
         host.spin(0.05)
         XCTAssertFalse(host.coordinator.isJiggling)
-        assertNoJiggle(in: host, "После выключения на лету")
+        assertNoJiggle(in: host, "After disabling on the fly")
         host.coordinator.endEditing()
     }
 
-    /// Включение параметра на лету при Reduce Motion ничего не навешивает.
+    /// Enabling the parameter on the fly under Reduce Motion attaches nothing.
     func testTogglingParameterOnUnderReduceMotionStaysStatic() {
         let host = makeHost(jiggle: false, reduceMotion: true)
         host.coordinator.beginEditing()
@@ -263,7 +263,7 @@ final class TileEditJiggleOptInTests: XCTestCase {
         host.coordinator.configuration = configuration
         host.spin(0.05)
 
-        assertNoJiggle(in: host, "Параметр включён на лету, Reduce Motion")
+        assertNoJiggle(in: host, "Parameter enabled on the fly, Reduce Motion")
         XCTAssertFalse(host.coordinator.isJiggling)
         host.coordinator.endEditing()
     }

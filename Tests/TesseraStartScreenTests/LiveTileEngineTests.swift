@@ -2,16 +2,16 @@
 //  LiveTileEngineTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты live-движка плиток (задача E4.7).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §4 «Live-плитки (движок)»
-//  (флипы, стахгер пакетами со случайным разбросом, паузы вне экрана/в фоне,
-//  Reduce Motion — флипов нет, показывается статичный фронт) и §9
-//  «Accessibility» (Reduce Motion).
+//  Tests for the live tile engine.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §4 "Live tiles (engine)"
+//  (flips, staggering in batches with random jitter, pauses off screen/in the background,
+//  Reduce Motion: no flips, a static front is shown) and §9
+//  "Accessibility" (Reduce Motion).
 //
-//  Проверяются чистые функции стахгера/батчей с seeded-генератором и поведение
-//  движка при инжектированном провайдере Reduce Motion. Тесты не ждут таймеров
-//  и не поднимают окно: «флипы выключены» проверяется по устоявшейся стороне
-//  плитки после `refresh`, а не по времени.
+//  The tests check the pure stagger/batch functions with a seeded generator and the behavior
+//  of the engine with an injected Reduce Motion provider. They do not wait for timers
+//  and do not bring up a window: "flips disabled" is checked by the settled side of the
+//  tile after `refresh`, not by time.
 //
 
 #if canImport(UIKit)
@@ -22,25 +22,25 @@ import XCTest
 
 final class LiveTileEngineTests: XCTestCase {
 
-    // MARK: - Тестовый провайдер
+    // MARK: - Test provider
 
-    /// Провайдер контента с наблюдаемой подпиской.
+    /// A content provider with an observable subscription.
     private final class TestProvider: TesseraLiveTileContentProvider {
 
         var frontFace = TesseraLiveTileFace(title: "Front")
         var backFaceValue: TesseraLiveTileFace? = TesseraLiveTileFace(
             title: "Back",
-            detail: "3 новых"
+            detail: "3 new"
         )
 
         var backFace: TesseraLiveTileFace? {
             backFaceValue
         }
 
-        /// Сколько раз движок подписался на обновления.
+        /// How many times the engine subscribed to updates.
         private(set) var observationCount = 0
 
-        /// Сколько раз вызывалась отмена подписки.
+        /// How many times the subscription was cancelled.
         private(set) var cancellationCount = 0
 
         func startObservingChanges(_ onChange: @escaping () -> Void) -> (() -> Void)? {
@@ -51,7 +51,7 @@ final class LiveTileEngineTests: XCTestCase {
         }
     }
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makePlanner(
         batchSize: Int = 3,
@@ -67,10 +67,10 @@ final class LiveTileEngineTests: XCTestCase {
         )
     }
 
-    // MARK: - Стахгер и батчи (seeded)
+    // MARK: - Stagger and batches (seeded)
 
-    /// Один seed — один и тот же план: поведение воспроизводимо в тестах и на
-    /// устройстве (§4).
+    /// One seed gives the same plan: the behavior is reproducible in tests and on
+    /// a device (§4).
     func testPlannerIsDeterministicForSameSeed() {
         let first = makePlanner(seed: 42).plan(tileCount: 8)
         let second = makePlanner(seed: 42).plan(tileCount: 8)
@@ -79,8 +79,8 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(first.maximumDelay, second.maximumDelay, accuracy: 1e-9)
     }
 
-    /// Другой seed меняет порядок пакетов (проверка зафиксирована для двух
-    /// известных seed, чтобы тест не зависел от случайности).
+    /// A different seed changes the batch order (the check is pinned for two
+    /// known seeds so that the test does not depend on randomness).
     func testPlannerDifferentSeedsProduceDifferentOrders() {
         let first = makePlanner(seed: 42).plan(tileCount: 8)
         let second = makePlanner(seed: 7).plan(tileCount: 8)
@@ -88,8 +88,8 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertNotEqual(first.entries.map { $0.index }, second.entries.map { $0.index })
     }
 
-    /// Каждая плитка получает ровно один флип за цикл; стахгер меняет только
-    /// моменты старта, а не число флипов (§4).
+    /// Each tile gets exactly one flip per cycle; the stagger changes only
+    /// the start moments, not the number of flips (§4).
     func testPlannerAssignsEveryTileExactlyOnce() {
         let plan = makePlanner(seed: 123).plan(tileCount: 10)
 
@@ -98,8 +98,8 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(Set(plan.entries.map { $0.index }).count, 10)
     }
 
-    /// Пакет `k` стартует через `k × batchStagger`, внутри пакета — случайная
-    /// добавка `0...jitter` (§4).
+    /// Batch `k` starts after `k × batchStagger`, with a random addition
+    /// `0...jitter` inside the batch (§4).
     func testPlannerBatchesAndDelays() {
         let batchSize = 3
         let stagger: TimeInterval = 0.35
@@ -122,7 +122,7 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(plan.maximumDelay, maximum, accuracy: 1e-9)
     }
 
-    /// Без разброса задержка равна только старту пакета.
+    /// Without jitter the delay equals just the batch start.
     func testPlannerWithZeroJitterUsesBatchStaggerOnly() {
         let plan = makePlanner(batchStagger: 0.5, jitter: 0, seed: 5).plan(tileCount: 7)
 
@@ -131,7 +131,7 @@ final class LiveTileEngineTests: XCTestCase {
         }
     }
 
-    /// Пустой и отрицательный вход дают пустой план.
+    /// Empty and negative input give an empty plan.
     func testPlannerHandlesEmptyAndNegativeCounts() {
         let empty = makePlanner().plan(tileCount: 0)
         XCTAssertTrue(empty.entries.isEmpty)
@@ -142,7 +142,7 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(negative.maximumDelay, 0)
     }
 
-    /// Отрицательные параметры зажимаются: `batchSize` — минимум 1, паузы — 0.
+    /// Negative parameters are clamped: `batchSize` is at least 1, pauses are 0.
     func testPlannerClampsNegativeParameters() {
         let planner = makePlanner(batchSize: 0, batchStagger: -1, jitter: -1, seed: 1)
         let plan = planner.plan(tileCount: 5)
@@ -155,8 +155,8 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(plan.maximumDelay, 0, accuracy: 1e-9)
     }
 
-    /// Seedable-генератор: одинаковая последовательность при одном seed,
-    /// значения `0..<upperBound`.
+    /// A seedable generator: the same sequence for the same seed,
+    /// values in `0..<upperBound`.
     func testSeededGeneratorIsDeterministicAndInRange() {
         var first = TesseraSeededGenerator(seed: 7)
         var second = TesseraSeededGenerator(seed: 7)
@@ -171,9 +171,9 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(first.next(upperBound: 1), 0)
     }
 
-    // MARK: - Конфигурация движка
+    // MARK: - Engine configuration
 
-    /// Значения по умолчанию §4: редкий цикл, короткий флип, пакеты по три.
+    /// Default values from §4: a rare cycle, a short flip, batches of three.
     func testConfigurationDefaults() {
         let configuration = TesseraLiveTileEngine.Configuration()
 
@@ -184,11 +184,11 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(configuration.jitter, 0.35)
     }
 
-    // MARK: - Движок и Reduce Motion
+    // MARK: - Engine and Reduce Motion
 
-    /// Движок без окна: регистрация читает стороны и не запускает флип.
+    /// An engine without a window: registration reads the sides and does not start a flip.
     ///
-    /// `flipDuration` применяется к контейнеру при регистрации (§4).
+    /// `flipDuration` is applied to the container on registration (§4).
     func testRegistrationSetsFacesAndFlipDuration() {
         let engine = TesseraLiveTileEngine(
             configuration: TesseraLiveTileEngine.Configuration(flipDuration: 0.9),
@@ -209,13 +209,13 @@ final class LiveTileEngineTests: XCTestCase {
         engine.unregister(view)
         XCTAssertEqual(provider.cancellationCount, 1)
 
-        // Повторная отмена не должна вызывать подписку второй раз.
+        // A repeated cancellation must not call the subscription a second time.
         engine.unregister(view)
         XCTAssertEqual(provider.cancellationCount, 1)
     }
 
-    /// Reduce Motion: флипов нет, показывается статичный фронт. Даже если
-    /// плитка была переведена на бэк, `refresh` возвращает её на фронт (§4, §9).
+    /// Reduce Motion: no flips, a static front is shown. Even if
+    /// the tile was switched to the back, `refresh` returns it to the front (§4, §9).
     func testReduceMotionKeepsStaticFront() {
         let engine = TesseraLiveTileEngine(
             configuration: TesseraLiveTileEngine.Configuration(
@@ -234,7 +234,7 @@ final class LiveTileEngineTests: XCTestCase {
         engine.register(view, provider: provider)
         XCTAssertEqual(view.side, .front)
 
-        // Принудительно показываем бэк — движок обязан вернуть фронт.
+        // Force the back to be shown: the engine must return the front.
         view.show(.back, animated: false)
         XCTAssertEqual(view.side, .back)
 
@@ -250,8 +250,8 @@ final class LiveTileEngineTests: XCTestCase {
         engine.unregister(view)
     }
 
-    /// Пауза по видимости не запускает флип и не ломает регистрацию (§4,
-    /// «Паузы»): повторная регистрация заменяет прежнюю запись.
+    /// A visibility pause does not start a flip and does not break registration (§4,
+    /// "Pauses"): a repeated registration replaces the previous entry.
     func testVisibilityPauseAndReRegistrationAreSafe() {
         let engine = TesseraLiveTileEngine(
             configuration: TesseraLiveTileEngine.Configuration(seed: 2),
@@ -273,8 +273,8 @@ final class LiveTileEngineTests: XCTestCase {
         XCTAssertEqual(second.cancellationCount, 1)
     }
 
-    /// Провайдер без бэка — статичная плитка: запрос бэка игнорируется, движок
-    /// не считает её подходящей для флипа (§4, «опциональный бэк»).
+    /// A provider without a back is a static tile: a back request is ignored, and the engine
+    /// does not consider it suitable for a flip (§4, "optional back").
     func testProviderWithoutBackStaysOnFront() {
         let engine = TesseraLiveTileEngine(
             configuration: TesseraLiveTileEngine.Configuration(),

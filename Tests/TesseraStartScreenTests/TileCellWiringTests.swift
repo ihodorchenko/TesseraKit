@@ -2,20 +2,20 @@
 //  TileCellWiringTests.swift
 //  TesseraStartScreenTests
 //
-//  Живое подключение ячеек и кнопки правки по операциям `TesseraTileStore` по ячейкам
-//  (E14.5, 13.11.2026). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  «Отступления реализации (E14)», п. 53; решения D30–D33 в docs/STATE.md.
+//  Live wiring of cells and the edit button to `TesseraTileStore` cell operations
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md
+//  "Implementation deviations"; decisions D30–D33 in docs/STATE.md.
 //
-//  Проверяется:
-//  - рамки сетки равны сохранённым ячейкам модели (в том числе с дырами);
-//  - открепление оставляет дыру, схлопывается только полностью пустая строка (D31);
-//  - стрелка размера: рост выталкивает вниз, уменьшение оставляет дыру/схлопывает строку;
-//  - ширина сетки сообщается хранилищу и при смене колонок (D32);
-//  - сетка, построенная хостом без таблицы ячеек, подтягивается на входе в правку;
-//  - `onChange` хранилища отдаёт снимок с таблицей ячеек, когда ширина известна;
-//  - публичные `move(toCell:)`/`moveToNewRow`/`createFolder`/`addToFolder` идут по ячейкам.
+//  What is checked:
+//  - grid frames match the model's stored cells (including holes);
+//  - unpinning leaves a hole, and only a fully empty row collapses (D31);
+//  - the size arrow: growing pushes tiles down, shrinking leaves a hole or collapses the row;
+//  - the grid width is reported to the store, including when the columns change (D32);
+//  - a grid built by the host without a cell table catches up on entering edit mode;
+//  - the store's `onChange` delivers a snapshot with a cell table once the width is known;
+//  - the public `move(toCell:)`/`moveToNewRow`/`createFolder`/`addToFolder` work by cells.
 //
-//  Раскладки точные (`TileStoreCellFixture`), 4 колонки; без `sleep`.
+//  Layouts are exact (`TileStoreCellFixture`), 4 columns; no `sleep`.
 //
 
 #if canImport(UIKit)
@@ -26,18 +26,18 @@ import XCTest
 
 final class TileCellWiringTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Делегат, считающий события открепления, размера и перестановки.
+    /// A delegate that counts unpin, resize and move events.
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
-        /// События `didUnpin`.
+        /// `didUnpin` events.
         var unpins: [AnyHashable] = []
 
-        /// События `didResize`.
+        /// `didResize` events.
         var resizes: [(id: AnyHashable, size: TesseraTileSize)] = []
 
-        /// События `didMove(toCell:)`.
+        /// `didMove(toCell:)` events.
         var moves: [(id: AnyHashable, cell: TesseraTileGridPlacement)] = []
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didUnpin tileID: AnyHashable) {
@@ -61,12 +61,12 @@ final class TileCellWiringTests: XCTestCase {
         }
     }
 
-    /// Ячейка в короткой записи.
+    /// A cell in short notation.
     private func at(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
         TesseraTileGridPlacement(row: row, column: column)
     }
 
-    /// Сравнивает рамки с точностью до долей точки.
+    /// Compares frames to within a fraction of a point.
     private func assertFrame(
         _ actual: CGRect?,
         _ expected: CGRect?,
@@ -75,7 +75,7 @@ final class TileCellWiringTests: XCTestCase {
         line: UInt = #line
     ) {
         guard let actual, let expected else {
-            return XCTFail("Нет рамки: \(message)", file: file, line: line)
+            return XCTFail("No frame: \(message)", file: file, line: line)
         }
         XCTAssertEqual(actual.minX, expected.minX, accuracy: 0.5, message, file: file, line: line)
         XCTAssertEqual(actual.minY, expected.minY, accuracy: 0.5, message, file: file, line: line)
@@ -83,7 +83,7 @@ final class TileCellWiringTests: XCTestCase {
         XCTAssertEqual(actual.height, expected.height, accuracy: 0.5, message, file: file, line: line)
     }
 
-    /// Раскладка с дырами: `a (0,0)`, `b (0,2)`, `c (1,3)`, `w` wide `(2,0)`.
+    /// A layout with holes: `a (0,0)`, `b (0,2)`, `c (1,3)`, `w` wide `(2,0)`.
     private func makeHoleyHost() throws -> TesseraTestDragHost {
         try TesseraTestDragHost(
             cells: [
@@ -95,10 +95,10 @@ final class TileCellWiringTests: XCTestCase {
         )
     }
 
-    // MARK: - Живое подключение
+    // MARK: - Live wiring
 
-    /// Сетка из `TesseraTileStore.snapshot(columns:)` показывает плитки ровно на
-    /// сохранённых ячейках модели — с дырами, без обратного заполнения.
+    /// A grid built from `TesseraTileStore.snapshot(columns:)` shows tiles exactly at the
+    /// model's stored cells — with holes, with no back-filling.
     func testGridFramesEqualStoredPlacementsWithHoles() throws {
         let host = try makeHoleyHost()
         let sizes: [String: TesseraTileSize] = ["a": .small, "b": .small, "c": .small, "w": .wide]
@@ -108,15 +108,15 @@ final class TileCellWiringTests: XCTestCase {
             assertFrame(
                 host.host.grid.frame(forItemID: id),
                 host.host.grid.baseFrame(forCell: cell, size: try XCTUnwrap(sizes[key])),
-                "\(key) на ячейке (\(cell.row), \(cell.column))"
+                "\(key) at cell (\(cell.row), \(cell.column))"
             )
         }
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
-        XCTAssertEqual(host.store.placement(of: "b"), at(0, 2), "Дыра (0, 1) не заполнена")
+        XCTAssertEqual(host.store.placement(of: "b"), at(0, 2), "Hole (0, 1) is not filled")
     }
 
-    /// Первый запуск (ячеек в файле ещё нет): штатный путь даёт ту же компактную
-    /// раскладку, что и упаковка по порядку, без дыр.
+    /// First launch (no cells in the file yet): the regular path gives the same compact
+    /// layout as packing in order, with no holes.
     func testFirstLaunchShowsCompactLayoutThroughCells() throws {
         let host = TesseraTestDragHost(
             descriptors: ["a", "b", "c", "d", "e"].map { tesseraTestTile($0, size: .small) }
@@ -134,13 +134,13 @@ final class TileCellWiringTests: XCTestCase {
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
     }
 
-    /// Хост, построивший сетку из `snapshot()` без таблицы ячеек, получает на входе
-    /// в правку те же ячейки, что и в модели (без анимации).
+    /// A host that built the grid from `snapshot()` without a cell table gets, on entering
+    /// edit mode, the same cells as in the model (without animation).
     func testEditingSyncsGridWhenHostOmittedCellTable() throws {
         let host = try makeHoleyHost()
         host.host.grid.reload(snapshot: host.store.snapshot())
         host.host.layout()
-        XCTAssertNil(host.host.grid.snapshot?.placementTable, "Хост показывает упаковку по порядку")
+        XCTAssertNil(host.host.grid.snapshot?.placementTable, "The host shows order packing")
 
         host.coordinator.beginEditing()
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
@@ -148,8 +148,8 @@ final class TileCellWiringTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// `onChange` хранилища отдаёт снимок с таблицей ячеек, когда ширина сетки
-    /// известна (её сообщает координатор); без ширины — прежний снимок.
+    /// The store's `onChange` delivers a snapshot with a cell table once the grid width is
+    /// known (the coordinator reports it); without a width — the previous snapshot.
     func testOnChangeSnapshotCarriesCellTableWhenWidthIsKnown() throws {
         let directory = TesseraTestDirectory()
         let store = try TileStoreCellFixture.makeStore(
@@ -170,16 +170,16 @@ final class TileCellWiringTests: XCTestCase {
         bare.setCatalog([tesseraTestTile("a", size: .small)])
         var bareSnapshot: TesseraTileGridSnapshot?
         bare.onChange = { bareSnapshot = $0 }
-        // Уведомление без операции с `columns`: ширина сетки хранилищу неизвестна.
+        // A notification without an operation carrying `columns`: the grid width is unknown to the store.
         bare.setCatalog([tesseraTestTile("a", size: .small), tesseraTestTile("b", size: .small)])
         XCTAssertNotNil(bareSnapshot)
-        XCTAssertNil(bareSnapshot?.placementTable, "Хост без ширины — прежний снимок")
+        XCTAssertNil(bareSnapshot?.placementTable, "A host without a width — the previous snapshot")
     }
 
-    // MARK: - Открепление
+    // MARK: - Unpin
 
-    /// Открепление оставляет дыру: остальные плитки не двигаются, ячейка ярлыка
-    /// свободна; строка, где остались другие плитки, не схлопывается.
+    /// Unpinning leaves a hole: the other tiles do not move, the tile's cell
+    /// is free; a row where other tiles remain does not collapse.
     func testUnpinLeavesHoleWithoutRepacking() throws {
         let host = try makeHoleyHost()
         let recorder = Recorder()
@@ -193,15 +193,15 @@ final class TileCellWiringTests: XCTestCase {
 
         var expected = before
         expected["a"] = nil
-        XCTAssertEqual(host.store.placements(forColumns: 4), expected, "Только «a» ушла, остальные на местах")
+        XCTAssertEqual(host.store.placements(forColumns: 4), expected, "Only a left; the others stay in place")
         XCTAssertTrue(host.waitUntil { host.gridCells == expected })
-        assertFrame(host.host.grid.frame(forItemID: "b"), bFrame, "Соседи не двигаются")
-        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "Дыра на месте «a»")
+        assertFrame(host.host.grid.frame(forItemID: "b"), bFrame, "Neighbors do not move")
+        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "A hole where a was")
         host.coordinator.endEditing()
     }
 
-    /// Открепление единственной плитки строки схлопывает пустую строку (D31):
-    /// ниже лежащие плитки поднимаются; дыры внутри остальных строк остаются.
+    /// Unpinning the only tile of a row collapses the empty row (D31):
+    /// the tiles below move up; holes inside the other rows remain.
     func testUnpinOfOnlyTileInRowCollapsesEmptyRow() throws {
         let host = try makeHoleyHost()
         let recorder = Recorder()
@@ -212,16 +212,16 @@ final class TileCellWiringTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { recorder.unpins.count == 1 })
 
         XCTAssertEqual(host.store.placement(of: "a"), at(0, 0))
-        XCTAssertEqual(host.store.placement(of: "b"), at(0, 2), "Дыра в строке 0 осталась")
-        // Строка 1 (где была «c») опустела: «w» поднимается на неё.
+        XCTAssertEqual(host.store.placement(of: "b"), at(0, 2), "The hole in row 0 remained")
+        // Row 1 (where c was) became empty: w moves up into it.
         XCTAssertEqual(host.store.placement(of: "w"), at(1, 0))
         XCTAssertTrue(host.waitUntil { host.gridCells == host.store.placements(forColumns: 4) })
         host.coordinator.endEditing()
     }
 
-    /// Ярлык в папке открепляется без fly-out (его нет на сетке): последний ярлык
-    /// переходной папки (D45: папка из одного ярлыка бывает только после
-    /// `createFolder(withTile:)`) убирает папку, её ячейка остаётся дырой.
+    /// A tile in a folder is unpinned without a fly-out (it is not on the grid): the last tile
+    /// of a transitional folder (D45: a one-tile folder exists only after
+    /// `createFolder(withTile:)`) removes the folder, and its cell remains a hole.
     func testUnpinOfSoleFolderTileLeavesHoleWhereFolderWas() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 0, 3), CellFixtureTile("f1", .small, 0, 0)]
@@ -235,15 +235,15 @@ final class TileCellWiringTests: XCTestCase {
         XCTAssertTrue(host.waitUntil { recorder.unpins.count == 1 })
 
         XCTAssertTrue(host.folders.isEmpty)
-        XCTAssertEqual(host.store.placements(forColumns: 4), ["a": at(0, 3)], "Дыра на месте папки, без репака")
+        XCTAssertEqual(host.store.placements(forColumns: 4), ["a": at(0, 3)], "A hole where the folder was, no repack")
         XCTAssertTrue(host.waitUntil { host.gridCells == host.store.placements(forColumns: 4) })
         host.coordinator.endEditing()
     }
 
-    // MARK: - Размер
+    // MARK: - Size
 
-    /// Стрелка размера: рост на месте выталкивает мешающую плитку вниз каскадом
-    /// (D31), якорная ячейка остаётся.
+    /// The size arrow: growing in place pushes a blocking tile down in a cascade
+    /// (D31), and the anchor cell stays.
     func testCycleSizeGrowthPushesNeighborDownAndKeepsAnchor() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -254,23 +254,23 @@ final class TileCellWiringTests: XCTestCase {
         )
         let recorder = Recorder()
         host.coordinator.delegate = recorder
-        // E15.3 (D28): в полном цикле из small следующий — wide; тест про рост до
-        // 2×2 и выталкивание, поэтому набор сужен до small/medium.
+        // In the full cycle (D28) small is followed by wide; this test is about growing to
+        // 2×2 and pushing, so the set is narrowed to small/medium.
         host.coordinator.supportedSizesProvider = { _ in [.small, .medium] }
         host.coordinator.beginEditing()
 
         XCTAssertEqual(host.coordinator.cycleSize(of: "a"), .medium)
         XCTAssertEqual(recorder.resizes.count, 1)
-        XCTAssertEqual(host.store.placement(of: "a"), at(0, 0), "Якорь остался")
-        XCTAssertEqual(host.store.placement(of: "b"), at(2, 1), "«b» вытолкнута под плитку 2×2")
-        XCTAssertEqual(host.store.placement(of: "z"), at(0, 3), "Не затронутая — на месте")
+        XCTAssertEqual(host.store.placement(of: "a"), at(0, 0), "The anchor stayed")
+        XCTAssertEqual(host.store.placement(of: "b"), at(2, 1), "b is pushed below the 2×2 tile")
+        XCTAssertEqual(host.store.placement(of: "z"), at(0, 3), "Untouched — in place")
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
         assertFrame(host.host.grid.frame(forItemID: "a"), host.cellFrame(row: 0, column: 0, size: .medium))
         host.coordinator.endEditing()
     }
 
-    /// Уменьшение плитки оставляет дыру; если строки, которые она покрывала, опустели,
-    /// они схлопываются (D31).
+    /// Shrinking a tile leaves a hole; if the rows it covered became empty,
+    /// they collapse (D31).
     func testCycleSizeShrinkLeavesHoleAndCollapsesEmptyRows() throws {
         let host = try TesseraTestDragHost(
             cells: [
@@ -282,34 +282,34 @@ final class TileCellWiringTests: XCTestCase {
 
         XCTAssertEqual(host.coordinator.cycleSize(of: "big"), .small, "large → small")
         XCTAssertEqual(host.store.placement(of: "big"), at(0, 0))
-        XCTAssertEqual(host.store.placement(of: "x"), at(1, 0), "Пустые строки 1–3 схлопнулись")
+        XCTAssertEqual(host.store.placement(of: "x"), at(1, 0), "The empty rows 1–3 collapsed")
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
         host.coordinator.endEditing()
     }
 
-    // MARK: - Ширина сетки
+    // MARK: - Grid width
 
-    /// Смена числа колонок сообщается хранилищу; при правке сетка пересобирается
-    /// под новую ширину, а файл не перезаписывается (холст прежней ширины, D32).
+    /// A change in the column count is reported to the store; in edit mode the grid is rebuilt
+    /// for the new width, and the file is not rewritten (the canvas keeps the old width, D32).
     func testColumnsChangeReportsWidthToStoreAndRebuildsGridWhileEditing() throws {
         let host = try makeHoleyHost()
         XCTAssertEqual(host.store.canvasColumns, 4)
         host.coordinator.beginEditing()
 
         host.host.grid.columns = 6
-        XCTAssertEqual(host.store.effectiveColumns, 6, "Хранилище узнало новую ширину")
-        XCTAssertEqual(host.store.canvasColumns, 4, "Файл не перезаписан, пока пользователь ничего не правит")
-        XCTAssertEqual(host.host.grid.snapshot?.placementTable?.columns, 6, "Сетка пересобрана под 6 колонок")
+        XCTAssertEqual(host.store.effectiveColumns, 6, "The store learned the new width")
+        XCTAssertEqual(host.store.canvasColumns, 4, "The file is not rewritten while the user edits nothing")
+        XCTAssertEqual(host.host.grid.snapshot?.placementTable?.columns, 6, "The grid is rebuilt for 6 columns")
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 6))
-        XCTAssertEqual(host.gridCells?["b"], at(0, 1), "Проекция D32: порядок чтения без дыр")
+        XCTAssertEqual(host.gridCells?["b"], at(0, 1), "D32 projection: reading order without holes")
 
         host.host.grid.columns = 4
-        XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4), "Возврат к ширине холста возвращает дыры")
+        XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4), "Returning to the canvas width brings the holes back")
         XCTAssertEqual(host.gridCells?["b"], at(0, 2))
         host.coordinator.endEditing()
     }
 
-    /// Смена колонок во время drag отменяет его: база считалась на прежней ширине.
+    /// A change of columns during a drag cancels it: the base was computed at the previous width.
     func testColumnsChangeDuringDragCancelsDrag() throws {
         let host = try makeHoleyHost()
         XCTAssertTrue(host.startDrag("a"))
@@ -318,48 +318,48 @@ final class TileCellWiringTests: XCTestCase {
         host.host.grid.columns = 6
         XCTAssertFalse(host.coordinator.isDragging)
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 6))
-        XCTAssertGreaterThan(host.host.cell("a")?.contentView.alpha ?? 0, 0.9, "Ячейка снова видима")
+        XCTAssertGreaterThan(host.host.cell("a")?.contentView.alpha ?? 0, 0.9, "The cell is visible again")
     }
 
-    // MARK: - Публичные операции координатора
+    // MARK: - Public coordinator operations
 
-    /// Публичные `move(toCell:)` и `moveToNewRow` идут по ячейкам: элемент
-    /// встаёт на ячейку (ограниченную холстом), мешающие выталкиваются вниз;
-    /// новая строка — в конце холста; пустая строка схлопывается; делегат
-    /// получает итоговую ячейку (E14.6: вместо `move(toIndex:)`).
+    /// The public `move(toCell:)` and `moveToNewRow` work by cells: the item
+    /// lands on the cell (clamped to the canvas), blocking tiles are pushed down;
+    /// a new row goes at the end of the canvas; an empty row collapses; the delegate
+    /// receives the resulting cell.
     func testPublicMoveToCellAndNewRowUseCells() throws {
         let host = try makeHoleyHost()
         let recorder = Recorder()
         host.coordinator.delegate = recorder
-        // Порядок чтения: a (0,0), b (0,2), c (1,3), w (2,0).
+        // Reading order: a (0,0), b (0,2), c (1,3), w (2,0).
 
-        XCTAssertTrue(host.coordinator.move("w", toCell: at(0, 2)), "«w» на ячейку «b»")
-        XCTAssertEqual(host.store.placement(of: "w"), at(0, 0), "4×2 ограничена холстом до колонки 0")
+        XCTAssertTrue(host.coordinator.move("w", toCell: at(0, 2)), "w onto b's cell")
+        XCTAssertEqual(host.store.placement(of: "w"), at(0, 0), "4×2 is clamped to the canvas, to column 0")
         XCTAssertEqual(host.storeIDs.first, AnyHashable("w"))
         XCTAssertEqual(recorder.moves.count, 1)
         XCTAssertEqual(recorder.moves.first?.cell, at(0, 0))
 
         XCTAssertTrue(host.coordinator.moveToNewRow("a"))
-        XCTAssertEqual(host.storeIDs.last, AnyHashable("a"), "Новая строка в конце холста")
+        XCTAssertEqual(host.storeIDs.last, AnyHashable("a"), "A new row at the end of the canvas")
         XCTAssertEqual(host.store.placement(of: "a")?.column, 0)
         XCTAssertEqual(recorder.moves.last?.cell, host.store.placement(of: "a"))
-        XCTAssertFalse(host.coordinator.moveToNewRow("a"), "Уже одна в нижней строке")
+        XCTAssertFalse(host.coordinator.moveToNewRow("a"), "Already alone in the bottom row")
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
     }
 
-    /// Публичные `createFolder(withTile:)` и `addToFolder` не теряют дыры: ячейки
-    /// считаются движком, а не упаковкой по порядку.
+    /// The public `createFolder(withTile:)` and `addToFolder` do not lose holes: cells
+    /// are computed by the engine, not by order packing.
     func testPublicFolderOperationsKeepHoles() throws {
         let host = try makeHoleyHost()
 
         let folder = try XCTUnwrap(host.coordinator.createFolder(withTile: "b", title: "G"))
-        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 2), "Папка 2×2 на ячейке ярлыка")
-        XCTAssertEqual(host.store.placement(of: "c"), at(2, 3), "«c» накрыта папкой и вытолкнута вниз")
-        XCTAssertEqual(host.store.placement(of: "a"), at(0, 0), "«a» на месте, дыра (0, 1) осталась")
+        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 2), "A 2×2 folder on the tile's cell")
+        XCTAssertEqual(host.store.placement(of: "c"), at(2, 3), "c is covered by the folder and pushed down")
+        XCTAssertEqual(host.store.placement(of: "a"), at(0, 0), "a is in place, hole (0, 1) remained")
 
         XCTAssertTrue(host.coordinator.addToFolder("a", folderID: folder.id))
-        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "Ячейка «a» — дыра")
-        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 2), "Папка не сдвинулась")
+        XCTAssertFalse(host.store.placements(forColumns: 4).values.contains(at(0, 0)), "a's cell is a hole")
+        XCTAssertEqual(host.store.placement(of: folder.id), at(0, 2), "The folder did not move")
         XCTAssertEqual(host.gridCells, host.store.placements(forColumns: 4))
     }
 }

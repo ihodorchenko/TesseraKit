@@ -2,24 +2,23 @@
 //  TileStoreVisibleOrderTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты видимых и невидимых ключей сетки в `TesseraTileStore` (W2: E10.3a, после
-//  E14.6 — на операциях по ячейкам).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»,
-//  «Отступления реализации» п. 4–5 и (E14) п. 52–54; план — docs/PLAN.md,
-//  разделы «E9–E10» и «E14».
+//  Tests for visible and invisible grid keys in `TesseraTileStore`, on
+//  cell-based operations.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid",
+//  "Implementation deviations".
 //
-//  Проверяются:
-//  - ярлыки вне каталога (невидимые ключи) сохраняют свои ячейки и места в
-//    файле при переносе, закреплении и откреплении видимых элементов, а
-//    невидимый ключ нельзя переставить (его нет в снимке);
-//  - порядок снимка после операций — порядок чтения ячеек видимых элементов.
+//  Checked:
+//  - tiles outside the catalog (invisible keys) keep their cells and places in the
+//    file when visible items are moved, pinned and unpinned, and an
+//    invisible key cannot be reordered (it is not in the snapshot);
+//  - the snapshot order after operations is the reading order of the visible items' cells.
 //
-//  Индексного API (`move(toIndex:)`, `pin(at:)`) больше нет (E14.6, D33):
-//  прежние тесты этого файла на нём заменены. Покрытие
-//  прежних сценариев: `TileStoreCellOperationsTests` (перенос, зажим, no-op),
-//  `TileStoreCellPropertyTests` (порядок снимка = порядок чтения после любой
-//  последовательности операций) и `TileStoreCellPersistenceTests` (невидимые
-//  ключи, холст, круг записи).
+//  The index-based API (`move(toIndex:)`, `pin(at:)`) no longer exists (D33):
+//  the former tests of this file that relied on it were replaced. Coverage of
+//  the former scenarios: `TileStoreCellOperationsTests` (move, clamping, no-op),
+//  `TileStoreCellPropertyTests` (snapshot order = reading order after any
+//  sequence of operations) and `TileStoreCellPersistenceTests` (invisible
+//  keys, canvas, write round trip).
 //
 
 #if canImport(UIKit)
@@ -29,7 +28,7 @@ import XCTest
 
 final class TileStoreVisibleOrderTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private let columns = 6
 
@@ -37,9 +36,9 @@ final class TileStoreVisibleOrderTests: XCTestCase {
         store.snapshot().items.map { $0.id }
     }
 
-    /// Каталог [a, b, c, d] — все small в строке 0 (колонки 0…3); раскладка
-    /// записана файлом версии 2. Каталог хранилища урезан до `visible`, так что
-    /// остальные ключи — невидимые (E10.3a).
+    /// The catalog [a, b, c, d]: all small in row 0 (columns 0…3); the layout
+    /// is written as a version 2 file. The store's catalog is trimmed to `visible`, so the
+    /// remaining keys are invisible.
     private func makeStoreHiding(
         _ hidden: Set<String>,
         in directory: TesseraTestDirectory
@@ -59,7 +58,7 @@ final class TileStoreVisibleOrderTests: XCTestCase {
         )
     }
 
-    /// Поднимает хранилище с полным каталогом поверх файла, записанного `store`.
+    /// Brings up a store with the full catalog on top of the file written by `store`.
     private func reloadWithFullCatalog(
         savedBy store: TesseraTileStore,
         in directory: TesseraTestDirectory
@@ -72,32 +71,32 @@ final class TileStoreVisibleOrderTests: XCTestCase {
         return reloaded
     }
 
-    // MARK: - Невидимые ключи при переносе
+    // MARK: - Invisible keys on move
 
-    /// Каталог [a, b, c, d], b убран из каталога: перенос `a` на ячейку `c`
-    /// выталкивает `c` вниз, порядок снимка — порядок чтения ячеек, а
-    /// невидимый `b` сохраняет свою ячейку и после возврата в каталог остаётся
-    /// на ней.
+    /// The catalog [a, b, c, d] with b removed from the catalog: moving `a` onto the cell of `c`
+    /// pushes `c` down, the snapshot order is the cell reading order, and
+    /// the invisible `b` keeps its cell and, after returning to the catalog, stays
+    /// on it.
     func testMoveItemToCellKeepsHiddenKeyCell() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStoreHiding(["b"], in: directory)
         XCTAssertEqual(ids(store), ["a", "c", "d"])
 
         XCTAssertTrue(store.moveItem("a", toCell: tesseraCell(0, 2), columns: columns))
-        // a на (0,2); c выталкивается на (1,2); d на (0,3): порядок чтения a, d, c.
+        // a goes to (0,2); c is pushed to (1,2); d to (0,3): reading order a, d, c.
         XCTAssertEqual(ids(store), ["a", "d", "c"])
         XCTAssertEqual(store.placement(of: "a"), tesseraCell(0, 2))
         XCTAssertEqual(store.placement(of: "c"), tesseraCell(1, 2))
 
         let reloaded = try reloadWithFullCatalog(savedBy: store, in: directory)
-        XCTAssertEqual(reloaded.placement(of: "b"), tesseraCell(0, 1), "невидимый b остался на своей ячейке")
+        XCTAssertEqual(reloaded.placement(of: "b"), tesseraCell(0, 1), "the invisible b stayed on its cell")
         XCTAssertEqual(reloaded.placement(of: "a"), tesseraCell(0, 2))
         XCTAssertEqual(reloaded.placement(of: "c"), tesseraCell(1, 2))
     }
 
-    /// Ячейка невидимого ключа не участвует в коллизиях: перенос видимого
-    /// элемента на неё не выталкивает невидимый ключ, и вернувшийся в каталог
-    /// ключ уходит в новую строку (его ячейку заняли).
+    /// The cell of an invisible key does not take part in collisions: moving a visible
+    /// item onto it does not push the invisible key out, and a key that returns to the catalog
+    /// goes into a new row (its cell was taken).
     func testMoveOntoHiddenKeyCellDoesNotPushHiddenKey() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStoreHiding(["b"], in: directory)
@@ -106,15 +105,15 @@ final class TileStoreVisibleOrderTests: XCTestCase {
         XCTAssertEqual(store.placement(of: "d"), tesseraCell(0, 1))
         XCTAssertEqual(ids(store), ["a", "d", "c"])
 
-        // «b» возвращается в каталог: его ячейку заняли, поэтому он идёт в новую
-        // строку в конце холста, а видимые элементы не двигаются.
+        // "b" returns to the catalog: its cell was taken, so it goes into a new
+        // row at the end of the canvas, and visible items do not move.
         store.setCatalog(["a", "b", "c", "d"].map { tesseraTestTile($0, size: .small) })
         XCTAssertEqual(store.placement(of: "d"), tesseraCell(0, 1))
         XCTAssertEqual(store.placement(of: "b"), tesseraCell(1, 0))
     }
 
-    /// Невидимый ключ переставить, изменить и открепить нельзя: его нет в
-    /// снимке, операции возвращают `false` и ничего не пишут.
+    /// An invisible key cannot be reordered, changed or unpinned: it is not in the
+    /// snapshot, so operations return `false` and write nothing.
     func testHiddenKeyCannotBeMovedResizedOrUnpinned() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStoreHiding(["a", "d"], in: directory)
@@ -131,11 +130,11 @@ final class TileStoreVisibleOrderTests: XCTestCase {
         XCTAssertNil(store.placement(of: "a"))
     }
 
-    // MARK: - Невидимые ключи при закреплении
+    // MARK: - Invisible keys on pinning
 
-    /// Закрепление идёт в новую строку и не трогает ячейки невидимых ключей;
-    /// открепление оставляет дыру, а возврат в тот же ряд через новую строку
-    /// порядок чтения не нарушает.
+    /// Pinning goes into a new row and does not touch the cells of invisible keys;
+    /// unpinning leaves a hole, and returning to the same row through a new row
+    /// does not break the reading order.
     func testPinAndUnpinKeepHiddenKeyCell() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStoreHiding(["b"], in: directory)
@@ -146,18 +145,18 @@ final class TileStoreVisibleOrderTests: XCTestCase {
 
         XCTAssertTrue(store.pinTile("d", columns: columns))
         XCTAssertEqual(ids(store), ["a", "c", "d"])
-        XCTAssertEqual(store.placement(of: "d"), tesseraCell(1, 0), "закрепление — новая строка в конце холста")
+        XCTAssertEqual(store.placement(of: "d"), tesseraCell(1, 0), "pinning is a new row at the end of the canvas")
 
         let reloaded = try reloadWithFullCatalog(savedBy: store, in: directory)
         XCTAssertEqual(reloaded.placement(of: "b"), tesseraCell(0, 1))
         XCTAssertEqual(reloaded.placement(of: "d"), tesseraCell(1, 0))
     }
 
-    // MARK: - Порядок снимка = порядок чтения ячеек
+    // MARK: - Snapshot order = cell reading order
 
-    /// После переноса, роста и открепления порядок `snapshot().items` и
-    /// `placementReadingOrder` совпадают (хранилище не канонизирует порядок:
-    /// он производный от ячеек).
+    /// After a move, growth and unpinning, the order of `snapshot().items` and
+    /// `placementReadingOrder` match (the store does not canonicalize the order:
+    /// it is derived from cells).
     func testSnapshotOrderFollowsCellsAfterOperations() throws {
         let directory = TesseraTestDirectory()
         let store = try TileStoreCellFixture.makeStore(
@@ -170,7 +169,7 @@ final class TileStoreVisibleOrderTests: XCTestCase {
             in: directory,
             autosaves: false
         )
-        // Порядок чтения: a(0,0), s(0,2), w(2,0).
+        // Reading order: a(0,0), s(0,2), w(2,0).
         XCTAssertEqual(ids(store), ["a", "s", "w"])
 
         XCTAssertTrue(store.moveItem("s", toCell: tesseraCell(3, 4), columns: columns))

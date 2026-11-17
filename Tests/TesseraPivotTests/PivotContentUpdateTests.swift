@@ -2,17 +2,17 @@
 //  PivotContentUpdateTests.swift
 //  TesseraPivotTests
 //
-//  Контрактные тесты обновления контента секций (задача E10.12а).
-//  Проектный документ: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (SwiftUI-фасад
-//  `TesseraPivotView`), §5 «Синхронизация» (один писатель `contentOffset`),
-//  docs/CORE-IOS-DESIGN.md «Отступления реализации» п. 7 (W1: `reload` пейджера
-//  сохраняет страницу и контроллеры по `id`, SwiftUI-контент обновляется через
+//  Contract tests for section content updates.
+//  Design document: docs/PIVOT-IOS-DESIGN.md §3 (architecture: the SwiftUI facade
+//  `TesseraPivotView`), §5 (synchronization: a single writer of `contentOffset`),
+//  docs/CORE-IOS-DESIGN.md, implementation deviations (the pager's `reload`
+//  keeps the page and controllers by `id`, SwiftUI content is updated through
 //  `TesseraContentHosting`).
 //
-//  Проверяются: новый контент при тех же `id`/заголовках доходит до страниц
-//  (и через `TesseraPivotView`, и через контроллер); страница, контроллеры, скролл и
-//  `@StateObject` контента сохраняются; во время перехода обновление
-//  откладывается; колбэк прогресса не вызывается синхронно внутри `reload`.
+//  Checked: new content with the same `id`s/titles reaches the pages
+//  (both via `TesseraPivotView` and via the controller); the page, controllers, scroll view, and
+//  the content's `@StateObject` are preserved; during a transition the update
+//  is deferred; the progress callback is not called synchronously inside `reload`.
 //
 
 #if canImport(UIKit) && canImport(SwiftUI)
@@ -23,8 +23,8 @@ import SwiftUI
 import TesseraCore
 @testable import TesseraPivot
 
-/// Счётчик созданий состояния SwiftUI-страницы: пересоздание `@StateObject`
-/// означает потерю `@State` контента.
+/// A creation counter for SwiftUI page state: recreating a `@StateObject`
+/// means losing the content's `@State`.
 final class PivotProbeToken: ObservableObject {
     static var createdCount = 0
 
@@ -33,7 +33,7 @@ final class PivotProbeToken: ObservableObject {
     }
 }
 
-/// SwiftUI-контент страницы с наблюдаемым значением и собственным состоянием.
+/// SwiftUI page content with an observable value and its own state.
 struct PivotProbeContent: View {
     let value: String
     @StateObject private var token = PivotProbeToken()
@@ -45,13 +45,13 @@ struct PivotProbeContent: View {
     }
 }
 
-/// Хранилище SwiftUI-харнесса: смена значения перерисовывает `TesseraPivotView`.
+/// The SwiftUI harness store: changing the value redraws `TesseraPivotView`.
 final class PivotProbeStore: ObservableObject {
     @Published var value = "A"
 }
 
-/// Харнесс фасада: секции с теми же `id`/заголовками, контент зависит от
-/// состояния хранилища.
+/// The facade harness: sections with the same `id`s/titles, with content depending on
+/// the store's state.
 struct PivotProbeHarness: View {
     @ObservedObject var store: PivotProbeStore
     let delegate: TesseraPivotDelegate?
@@ -84,7 +84,7 @@ final class PivotContentUpdateTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func spinRunLoop(_ seconds: TimeInterval = 0.1) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
@@ -111,7 +111,7 @@ final class PivotContentUpdateTests: XCTestCase {
         spinRunLoop()
     }
 
-    /// SwiftUI-страницы пейджера по значению их контента.
+    /// The pager's SwiftUI pages by their content value.
     private func pageHosts(
         of pivot: TesseraPivotViewController
     ) -> [UIHostingController<PivotProbeContent>] {
@@ -127,10 +127,10 @@ final class PivotContentUpdateTests: XCTestCase {
         pageHosts(of: pivot).first { $0.rootView.value.hasSuffix("-\(index)") }
     }
 
-    // MARK: - Контроллер: обновление контента без потери состояния
+    // MARK: - Controller: content update without losing state
 
-    /// Тот же набор `id`/заголовков с новым контентом: страница остаётся
-    /// прежней, контроллеры переиспользуются, `rootView` обновлён.
+    /// The same set of `id`s/titles with new content: the page stays
+    /// the same, controllers are reused, and `rootView` is updated.
     func testRefreshSectionContentUpdatesExistingPagesInPlace() throws {
         let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
@@ -142,17 +142,17 @@ final class PivotContentUpdateTests: XCTestCase {
         pivot.refreshSectionContent(makeSections(value: "B"))
 
         let hostAfter = try XCTUnwrap(pageHost(2, of: pivot))
-        XCTAssertTrue(hostAfter === hostBefore, "Контроллер страницы переиспользуется")
+        XCTAssertTrue(hostAfter === hostBefore, "The page controller is reused")
         XCTAssertEqual(hostAfter.rootView.value, "B-2")
         XCTAssertEqual(pageHost(1, of: pivot)?.rootView.value, "B-1")
         XCTAssertEqual(pivot.currentSectionIndex, 2)
         XCTAssertEqual(scrollView.contentOffset, offsetBefore)
     }
 
-    /// Обновление во время анимированного перехода откладывается (reload
-    /// пейджера оборвал бы анимацию) и применяется по его завершении.
+    /// An update during an animated transition is deferred (the pager's reload
+    /// would cut the animation short) and applied when it completes.
     func testRefreshSectionContentIsDeferredDuringAnimatedTransition() throws {
-        try XCTSkipIf(TesseraAccessibility.isReduceMotionEnabled, "Нужен анимированный переход")
+        try XCTSkipIf(TesseraAccessibility.isReduceMotionEnabled, "An animated transition is required")
         let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
 
@@ -160,19 +160,19 @@ final class PivotContentUpdateTests: XCTestCase {
         XCTAssertTrue(pivot.isTransitionInFlight)
 
         pivot.refreshSectionContent(makeSections(value: "B"))
-        XCTAssertEqual(pageHost(0, of: pivot)?.rootView.value, "A-0", "Во время перехода контент не трогаем")
+        XCTAssertEqual(pageHost(0, of: pivot)?.rootView.value, "A-0", "The content is not touched during the transition")
 
         pivot.pager(pivot.pagerViewController, didShowPageAt: 1)
 
         XCTAssertFalse(pivot.isTransitionInFlight)
-        XCTAssertEqual(pageHost(1, of: pivot)?.rootView.value, "B-1", "Отложенный контент применён")
+        XCTAssertEqual(pageHost(1, of: pivot)?.rootView.value, "B-1", "The deferred content is applied")
     }
 
-    // MARK: - Прогресс не вызывается синхронно внутри reload
+    // MARK: - Progress is not called synchronously inside reload
 
-    /// `reload`, меняющий положение текущей секции, не зовёт
-    /// `didChangeProgress` синхронно; итоговое значение приходит следующим
-    /// проходом главной очереди.
+    /// A `reload` that changes the current section's position does not call
+    /// `didChangeProgress` synchronously; the final value arrives on the next
+    /// pass of the main queue.
     func testReloadDefersProgressCallback() throws {
         let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
@@ -180,19 +180,19 @@ final class PivotContentUpdateTests: XCTestCase {
         let spy = PivotTransitionSpy()
         pivot.delegate = spy
 
-        // Секция 2 переезжает в начало: прогресс меняется 2 → 0.
+        // Section 2 moves to the start: the progress changes 2 → 0.
         let reordered = makeSections(value: "A")
         pivot.reload(sections: [reordered[2], reordered[0], reordered[1], reordered[3]])
 
-        XCTAssertEqual(spy.progressValues, [], "Колбэк прогресса не должен вызываться внутри reload")
+        XCTAssertEqual(spy.progressValues, [], "The progress callback must not be called inside reload")
         XCTAssertEqual(pivot.currentSectionIndex, 0)
 
         spinRunLoop(0.05)
         XCTAssertEqual(spy.progressValues, [0])
     }
 
-    /// `reload` с тем же положением не порождает колбэков прогресса вовсе —
-    /// нет цикла «колбэк → состояние SwiftUI → обновление → reload».
+    /// A `reload` with the same position produces no progress callbacks at all:
+    /// there is no "callback → SwiftUI state → update → reload" cycle.
     func testReloadWithUnchangedProgressDoesNotNotifyDelegate() throws {
         let pivot = TesseraPivotViewController(sections: makeSections(value: "A"))
         host(pivot)
@@ -206,11 +206,11 @@ final class PivotContentUpdateTests: XCTestCase {
         XCTAssertEqual(spy.progressValues, [])
     }
 
-    // MARK: - SwiftUI-фасад
+    // MARK: - SwiftUI facade
 
-    /// `TesseraPivotView` доносит новый контент секций с теми же `id`/заголовками
-    /// (до E10.12а `sectionsDiffer` сравнивал только `id`+`title` и reload не
-    /// вызывался): страница, хостинг-контроллер и `@StateObject` сохраняются.
+    /// `TesseraPivotView` delivers new section content with the same `id`s/titles
+    /// (previously `sectionsDiffer` compared only `id`+`title` and reload was not
+    /// called): the page, hosting controller, and `@StateObject` are preserved.
     func testPivotViewPropagatesContentForSameIdentifiers() throws {
         let store = PivotProbeStore()
         let spy = PivotTransitionSpy()
@@ -219,7 +219,7 @@ final class PivotContentUpdateTests: XCTestCase {
 
         let pivot = try XCTUnwrap(
             hosting.children.compactMap { $0 as? TesseraPivotViewController }.first,
-            "TesseraPivotView должен встроить TesseraPivotViewController"
+            "TesseraPivotView must embed TesseraPivotViewController"
         )
         pivot.selectSection(at: 1, animated: false)
         spinRunLoop()
@@ -227,7 +227,7 @@ final class PivotContentUpdateTests: XCTestCase {
         let hostBefore = try XCTUnwrap(pageHost(1, of: pivot))
         XCTAssertEqual(hostBefore.rootView.value, "A-1")
         let tokensBefore = PivotProbeToken.createdCount
-        XCTAssertGreaterThan(tokensBefore, 0, "Предусловие: SwiftUI-страница отрисована и создала @StateObject")
+        XCTAssertGreaterThan(tokensBefore, 0, "Precondition: the SwiftUI page is rendered and created a @StateObject")
         let progressCountBefore = spy.progressValues.count
 
         store.value = "B"
@@ -235,11 +235,11 @@ final class PivotContentUpdateTests: XCTestCase {
         hosting.view.layoutIfNeeded()
 
         let hostAfter = try XCTUnwrap(pageHost(1, of: pivot))
-        XCTAssertTrue(hostAfter === hostBefore, "Хостинг страницы переиспользуется")
-        XCTAssertEqual(hostAfter.rootView.value, "B-1", "Новый контент дошёл до страницы")
-        XCTAssertEqual(pivot.currentSectionIndex, 1, "Текущая секция сохранена")
-        XCTAssertEqual(PivotProbeToken.createdCount, tokensBefore, "@StateObject контента не пересоздан")
-        XCTAssertEqual(spy.progressValues.count, progressCountBefore, "Обновление контента не шлёт прогресс")
+        XCTAssertTrue(hostAfter === hostBefore, "The page hosting is reused")
+        XCTAssertEqual(hostAfter.rootView.value, "B-1", "The new content reached the page")
+        XCTAssertEqual(pivot.currentSectionIndex, 1, "The current section is preserved")
+        XCTAssertEqual(PivotProbeToken.createdCount, tokensBefore, "The content's @StateObject was not recreated")
+        XCTAssertEqual(spy.progressValues.count, progressCountBefore, "A content update does not send progress")
     }
 }
 

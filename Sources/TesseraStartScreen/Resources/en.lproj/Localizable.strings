@@ -1,94 +1,94 @@
 /*
-  Localizable.strings (English) — TesseraStartScreen default user-facing strings.
+  Localizable.strings (English) — default user-facing strings of TesseraStartScreen.
 
-  E9.8г: строки по умолчанию вынесены из Swift-литералов в ресурсы SPM.
-  Ключи — стабильные идентификаторы в таблицах en/ru; переводятся только
-  значения. Ключ не переименовывать без правки TesseraStartScreenStrings.Key
-  и тестов паритета (Tests/TesseraStartScreenTests/LocalizationTests.swift).
+  The default strings live in SPM resources rather than in Swift literals.
+  Keys are stable identifiers shared by the en and ru tables; only the values
+  are translated. Do not rename a key without updating TesseraStartScreenStrings.Key
+  and the parity tests (Tests/TesseraStartScreenTests/LocalizationTests.swift).
 
-  Плейсхолдеры: %1$@ — строка, %1$ld — целое число.
+  Placeholders: %1$@ is a string, %1$ld is an integer.
 */
 
-/* MARK: - Режим редактирования (VoiceOver) */
+/* MARK: - Editing mode (VoiceOver) */
 
-/* Вход в режим редактирования. */
+/* Entering editing mode. */
 "a11y.editing.entered" = "Editing mode.";
 
-/* Выход из режима редактирования. */
+/* Leaving editing mode. */
 "a11y.editing.exited" = "Editing mode finished.";
 
-/* Ярлык откреплён с рабочего стола. */
+/* A shortcut was unpinned from the Start screen. */
 "a11y.tile.unpinned" = "Shortcut unpinned.";
 
-/* Новый размер плитки: %1$@ — название размера. */
+/* New tile size: %1$@ is the size name. */
 "a11y.resize.format" = "Size: %1$@.";
 
-/* Названия размеров для озвучивания. */
+/* Size names for VoiceOver announcements. */
 "a11y.size.small" = "small";
 "a11y.size.medium" = "medium";
 "a11y.size.wide" = "wide";
 "a11y.size.large" = "large";
 
-/* MARK: - Папки (VoiceOver) */
+/* MARK: - Folders (VoiceOver) */
 
-/* Папка создана. */
+/* A folder was created. */
 "a11y.folder.created" = "Folder created.";
 
-/* Ярлык добавлен в папку. */
+/* A shortcut was added to a folder. */
 "a11y.folder.tileAdded" = "Shortcut added to the folder.";
 
-/* Ярлык перемещён в другую папку. */
+/* A shortcut was moved to another folder. */
 "a11y.folder.tileMoved" = "Shortcut moved to the folder.";
 
-/* Ярлык перемещён из папки на рабочий стол. */
+/* A shortcut was moved out of a folder onto the Start screen. */
 "a11y.folder.tileOnStart" = "Shortcut on the Start screen.";
 
-/* Функция одобрения хоста запретила операцию с папкой. */
+/* The host's approval function denied a folder operation. */
 "a11y.folder.unavailable" = "Folder operation unavailable.";
 
-/* Папка создана перетаскиванием одного ярлыка на другой. */
+/* A folder was created by dragging one shortcut onto another. */
 "a11y.folder.createdFromTwoTiles" = "Folder created from two shortcuts.";
 
-/* MARK: - Перетаскивание (VoiceOver) */
+/* MARK: - Dragging (VoiceOver) */
 
-/* Внешнее изменение модели отменило перетаскивание. */
+/* An external model change cancelled the drag. */
 "a11y.drag.cancelled" = "Drag cancelled: the state has changed.";
 
-/* Удержание над папкой: отпускание добавит ярлык в папку. */
+/* Hovering over a folder: releasing adds the shortcut to the folder. */
 "a11y.drag.holdToAddToFolder" = "Release to add the shortcut to the folder.";
 
-/* Удержание над центром ярлыка: отпускание создаст папку. */
+/* Hovering over the center of a shortcut: releasing creates a folder. */
 "a11y.drag.holdToCreateFolder" = "Release to create a folder.";
 
-/* MARK: - Отказ функции одобрения (D14) */
+/* MARK: - Approval function denial (D14) */
 
-/* Шаблон сообщения об отказе: %1$@ — причина (см. a11y.grouping.reason.*). */
+/* Template for the denial message: %1$@ is the reason (see a11y.grouping.reason.*). */
 "a11y.grouping.failedFormat" = "Failed: %1$@.";
 
-/* Причины отказа функции одобрения. */
+/* Reasons the approval function can deny an operation. */
 "a11y.grouping.reason.addDenied" = "adding to a folder is denied";
 "a11y.grouping.reason.createDenied" = "creating a folder is denied";
 "a11y.grouping.reason.tileAddDenied" = "adding the shortcut to the new folder is denied";
 "a11y.grouping.reason.moveDenied" = "moving the shortcut is denied";
 
-/* MARK: - Custom actions режима редактирования (§9) */
+/* MARK: - Editing mode custom actions */
 
-/* Действие «открепить ярлык». */
+/* Action: unpin a shortcut. */
 "a11y.action.unpin" = "Unpin";
 
-/* Change tile size. */
+/* Action: change the tile size. */
 "a11y.action.resize" = "Change size";
 
-/* Rename a folder (folder tile and open panel header; E15.5, D35). */
+/* Action: rename a folder (folder tile and open panel header; D35). */
 "a11y.action.renameFolder" = "Rename";
 
-/* Add to a folder (%@ — folder title). */
+/* Action: add a shortcut to a folder (%@ is the folder title). */
 "a11y.action.addToFolderFormat" = "Add to folder %@";
 
-/* Move a shortcut out of its folder onto the start screen. */
+/* Action: move a shortcut out of its folder onto the Start screen. */
 "a11y.action.removeFromFolder" = "Remove from folder";
 
-/* Move a shortcut to another folder (%@ — folder title). */
+/* Action: move a shortcut to another folder (%@ is the folder title). */
 "a11y.action.moveToFolderFormat" = "Move to folder %@";
 
 /* Move a shortcut one position earlier inside the open folder panel. */
@@ -97,69 +97,69 @@
 /* Move a shortcut one position later inside the open folder panel. */
 "a11y.action.moveLater" = "Move later";
 
-/* Spoken position of a shortcut after reordering inside a folder (%1$d — position, %2$d — count). */
+/* Announced position of a shortcut after reordering inside a folder (%1$d is the position, %2$d is the shortcut count). */
 "a11y.folder.tilePositionFormat" = "Position %1$d of %2$d.";
 
-/* MARK: - Экран папки (TesseraFolderViewController) */
+/* MARK: - Folder screen (TesseraFolderViewController) */
 
-/* Кнопка закрытия экрана папки. */
+/* Button that closes the folder screen. */
 "folderScreen.done" = "Done";
 
-/* Accessibility label кнопки закрытия: что именно закрывается. */
+/* Accessibility label of the close button: says what is being closed. */
 "folderScreen.close" = "Close folder";
 
-/* Подпись папки без названия. */
+/* Title of a folder without a name. */
 "folderScreen.defaultTitle" = "Folder";
 
-/* Accessibility label of the folder rename text field (E15.5, D35). */
+/* Accessibility label of the folder rename text field (D35). */
 "folderName.fieldLabel" = "Folder name";
 
-/* VoiceOver-действие «переместить ярлык». */
+/* VoiceOver action: move a shortcut. */
 "folderScreen.moveAction" = "Move";
 
-/* Заголовок меню перемещения: %1$@ — подпись ярлыка. */
+/* Title of the move menu: %1$@ is the shortcut caption. */
 "folderScreen.moveMenu.titleFormat" = "Move “%1$@”";
 
-/* Пункт меню перемещения в папку: %1$@ — название папки. */
+/* Move menu item for moving into a folder: %1$@ is the folder title. */
 "folderScreen.moveMenu.intoFormat" = "Into “%1$@”";
 
-/* Пункт меню «переместить на рабочий стол». */
+/* Move menu item: move to the Start screen. */
 "folderScreen.moveMenu.toStart" = "To the Start screen";
 
-/* Подзаголовок экрана папки: %1$ld — число ярлыков, %2$@ — слово. */
+/* Subtitle of the folder screen: %1$ld is the shortcut count, %2$@ is the noun. */
 "folderScreen.tiles.countFormat" = "%1$ld %2$@";
 
-/* Слово «ярлык» в нужной числовой форме (en: одна/множественная). */
+/* The word "shortcut" in the right plural form (en: singular/plural). */
 "folderScreen.tiles.word.one" = "shortcut";
 "folderScreen.tiles.word.few" = "shortcuts";
 "folderScreen.tiles.word.many" = "shortcuts";
 
-/* MARK: - Список приложений (TesseraAppsListTexts) */
+/* MARK: - Apps list (TesseraAppsListTexts) */
 
-/* Заголовок секции настроек. */
+/* Title of the settings section. */
 "appsList.settingsSectionTitle" = "Settings";
 
-/* Пустое состояние: в каталоге нет ни ярлыков, ни настроек. */
+/* Empty state: the catalog has neither shortcuts nor settings. */
 "appsList.emptyTitle" = "No apps";
 
-/* Действие «закрепить ярлык на рабочем столе». */
+/* Action: pin a shortcut to the Start screen. */
 "appsList.pinActionTitle" = "Pin to Start";
 
-/* Действие «открепить ярлык с рабочего стола». */
+/* Action: unpin a shortcut from the Start screen. */
 "appsList.unpinActionTitle" = "Unpin";
 
-/* Значение строки закреплённого ярлыка для VoiceOver. */
+/* VoiceOver value of a pinned shortcut row. */
 "appsList.pinnedValue" = "Pinned";
 
-/* MARK: - Сетка плиток */
+/* MARK: - Tile grid */
 
-/* Состояние раскрытой папки в accessibilityValue ячейки. */
+/* State of an expanded folder in the cell's accessibilityValue. */
 "panel.expanded" = "expanded";
 
-/* Значение VoiceOver для бэйджа-точки без числа (D34, E15.4). */
+/* VoiceOver value for a dot badge without a number (D34). */
 "a11y.badge.dot" = "has a notification";
 
-/* MARK: - Общие строки */
+/* MARK: - Common strings */
 
-/* Кнопка отмены в меню. */
+/* Cancel button in a menu. */
 "common.cancel" = "Cancel";

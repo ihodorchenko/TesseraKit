@@ -2,24 +2,24 @@
 //  TileFolderDissolveUITests.swift
 //  TesseraStartScreenTests
 //
-//  Папка не бывает из 0–1 ярлыков: координатор и сетка (E14.8, D45,
-//  13.11.2026). Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md «Отступления
-//  реализации (E14)», п. 56; решения D45 в docs/STATE.md.
+//  A folder never holds 0–1 tiles: coordinator and grid (D45).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md "Implementation
+//  deviations"; decision D45 in docs/STATE.md.
 //
-//  Проверяется на настоящем `TesseraTileStore` и сетке в окне (`TesseraTestDragHost`):
-//  - unpin ярлыка раскрытой панели в папке из двух ярлыков: панель закрывается,
-//    оставшийся ярлык встаёт на место папки, фокус VoiceOver — на него;
-//  - unpin в папке из трёх: панель остаётся, фокус — на следующем ярлыке панели,
-//    у последнего — на предыдущем; панель закрыта — на плитке папки;
-//  - VoiceOver-действие «Открепить» на ярлыке панели;
-//  - публичный `moveBetweenFolders(_:to: nil)` распускает папку из двух;
-//  - drag из папки в два ярлыка: превью цели-размещения показывает итог (папка
-//    заменена оставшимся ярлыком), над слиянием/родной папкой — база; drop кладёт
-//    ярлыки ровно туда, где показало превью; отмена и отказ хоста возвращают
-//    папку; drop на центр другой папки распускает источник;
-//  - делегат: `didDissolveFolder` после основного колбэка, один раз.
+//  Checked on a real `TesseraTileStore` and a grid in a window (`TesseraTestDragHost`):
+//  - unpinning a tile of an opened panel in a two-tile folder: the panel closes,
+//    the remaining tile takes the folder's place, VoiceOver focus goes to it;
+//  - unpin in a three-tile folder: the panel stays, focus goes to the next tile of the panel,
+//    for the last one — to the previous; with the panel closed — to the folder tile;
+//  - the VoiceOver "Unpin" action on a panel tile;
+//  - the public `moveBetweenFolders(_:to: nil)` dissolves a two-tile folder;
+//  - drag out of a two-tile folder: the target-placement preview shows the outcome (the folder
+//    is replaced by the remaining tile), over a merge/the home folder — the base; a drop puts
+//    the tiles exactly where the preview showed; cancellation and a host refusal restore
+//    the folder; a drop on the center of another folder dissolves the source;
+//  - the delegate: `didDissolveFolder` after the main callback, exactly once.
 //
-//  Раскладки точные (`TileStoreCellFixture`), 4 колонки; без `sleep`.
+//  Layouts are exact (`TileStoreCellFixture`), 4 columns; no `sleep`.
 //
 
 #if canImport(UIKit)
@@ -30,15 +30,15 @@ import XCTest
 
 final class TileFolderDissolveUITests: XCTestCase {
 
-    // MARK: - Помощники
+    // MARK: - Helpers
 
-    /// Делегат, пишущий события одной лентой: порядок важен.
+    /// A delegate that records events in a single stream: the order matters.
     private final class Recorder: TesseraTileEditCoordinatorDelegate {
 
-        /// События: `unpin:id`, `move:id>папка|nil@ячейка`, `dissolve:папка>ярлык`.
+        /// Events: `unpin:id`, `move:id>folder|nil@cell`, `dissolve:folder>tile`.
         var events: [String] = []
 
-        /// Отказы функции одобрения.
+        /// Refusals of the approval function.
         var failures: [TesseraTileGroupingAction] = []
 
         func tileEditCoordinator(_ coordinator: TesseraTileEditCoordinator, didUnpin tileID: AnyHashable) {
@@ -90,7 +90,7 @@ final class TileFolderDissolveUITests: XCTestCase {
         TesseraTileGridPlacement(row: row, column: column)
     }
 
-    /// Фокус последнего поста — на заданном виде.
+    /// The focus of the last post is on the given view.
     private func assertFocus(
         _ recorder: PostRecorder,
         on view: UIView?,
@@ -99,11 +99,11 @@ final class TileFolderDissolveUITests: XCTestCase {
         line: UInt = #line
     ) {
         XCTAssertEqual(recorder.posts.last?.0, UIAccessibility.Notification.layoutChanged, file: file, line: line)
-        XCTAssertNotNil(view, "цель фокуса существует: \(message)", file: file, line: line)
+        XCTAssertNotNil(view, "the focus target exists: \(message)", file: file, line: line)
         XCTAssertTrue((recorder.posts.last?.1 as? UIView) === view, message, file: file, line: line)
     }
 
-    /// Входит в edit и раскрывает панель папки без анимации.
+    /// Enters edit mode and opens the folder panel without animation.
     @discardableResult
     private func openPanel(_ host: TesseraTestDragHost, folderID: AnyHashable) throws -> TesseraFolderPanelCell {
         host.coordinator.beginEditing()
@@ -112,24 +112,24 @@ final class TileFolderDissolveUITests: XCTestCase {
         host.host.layout()
         XCTAssertTrue(host.waitUntil {
             host.host.panelCell(folderID: folderID)?.shortcutCells.first?.accessibilityCustomActions != nil
-        }, "Действия ярлыков панели выставлены отложенной сверкой")
+        }, "The panel tiles' actions are set by the deferred reconciliation")
         XCTAssertEqual(host.host.grid.expandedFolderID, folderID)
         return try XCTUnwrap(host.host.panelCell(folderID: folderID))
     }
 
-    /// Долгое нажатие по иконке панели: drag ярлыка из папки.
+    /// A long press on a panel icon: a drag of a tile out of the folder.
     private func startPanelDrag(_ host: TesseraTestDragHost, folderID: AnyHashable, iconIndex: Int) throws {
         try openPanel(host, folderID: folderID)
         let panel = try XCTUnwrap(host.host.panelCell(folderID: folderID))
         let icon = try XCTUnwrap(panel.shortcutCells[iconIndex] as TesseraTileCell?)
         let iconFrame = try XCTUnwrap(icon.superview).convert(icon.frame, to: host.host.grid)
-        // E16.1: вход сразу в вынос (долгое нажатие по панели начинает перестановку).
+        // A long press on the panel starts a reorder, and the take-out is entered immediately.
         host.coordinator.startDragFromPanel(at: CGPoint(x: iconFrame.midX, y: iconFrame.midY))
         XCTAssertTrue(host.coordinator.isDragging)
     }
 
-    /// Рамка элемента в **базовой** раскладке drag-сессии (координаты сетки): рамки
-    /// самой сетки сразу после подъёма ещё едут за batch-анимацией отображаемого снимка.
+    /// An item frame in the **base** layout of the drag session (grid coordinates): the grid's
+    /// own frames right after the lift are still following the batch animation of the displayed snapshot.
     private func baseFrame(_ host: TesseraTestDragHost, _ id: AnyHashable) throws -> CGRect {
         let session = try XCTUnwrap(host.coordinator.dragSession)
         let content = try XCTUnwrap(host.host.grid.baseContentFrames(
@@ -145,7 +145,7 @@ final class TileFolderDissolveUITests: XCTestCase {
     }
 
     private func settle(_ host: TesseraTestDragHost, _ id: AnyHashable) {
-        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs }, "Сетка = модель")
+        XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs }, "The grid equals the model")
         XCTAssertTrue(host.waitForDragCleanup(id))
         XCTAssertNil(host.coordinator.dragSession)
     }
@@ -158,7 +158,7 @@ final class TileFolderDissolveUITests: XCTestCase {
         line: UInt = #line
     ) {
         guard let actual, let expected else {
-            return XCTFail("Нет рамки: \(message)", file: file, line: line)
+            return XCTFail("No frame: \(message)", file: file, line: line)
         }
         XCTAssertEqual(actual.minX, expected.minX, accuracy: 0.5, message, file: file, line: line)
         XCTAssertEqual(actual.minY, expected.minY, accuracy: 0.5, message, file: file, line: line)
@@ -166,7 +166,7 @@ final class TileFolderDissolveUITests: XCTestCase {
         XCTAssertEqual(actual.height, expected.height, accuracy: 0.5, message, file: file, line: line)
     }
 
-    /// Стенд: папка F (medium, (0,0)) из `contents`, плитки `a` (0,3) и `b` (2,3).
+    /// The test bench: folder F (medium, (0,0)) made of `contents`, tiles `a` (0,3) and `b` (2,3).
     private func makeHost(
         contents: [(String, TesseraTileSize)] = [("x", .small), ("y", .medium)],
         extraFolders: [CellFixtureFolder] = []
@@ -177,11 +177,11 @@ final class TileFolderDissolveUITests: XCTestCase {
         )
     }
 
-    // MARK: - Unpin в панели
+    // MARK: - Unpin in the panel
 
-    /// Папка из двух: unpin ярлыка раскрытой панели закрывает панель (анимированно),
-    /// оставшийся ярлык встаёт на место папки, фокус — на него; делегат получает
-    /// `didUnpin`, затем `didDissolveFolder`.
+    /// A two-tile folder: unpinning a tile of the opened panel closes the panel (animated),
+    /// the remaining tile takes the folder's place, focus goes to it; the delegate receives
+    /// `didUnpin`, then `didDissolveFolder`.
     func testUnpinInsideTwoTileFolderPanelClosesAndFocusesRemainingTile() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -191,22 +191,22 @@ final class TileFolderDissolveUITests: XCTestCase {
         let folderCell = try XCTUnwrap(host.store.placement(of: "F"))
 
         host.coordinator.unpin("x")
-        XCTAssertTrue(host.waitUntil { !posts.posts.isEmpty }, "фокус опубликован")
+        XCTAssertTrue(host.waitUntil { !posts.posts.isEmpty }, "focus is posted")
         XCTAssertTrue(host.waitForFolderTransitionDone())
 
-        XCTAssertNil(host.host.grid.expandedFolderID, "Панель закрыта")
+        XCTAssertNil(host.host.grid.expandedFolderID, "The panel is closed")
         XCTAssertTrue(host.folders.isEmpty)
-        XCTAssertFalse(host.gridIDs.contains("F"), "Плитки папки на сетке нет")
-        XCTAssertEqual(host.store.placement(of: "y"), folderCell, "Оставшийся ярлык — на ячейке папки")
+        XCTAssertFalse(host.gridIDs.contains("F"), "There is no folder tile on the grid")
+        XCTAssertEqual(host.store.placement(of: "y"), folderCell, "The remaining tile is on the folder's cell")
         XCTAssertEqual(host.store.snapshot().item(withID: "y")?.size, .medium)
         XCTAssertEqual(host.gridIDs, host.storeIDs)
-        assertFocus(posts, on: host.host.cell("y"), "фокус — на оставшемся ярлыке (новый элемент сетки)")
+        assertFocus(posts, on: host.host.cell("y"), "focus is on the remaining tile (the new grid item)")
         XCTAssertEqual(recorder.events, ["unpin:x", "dissolve:F>y"])
         XCTAssertFalse(host.store.isPinned("x"))
         host.coordinator.endEditing()
     }
 
-    /// Reduce Motion: панель закрывается мгновенно, результат тот же.
+    /// Reduce Motion: the panel closes instantly, the result is the same.
     func testUnpinInsideTwoTileFolderWithReduceMotionClosesPanelInstantly() throws {
         let host = try makeHost()
         host.host.grid.isReduceMotionEnabled = { true }
@@ -215,15 +215,15 @@ final class TileFolderDissolveUITests: XCTestCase {
         try openPanel(host, folderID: "F")
 
         host.coordinator.unpin("y")
-        XCTAssertNil(host.host.grid.expandedFolderID, "Панель закрыта сразу")
+        XCTAssertNil(host.host.grid.expandedFolderID, "The panel is closed immediately")
         XCTAssertTrue(host.waitUntil { !posts.posts.isEmpty })
 
         XCTAssertTrue(host.folders.isEmpty)
-        assertFocus(posts, on: host.host.cell("x"), "фокус — на оставшемся ярлыке")
+        assertFocus(posts, on: host.host.cell("x"), "focus is on the remaining tile")
         host.coordinator.endEditing()
     }
 
-    /// Папка из трёх: панель остаётся, фокус — на следующем ярлыке панели.
+    /// A three-tile folder: the panel stays, focus goes to the next tile of the panel.
     func testUnpinInsideThreeTileFolderKeepsPanelAndFocusesNextTile() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .small), ("z", .small)])
         let recorder = Recorder()
@@ -234,16 +234,16 @@ final class TileFolderDissolveUITests: XCTestCase {
         host.coordinator.unpin("x")
         XCTAssertTrue(host.waitUntil { !posts.posts.isEmpty })
 
-        XCTAssertEqual(host.host.grid.expandedFolderID, "F", "Панель осталась")
+        XCTAssertEqual(host.host.grid.expandedFolderID, "F", "The panel stayed")
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["y", "z"] as [AnyHashable])
         let panel = try XCTUnwrap(host.host.panelCell(folderID: "F"))
         XCTAssertEqual(panel.shortcutCells.count, 2)
-        assertFocus(posts, on: panel.shortcutCells[0], "следующий после «x» — «y» (первый в панели)")
-        XCTAssertEqual(recorder.events, ["unpin:x"], "Папка не распалась — события распада нет")
+        assertFocus(posts, on: panel.shortcutCells[0], "the one after x is y (first in the panel)")
+        XCTAssertEqual(recorder.events, ["unpin:x"], "The folder did not dissolve — no dissolve event")
         host.coordinator.endEditing()
     }
 
-    /// Последний ярлык панели: фокус — на предыдущем; средний — на следующем.
+    /// The last tile of the panel: focus goes to the previous one; the middle one — to the next.
     func testUnpinInsideThreeTileFolderFocusesPreviousForLastAndNextForMiddle() throws {
         let last = try makeHost(contents: [("x", .small), ("y", .small), ("z", .small)])
         let lastPosts = record(last)
@@ -252,7 +252,7 @@ final class TileFolderDissolveUITests: XCTestCase {
         XCTAssertTrue(last.waitUntil { !lastPosts.posts.isEmpty })
         let lastPanel = try XCTUnwrap(last.host.panelCell(folderID: "F"))
         XCTAssertEqual(last.folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable])
-        assertFocus(lastPosts, on: lastPanel.shortcutCells[1], "у последнего — предыдущий «y»")
+        assertFocus(lastPosts, on: lastPanel.shortcutCells[1], "for the last one — the previous y")
 
         let middle = try makeHost(contents: [("x", .small), ("y", .small), ("z", .small)])
         let middlePosts = record(middle)
@@ -260,12 +260,12 @@ final class TileFolderDissolveUITests: XCTestCase {
         middle.coordinator.unpin("y")
         XCTAssertTrue(middle.waitUntil { !middlePosts.posts.isEmpty })
         let middlePanel = try XCTUnwrap(middle.host.panelCell(folderID: "F"))
-        assertFocus(middlePosts, on: middlePanel.shortcutCells[1], "следующий после «y» — «z», теперь второй")
+        assertFocus(middlePosts, on: middlePanel.shortcutCells[1], "the one after y is z, now second")
         last.coordinator.endEditing()
         middle.coordinator.endEditing()
     }
 
-    /// Панель закрыта: фокус — на плитке папки (на отсутствующую ячейку не уходит).
+    /// The panel is closed: focus goes to the folder tile (it does not go to a missing cell).
     func testUnpinInsideClosedThreeTileFolderFocusesFolderTile() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .small), ("z", .small)])
         let posts = record(host)
@@ -274,10 +274,10 @@ final class TileFolderDissolveUITests: XCTestCase {
         XCTAssertTrue(host.waitUntil { !posts.posts.isEmpty })
 
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["x", "z"] as [AnyHashable])
-        assertFocus(posts, on: host.host.cell("F"), "панели нет — фокус на плитке папки")
+        assertFocus(posts, on: host.host.cell("F"), "no panel — focus on the folder tile")
     }
 
-    /// Закрытая папка из двух: распад без панели — фокус на оставшемся ярлыке.
+    /// A closed two-tile folder: dissolving without a panel — focus on the remaining tile.
     func testUnpinInsideClosedTwoTileFolderFocusesRemainingTile() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -288,11 +288,11 @@ final class TileFolderDissolveUITests: XCTestCase {
         XCTAssertTrue(host.waitUntil { !posts.posts.isEmpty })
 
         XCTAssertTrue(host.folders.isEmpty)
-        assertFocus(posts, on: host.host.cell("y"), "оставшийся ярлык")
+        assertFocus(posts, on: host.host.cell("y"), "the remaining tile")
         XCTAssertEqual(recorder.events, ["unpin:x", "dissolve:F>y"])
     }
 
-    /// VoiceOver-действие «Открепить» на ярлыке панели идёт тем же маршрутом.
+    /// The VoiceOver "Unpin" action on a panel tile follows the same route.
     func testVoiceOverUnpinActionOnPanelTile() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -301,7 +301,7 @@ final class TileFolderDissolveUITests: XCTestCase {
         let panel = try openPanel(host, folderID: "F")
         let unpinName = TesseraStartScreenStrings.string(.a11yActionUnpin)
         let actions = panel.shortcutCells[0].accessibilityCustomActions ?? []
-        XCTAssertTrue(actions.contains { $0.name == unpinName }, "действие «Открепить» на ярлыке панели")
+        XCTAssertTrue(actions.contains { $0.name == unpinName }, "the \"Unpin\" action on a panel tile")
         let unpin = try XCTUnwrap(actions.first { $0.name == unpinName })
 
         XCTAssertEqual(unpin.actionHandler?(unpin), true)
@@ -312,11 +312,11 @@ final class TileFolderDissolveUITests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    // MARK: - Публичный вынос без жеста
+    // MARK: - Public take-out without a gesture
 
-    /// `moveBetweenFolders(_:to: nil)` на папке из двух: панель закрывается,
-    /// оставшийся ярлык — на месте папки, вынесенный — на первой свободной ячейке
-    /// после неё; `didMove`, затем `didDissolveFolder`; фокус — на вынесенном.
+    /// `moveBetweenFolders(_:to: nil)` on a two-tile folder: the panel closes,
+    /// the remaining tile is in the folder's place, the tile taken out is on the first free cell
+    /// after it; `didMove`, then `didDissolveFolder`; focus goes to the tile taken out.
     func testPublicMoveToDesktopDissolvesTwoTileFolder() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .small)])
         let recorder = Recorder()
@@ -330,68 +330,68 @@ final class TileFolderDissolveUITests: XCTestCase {
 
         XCTAssertNil(host.host.grid.expandedFolderID)
         XCTAssertTrue(host.folders.isEmpty)
-        XCTAssertEqual(host.store.placement(of: "y"), at(0, 0), "оставшийся — на ячейке папки")
+        XCTAssertEqual(host.store.placement(of: "y"), at(0, 0), "the remaining one is on the folder's cell")
         let moved = try XCTUnwrap(host.store.placement(of: "x"))
-        XCTAssertNotEqual(moved, at(0, 0), "вынесенный не лёг на оставшегося")
+        XCTAssertNotEqual(moved, at(0, 0), "the tile taken out did not land on the remaining one")
         XCTAssertEqual(recorder.events.count, 2)
         XCTAssertTrue(recorder.events.first?.hasPrefix("move:x>nil@") == true)
         XCTAssertEqual(recorder.events.last, "dissolve:F>y")
-        assertFocus(posts, on: host.host.cell("x"), "фокус — на вынесенном ярлыке")
+        assertFocus(posts, on: host.host.cell("x"), "focus is on the tile taken out")
         host.coordinator.endEditing()
     }
 
-    // MARK: - Drag из панели: превью
+    // MARK: - Drag from the panel: preview
 
-    /// Папка из двух: над клеткой-размещением превью показывает итог (папка заменена
-    /// оставшимся ярлыком на её ячейке, вынесенный — на клетке), над родной папкой и
-    /// слиянием — база (папка), отмена возвращает папку с обоими ярлыками.
+    /// A two-tile folder: over a placement cell the preview shows the outcome (the folder is replaced
+    /// by the remaining tile on its cell, the tile taken out is on the cell), over the home folder and
+    /// a merge — the base (the folder), cancellation restores the folder with both tiles.
     func testPreviewShowsDissolvedPictureOverCellAndBaseOverSourceFolder() throws {
         let host = try makeHost()
         let recorder = Recorder()
         host.coordinator.delegate = recorder
         try startPanelDrag(host, folderID: "F", iconIndex: 0)
 
-        // Старт: база — папка с оставшимся ярлыком и синтетический ярлык.
+        // Start: the base is the folder with the remaining tile and a synthetic tile.
         XCTAssertNotNil(host.host.grid.frame(forItemID: "F"))
-        XCTAssertNil(host.host.grid.frame(forItemID: "y"), "оставшийся ярлык ещё внутри папки")
+        XCTAssertNil(host.host.grid.frame(forItemID: "y"), "the remaining tile is still inside the folder")
         XCTAssertEqual(host.store.snapshot().folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable])
         let baseFolderFrame = try baseFrame(host, "F")
 
-        // Клетка-размещение (пустая клетка внутри занятых строк): итог.
+        // A placement cell (an empty cell inside occupied rows): the outcome.
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 2, column: 1)))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(2, 1)))
-        XCTAssertNil(host.host.grid.frame(forItemID: "F"), "Превью: папки нет")
-        assertFrame(host.host.grid.frame(forItemID: "y"), baseFolderFrame, "Превью: оставшийся ярлык на ячейке папки")
+        XCTAssertNil(host.host.grid.frame(forItemID: "F"), "Preview: no folder")
+        assertFrame(host.host.grid.frame(forItemID: "y"), baseFolderFrame, "Preview: the remaining tile is on the folder's cell")
         assertFrame(
             host.host.grid.frame(forItemID: "x"),
             host.cellFrame(row: 2, column: 1),
-            "Превью: вынесенный ярлык на клетке"
+            "Preview: the tile taken out is on the cell"
         )
-        XCTAssertEqual(host.store.snapshot().folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable], "Модель за время drag не меняется")
+        XCTAssertEqual(host.store.snapshot().folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable], "The model does not change during the drag")
 
-        // Над родной папкой — база.
+        // Over the home folder — the base.
         host.coordinator.updateDrag(to: try basePoint(host, "F"))
         XCTAssertEqual(host.coordinator.dragSession?.hover, .sourceFolder)
-        XCTAssertNotNil(host.host.grid.frame(forItemID: "F"), "Над родной папкой — база: папка на месте")
+        XCTAssertNotNil(host.host.grid.frame(forItemID: "F"), "Over the home folder — the base: the folder is in place")
         XCTAssertNil(host.host.grid.frame(forItemID: "y"))
 
-        // Снова на клетку — итог (превью считается от базы, без накопления).
+        // On a cell again — the outcome (the preview is computed from the base, without accumulation).
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 2, column: 2)))
         XCTAssertNil(host.host.grid.frame(forItemID: "F"))
-        assertFrame(host.host.grid.frame(forItemID: "y"), baseFolderFrame, "оставшийся ярлык на месте")
-        assertFrame(host.host.grid.frame(forItemID: "x"), host.cellFrame(row: 2, column: 2), "вынесенный на новой клетке")
+        assertFrame(host.host.grid.frame(forItemID: "y"), baseFolderFrame, "the remaining tile is in place")
+        assertFrame(host.host.grid.frame(forItemID: "x"), host.cellFrame(row: 2, column: 2), "the tile taken out is on the new cell")
 
-        // Отмена: папка с обоими ярлыками, сетка = модель, события нет.
+        // Cancellation: the folder with both tiles, grid = model, no event.
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
-        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable], "Папка восстановлена")
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable], "The folder is restored")
         XCTAssertNotNil(host.host.grid.frame(forItemID: "F"))
         XCTAssertNil(host.host.grid.frame(forItemID: "y"))
         XCTAssertTrue(recorder.events.isEmpty)
     }
 
-    /// Папка из трёх: превью цели-размещения папку не распускает.
+    /// A three-tile folder: the target-placement preview does not dissolve the folder.
     func testPreviewOfThreeTileFolderKeepsFolder() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .small), ("z", .small)])
         try startPanelDrag(host, folderID: "F", iconIndex: 0)
@@ -399,17 +399,17 @@ final class TileFolderDissolveUITests: XCTestCase {
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 2, column: 1)))
 
         XCTAssertEqual(host.coordinator.dragSession?.hover, .cell(at(2, 1)))
-        XCTAssertNotNil(host.host.grid.frame(forItemID: "F"), "Папка из трёх осталась")
+        XCTAssertNotNil(host.host.grid.frame(forItemID: "F"), "The three-tile folder remained")
         XCTAssertNil(host.host.grid.frame(forItemID: "y"))
         XCTAssertNil(host.coordinator.dragSession?.folderDissolution)
         host.coordinator.finishDrag(commit: false)
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
     }
 
-    // MARK: - Drag из панели: drop
+    // MARK: - Drag from the panel: drop
 
-    /// Drop на пустую клетку: ярлыки встают ровно туда, где показало превью (кадры
-    /// и таблица ячеек равны), папка распущена, делегат получает `didMove` и затем
+    /// A drop on an empty cell: tiles land exactly where the preview showed (frames
+    /// and the cell table are equal), the folder is dissolved, the delegate receives `didMove`, then
     /// `didDissolveFolder`.
     func testDropOnHoleCommitsPreviewAndDissolvesFolder() throws {
         let host = try makeHost()
@@ -424,23 +424,23 @@ final class TileFolderDissolveUITests: XCTestCase {
         let previewCells = try XCTUnwrap(host.gridCells)
         let previewY = try XCTUnwrap(host.host.grid.frame(forItemID: "y"))
         let previewX = try XCTUnwrap(host.host.grid.frame(forItemID: "x"))
-        XCTAssertEqual(changes, 0, "Во время drag модель не пишется")
+        XCTAssertEqual(changes, 0, "The model is not written during the drag")
 
         host.coordinator.finishDrag(commit: true)
         settle(host, "x")
 
-        XCTAssertEqual(changes, 1, "Одно уведомление за операцию")
+        XCTAssertEqual(changes, 1, "One notification per operation")
         XCTAssertTrue(host.folders.isEmpty)
-        XCTAssertEqual(host.store.placements(forColumns: 4), previewCells, "Модель = превью")
-        assertFrame(host.host.grid.frame(forItemID: "y"), previewY, "оставшийся ярлык там, где показало превью")
-        assertFrame(host.host.grid.frame(forItemID: "x"), previewX, "вынесенный ярлык там, где показало превью")
+        XCTAssertEqual(host.store.placements(forColumns: 4), previewCells, "Model = preview")
+        assertFrame(host.host.grid.frame(forItemID: "y"), previewY, "the remaining tile is where the preview showed")
+        assertFrame(host.host.grid.frame(forItemID: "x"), previewX, "the tile taken out is where the preview showed")
         XCTAssertEqual(host.store.placement(of: "x"), at(2, 1))
         XCTAssertEqual(host.store.placement(of: "y"), at(0, 0))
         XCTAssertEqual(recorder.events, ["move:x>nil@(2,1)", "dissolve:F>y"])
     }
 
-    /// Drop на край родной папки: вынесенный ярлык занимает ячейку папки, оставшийся
-    /// вытесняется вниз (обычные правила размещения) — модель равна превью.
+    /// A drop on the edge of the home folder: the tile taken out takes the folder's cell, the remaining one
+    /// is pushed down (the usual placement rules) — the model equals the preview.
     func testDropOnSourceFolderEdgeMatchesPreview() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .small)])
         try startPanelDrag(host, folderID: "F", iconIndex: 0)
@@ -453,13 +453,13 @@ final class TileFolderDissolveUITests: XCTestCase {
         settle(host, "x")
 
         XCTAssertEqual(host.store.placement(of: "x"), at(0, 0))
-        XCTAssertEqual(host.store.placement(of: "y"), at(1, 0), "оставшийся вытеснен вниз")
-        XCTAssertEqual(host.store.placements(forColumns: 4), previewCells, "Модель = превью")
+        XCTAssertEqual(host.store.placement(of: "y"), at(1, 0), "the remaining one is pushed down")
+        XCTAssertEqual(host.store.placements(forColumns: 4), previewCells, "Model = preview")
         XCTAssertTrue(host.folders.isEmpty)
     }
 
-    /// Drop на центр другой папки (после удержания): источник распущен, цель получила
-    /// ярлык; делегат: `didMove`, затем `didDissolveFolder`.
+    /// A drop on the center of another folder (after a hold): the source is dissolved, the target received the
+    /// tile; the delegate: `didMove`, then `didDissolveFolder`.
     func testDropOnOtherFolderDissolvesSourceFolder() throws {
         let host = try TesseraTestDragHost(
             cells: [CellFixtureTile("a", .small, 0, 3)],
@@ -481,11 +481,11 @@ final class TileFolderDissolveUITests: XCTestCase {
 
         XCTAssertEqual(host.folders.map { $0.id }, ["G"] as [AnyHashable])
         XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["p", "q", "x"] as [AnyHashable])
-        XCTAssertEqual(host.store.placement(of: "y"), at(0, 0), "оставшийся ярлык — на месте F")
+        XCTAssertEqual(host.store.placement(of: "y"), at(0, 0), "the remaining tile is in F's place")
         XCTAssertEqual(recorder.events, ["move:x>G@-", "dissolve:F>y"])
     }
 
-    /// Хост отказал в выносе: модель не менялась, папка возвращена, распада нет.
+    /// The host refused the take-out: the model did not change, the folder is restored, no dissolve.
     func testHostRejectionRestoresFolder() throws {
         let host = try makeHost()
         let recorder = Recorder()
@@ -494,18 +494,18 @@ final class TileFolderDissolveUITests: XCTestCase {
         try startPanelDrag(host, folderID: "F", iconIndex: 0)
 
         host.coordinator.updateDrag(to: try XCTUnwrap(host.cellPoint(row: 2, column: 1)))
-        XCTAssertNil(host.host.grid.frame(forItemID: "F"), "в превью папка уже распущена")
+        XCTAssertNil(host.host.grid.frame(forItemID: "F"), "in the preview the folder is already dissolved")
         host.coordinator.finishDrag(commit: true)
         XCTAssertTrue(host.waitUntil { host.coordinator.dragSession == nil })
         XCTAssertTrue(host.waitUntil { host.gridIDs == host.storeIDs })
 
-        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable], "Папка восстановлена")
+        XCTAssertEqual(host.folders.first?.tiles.map { $0.id }, ["x", "y"] as [AnyHashable], "The folder is restored")
         XCTAssertNotNil(host.host.grid.frame(forItemID: "F"))
         XCTAssertEqual(recorder.failures, [.moveBetweenFolders])
         XCTAssertFalse(recorder.events.contains { $0.hasPrefix("dissolve") })
     }
 
-    /// Новая строка: превью считается с оставшимся ярлыком на месте папки.
+    /// A new row: the preview is computed with the remaining tile in the folder's place.
     func testDropToNewRowMatchesPreview() throws {
         let host = try makeHost(contents: [("x", .small), ("y", .large)])
         try startPanelDrag(host, folderID: "F", iconIndex: 0)
@@ -517,7 +517,7 @@ final class TileFolderDissolveUITests: XCTestCase {
         host.coordinator.finishDrag(commit: true)
         settle(host, "x")
 
-        XCTAssertEqual(host.store.placements(forColumns: 4), previewCells, "Модель = превью")
+        XCTAssertEqual(host.store.placements(forColumns: 4), previewCells, "Model = preview")
         XCTAssertTrue(host.folders.isEmpty)
         XCTAssertEqual(host.store.snapshot().item(withID: "y")?.size, .large)
     }
@@ -525,7 +525,7 @@ final class TileFolderDissolveUITests: XCTestCase {
 
 private extension TesseraTestDragHost {
 
-    /// Ждёт, пока панель папки закончит переход и сетка применит отложенный снимок.
+    /// Waits until the folder panel finishes its transition and the grid applies the deferred snapshot.
     func waitForFolderTransitionDone() -> Bool {
         host.waitForFolderTransition() && waitUntil { self.gridIDs == self.storeIDs }
     }

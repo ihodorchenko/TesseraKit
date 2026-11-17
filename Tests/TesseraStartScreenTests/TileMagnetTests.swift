@@ -2,20 +2,20 @@
 //  TileMagnetTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты магнитизма к ячейкам (задача E8.9).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5 «Режим редактирования»
-//  и docs/PLAN.md E8.9: под перетаскиваемой плиткой строится виртуальная сетка,
-//  и снимок плавно притягивается к центру ближайшего слота той же размерности.
+//  Tests for the magnet to cells.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode"
+//  and docs/PLAN.md: a virtual grid is built under the dragged tile,
+//  and the drag image is smoothly pulled to the center of the nearest slot of the same dimensions.
 //
-//  Проверяется чистая математика `TesseraTileMagnet` (никакого UI): выбор
-//  ближайшего центра в радиусе, граница радиуса, вырожденные и нечисловые
-//  входы, детерминированность при равном расстоянии. Геометрию слотов даёт
-//  сетка, поэтому тесты не инстанцируют `UICollectionView`.
+//  The pure math of `TesseraTileMagnet` is tested (no UI): choosing
+//  the nearest center within the radius, the radius boundary, degenerate and non-numeric
+//  inputs, determinism at equal distance. The slot geometry comes from
+//  the grid, so the tests do not instantiate `UICollectionView`.
 //
-//  E10.5-A2: координатор передаёт сюда **центр снимка** (`point + grabOffset`),
-//  а не точку пальца; сама функция остаётся чистой «точка → ближайший слот»,
-//  поэтому контракт и тесты не меняются. Проверка того, что координатор считает
-//  от центра снимка, — `DragSessionTests.testMagnetUsesSnapshotCenterNotFingerPoint`.
+//  The coordinator passes the **drag image center** (`point + grabOffset`) here,
+//  not the finger point; the function itself stays a pure "point → nearest slot",
+//  so the contract and the tests do not change. The check that the coordinator computes
+//  from the drag image center is `DragSessionTests.testMagnetUsesSnapshotCenterNotFingerPoint`.
 //
 
 #if canImport(UIKit)
@@ -25,10 +25,10 @@ import XCTest
 
 final class TileMagnetTests: XCTestCase {
 
-    // MARK: - Конфигурация
+    // MARK: - Configuration
 
-    /// Значения по умолчанию: радиус из диапазона спеки WP 24–32 pt и
-    /// короткий spring притяжения.
+    /// Default values: a radius within the Windows Phone spec range of 24–32 pt and
+    /// a short pull spring.
     func testConfigurationDefaultsMatchSpec() {
         let configuration = TesseraTileEditConfiguration()
 
@@ -45,7 +45,7 @@ final class TileMagnetTests: XCTestCase {
         XCTAssertLessThanOrEqual(configuration.magnetSpringDamping, 1)
     }
 
-    /// Кастомные значения проходят через инициализатор без искажений.
+    /// Custom values pass through the initializer without distortion.
     func testCustomConfigurationIsStored() {
         let configuration = TesseraTileEditConfiguration(
             magnetSnapRadius: 24,
@@ -58,9 +58,9 @@ final class TileMagnetTests: XCTestCase {
         XCTAssertEqual(configuration.magnetSpringDamping, 0.7, accuracy: 0.0001)
     }
 
-    // MARK: - Выбор ближайшего слота
+    // MARK: - Choosing the nearest slot
 
-    /// Притягивает к ближайшему центру, а не к первому в массиве.
+    /// Pulls to the nearest center, not to the first one in the array.
     func testNearestCenterWins() {
         let centers = [
             CGPoint(x: 0, y: 0),
@@ -86,7 +86,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// Расстояние евклидово: точка «по диагонали» тоже притягивается.
+    /// The distance is Euclidean: a point "on the diagonal" is pulled too.
     func testDiagonalDistanceIsEuclidean() {
         XCTAssertEqual(
             TesseraTileMagnet.magnetTarget(
@@ -105,7 +105,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// За радиусом притяжения нет.
+    /// There is no pull beyond the pull radius.
     func testPointOutsideRadiusHasNoTarget() {
         XCTAssertNil(
             TesseraTileMagnet.magnetTarget(
@@ -116,9 +116,9 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// Радиус включительный: центр ровно на границе ещё притягивает.
+    /// The radius is inclusive: a center exactly on the boundary still pulls.
     func testExactRadiusIsInclusive() {
-        // Египетский треугольник 3–4–5: расстояние ровно 5 pt.
+        // The 3-4-5 triangle: the distance is exactly 5 pt.
         XCTAssertEqual(
             TesseraTileMagnet.magnetTarget(
                 for: CGPoint(x: 3, y: 4),
@@ -136,7 +136,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// Нулевой радиус отключает притяжение (даже точно над центром).
+    /// A zero radius disables the pull (even exactly over a center).
     func testZeroRadiusDisablesMagnet() {
         XCTAssertNil(
             TesseraTileMagnet.magnetTarget(
@@ -147,7 +147,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// Отрицательный и нечисловой радиус трактуются как отключённое притяжение.
+    /// A negative and a non-numeric radius are treated as a disabled pull.
     func testInvalidRadiusDisablesMagnet() {
         let centers = [CGPoint(x: 0, y: 0)]
 
@@ -158,14 +158,14 @@ final class TileMagnetTests: XCTestCase {
                     slotCenters: centers,
                     snapRadius: radius
                 ),
-                "Радиус \(radius) должен отключать притяжение"
+                "Radius \(radius) must disable the pull"
             )
         }
     }
 
-    // MARK: - Вырожденные входы
+    // MARK: - Degenerate inputs
 
-    /// Пустой набор слотов — притягивать некуда.
+    /// An empty set of slots: there is nothing to pull to.
     func testEmptySlotCentersReturnNil() {
         XCTAssertNil(
             TesseraTileMagnet.magnetTarget(
@@ -176,7 +176,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// При равном расстоянии побеждает первый слот — результат детерминирован.
+    /// At equal distance the first slot wins: the result is deterministic.
     func testFirstCenterWinsOnTie() {
         let left = CGPoint(x: -10, y: 0)
         let right = CGPoint(x: 10, y: 0)
@@ -199,7 +199,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// Нечисловые центры пропускаются, а не ломают весь поиск.
+    /// Non-numeric centers are skipped instead of breaking the whole search.
     func testNonFiniteCentersAreSkipped() {
         let broken = CGPoint(x: CGFloat.nan, y: 0)
         let valid = CGPoint(x: 0, y: 0)
@@ -214,7 +214,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// Нечисловая точка пальца не даёт цели.
+    /// A non-numeric finger point gives no target.
     func testNonFinitePointReturnsNil() {
         XCTAssertNil(
             TesseraTileMagnet.magnetTarget(
@@ -232,10 +232,10 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    // MARK: - Виртуальная сетка слотов
+    // MARK: - Virtual slot grid
 
-    /// Центры идут с шагом «юнит + зазор» и покрывают все позиции, куда
-    /// помещается плитка той же размерности.
+    /// The centers go in steps of "unit + gap" and cover all positions where a tile
+    /// of the same dimensions fits.
     func testVirtualSlotCentersCoverEveryCell() {
         let centers = TesseraTileMagnet.slotCenters(
             for: .medium,
@@ -246,7 +246,7 @@ final class TileMagnetTests: XCTestCase {
             rowCount: 2
         )
 
-        // 2×2 в сетке 4 колонки и 2 строки: три позиции по горизонтали.
+        // 2×2 in a grid of 4 columns and 2 rows: three positions horizontally.
         XCTAssertEqual(centers, [
             CGPoint(x: 121, y: 121),
             CGPoint(x: 231, y: 121),
@@ -254,7 +254,7 @@ final class TileMagnetTests: XCTestCase {
         ])
     }
 
-    /// Маленькая плитка встаёт в каждую ячейку, включая пустые.
+    /// A small tile fits into every cell, including empty ones.
     func testVirtualSlotCentersForSmallTile() {
         let centers = TesseraTileMagnet.slotCenters(
             for: .small,
@@ -273,8 +273,8 @@ final class TileMagnetTests: XCTestCase {
         ])
     }
 
-    /// След ужимается под узкую сетку так же, как в раскладке: широкая плитка
-    /// при двух колонках становится 2×2.
+    /// The footprint shrinks to a narrow grid as in the layout: a wide tile
+    /// in two columns becomes 2×2.
     func testVirtualSlotCentersFitNarrowGrid() {
         let centers = TesseraTileMagnet.slotCenters(
             for: .wide,
@@ -288,7 +288,7 @@ final class TileMagnetTests: XCTestCase {
         XCTAssertEqual(centers, [CGPoint(x: 100, y: 100)])
     }
 
-    /// Плитке не хватает занятых строк — слотов нет.
+    /// The tile lacks occupied rows: there are no slots.
     func testVirtualSlotCentersRequireEnoughRows() {
         XCTAssertTrue(
             TesseraTileMagnet.slotCenters(
@@ -302,7 +302,7 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    /// Вырожденная геометрия не даёт слотов.
+    /// Degenerate geometry gives no slots.
     func testVirtualSlotCentersInvalidGeometryIsEmpty() {
         XCTAssertTrue(
             TesseraTileMagnet.slotCenters(
@@ -336,9 +336,9 @@ final class TileMagnetTests: XCTestCase {
         )
     }
 
-    // MARK: - Радиус из конфигурации
+    // MARK: - Radius from the configuration
 
-    /// Притяжение использует радиус конфигурации, а не собственный порог.
+    /// The pull uses the configuration radius, not its own threshold.
     func testConfiguredRadiusIsUsed() {
         let configuration = TesseraTileEditConfiguration(magnetSnapRadius: 24)
         let centers = [CGPoint(x: 0, y: 0)]

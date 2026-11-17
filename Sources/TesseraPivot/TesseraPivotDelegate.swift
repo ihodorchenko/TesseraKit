@@ -1,73 +1,73 @@
-// Делегат пивота.
-// Проектный документ: docs/PIVOT-IOS-DESIGN.md — §3 «Архитектура»
-// (TesseraPivotDelegate — didSelectSection, didChangeProgress) и §5 «Синхронизация
-// ленты и пейджера» (один источник истины и один писатель contentOffset).
+// The Pivot delegate.
+// Design document: docs/PIVOT-IOS-DESIGN.md (architecture:
+// TesseraPivotDelegate has didSelectSection and didChangeProgress; synchronizing the
+// strip and the pager: a single source of truth and a single writer of contentOffset).
 
 #if canImport(UIKit)
 import UIKit
 
-/// Наблюдатель состояния пивота.
+/// Observes the state of the pivot.
 ///
-/// Делегат только читает состояние: `contentOffset` пишут исключительно жест
-/// пейджера и программный переход контроллера по тапу на заголовок
-/// (docs/PIVOT-IOS-DESIGN.md §5, «Правило одного писателя»). Возвращать
-/// значения или записывать offset из колбэков нельзя — это создаёт цикл
-/// обратной связи: лента и индикатор уже анимируются от того же `t`.
+/// The delegate only reads state: `contentOffset` is written exclusively by the pager's
+/// gesture and the controller's programmatic transition on a header tap
+/// (see the single-writer rule in docs/PIVOT-IOS-DESIGN.md). Returning
+/// values or writing the offset from callbacks is not allowed because it creates a
+/// feedback loop: the strip and the indicator are already animated from the same `t`.
 ///
-/// Все методы вызываются на главном потоке. Обязательных методов два
-/// (`didSelectSectionAt` и `didChangeProgress`); показ секции по завершении
-/// перехода — опциональное событие с пустой реализацией по умолчанию
-/// (docs/PIVOT-IOS-DESIGN.md §3).
+/// All methods are called on the main thread. There are two required methods
+/// (`didSelectSectionAt` and `didChangeProgress`); showing a section when a
+/// transition completes is an optional event with an empty default implementation
+/// (see docs/PIVOT-IOS-DESIGN.md).
 public protocol TesseraPivotDelegate: AnyObject {
 
-    /// Пользователь выбрал секцию тапом по заголовку в ленте.
+    /// The user selected a section by tapping its header in the strip.
     ///
-    /// Вызывается до программного перехода. Индекс — в порядке чтения:
-    /// `0` — первая секция для пользователя, независимо от LTR/RTL
-    /// (документ §8, «RTL»). Переход выполняет сам компонент
-    /// (`setContentOffset(animated:)`, §5), делегату не нужно и нельзя
-    /// дублировать его.
+    /// Called before the programmatic transition. The index is in reading order:
+    /// `0` is the first section for the user, regardless of LTR/RTL
+    /// (see the RTL notes in the design document). The component performs the transition itself
+    /// (`setContentOffset(animated:)`), and the delegate does not need to, and must not,
+    /// duplicate it.
     ///
     /// - Parameters:
-    ///   - pivot: Пивот-источник события.
-    ///   - index: Индекс выбранной секции в порядке чтения.
+    ///   - pivot: The pivot that emitted the event.
+    ///   - index: The index of the selected section in reading order.
     func pivot(_ pivot: TesseraPivotViewController, didSelectSectionAt index: Int)
 
-    /// Непрерывный прогресс прокрутки изменился.
+    /// The continuous scroll progress changed.
     ///
-    /// Значение нормализовано по направлению чтения (§4, «Прогресс»):
-    /// `0` — первая секция, `sectionCount - 1` — последняя. Целая часть —
-    /// индекс секции, дробная — прогресс перехода. При оттягивании за край
-    /// (`bounce`) значение может выходить за пределы диапазона — потребитель
-    /// сам решает, как его ограничить.
+    /// The value is normalized by the reading direction (see the progress notes in the design document):
+    /// `0` is the first section and `sectionCount - 1` is the last. The integer part is the
+    /// section index and the fractional part is the transition progress. When pulling past an edge
+    /// (`bounce`) the value may fall outside the range; the consumer
+    /// decides how to clamp it.
     ///
-    /// Метод вызывается из `scrollViewDidScroll`; в этот момент выполняется
-    /// только `frame`/`transform`/`alpha`, layout не запускается
-    /// (docs/PIVOT-IOS-DESIGN.md §4, «Правило производительности»).
+    /// The method is called from `scrollViewDidScroll`; at that point only
+    /// `frame`/`transform`/`alpha` change and no layout is triggered
+    /// (see the performance rule in docs/PIVOT-IOS-DESIGN.md).
     ///
     /// - Parameters:
-    ///   - pivot: Пивот-источник события.
-    ///   - t: Нормализованный прогресс `t = contentOffset.x / pageWidth`.
+    ///   - pivot: The pivot that emitted the event.
+    ///   - t: The normalized progress `t = contentOffset.x / pageWidth`.
     func pivot(_ pivot: TesseraPivotViewController, didChangeProgress t: CGFloat)
 
-    /// Пивот завершил переход и показывает секцию `index`.
+    /// The pivot finished a transition and is showing the section at `index`.
     ///
-    /// Индекс — в порядке чтения. Вызывается по завершении перехода
-    /// (жестом или тапом), то есть когда лента и контент уже
-    /// синхронизированы; удобен для озвучивания названия секции
-    /// (документ §8, «VoiceOver») и для внешней аналитики.
+    /// The index is in reading order. Called when a transition completes
+    /// (by gesture or tap), that is, when the strip and the content are already
+    /// synchronized; convenient for announcing the section name
+    /// (see the VoiceOver notes in the design document) and for external analytics.
     ///
     /// - Parameters:
-    ///   - pivot: Пивот-источник события.
-    ///   - index: Индекс показанной секции в порядке чтения.
+    ///   - pivot: The pivot that emitted the event.
+    ///   - index: The index of the shown section in reading order.
     func pivot(_ pivot: TesseraPivotViewController, didShowSectionAt index: Int)
 }
 
 public extension TesseraPivotDelegate {
-    /// Реализация по умолчанию: показ секции не интересует делегата.
+    /// Default implementation: the delegate is not interested in section changes.
     ///
-    /// Пустое тело позволяет подписаться только на выбор и прогресс
-    /// (docs/PIVOT-IOS-DESIGN.md §3).
+    /// The empty body lets a delegate subscribe only to selection and progress
+    /// (see docs/PIVOT-IOS-DESIGN.md).
     func pivot(_ pivot: TesseraPivotViewController, didShowSectionAt index: Int) {}
 }
 #endif

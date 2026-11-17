@@ -1,7 +1,7 @@
-// Хостинг контента TesseraCore: реестр переиспользования и мост состояния
-// (мост `TesseraStateBridge` устарел — E9.9, удаление в мажорном релизе).
-// Проектный документ: docs/Core-iOS-Design.md — §1 «Состав пакета»,
-// §3 «Концептуальная поверхность API».
+// TesseraCore content hosting: the reuse registry and the state bridge
+// (the `TesseraStateBridge` bridge is deprecated and will be removed in a major release).
+// Design document: docs/CORE-IOS-DESIGN.md (package composition;
+// conceptual API surface).
 
 #if canImport(UIKit)
 import UIKit
@@ -10,40 +10,40 @@ import UIKit
 #if canImport(Combine)
 import Combine
 
-/// Мост состояния между UIKit-ядром и SwiftUI-фасадами
-/// (docs/Core-iOS-Design.md, §1 — «мост состояния через `ObservableObject`»).
+/// A state bridge between the UIKit core and the SwiftUI facades
+/// (docs/CORE-IOS-DESIGN.md: "state bridge via `ObservableObject`").
 ///
-/// iOS 15 не поддерживает `@Observable`, поэтому перенос состояния выполняется
-/// через `ObservableObject`: SwiftUI-фасад подписывается на мост, а ядро уведомляет
-/// его методом `update(_:)`. `@Published` сам сообщает SwiftUI об изменении,
-/// отдельного канала уведомлений не требуется (§3 — никаких уведомлений «в никуда»).
+/// iOS 15 does not support `@Observable`, so state is passed
+/// through `ObservableObject`: the SwiftUI facade subscribes to the bridge, and the core notifies
+/// it with the `update(_:)` method. `@Published` itself tells SwiftUI about the change,
+/// so no separate notification channel is needed (no notifications "into the void").
 ///
-/// Мост не копирует объект и не подменяет его наблюдаемость: фасад получает
-/// исходный `Object`, а мост лишь публикует факт его замены.
+/// The bridge does not copy the object or replace its observability: the facade receives
+/// the original `Object`, and the bridge only publishes the fact that it was replaced.
 ///
-/// - Important: **Устарел (E9.9).** Ни один компонент TesseraKit мост не
-///   использует: фасады Pivot, Panorama и StartScreen передают состояние
-///   напрямую через `UIViewControllerRepresentable` и собственные
-///   `ObservableObject`. Тип нарушает правило трёх для Core (механика в Core —
-///   только если нужна минимум двум компонентам), поэтому помечен
-///   `@available(*, deprecated)` и будет удалён в следующем мажорном релизе
-///   (контракт 8: публичная поверхность Core меняется только через deprecation).
-///   Замена — собственный `ObservableObject` на стороне приложения или
-///   `@ObservedObject` непосредственно на исходном объекте.
-@available(*, deprecated, message: "TesseraStateBridge не используется компонентами TesseraKit и будет удалён в следующем мажорном релизе. Наблюдайте исходный ObservableObject напрямую (@ObservedObject / @StateObject).")
+/// - Important: **Deprecated.** No TesseraKit component uses the bridge:
+///   the Pivot, Panorama, and StartScreen facades pass state
+///   directly through `UIViewControllerRepresentable` and their own
+///   `ObservableObject`s. The type violates the rule of three for Core (a mechanism belongs in Core
+///   only if at least two components need it), so it is marked
+///   `@available(*, deprecated)` and will be removed in the next major release
+///   (the public surface of Core changes only through deprecation).
+///   The replacement is your own `ObservableObject` on the app side or
+///   `@ObservedObject` directly on the original object.
+@available(*, deprecated, message: "TesseraStateBridge is not used by TesseraKit components and will be removed in the next major release. Observe the original ObservableObject directly (@ObservedObject / @StateObject).")
 public final class TesseraStateBridge<Object: ObservableObject>: ObservableObject {
-    /// Текущий наблюдаемый объект. Меняется только через `init(_:)` и `update(_:)`,
-    /// поэтому фасад не может незаметно подменить источник состояния.
+    /// The current observed object. It changes only through `init(_:)` and `update(_:)`,
+    /// so the facade cannot silently swap the source of state.
     @Published public private(set) var object: Object
 
-    /// Создаёт мост поверх существующего наблюдаемого объекта.
+    /// Creates a bridge over an existing observable object.
     public init(_ object: Object) {
         self.object = object
     }
 
-    /// Публикует замену наблюдаемого объекта.
+    /// Publishes a replacement of the observed object.
     ///
-    /// SwiftUI-фасад получает уведомление через `objectWillChange` и перерисовывается.
+    /// The SwiftUI facade is notified through `objectWillChange` and redraws.
     public func update(_ object: Object) {
         self.object = object
     }
@@ -51,50 +51,50 @@ public final class TesseraStateBridge<Object: ObservableObject>: ObservableObjec
 #endif
 
 #if canImport(UIKit)
-/// Реестр переиспользования контроллеров контента
-/// (docs/Core-iOS-Design.md, §1 и §3).
+/// The reuse registry for content controllers
+/// (docs/CORE-IOS-DESIGN.md: package composition and conceptual API surface).
 ///
-/// Один `id` — один контроллер: повторный запрос возвращает тот же экземпляр,
-/// а не создаёт новый. Для `TesseraSwiftUIContentProvider` при повторном запросе
-/// обновляется `rootView` существующего `UIHostingController` — хостинг
-/// переиспользуется между перестройками иерархии, контроллер не пересоздаётся.
+/// One `id`, one controller: a repeated request returns the same instance
+/// instead of creating a new one. For `TesseraSwiftUIContentProvider`, a repeated request
+/// updates the `rootView` of the existing `UIHostingController`: hosting
+/// is reused across hierarchy rebuilds, and the controller is not recreated.
 ///
-/// Реестр — часть UIKit-ядра: SwiftUI-фасады передают сюда провайдеры
-/// и получают обычные `UIViewController` (§1).
+/// The registry is part of the UIKit core: SwiftUI facades pass providers here
+/// and get back ordinary `UIViewController`s.
 ///
 /// - Important:
-///   - Работает только на главном потоке: UI-состояние не размазывается по модулям (§3).
-///   - Держит сильные ссылки на контроллеры: освобождайте их через
-///     `removeContent(for:)` или `removeAll()`, когда контент больше не нужен.
+///   - Works only on the main thread: UI state is not spread across modules.
+///   - Holds strong references to the controllers: release them through
+///     `removeContent(for:)` or `removeAll()` when the content is no longer needed.
 public final class TesseraContentHosting {
-    /// Контроллеры по идентификаторам: словарь и есть контракт «один id — один контроллер».
+    /// Controllers by identifier: the dictionary itself is the "one id, one controller" contract.
     private var controllers: [AnyHashable: UIViewController] = [:]
 
-    /// Создаёт пустой реестр.
+    /// Creates an empty registry.
     public init() {}
 
-    /// Возвращает контроллер для `id`, создавая его при первом запросе.
+    /// Returns the controller for `id`, creating it on the first request.
     ///
-    /// Повторный запрос с тем же `id` не создаёт новый контроллер:
-    /// для SwiftUI-провайдера обновляется `rootView`, остальные провайдеры
-    /// возвращают уже созданный экземпляр без изменений.
+    /// A repeated request with the same `id` does not create a new controller:
+    /// for a SwiftUI provider the `rootView` is updated, and other providers
+    /// return the already created instance unchanged.
     ///
     /// - Parameters:
-    ///   - id: идентификатор контента (например, идентификатор страницы пейджера).
-    ///   - provider: фабрика контента; вызывается только при первом запросе.
-    /// - Returns: тот же экземпляр контроллера для одного и того же `id`.
+    ///   - id: The content identifier (for example, a pager page identifier).
+    ///   - provider: The content factory; called only on the first request.
+    /// - Returns: The same controller instance for the same `id`.
     ///
-    /// - Note: Смена поставщика или типа контента для занятого `id` не поддерживается
-    ///   (реестр сохраняет первый контроллер): удалите запись через `removeContent(for:)`
-    ///   и запросите контент заново.
+    /// - Note: Changing the provider or the content type for an occupied `id` is not supported
+    ///   (the registry keeps the first controller): remove the entry with `removeContent(for:)`
+    ///   and request the content again.
     public func viewController(
         for id: AnyHashable,
         provider: TesseraContentProviding
     ) -> UIViewController {
         if let existing = controllers[id] {
-            // Повторный запрос: SwiftUI-провайдер обновляет rootView на месте.
-            // Остальные провайдеры не умеют обновлять произвольный контроллер —
-            // возвращаем сохранённый экземпляр, сохраняя инвариант «один id — один контроллер».
+            // Repeated request: a SwiftUI provider updates its rootView in place.
+            // Other providers cannot update an arbitrary controller, so
+            // return the stored instance, preserving the "one id, one controller" invariant.
             _ = (provider as? TesseraContentUpdating)?.updateContent(of: existing)
             return existing
         }
@@ -104,15 +104,15 @@ public final class TesseraContentHosting {
         return controller
     }
 
-    /// Удаляет контроллер для `id` из реестра.
+    /// Removes the controller for `id` from the registry.
     ///
-    /// Сам контроллер не уничтожается принудительно — реестр лишь перестаёт
-    /// держать на него сильную ссылку; следующий запрос создаст новый экземпляр.
+    /// The controller itself is not forcibly destroyed: the registry only stops
+    /// holding a strong reference to it; the next request creates a new instance.
     public func removeContent(for id: AnyHashable) {
         controllers.removeValue(forKey: id)
     }
 
-    /// Очищает реестр: все контроллеры перестают переиспользоваться.
+    /// Clears the registry: no controller is reused any more.
     public func removeAll() {
         controllers.removeAll()
     }

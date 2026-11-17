@@ -2,25 +2,25 @@
 //  PanoramaControllerReviewTests.swift
 //  TesseraPanoramaTests
 //
-//  Контроллер-тесты панорамы по итогам ревью (трек T4: E9.2б, E9.7, E10.13,
-//  E10.12б). Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §4 «Снап»,
-//  §6 «Ленивая загрузка», §7 «Accessibility» (VoiceOver, RTL), §8
-//  «Адаптивность» (поворот, отложенный layout, navigation bar).
+//  Panorama controller tests from the review follow-up.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md: §4 (snapping),
+//  §6 (lazy loading), §7 (accessibility: VoiceOver, RTL), §8
+//  (adaptivity: rotation, deferred layout, navigation bar).
 //
-//  Каждый тест воспроизводит сценарий дефекта:
-//  - E9.2б: жест без скорости оставлял offset между снап-точками;
-//  - E9.7: VoiceOver-свайп с заголовка не листал; `contentInsetAdjustmentBehavior`
-//    не настраивался стилем;
-//  - E10.13: отложенный layout не применялся; смена LTR↔RTL открывала
-//    зеркальную секцию; смена `peek` оставляла секцию между снап-точками;
-//    `reload` пересоздавал выжившие секции; дальний `selectSection` пролетал
-//    пустые слоты; тот же стиль переприменялся; поворот слал ложный прогресс;
-//  - E10.12б: SwiftUI-контент секции с тем же `id`/заголовком не обновлялся.
+//  Each test reproduces a defect scenario:
+//  - a gesture without velocity left the offset between snap points;
+//  - a VoiceOver swipe from the header did not page; `contentInsetAdjustmentBehavior`
+//    was not configurable through the style;
+//  - deferred layout was not applied; an LTR↔RTL change opened
+//    the mirrored section; a `peek` change left the section between snap points;
+//    `reload` recreated surviving sections; a far `selectSection` flew through
+//    empty slots; the same style was reapplied; rotation sent false progress;
+//  - SwiftUI section content with the same `id`/title was not updated.
 //
-//  Анимация `setContentOffset(_:animated:)` в тестовом процессе без окна
-//  ведёт себя по-разному (UIKit может завершить её синхронно), поэтому тесты
-//  допускают оба исхода: синхронное завершение либо имитацию конца анимации
-//  вызовом `scrollViewDidEndScrollingAnimation`.
+//  The `setContentOffset(_:animated:)` animation behaves differently in a test process without a window
+//  (UIKit may complete it synchronously), so the tests
+//  accept both outcomes: synchronous completion or emulating the end of the animation
+//  by calling `scrollViewDidEndScrollingAnimation`.
 //
 
 #if canImport(UIKit)
@@ -31,11 +31,11 @@ import UIKit
 import TesseraCore
 @testable import TesseraPanorama
 
-/// Шпион делегата: показы секций и прогресс (с состоянием окна секций).
+/// A delegate spy: section shows and progress (with the section window's state).
 private final class PanoramaSpy: TesseraPanoramaDelegate {
     var shown: [Int] = []
     var progress: [CGFloat] = []
-    /// Загруженные секции в момент каждого `didChangeProgress`.
+    /// The loaded sections at the moment of each `didChangeProgress`.
     var loadedAtProgress: [Set<Int>] = []
 
     func panorama(_ panorama: TesseraPanoramaViewController, didShowSectionAt index: Int) {
@@ -48,7 +48,7 @@ private final class PanoramaSpy: TesseraPanoramaDelegate {
     }
 }
 
-/// SwiftUI-контент секции с проверяемым значением.
+/// SwiftUI section content with a checkable value.
 private struct ProbeView: View {
     let value: Int
 
@@ -61,10 +61,10 @@ final class PanoramaControllerReviewTests: XCTestCase {
 
     private let screen = CGSize(width: 390, height: 700)
 
-    /// Шаг секции при peek 48: `390 − 48 = 342`.
+    /// The section step at peek 48: `390 − 48 = 342`.
     private let itemWidth: CGFloat = 342
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makeSections(
         count: Int,
@@ -105,8 +105,8 @@ final class PanoramaControllerReviewTests: XCTestCase {
         makePanorama(sections: makeSections(count: count))
     }
 
-    /// Доводит программную анимацию offset'а до конца, если UIKit не завершил
-    /// её синхронно.
+    /// Drives the programmatic offset animation to its end if UIKit did not complete
+    /// it synchronously.
     private func finishAnimationIfNeeded(
         _ panorama: TesseraPanoramaViewController,
         to targetX: CGFloat,
@@ -119,11 +119,11 @@ final class PanoramaControllerReviewTests: XCTestCase {
         scrollView.scrollViewDidEndScrollingAnimation(scrollView)
     }
 
-    // MARK: - E9.2б: доводка снапа без инерции
+    // MARK: - Snap settling without inertia
 
-    /// Жест закончился без скорости на 200 pt: политика выбирает секцию 1
-    /// (342), но UIKit при нулевой скорости цель игнорирует. Панорама сама
-    /// доводит offset до 342 и только потом сообщает показ секции.
+    /// The gesture ended with no velocity at 200 pt: the policy picks section 1
+    /// (342), but UIKit ignores the target at zero velocity. The panorama itself
+    /// drives the offset to 342 and only then reports the section show.
     func testDragWithoutVelocityAlignsOffset() {
         let panorama = makePanorama()
         let spy = PanoramaSpy()
@@ -139,22 +139,22 @@ final class PanoramaControllerReviewTests: XCTestCase {
 
         scrollView.scrollViewDidEndDragging(scrollView, willDecelerate: false)
 
-        // Либо анимация завершилась синхронно (offset выровнен, показ — 1),
-        // либо она ещё идёт и показ не сообщён. Показ при невыровненном
-        // offset'е — дефект E9.2б.
+        // Either the animation completed synchronously (the offset is aligned, the show is 1),
+        // or it is still running and no show was reported. A show at an unaligned
+        // offset is a defect.
         XCTAssertTrue(
             spy.shown.isEmpty || abs(scrollView.contentOffset.x - itemWidth) < 0.001,
-            "показ секции \(spy.shown) при невыровненном offset \(scrollView.contentOffset.x)"
+            "section show \(spy.shown) at unaligned offset \(scrollView.contentOffset.x)"
         )
         finishAnimationIfNeeded(panorama, to: itemWidth, spy: spy, expectedShown: 1)
 
-        XCTAssertEqual(scrollView.contentOffset.x, itemWidth, accuracy: 0.001, "offset не выровнен после drag без скорости")
+        XCTAssertEqual(scrollView.contentOffset.x, itemWidth, accuracy: 0.001, "offset is not aligned after a drag with no velocity")
         XCTAssertEqual(spy.shown, [1])
         XCTAssertEqual(panorama.currentSectionIndex, 1)
     }
 
-    /// Без цели политики (жест без `willEndDragging`) доводка идёт к ближайшей
-    /// секции: 442 pt (1,29 секции) — назад к секции 1, а не «как есть».
+    /// Without a policy target (a gesture without `willEndDragging`) settling goes to the nearest
+    /// section: 442 pt (1.29 sections) goes back to section 1, not "as is".
     func testDragWithoutVelocityAndWithoutPolicyTargetAlignsToNearest() {
         let panorama = makePanorama()
         let spy = PanoramaSpy()
@@ -166,7 +166,7 @@ final class PanoramaControllerReviewTests: XCTestCase {
 
         XCTAssertTrue(
             spy.shown.isEmpty || abs(scrollView.contentOffset.x - itemWidth) < 0.001,
-            "показ секции \(spy.shown) при невыровненном offset \(scrollView.contentOffset.x)"
+            "section show \(spy.shown) at unaligned offset \(scrollView.contentOffset.x)"
         )
         finishAnimationIfNeeded(panorama, to: itemWidth, spy: spy, expectedShown: 1)
 
@@ -174,7 +174,7 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertEqual(spy.shown, [1])
     }
 
-    /// Уже выровненный offset: доводка не нужна, переход завершается сразу.
+    /// An already aligned offset: no settling is needed, the transition completes at once.
     func testDragEndingAlignedFinishesImmediately() {
         let panorama = makePanorama()
         let spy = PanoramaSpy()
@@ -191,10 +191,10 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, itemWidth, accuracy: 0.001)
     }
 
-    // MARK: - E9.7: VoiceOver с заголовка, contentInsetAdjustmentBehavior
+    // MARK: - VoiceOver from the header, contentInsetAdjustmentBehavior
 
-    /// Фокус VoiceOver на слое заголовков: трёхпальцевый свайп влево (вперёд
-    /// в LTR по конвенции UIKit, W1) листает на следующую секцию.
+    /// VoiceOver focus on the header layer: a three-finger swipe left (forward
+    /// in LTR by the UIKit convention) pages to the next section.
     func testAccessibilityScrollFromHeaderPagesSections() {
         let panorama = makePanorama()
         panorama.view.semanticContentAttribute = .forceLeftToRight
@@ -202,17 +202,17 @@ final class PanoramaControllerReviewTests: XCTestCase {
         let spy = PanoramaSpy()
         panorama.delegate = spy
 
-        XCTAssertTrue(panorama.headerView.accessibilityScroll(.left), "жест с заголовка обязан листать")
+        XCTAssertTrue(panorama.headerView.accessibilityScroll(.left), "a gesture from the header must page")
         finishAnimationIfNeeded(panorama, to: itemWidth, spy: spy, expectedShown: 1)
 
         XCTAssertEqual(panorama.currentSectionIndex, 1)
         XCTAssertEqual(panorama.scrollView.contentOffset.x, itemWidth, accuracy: 0.001)
 
-        // Вертикальный жест — не листание секций.
+        // A vertical gesture is not section paging.
         XCTAssertFalse(panorama.headerView.accessibilityScroll(.up))
     }
 
-    /// §8: подстройка отступов полосы секций берётся из стиля и меняется на лету.
+    /// §8: the section strip's inset adjustment is taken from the style and changes on the fly.
     func testContentInsetAdjustmentBehaviorComesFromStyle() {
         let panorama = makePanorama()
         XCTAssertEqual(panorama.scrollView.contentInsetAdjustmentBehavior, .never)
@@ -229,10 +229,10 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertEqual(configured.scrollView.contentInsetAdjustmentBehavior, .scrollableAxes)
     }
 
-    // MARK: - E10.13: отложенный layout
+    // MARK: - Deferred layout
 
-    /// Поворот во время жеста откладывается (§8), а по завершении инерции
-    /// обязан примениться: кадр полосы и offset — под новую ширину.
+    /// A rotation during a gesture is deferred (§8), and when inertia ends
+    /// it must be applied: the strip's frame and the offset match the new width.
     func testDeferredLayoutIsAppliedWhenScrollEnds() {
         let panorama = makePanorama()
         panorama.selectSection(at: 1, animated: false)
@@ -241,20 +241,20 @@ final class PanoramaControllerReviewTests: XCTestCase {
         scrollView.interactionOverrideForTesting = true
         panorama.view.frame = CGRect(x: 0, y: 0, width: 844, height: 390)
         panorama.view.layoutIfNeeded()
-        XCTAssertEqual(scrollView.frame.width, screen.width, "во время жеста layout откладывается")
+        XCTAssertEqual(scrollView.frame.width, screen.width, "layout is deferred during a gesture")
 
         scrollView.interactionOverrideForTesting = false
         scrollView.scrollViewDidEndDecelerating(scrollView)
 
-        XCTAssertEqual(scrollView.frame.width, 844, "отложенный layout не применился")
+        XCTAssertEqual(scrollView.frame.width, 844, "the deferred layout was not applied")
         XCTAssertEqual(scrollView.contentOffset.x, scrollView.alignmentOffset(forReadingIndex: 1), accuracy: 0.001)
         XCTAssertEqual(panorama.currentSectionIndex, 1)
     }
 
-    // MARK: - E10.13: смена направления чтения на лету
+    // MARK: - Reading direction change on the fly
 
-    /// LTR → RTL → LTR через `semanticContentAttribute` корневого вида:
-    /// остаётся та же секция в порядке чтения, а не зеркальная.
+    /// LTR → RTL → LTR via the root view's `semanticContentAttribute`:
+    /// the same section in reading order stays, not the mirrored one.
     func testSemanticDirectionChangeKeepsReadingSection() {
         let panorama = makePanorama()
         panorama.view.semanticContentAttribute = .forceLeftToRight
@@ -267,8 +267,8 @@ final class PanoramaControllerReviewTests: XCTestCase {
         panorama.view.layoutIfNeeded()
 
         XCTAssertEqual(scrollView.resolvedLayoutDirection, .rightToLeft)
-        XCTAssertEqual(panorama.currentSectionIndex, 1, "смена направления открыла другую секцию")
-        // RTL: секция 1 — физический слот 4 − 1 − 1 = 2.
+        XCTAssertEqual(panorama.currentSectionIndex, 1, "the direction change opened a different section")
+        // RTL: section 1 is physical slot 4 − 1 − 1 = 2.
         XCTAssertEqual(scrollView.contentOffset.x, 2 * itemWidth, accuracy: 0.001)
         XCTAssertNotNil(panorama.loadedSections[1])
 
@@ -280,9 +280,9 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, itemWidth, accuracy: 0.001)
     }
 
-    /// То же через trait-окружение (направление интерфейса от родителя).
+    /// The same via the trait environment (the interface direction from the parent).
     func testTraitDirectionChangeKeepsReadingSection() {
-        // Trait-окружение распространяется только по иерархии с окном.
+        // The trait environment propagates only through a hierarchy with a window.
         let window = UIWindow(frame: CGRect(origin: .zero, size: screen))
         let parent = UIViewController()
         window.rootViewController = parent
@@ -304,15 +304,15 @@ final class PanoramaControllerReviewTests: XCTestCase {
         panorama.view.setNeedsLayout()
         panorama.view.layoutIfNeeded()
 
-        XCTAssertEqual(scrollView.resolvedLayoutDirection, .rightToLeft, "trait-направление не дошло до скролла")
-        XCTAssertEqual(panorama.currentSectionIndex, 0, "смена направления открыла зеркальную секцию")
+        XCTAssertEqual(scrollView.resolvedLayoutDirection, .rightToLeft, "the trait direction did not reach the scroll view")
+        XCTAssertEqual(panorama.currentSectionIndex, 0, "the direction change opened the mirrored section")
         XCTAssertEqual(scrollView.contentOffset.x, 3 * itemWidth, accuracy: 0.001)
     }
 
-    // MARK: - E10.13: смена peek на лету
+    // MARK: - Peek change on the fly
 
-    /// Смена `peek` меняет шаг секции; секция остаётся выровненной по новой
-    /// снап-точке, а не между ними.
+    /// A `peek` change alters the section step; the section stays aligned to the new
+    /// snap point, not between them.
     func testPeekChangeKeepsSectionAligned() {
         let panorama = makePanorama()
         panorama.selectSection(at: 2, animated: false)
@@ -323,14 +323,14 @@ final class PanoramaControllerReviewTests: XCTestCase {
         panorama.view.layoutIfNeeded()
 
         XCTAssertEqual(scrollView.itemWidth, 374, accuracy: 0.001)
-        XCTAssertEqual(scrollView.contentOffset.x, 2 * 374, accuracy: 0.001, "секция между снап-точками")
+        XCTAssertEqual(scrollView.contentOffset.x, 2 * 374, accuracy: 0.001, "the section is between snap points")
         XCTAssertEqual(panorama.currentSectionIndex, 2)
     }
 
-    // MARK: - E10.13: reload переиспользует секции
+    // MARK: - reload reuses sections
 
-    /// `reload` с теми же `id`: загруженные контроллеры — те же экземпляры,
-    /// фабрики заново не вызываются.
+    /// A `reload` with the same `id`s: the loaded controllers are the same instances,
+    /// and the factories are not called again.
     func testReloadReusesSurvivingSections() {
         var made: [Int] = []
         let panorama = makePanorama(sections: makeSections(count: 4) { made.append($0) })
@@ -341,14 +341,14 @@ final class PanoramaControllerReviewTests: XCTestCase {
 
         panorama.reload(sections: makeSections(count: 4) { made.append($0) })
 
-        XCTAssertTrue(panorama.loadedSections[0] === before0, "секция 0 пересоздана")
-        XCTAssertTrue(panorama.loadedSections[1] === before1, "секция 1 пересоздана")
-        XCTAssertEqual(made.sorted(), [0, 1], "фабрики выживших не должны вызываться")
+        XCTAssertTrue(panorama.loadedSections[0] === before0, "section 0 was recreated")
+        XCTAssertTrue(panorama.loadedSections[1] === before1, "section 1 was recreated")
+        XCTAssertEqual(made.sorted(), [0, 1], "the factories of survivors must not be called")
         XCTAssertTrue(before0?.parent === panorama)
     }
 
-    /// Перестановка: текущая секция ищется по `id`, выжившие в новом окне
-    /// переиспользуются, вышедшие из окна и исчезнувшие выгружаются.
+    /// A reorder: the current section is looked up by `id`, survivors in the new window
+    /// are reused, and those that left the window or disappeared are unloaded.
     func testReloadWithReorderKeepsCurrentAndReusesWindow() {
         var made: [Int] = []
         let panorama = makePanorama(sections: makeSections(count: 4) { made.append($0) })
@@ -362,18 +362,18 @@ final class PanoramaControllerReviewTests: XCTestCase {
 
         panorama.reload(sections: makeSections(count: 4, ids: [3, 1, 0, 2]) { made.append($0) })
 
-        XCTAssertEqual(panorama.currentSectionIndex, 1, "текущая секция — по id 1")
+        XCTAssertEqual(panorama.currentSectionIndex, 1, "the current section is the one with id 1")
         XCTAssertEqual(panorama.scrollView.contentOffset.x, itemWidth, accuracy: 0.001)
         XCTAssertTrue(panorama.loadedSections[1] === byID[1])
         XCTAssertTrue(panorama.loadedSections[2] === byID[0])
-        XCTAssertEqual(made, [3], "создаётся только новая в окне секция")
-        XCTAssertNil(byID[2]?.parent, "вышедшая из окна секция выгружена")
+        XCTAssertEqual(made, [3], "only the section that is new in the window is created")
+        XCTAssertNil(byID[2]?.parent, "the section that left the window is unloaded")
     }
 
-    // MARK: - E10.13: дальний анимированный selectSection
+    // MARK: - A far animated selectSection
 
-    /// Переход 0 → 5 с анимацией: ни на одном кадре прогресса в кадре нет
-    /// невыгруженных секций, и анимируется только последний шаг 4 → 5.
+    /// A 0 → 5 transition with animation: on no progress frame are there
+    /// unloaded sections in the frame, and only the last step 4 → 5 is animated.
     func testAnimatedFarSelectDoesNotFlyOverEmptySlots() {
         let panorama = makePanorama(count: 6)
         let spy = PanoramaSpy()
@@ -387,19 +387,19 @@ final class PanoramaControllerReviewTests: XCTestCase {
             let visible = Set([Int(progress.rounded(.down)), Int(progress.rounded(.up))])
             XCTAssertTrue(
                 visible.isSubset(of: loaded),
-                "прогресс \(progress): в кадре секции \(visible), загружены \(loaded.sorted())"
+                "progress \(progress): sections \(visible) in the frame, loaded \(loaded.sorted())"
             )
-            XCTAssertGreaterThanOrEqual(progress, 4 - 0.001, "анимация пролетает промежуточные слоты")
+            XCTAssertGreaterThanOrEqual(progress, 4 - 0.001, "the animation flies through intermediate slots")
         }
         XCTAssertEqual(panorama.currentSectionIndex, 5)
         XCTAssertEqual(spy.shown, [5])
         XCTAssertEqual(Set(panorama.loadedSections.keys), [4, 5])
     }
 
-    // MARK: - E10.13: тот же стиль не переприменяется
+    // MARK: - The same style is not reapplied
 
-    /// SwiftUI присваивает стиль на каждом обновлении: равный стиль не
-    /// запускает layout и не трогает слои.
+    /// SwiftUI assigns the style on every update: an equal style does not
+    /// trigger layout and does not touch the layers.
     func testAssigningEquivalentStyleIsNoOp() {
         let image = UIImage()
         let panorama = makePanorama(
@@ -409,13 +409,13 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertFalse(panorama.view.layer.needsLayout())
 
         panorama.style = TesseraPanoramaStyle(backgroundBehavior: .image(image))
-        XCTAssertFalse(panorama.view.layer.needsLayout(), "тот же стиль переприменён")
+        XCTAssertFalse(panorama.view.layer.needsLayout(), "the same style was reapplied")
 
         panorama.style = TesseraPanoramaStyle(peek: 20, backgroundBehavior: .image(image))
-        XCTAssertTrue(panorama.view.layer.needsLayout(), "новый стиль обязан примениться")
+        XCTAssertTrue(panorama.view.layer.needsLayout(), "a new style must be applied")
     }
 
-    /// Сравнение стиля учитывает каждое поле.
+    /// Style comparison takes every field into account.
     func testStyleEquivalenceCoversAllFields() {
         let base = TesseraPanoramaStyle()
         XCTAssertTrue(base.isEquivalent(to: TesseraPanoramaStyle()))
@@ -441,14 +441,14 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertFalse(
             TesseraPanoramaStyle(backgroundBehavior: .image(UIImage()))
                 .isEquivalent(to: TesseraPanoramaStyle(backgroundBehavior: .image(UIImage()))),
-            "картинки сравниваются по идентичности"
+            "images are compared by identity"
         )
     }
 
-    // MARK: - E10.13: поворот без ложного прогресса
+    // MARK: - Rotation without false progress
 
-    /// Поворот — пересчёт геометрии, а не прогресс пользователя: делегат не
-    /// получает `didChangeProgress`, секция сохраняется.
+    /// Rotation is a geometry recomputation, not user progress: the delegate does not
+    /// receive `didChangeProgress`, and the section is kept.
     func testRotationDoesNotReportProgress() {
         let panorama = makePanorama()
         panorama.selectSection(at: 3, animated: false)
@@ -460,16 +460,16 @@ final class PanoramaControllerReviewTests: XCTestCase {
         panorama.view.frame = CGRect(origin: .zero, size: screen)
         panorama.view.layoutIfNeeded()
 
-        XCTAssertEqual(spy.progress, [], "ложный didChangeProgress при повороте")
+        XCTAssertEqual(spy.progress, [], "false didChangeProgress on rotation")
         XCTAssertEqual(panorama.currentSectionIndex, 3)
         XCTAssertEqual(panorama.scrollView.contentOffset.x, 3 * itemWidth, accuracy: 0.001)
     }
 
-    // MARK: - E10.12б: контент SwiftUI-секций с тем же id
+    // MARK: - SwiftUI section content with the same id
 
-    /// Те же `id`/заголовки, новый контент: загруженные SwiftUI-секции
-    /// обновляются на месте — тот же контроллер, новый `rootView`; offset и
-    /// текущая секция не меняются, делегат молчит.
+    /// The same `id`s/titles, new content: loaded SwiftUI sections
+    /// are updated in place: the same controller, a new `rootView`; the offset and
+    /// the current section do not change, and the delegate stays silent.
     func testUpdateContentRefreshesLoadedSwiftUISectionsInPlace() throws {
         let panorama = makePanorama(sections: makeSwiftUISections(count: 4, value: 1))
         panorama.selectSection(at: 1, animated: false)
@@ -481,8 +481,8 @@ final class PanoramaControllerReviewTests: XCTestCase {
         panorama.updateContent(of: makeSwiftUISections(count: 4, value: 2))
 
         let after = try XCTUnwrap(panorama.loadedSections[1] as? UIHostingController<ProbeView>)
-        XCTAssertTrue(after === before, "контроллер секции пересоздан")
-        XCTAssertEqual(after.rootView.value, 2, "контент не обновлён")
+        XCTAssertTrue(after === before, "the section controller was recreated")
+        XCTAssertEqual(after.rootView.value, 2, "the content was not updated")
         XCTAssertEqual(
             (panorama.loadedSections[0] as? UIHostingController<ProbeView>)?.rootView.value,
             2
@@ -492,13 +492,13 @@ final class PanoramaControllerReviewTests: XCTestCase {
         XCTAssertEqual(spy.shown, [])
         XCTAssertEqual(spy.progress, [])
 
-        // Невыгруженная секция создаётся уже из нового поставщика.
+        // An unloaded section is created from the new provider.
         panorama.selectSection(at: 3, animated: false)
         XCTAssertEqual((panorama.loadedSections[3] as? UIHostingController<ProbeView>)?.rootView.value, 2)
     }
 
-    /// Сквозной сценарий фасада: перерисовка `TesseraPanoramaView` с теми же
-    /// `id`/заголовками доносит новый контент до секции.
+    /// End-to-end scenario of the facade: redrawing `TesseraPanoramaView` with the same
+    /// `id`s/titles delivers the new content to the section.
     func testPanoramaViewPropagatesContentForSameIdentifiers() throws {
         let window = UIWindow(frame: CGRect(origin: .zero, size: screen))
         let host = UIHostingController(rootView: TesseraPanoramaView(sections: makeSwiftUISections(count: 3, value: 1)))
@@ -507,7 +507,7 @@ final class PanoramaControllerReviewTests: XCTestCase {
         defer { window.isHidden = true }
         host.view.layoutIfNeeded()
 
-        let panorama = try XCTUnwrap(Self.findPanorama(in: host), "TesseraPanoramaViewController не найден")
+        let panorama = try XCTUnwrap(Self.findPanorama(in: host), "TesseraPanoramaViewController not found")
         panorama.view.layoutIfNeeded()
         let before = try XCTUnwrap(panorama.loadedSections[0] as? UIHostingController<ProbeView>)
         XCTAssertEqual(before.rootView.value, 1)
@@ -518,7 +518,7 @@ final class PanoramaControllerReviewTests: XCTestCase {
 
         let after = try XCTUnwrap(panorama.loadedSections[0] as? UIHostingController<ProbeView>)
         XCTAssertTrue(after === before)
-        XCTAssertEqual(after.rootView.value, 7, "SwiftUI-контент секции с тем же id не обновился")
+        XCTAssertEqual(after.rootView.value, 7, "the SwiftUI section content with the same id was not updated")
     }
 
     private static func findPanorama(in controller: UIViewController) -> TesseraPanoramaViewController? {

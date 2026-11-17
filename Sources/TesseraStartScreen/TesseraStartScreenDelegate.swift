@@ -1,43 +1,39 @@
-// Делегат рабочего стола (Start Screen).
+// The start screen delegate.
 //
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  - §2 «Архитектура»: `TesseraStartScreenDelegate` — события рабочего стола
-//    (тап, переходы страниц, хук); модель и раскладка живут отдельно;
-//  - §6 «Страница справа: список приложений + настройки» и §7 «Страница
-//    слева: хук»: действия ярлыков и навигация — забота хоста, компонент
-//    только сообщает о намерении;
-//  - §9 «Accessibility»: доступность плиток, режима редактирования и озвучивание
-//    страниц выполняет UIKit-ядро (`TesseraTileGridView` E4.2,
-//    `TesseraTileEditCoordinator` E4.4, `TesseraStartScreenViewController`
-//    E4.1); делегат — наблюдатель и ничего не дублирует и не озвучивает;
-//  - §14 «Уточнения MVP» п. 1–2 и D12/D13 в docs/STATE.md: ярлык — просто
-//    действие (без поля `type`), боковые страницы опциональны.
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md
+//  - §2 (architecture): `TesseraStartScreenDelegate` carries start screen events (taps, page
+//    transitions, the hook); the model and the layout live separately;
+//  - §6 (the right page: app list + settings) and §7 (the left page: the hook): tile actions and
+//    navigation are the host's concern, the component only reports intent;
+//  - §9 (Accessibility): accessibility of tiles, edit mode and page announcements is handled by the
+//    UIKit core (`TesseraTileGridView`, `TesseraTileEditCoordinator`,
+//    `TesseraStartScreenViewController`); the delegate is an observer and neither duplicates nor
+//    announces anything;
+//  - §14 (MVP clarifications) and D12/D13 in docs/STATE.md: a shortcut is just an action (no `type`
+//    field), side pages are optional.
 //
-// Задача плана: E4.6 (SwiftUI-фасад + accessibility).
-//
-// Делегат — единственный канал событий фасада: UIKit-ядро отдаёт тапы сетки и
-// переходы пейджера, а фасад переводит их в этот протокол. Все методы
-// вызываются на главном потоке; обязательных методов нет, поэтому хост
-// подписывается только на нужные события (пустые реализации — в extension).
+// The delegate is the only event channel of the facade: the UIKit core reports grid taps and pager
+// transitions, and the facade translates them into this protocol. All methods are called on the main
+// thread; there are no required methods, so the host subscribes only to the events it needs (empty
+// implementations are in the extension).
 
 #if canImport(UIKit)
 import UIKit
 
-/// Наблюдатель событий рабочего стола (docs/STARTSCREEN-IOS-DESIGN.md §2).
+/// An observer of start screen events (docs/STARTSCREEN-IOS-DESIGN.md §2).
 ///
-/// Делегат только читает состояние и реагирует на действия пользователя:
-/// модель (`TesseraTileStore`) и раскладку (`TileGridView`) он не меняет — это правило
-/// «один писатель» из §6 и `docs/CORE-IOS-DESIGN.md` §2. Если нужно изменить
-/// состав ярлыков (pin/unpin, resize, папки), хост делает это через `TesseraTileStore` и
-/// передаёт фасаду новый снимок сетки.
+/// The delegate only reads state and reacts to user actions: it does not change the model
+/// (`TesseraTileStore`) or the layout (`TileGridView`). This is the "single writer" rule from §6
+/// and `docs/CORE-IOS-DESIGN.md` §2. To change the set of shortcuts (pin/unpin, resize, folders),
+/// the host does it through `TesseraTileStore` and passes the facade a new grid snapshot.
 ///
-/// ## Что фасад НЕ делает сам (D12)
+/// ## What the facade does NOT do by itself (D12)
 ///
-/// Тап по ярлыку — это событие ``startScreen(_:didTapShortcut:)``, а **не**
-/// вызов `TesseraTileDescriptor.action`. Действие ярлыка выполняет хост: так D12
-/// («ярлык — просто действие») остаётся в одном месте, а хост может добавить
-/// аналитику, защиту от повторного тапа или навигацию до запуска действия.
-/// Если вызывать `action` ещё и в фасаде, действие выполнилось бы дважды.
+/// A tap on a shortcut is the ``startScreen(_:didTapShortcut:)`` event, **not** a call to
+/// `TesseraTileDescriptor.action`. The host runs the shortcut action: this keeps D12 ("a shortcut is
+/// just an action") in one place, and lets the host add analytics, double-tap protection or
+/// navigation before running the action. If the facade also called `action`, the action would run
+/// twice.
 ///
 /// ```swift
 /// final class Host: TesseraStartScreenDelegate {
@@ -52,126 +48,121 @@ import UIKit
 ///
 /// ## Accessibility (§9)
 ///
-/// VoiceOver-активация плитки приходит тем же путём, что и тап пальцем
-/// (`accessibilityActivate` ячейки → `onTap` сетки), поэтому делегату не нужно
-/// различать способы ввода:
+/// A VoiceOver activation of a tile arrives the same way as a finger tap (the cell's
+/// `accessibilityActivate` -> the grid's `onTap`), so the delegate does not need to distinguish
+/// input methods:
 ///
-/// - плитка уже один элемент с заголовком и счётчиком бэйджа (E4.2);
-/// - в режиме редактирования `resize`/`unpin` доступны как
-///   `UIAccessibilityCustomAction`, а вход и выход озвучиваются (E4.4);
-/// - листание страниц жестом VoiceOver и озвучивание названия страницы делает
-///   контроллер (E4.1) — фасад лишь не перекрывает это поведение, пробрасывая
-///   события пейджера в контроллер.
+/// - a tile is a single element with a title and a badge counter;
+/// - in edit mode `resize`/`unpin` are available as `UIAccessibilityCustomAction`, and entering and
+///   leaving are announced;
+/// - paging with the VoiceOver gesture and announcing the page name are done by the controller; the
+///   facade only does not override this behavior, forwarding pager events to the controller.
 ///
-/// - Note: В режиме редактирования сетка продолжает сообщать тапы — координатор
-///   редактирования (E4.4) их не перехватывает. Если хост подключил
-///   `TesseraTileEditCoordinator`, решение «реагировать или нет» принимает он
-///   сам по своему `isEditing` (docs/STARTSCREEN-IOS-DESIGN.md §5).
+/// - Note: In edit mode the grid keeps reporting taps: the edit coordinator does not intercept them.
+///   If the host attached `TesseraTileEditCoordinator`, it decides whether to react using its own
+///   `isEditing` (docs/STARTSCREEN-IOS-DESIGN.md §5).
 ///
-/// - Note: Делегат удерживается фасадом сильной ссылкой (SwiftUI-структура не
-///   умеет хранить `weak`). Если делегат держит SwiftUI-состояние, используйте
-///   промежуточный объект, чтобы не создать цикл.
+/// - Note: The facade holds the delegate with a strong reference (a SwiftUI struct cannot store a
+///   `weak` one). If the delegate holds SwiftUI state, use an intermediate object to avoid a cycle.
 public protocol TesseraStartScreenDelegate: AnyObject {
 
-    /// Пользователь выбрал ярлык (тап пальцем или активация VoiceOver).
+    /// The user selected a shortcut (finger tap or VoiceOver activation).
     ///
-    /// Ярлык приходит из снимка сетки — с идентификатором, заголовком, иконкой,
-    /// бейджем, размером и действием (D12). Фасад **не** вызывает
-    /// `TesseraTileDescriptor.action`: это решение хоста (см. документацию протокола).
-    /// Папки приходят отдельным событием ``startScreen(_:didTapFolder:)``.
+    /// The shortcut comes from the grid snapshot, with its identifier, title, icon, badge, size and
+    /// action (D12). The facade does **not** call `TesseraTileDescriptor.action`: that is the host's
+    /// decision (see the protocol documentation). Folders arrive as a separate event,
+    /// ``startScreen(_:didTapFolder:)``.
     ///
     /// - Parameters:
-    ///   - screen: Контроллер-источник события.
-    ///   - shortcut: Выбранный ярлык.
+    ///   - screen: The controller that is the source of the event.
+    ///   - shortcut: The selected shortcut.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didTapShortcut shortcut: TesseraTileDescriptor
     )
 
-    /// Пользователь выбрал папку на сетке.
+    /// The user selected a folder on the grid.
     ///
-    /// Открытие папки — навигация хоста (D14): фасад не показывает собственный
-    /// экран папки. Если хост использует `TesseraTileEditCoordinator`, он может
-    /// передать папку в ``TesseraTileEditCoordinator/openFolder(_:)``; иначе
-    /// показывает свой контроллер.
+    /// Opening a folder is host navigation (D14): the facade does not show its own folder screen. If
+    /// the host uses `TesseraTileEditCoordinator`, it can pass the folder to
+    /// ``TesseraTileEditCoordinator/openFolder(_:)``; otherwise it shows its own controller.
     ///
-    /// - Note: С D17 (E7.3) по умолчанию папка дополнительно раскрывается
-    ///   нативной панелью сетки, поэтому событие — «палец коснулся папки», а не
-    ///   команда показа экрана. Чтобы сохранить прежнее поведение (свой экран
-    ///   без встроенной панели), задайте перехватчик в `TesseraStartScreenView`.
+    /// - Note: Since D17, by default the folder is additionally expanded by the grid's native
+    ///   panel, so the event means "a finger touched the folder", not a command to show a screen. To
+    ///   keep the previous behavior (a custom screen without the built-in panel), set an interceptor
+    ///   in `TesseraStartScreenView`.
     ///
     /// - Parameters:
-    ///   - screen: Контроллер-источник события.
-    ///   - folder: Выбранная папка вместе с ярлыками.
+    ///   - screen: The controller that is the source of the event.
+    ///   - folder: The selected folder with its shortcuts.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didTapFolder folder: TesseraTileFolder
     )
 
-    /// Сетка раскрыла папку нативной панелью (D17, E7.3).
+    /// The grid expanded a folder with the native panel (D17).
     ///
-    /// Событие приходит после анимации раскрытия: панель уже вставлена, строки
-    /// ниже сдвинуты, иконки начинают каскад. Хост может использовать его для
-    /// аналитики или синхронизации своего состояния; менять снимок сетки в
-    /// колбэке не нужно — раскрытие уже выполнено.
+    /// The event arrives after the expansion animation: the panel is already inserted, the rows below
+    /// are shifted, and the icons start their cascade. The host can use it for analytics or to sync
+    /// its own state; there is no need to change the grid snapshot in the callback, because the
+    /// expansion is already done.
     ///
     /// - Parameters:
-    ///   - screen: Контроллер-источник события.
-    ///   - folder: Раскрытая папка.
+    ///   - screen: The controller that is the source of the event.
+    ///   - folder: The expanded folder.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didExpandFolder folder: TesseraTileFolder
     )
 
-    /// Сетка свернула нативную панель папки (D17, E7.3).
+    /// The grid collapsed the native folder panel (D17).
     ///
-    /// Приходит и при закрытии по повторному тапу, тапу по пустому месту,
-    /// вызову ``TesseraTileGridView/closeFolder(animated:)`` или `Back`, и при
-    /// исчезновении открытой папки из снимка (модель распустила папку).
+    /// It arrives both when the panel is closed by a repeated tap, a tap on empty space, a call to
+    /// ``TesseraTileGridView/closeFolder(animated:)`` or `Back`, and when the open folder disappears
+    /// from the snapshot (the model dissolved the folder).
     ///
     /// - Parameters:
-    ///   - screen: Контроллер-источник события.
-    ///   - folder: Свёрнутая папка.
+    ///   - screen: The controller that is the source of the event.
+    ///   - folder: The collapsed folder.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didCollapseFolder folder: TesseraTileFolder
     )
 
-    /// Пейджер завершил переход и показывает новую страницу.
+    /// The pager finished a transition and shows a new page.
     ///
-    /// Индекс — в порядке чтения (Core нормализует его с учётом RTL): `0` —
-    /// первая страница для пользователя, независимо от LTR/RTL. Набор страниц
-    /// зависит от конфигурации (D13): боковые страницы существуют, только если
-    /// хост их задал, поэтому индекс `0` — это либо хук, либо START.
+    /// The index is in reading order (Core normalizes it for RTL): `0` is the first page for the
+    /// user, regardless of LTR/RTL. The set of pages depends on the configuration (D13): side pages
+    /// exist only if the host provided them, so index `0` is either the hook or START.
     ///
-    /// Событие приходит по завершении перехода (жестом или программно), а не на
-    /// кадрах прокрутки: непрерывный прогресс рабочему столу не нужен, а
-    /// покадровые вызовы заставляли бы SwiftUI перерисовываться на каждом кадре.
+    /// The event arrives when a transition completes (by gesture or programmatically), not on scroll
+    /// frames: the start screen does not need continuous progress, and per-frame calls would make
+    /// SwiftUI redraw on every frame.
     ///
     /// - Parameters:
-    ///   - screen: Контроллер-источник события.
-    ///   - page: Показанная страница в порядке чтения.
-    ///   - index: Индекс страницы в порядке чтения.
+    ///   - screen: The controller that is the source of the event.
+    ///   - page: The page now shown, in reading order.
+    ///   - index: The page index in reading order.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didChangePage page: TesseraStartScreenPage,
         index: Int
     )
 
-    /// Изменилась видимость страницы-хука (§7).
+    /// The visibility of the hook page changed (§7).
     ///
-    /// `true` — хук сейчас на экране (пользователь листает пейджер или хост
-    /// показал его программно), `false` — ушёл с экрана. Событие нужно для
-    /// ленивой загрузки контента хука на уровне экрана; сам
-    /// ``TesseraQuickPanelProviding`` дополнительно получает `quickPanelWillAppear` /
-    /// `quickPanelDidDisappear` от контроллера, поэтому обычно достаточно их.
+    /// `true` means the hook is on screen now (the user pages the pager or the host showed it
+    /// programmatically), `false` means it left the screen. The event is for lazy loading of hook
+    /// content at the screen level; ``TesseraQuickPanelProviding`` itself additionally receives
+    /// `quickPanelWillAppear` / `quickPanelDidDisappear` from the controller, so those are usually
+    /// enough.
     ///
-    /// Событие приходит только при смене значения — при первом переходе на
-    /// START, если хук не показывался, вызова не будет.
+    /// The event arrives only when the value changes: on the first transition to START, if the hook
+    /// was never shown, there is no call.
     ///
     /// - Parameters:
-    ///   - screen: Контроллер-источник события.
-    ///   - isVisible: `true`, если страница-хук сейчас на экране.
+    ///   - screen: The controller that is the source of the event.
+    ///   - isVisible: `true` if the hook page is on screen now.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didChangeHookVisibility isVisible: Bool
@@ -180,39 +171,39 @@ public protocol TesseraStartScreenDelegate: AnyObject {
 
 public extension TesseraStartScreenDelegate {
 
-    /// По умолчанию тап по ярлыку игнорируется: хост подписывается на нужные
-    /// события выборочно (docs/STARTSCREEN-IOS-DESIGN.md §2).
+    /// By default a tap on a shortcut is ignored: the host subscribes selectively to the events it
+    /// needs (docs/STARTSCREEN-IOS-DESIGN.md §2).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didTapShortcut shortcut: TesseraTileDescriptor
     ) {}
 
-    /// По умолчанию папка не открывается: навигация — за хостом (D14).
+    /// By default a folder is not opened: navigation is up to the host (D14).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didTapFolder folder: TesseraTileFolder
     ) {}
 
-    /// По умолчанию раскрытие папки не интересует делегата (D17).
+    /// By default the delegate is not interested in folder expansion (D17).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didExpandFolder folder: TesseraTileFolder
     ) {}
 
-    /// По умолчанию закрытие папки не интересует делегата (D17).
+    /// By default the delegate is not interested in folder collapse (D17).
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didCollapseFolder folder: TesseraTileFolder
     ) {}
 
-    /// По умолчанию смена страницы не интересует делегата.
+    /// By default the delegate is not interested in page changes.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didChangePage page: TesseraStartScreenPage,
         index: Int
     ) {}
 
-    /// По умолчанию видимость хука не интересует делегата.
+    /// By default the delegate is not interested in hook visibility.
     func startScreen(
         _ screen: TesseraStartScreenViewController,
         didChangeHookVisibility isVisible: Bool

@@ -2,10 +2,10 @@
 //  TileEditControlsTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты кнопок редактирования (E12.4/E12.5): обрезка вместе с плиткой,
-//  размер по размеру плитки, зона касания не меньше 44 pt, контраст в обеих
-//  темах. Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §5
-//  (п. 42 «Отступлений реализации»).
+//  Tests of the edit-mode buttons: clipped together with the tile,
+//  sized by tile size, a touch target of at least 44 pt, contrast in both
+//  themes. Design document: docs/STARTSCREEN-IOS-DESIGN.md §5
+//  ("Implementation deviations").
 //
 
 #if canImport(UIKit)
@@ -37,14 +37,14 @@ final class TileEditControlsTests: XCTestCase {
         return white
     }
 
-    // MARK: - E12.9: кнопки не «влетают» при входе в edit
+    // MARK: - Buttons do not fly in when entering edit mode
 
-    /// Кнопки встают на место плитки сразу: ни на входе, ни после отложенной
-    /// сверки у них нет анимации положения из нулевой рамки (перелёт из
-    /// левого верхнего угла), в том числе при включённом Reduce Motion.
+    /// The buttons sit in the tile's place immediately: neither on entry nor after the deferred
+    /// reconciliation do they have a position animation from a zero frame (flying in
+    /// from the top-left corner), including with Reduce Motion enabled.
     func testControlsAppearInPlaceWithoutFlyInFromOrigin() throws {
-        // E15.6: «желе» по умолчанию выключено; включённое — поворачивает слой
-        // оверлея, и центр кнопок по-прежнему должен совпадать с плиткой.
+        // The jiggle is off by default; when enabled it rotates the overlay layer,
+        // and the button centers must still coincide with the tile.
         for (reduceMotion, jiggle) in [(false, false), (false, true), (true, false), (true, true)] {
             let host = TesseraTestDragHost(
                 descriptors: (0..<4).map { tesseraTestTile("t\($0)", size: .medium) },
@@ -57,14 +57,14 @@ final class TileEditControlsTests: XCTestCase {
             for id in ["t0", "t1", "t2", "t3"] {
                 let control = try control(id, in: host)
                 let tile = try XCTUnwrap(host.host.grid.frame(forItemID: AnyHashable(id)))
-                // «Желе» поворачивает слой, поэтому сравниваем центры (frame
-                // повёрнутого вида — рамка описанного прямоугольника).
+                // The jiggle rotates the layer, so compare centers (the frame
+                // of a rotated view is the frame of its bounding rectangle).
                 let center = CGPoint(x: tile.midX, y: tile.midY)
                 XCTAssertEqual(control.center.x, center.x, accuracy: 0.5, "reduceMotion=\(reduceMotion) \(id)")
                 XCTAssertEqual(control.center.y, center.y, accuracy: 0.5, "reduceMotion=\(reduceMotion) \(id)")
                 XCTAssertNil(
                     control.layer.animation(forKey: "position"),
-                    "Нет перелёта: reduceMotion=\(reduceMotion) \(id)"
+                    "No fly-in: reduceMotion=\(reduceMotion) \(id)"
                 )
                 let shown = control.layer.presentation()?.position ?? control.layer.position
                 XCTAssertEqual(shown.x, center.x, accuracy: 1, "\(id)")
@@ -73,9 +73,9 @@ final class TileEditControlsTests: XCTestCase {
         }
     }
 
-    /// Кнопки плитки, поднятой long-press'ом, после отпускания возвращаются на
-    /// место без перелёта: оверлей пересоздаётся анимированным проходом, и
-    /// раньше его рамка анимировалась из нулевой (левый верхний угол сетки).
+    /// The buttons of a tile lifted by a long press return to its place
+    /// without flying in after release: the overlay is recreated with an animated pass, and
+    /// previously its frame animated from zero (the grid's top-left corner).
     func testControlsOfLiftedTileReappearInPlaceAfterRelease() throws {
         for reduceMotion in [false, true] {
             let host = TesseraTestDragHost(
@@ -83,7 +83,7 @@ final class TileEditControlsTests: XCTestCase {
             )
             host.coordinator.isReduceMotionEnabled = { reduceMotion }
             XCTAssertTrue(host.startDrag("t0"))
-            XCTAssertNil(host.coordinator.editControls["t0"], "Под пальцем оверлея нет")
+            XCTAssertNil(host.coordinator.editControls["t0"], "No overlay under the finger")
             host.coordinator.finishDrag(commit: true)
 
             var seen = false
@@ -99,14 +99,14 @@ final class TileEditControlsTests: XCTestCase {
                 }
                 host.spin(0.005)
             }
-            XCTAssertTrue(seen, "Оверлей вернулся: reduceMotion=\(reduceMotion)")
+            XCTAssertTrue(seen, "The overlay is back: reduceMotion=\(reduceMotion)")
         }
     }
 
-    // MARK: - E12.4: обрезка
+    // MARK: - Clipping
 
-    /// Кнопки живут в контейнере, который обрезает по `bounds` сетки — как
-    /// коллекция обрезает плитки.
+    /// The buttons live in a container that clips to the grid's `bounds`, just as
+    /// the collection view clips tiles.
     func testControlsAreHostedInClippingContainerMatchingGridBounds() throws {
         let host = TesseraTestDragHost(
             descriptors: (0..<8).map { tesseraTestTile("t\($0)", size: .medium) }
@@ -121,12 +121,12 @@ final class TileEditControlsTests: XCTestCase {
         XCTAssertEqual(container.frame, host.host.grid.bounds)
 
         host.coordinator.endEditing()
-        XCTAssertNil(host.coordinator.editControlsHost, "Контейнер снят вместе с кнопками")
+        XCTAssertNil(host.coordinator.editControlsHost, "The container is removed together with the buttons")
     }
 
-    /// Плитка частично под верхним краем и частично под нижним: кнопка плитки
-    /// выступает за `bounds` контейнера (будет обрезана), а полностью ушедшая
-    /// плитка скрыта.
+    /// A tile partly under the top edge and partly under the bottom one: the tile's button
+    /// extends beyond the container's `bounds` (and will be clipped), while a tile that has
+    /// fully scrolled away is hidden.
     func testControlsAreClippedLikeTileAtTopAndBottomEdges() throws {
         let host = TesseraTestDragHost(
             descriptors: (0..<48).map { tesseraTestTile("t\($0)", size: .medium) }
@@ -135,7 +135,7 @@ final class TileEditControlsTests: XCTestCase {
         let grid = host.host.grid
         let container = try XCTUnwrap(host.coordinator.editControlsHost)
 
-        // Плитка t0 (верхний ряд) частично уходит вверх.
+        // Tile t0 (the top row) goes partly off the top.
         let top = try XCTUnwrap(grid.frame(forItemID: "t0"))
         grid.setContentOffset(CGPoint(x: 0, y: top.minY + top.height / 2), animated: false)
         host.host.layout()
@@ -145,11 +145,11 @@ final class TileEditControlsTests: XCTestCase {
         let topControl = try control("t0", in: host)
         XCTAssertFalse(topControl.isHidden)
         let unpinInGrid = topControl.convert(topControl.unpinButtonFrame, to: grid)
-        XCTAssertLessThan(unpinInGrid.minY, 0, "Кнопка выступает над краем — обрежет контейнер")
+        XCTAssertLessThan(unpinInGrid.minY, 0, "The button extends past the edge — the container will clip it")
         XCTAssertEqual(container.frame, grid.bounds)
         XCTAssertTrue(container.clipsToBounds)
 
-        // Плитка, нижний край сетки которой режет пополам.
+        // A tile cut in half by the grid's bottom edge.
         let bottomID = try XCTUnwrap(
             grid.items.map { $0.id }.first {
                 guard let f = grid.frame(forItemID: $0) else { return false }
@@ -162,16 +162,16 @@ final class TileEditControlsTests: XCTestCase {
         let resizeInGrid = bottomControl.convert(bottomControl.resizeButtonFrame, to: grid)
         XCTAssertGreaterThan(resizeInGrid.maxY, grid.bounds.maxY - 1)
 
-        // Далеко за краем — скрыта.
+        // Far beyond the edge — hidden.
         grid.setContentOffset(CGPoint(x: 0, y: 1200), animated: false)
         host.host.layout()
         if let gone = host.coordinator.editControls[AnyHashable("t0")] {
-            XCTAssertTrue(gone.isHidden, "Плитка вне видимой области — кнопки скрыты")
+            XCTAssertTrue(gone.isHidden, "A tile outside the visible area — its buttons are hidden")
         }
         host.coordinator.endEditing()
     }
 
-    // MARK: - E12.5: размер, зона касания, контраст
+    // MARK: - Size, touch target, contrast
 
     func testControlDiameterScalesWithTileSize() throws {
         let host = TesseraTestDragHost(
@@ -187,14 +187,14 @@ final class TileEditControlsTests: XCTestCase {
 
         let small = try control("s", in: host).unpinButtonFrame.width
         XCTAssertGreaterThanOrEqual(small, 20)
-        XCTAssertLessThanOrEqual(small, 24, "Малая плитка — компактные кнопки")
+        XCTAssertLessThanOrEqual(small, 24, "A small tile — compact buttons")
 
         for id in ["m", "w", "l"] {
             XCTAssertEqual(
                 try control(id, in: host).unpinButtonFrame.width,
                 28,
                 accuracy: 0.001,
-                "Плитка \(id): диаметр = потолок controlDiameter"
+                "Tile \(id): diameter = the controlDiameter ceiling"
             )
         }
         XCTAssertEqual(
@@ -204,13 +204,13 @@ final class TileEditControlsTests: XCTestCase {
         XCTAssertEqual(
             TesseraTileEditControlView.diameter(forTileSize: CGSize(width: 500, height: 500), maxDiameter: 12),
             20,
-            "Потолок ниже минимума поднимается до 20"
+            "A ceiling below the minimum is raised to 20"
         )
         host.coordinator.endEditing()
     }
 
-    /// Кнопки сидят в углах и закрывают мало: центр малой плитки (иконка)
-    /// свободен, а выступ за рамку не больше 4 pt (D48: половина зазора сетки 8 pt).
+    /// The buttons sit in the corners and cover little: the center of a small tile (the icon)
+    /// is free, and the overhang past the frame is at most 4 pt (D48: half the 8 pt grid gap).
     func testControlsSitAtCornersWithBoundedOverhang() throws {
         let host = TesseraTestDragHost(descriptors: [tesseraTestTile("s", size: .small)])
         host.coordinator.beginEditing()
@@ -220,7 +220,7 @@ final class TileEditControlsTests: XCTestCase {
         let unpin = control.unpinButtonFrame
         let resize = control.resizeButtonFrame
 
-        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4, "D48: выступ 4 pt")
+        XCTAssertEqual(TesseraTileEditControlView.cornerOverhang, 4, "D48: overhang of 4 pt")
         XCTAssertGreaterThanOrEqual(unpin.minX, -TesseraTileEditControlView.cornerOverhang - 0.001)
         XCTAssertGreaterThanOrEqual(unpin.minY, -TesseraTileEditControlView.cornerOverhang - 0.001)
         XCTAssertLessThanOrEqual(resize.maxX, bounds.maxX + TesseraTileEditControlView.cornerOverhang + 0.001)
@@ -246,14 +246,14 @@ final class TileEditControlsTests: XCTestCase {
         }
         XCTAssertGreaterThan(control.unpinHitFrame.width, control.unpinButtonFrame.width)
 
-        // Точка в зоне касания, но вне видимой кнопки, попадает в кнопку.
+        // A point inside the touch target but outside the visible button hits the button.
         let unpin = control.unpinButtonFrame
         let nearUnpin = CGPoint(x: unpin.midX + 20, y: unpin.midY + 20)
         XCTAssertFalse(unpin.contains(nearUnpin))
         XCTAssertNotNil(control.hitTest(nearUnpin, with: nil))
         XCTAssertTrue(control.hitTest(nearUnpin, with: nil) is UIButton)
 
-        // Центр плитки — мимо кнопок.
+        // The tile center misses the buttons.
         let center = CGPoint(x: control.bounds.midX, y: control.bounds.midY)
         XCTAssertNil(control.hitTest(center, with: nil))
         let container = try XCTUnwrap(host.coordinator.editControlsHost)
@@ -261,8 +261,8 @@ final class TileEditControlsTests: XCTestCase {
         host.coordinator.endEditing()
     }
 
-    /// Светлая заливка с тёмным символом — контраст на тёмных и светлых плитках
-    /// в обеих темах; кольцо динамическое.
+    /// A light fill with a dark glyph — contrast on dark and light tiles
+    /// in both themes; the ring is dynamic.
     func testControlColorsContrastInLightAndDarkMode() throws {
         let host = TesseraTestDragHost(descriptors: [tesseraTestTile("s", size: .small)])
         host.coordinator.beginEditing()
@@ -272,14 +272,14 @@ final class TileEditControlsTests: XCTestCase {
         for style in [UIUserInterfaceStyle.light, .dark] {
             let fill = try XCTUnwrap(button.backgroundColor)
             let glyph = button.tintColor ?? .clear
-            XCTAssertGreaterThan(luminance(fill, style: style), 0.85, "Заливка светлая (\(style.rawValue))")
-            XCTAssertLessThan(luminance(glyph, style: style), 0.2, "Символ тёмный (\(style.rawValue))")
+            XCTAssertGreaterThan(luminance(fill, style: style), 0.85, "The fill is light (\(style.rawValue))")
+            XCTAssertLessThan(luminance(glyph, style: style), 0.2, "The glyph is dark (\(style.rawValue))")
         }
 
         let ring = TesseraTileEditControlView.ringColor
         let lightAlpha = ring.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light)).cgColor.alpha
         let darkAlpha = ring.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark)).cgColor.alpha
-        XCTAssertNotEqual(lightAlpha, darkAlpha, "Кольцо — динамический цвет")
+        XCTAssertNotEqual(lightAlpha, darkAlpha, "The ring is a dynamic color")
         XCTAssertNotNil(button.layer.borderColor)
         host.coordinator.endEditing()
     }

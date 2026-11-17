@@ -2,19 +2,19 @@
 //  FolderTapInterceptionTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты перехватчика тапа по папке (задача E7.4, решение D17).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка»;
-//  D17 в docs/STATE.md — `folderTapHandler`, вернувший `true`, отменяет
-//  нативное раскрытие: панель не открывается, `onTap` не вызывается.
+//  Tests for the folder tap interceptor (D17).
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid";
+//  D17 in docs/STATE.md: a `folderTapHandler` that returns `true` cancels
+//  the native expansion: the panel does not open and `onTap` is not called.
 //
-//  Тап приходит тем же путём, что и от UICollectionView: через публичный
-//  delegate-метод `collectionView(_:didSelectItemAt:)`. Коллекция берётся из
-//  подвью сетки (как в `TileEditTests`), окно не нужно: вне окна раскрытие
-//  выполняется синхронно, без анимации.
+//  A tap arrives the same way as from UICollectionView: through the public
+//  delegate method `collectionView(_:didSelectItemAt:)`. The collection is taken from the
+//  grid's subviews (as in `TileEditTests`); no window is needed: outside a window the expansion
+//  runs synchronously, without animation.
 //
-//  Панель вставляется под плитку папки (D17): пока панель открыта, плитка папки
-//  остаётся в наборе, но панель закрывает собственный жест по фону/заголовку
-//  (см. `TesseraFolderPanelCell`), а выбор панели коллекцией отключён
+//  The panel is inserted under the folder tile (D17): while the panel is open, the folder tile
+//  stays in the set, but the panel absorbs its own background/title gesture
+//  (see `TesseraFolderPanelCell`), and selection of the panel by the collection is disabled
 //  (`shouldSelectItemAt`).
 //
 
@@ -26,20 +26,20 @@ import XCTest
 
 final class FolderTapInterceptionTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Папка с одним ярлыком.
+    /// A folder with one tile.
     ///
-    /// - Parameter id: Идентификатор папки.
-    /// - Returns: Модель папки.
+    /// - Parameter id: The folder identifier.
+    /// - Returns: The folder model.
     private func makeFolder(_ id: String) -> TesseraTileFolder {
         TesseraTileFolder(id: id, title: id, tiles: [tesseraTestTile("\(id)-tile")])
     }
 
-    /// Сетка с элементами снимка, разложенная без окна.
+    /// A grid with the snapshot items, laid out without a window.
     ///
-    /// - Parameter items: Элементы в порядке отображения.
-    /// - Returns: Готовая сетка.
+    /// - Parameter items: The items in display order.
+    /// - Returns: A ready grid.
     private func makeGrid(_ items: [TesseraTileGridItem]) -> TesseraTileGridView {
         let grid = TesseraTileGridView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         grid.columns = 4
@@ -51,50 +51,50 @@ final class FolderTapInterceptionTests: XCTestCase {
         return grid
     }
 
-    /// Коллекция внутри сетки — источник `IndexPath` для delegate-метода.
+    /// The collection inside the grid is the source of the `IndexPath` for the delegate method.
     ///
-    /// - Parameter grid: Сетка.
-    /// - Returns: Коллекция.
-    /// - Throws: Ошибка, если коллекции нет (сломанная иерархия вью).
+    /// - Parameter grid: The grid.
+    /// - Returns: The collection.
+    /// - Throws: An error if there is no collection (a broken view hierarchy).
     private func collectionView(in grid: TesseraTileGridView) throws -> UICollectionView {
         try XCTUnwrap(grid.subviews.compactMap { $0 as? UICollectionView }.first)
     }
 
-    /// Индекс плитки-папки в наборе коллекции.
+    /// The index of the folder tile in the collection's set.
     ///
-    /// Панель пропускается: она делит идентификатор с папкой, но это другой
-    /// элемент набора (D17).
+    /// The panel is skipped: it shares the identifier with the folder, but it is a different
+    /// item of the set (D17).
     ///
     /// - Parameters:
-    ///   - grid: Сетка.
-    ///   - id: Идентификатор папки.
-    /// - Returns: Индекс плитки-папки.
-    /// - Throws: Ошибка, если папки нет в наборе.
+    ///   - grid: The grid.
+    ///   - id: The folder identifier.
+    /// - Returns: The index of the folder tile.
+    /// - Throws: An error if the folder is not in the set.
     private func folderIndex(in grid: TesseraTileGridView, id: AnyHashable) throws -> Int {
         try XCTUnwrap(
             grid.displayItems.firstIndex { !$0.isFolderPanel && $0.folder?.id == id }
         )
     }
 
-    /// Индекс панели раскрытой папки в наборе коллекции.
+    /// The index of the expanded folder's panel in the collection's set.
     ///
     /// - Parameters:
-    ///   - grid: Сетка.
-    ///   - id: Идентификатор папки.
-    /// - Returns: Индекс панели.
-    /// - Throws: Ошибка, если панель не открыта.
+    ///   - grid: The grid.
+    ///   - id: The folder identifier.
+    /// - Returns: The panel index.
+    /// - Throws: An error if the panel is not open.
     private func panelIndex(in grid: TesseraTileGridView, id: AnyHashable) throws -> Int {
         try XCTUnwrap(
             grid.displayItems.firstIndex { $0.isFolderPanel && $0.id == id }
         )
     }
 
-    /// Эмулирует выбор элемента коллекцией.
+    /// Emulates the collection selecting an item.
     ///
     /// - Parameters:
-    ///   - grid: Сетка.
-    ///   - index: Индекс элемента в наборе коллекции.
-    /// - Throws: Ошибка, если коллекции нет.
+    ///   - grid: The grid.
+    ///   - index: The item index in the collection's set.
+    /// - Throws: An error if there is no collection.
     private func tap(grid: TesseraTileGridView, at index: Int) throws {
         let collectionView = try collectionView(in: grid)
         grid.collectionView(
@@ -103,9 +103,9 @@ final class FolderTapInterceptionTests: XCTestCase {
         )
     }
 
-    // MARK: - Перехват
+    // MARK: - Interception
 
-    /// `true` отменяет и раскрытие, и `onTap`: решение остаётся за хостом.
+    /// `true` cancels both the expansion and `onTap`: the decision stays with the host.
     func testHandlerReturningTrueSuppressesExpansionAndTap() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.tile(tesseraTestTile("a")), .folder(folder)])
@@ -127,7 +127,7 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertFalse(grid.displayItems.contains { $0.isFolderPanel })
     }
 
-    /// `false` — перехватчик лишь посмотрел, нативное раскрытие выполняется.
+    /// `false` means the interceptor only looked, and the native expansion runs.
     func testHandlerReturningFalseAllowsExpansionAndTap() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -147,7 +147,7 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertEqual(grid.expandedFolderID, folder.id)
     }
 
-    /// `nil` — перехватчика нет, поведение по умолчанию: тап + раскрытие.
+    /// `nil` means there is no interceptor and the default behavior applies: tap + expansion.
     func testNoHandlerAllowsExpansionAndTap() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -161,9 +161,9 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertEqual(grid.expandedFolderID, folder.id)
     }
 
-    /// Выбор панели не вызывает перехватчик и не меняет состояние: панель —
-    /// представление, а не элемент модели. Закрытие — жест самой панели по
-    /// фону/заголовку, а не перехват тапа по папке (D17).
+    /// Selecting the panel does not call the interceptor and does not change state: the panel is
+    /// a presentation, not a model item. Closing is the panel's own gesture on its
+    /// background/title, not an interception of the folder tap (D17).
     func testHandlerIsNotCalledForExpandedPanel() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -186,9 +186,9 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertTrue(grid.displayItems.contains { $0.isFolderPanel })
     }
 
-    /// Выбор панели отключён, а плитка папки и ярлыки выбираются: иначе тап по
-    /// панели после её закрытия пришёл бы по индексу, где панели уже нет, и
-    /// сработал бы по чужому элементу.
+    /// Selection of the panel is disabled, while the folder tile and tiles can be selected: otherwise a tap on
+    /// the panel after it closed would arrive at an index where the panel no longer exists and
+    /// would act on a different item.
     func testPanelIsNotSelectableWhileTilesAndFoldersAre() throws {
         let folder = makeFolder("f")
         let tile = tesseraTestTile("a")
@@ -217,9 +217,9 @@ final class FolderTapInterceptionTests: XCTestCase {
         )
     }
 
-    /// Пока панель раскрыта, плитка папки остаётся в наборе и выбирается:
-    /// повторный тап по ней закрывает панель (D17). Перехватчика нет, поэтому
-    /// тап идёт обычным путём.
+    /// While the panel is expanded, the folder tile stays in the set and can be selected:
+    /// a second tap on it closes the panel (D17). There is no interceptor, so
+    /// the tap takes the normal path.
     func testFolderTileStaysSelectableWhileExpanded() throws {
         let folder = makeFolder("f")
         let grid = makeGrid([.folder(folder)])
@@ -244,7 +244,7 @@ final class FolderTapInterceptionTests: XCTestCase {
         XCTAssertFalse(grid.displayItems.contains { $0.isFolderPanel })
     }
 
-    /// Перехватчик папок не трогает тапы по ярлыкам: они идут в `onTap`.
+    /// The folder interceptor does not touch taps on tiles: they go to `onTap`.
     func testHandlerIsNotCalledForTileTap() throws {
         let folder = makeFolder("f")
         let tile = tesseraTestTile("a")

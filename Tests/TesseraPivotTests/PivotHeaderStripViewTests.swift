@@ -2,18 +2,18 @@
 //  PivotHeaderStripViewTests.swift
 //  TesseraPivotTests
 //
-//  Контрактные тесты ленты заголовков пивота (задача E2.7).
-//  Проектный документ: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (режимы ленты:
-//  по ширине контента и равные ширины), §4 «Математика ядра» (выделение —
-//  ближайшая к прогрессу секция), §5 «Синхронизация ленты и пейджера» (лента —
-//  только читатель: `onSelect` сообщает намерение, но ничего не двигает),
-//  §7 «Производительность» (в горячем пути — только `transform` индикатора,
-//  без layout и без записи в `contentOffset`), §8 «Accessibility» (минимум
-//  44 pt на тапабельную кнопку-заголовок).
+//  Contract tests for the pivot header strip.
+//  Design document: docs/PIVOT-IOS-DESIGN.md §3 (architecture: strip modes:
+//  content width and equal widths), §4 (core math: selection is the
+//  section nearest to the progress), §5 (strip and pager synchronization: the strip is
+//  a reader only: `onSelect` reports an intent but moves nothing),
+//  §7 (performance: only the indicator's `transform` is on the hot path,
+//  with no layout and no write to `contentOffset`), §8 (accessibility: a minimum of
+//  44 pt per tappable header button).
 //
-//  Чистых функций выбора режима/порядка в публичной поверхности ленты нет
-//  (это приватная геометрия `effectiveMode`), поэтому режимы проверяются через
-//  публичный делегат раскладки — без UI-цикла и без окна.
+//  The strip's public surface has no pure functions for choosing the mode/order
+//  (that is the private `effectiveMode` geometry), so the modes are checked through
+//  the public layout delegate, without a UI run loop and without a window.
 //
 
 #if canImport(UIKit)
@@ -24,7 +24,7 @@ import UIKit
 
 final class PivotHeaderStripViewTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makeStrip(
         width: CGFloat = 320,
@@ -43,11 +43,11 @@ final class PivotHeaderStripViewTests: XCTestCase {
     ) throws -> UICollectionView {
         try XCTUnwrap(
             strip.subviews.compactMap { $0 as? UICollectionView }.first,
-            "Лента обязана содержать UICollectionView заголовков"
+            "The strip must contain a UICollectionView of headers"
         )
     }
 
-    /// Ширина ячейки по публичному делегату раскладки (без окна и UI-цикла).
+    /// The cell width from the public layout delegate (without a window or a UI run loop).
     private func itemWidth(
         of strip: TesseraPivotHeaderStripView,
         at index: Int
@@ -63,18 +63,18 @@ final class PivotHeaderStripViewTests: XCTestCase {
         ).width
     }
 
-    // MARK: - Конфигурация
+    // MARK: - Configuration
 
-    /// Дефолты ленты: пустой набор, режим по ширине контента, скрытый до
-    /// раскладки индикатор, отступы и минимальная ширина ячейки (§3, §8).
+    /// Strip defaults: an empty set, content-width mode, an indicator hidden until
+    /// layout, insets, and the minimum cell width (§3, §8).
     func testDefaultConfiguration() {
         let strip = TesseraPivotHeaderStripView(frame: .zero)
 
         XCTAssertTrue(strip.titles.isEmpty)
         if case .content = strip.mode {
-            // Ожидаемый режим по умолчанию (§3).
+            // The expected default mode (§3).
         } else {
-            XCTFail("По умолчанию лента должна быть в режиме .content")
+            XCTFail("By default the strip must be in .content mode")
         }
         XCTAssertEqual(strip.selectedIndex, 0)
         XCTAssertTrue(strip.showsIndicator)
@@ -87,8 +87,8 @@ final class PivotHeaderStripViewTests: XCTestCase {
         XCTAssertNil(strip.onSelect)
     }
 
-    /// Пустая лента — валидное состояние (§9 «одна секция / пусто»): прогресс,
-    /// выбор и автоцентрирование не падают и не создают заголовков.
+    /// An empty strip is a valid state (§9, single section / empty): progress,
+    /// selection, and auto-centering do not crash and create no headers.
     func testEmptyTitlesStaySafe() {
         let strip = makeStrip()
 
@@ -105,12 +105,12 @@ final class PivotHeaderStripViewTests: XCTestCase {
         XCTAssertTrue(strip.indicator.isHidden)
     }
 
-    // MARK: - Выделение по прогрессу (§4)
+    // MARK: - Selection by progress (§4)
 
-    /// «Активная» секция — ближайшая к прогрессу: до 0.5 — текущая, с 0.5 —
-    /// следующая (§4).
+    /// The "active" section is the one nearest to the progress: up to 0.5 it is the current one, from 0.5
+    /// the next one (§4).
     func testApplyProgressSelectsNearestSection() {
-        let strip = makeStrip(titles: ["Один", "Два", "Три", "Четыре", "Пять"])
+        let strip = makeStrip(titles: ["One", "Two", "Three", "Four", "Five"])
 
         let cases: [(progress: CGFloat, expected: Int)] = [
             (0, 0),
@@ -128,15 +128,15 @@ final class PivotHeaderStripViewTests: XCTestCase {
             XCTAssertEqual(
                 strip.selectedIndex,
                 entry.expected,
-                "t=\(entry.progress) должен выделять секцию \(entry.expected)"
+                "t=\(entry.progress) must select section \(entry.expected)"
             )
         }
     }
 
-    /// Прогресс за пределами диапазона (bounce) и `NaN` зажимаются крайними
-    /// секциями: лента не «зависает» вне набора (§4).
+    /// Progress out of range (bounce) and `NaN` are clamped to the edge
+    /// sections: the strip does not "hang" outside the set (§4).
     func testApplyProgressClampsOutOfRangeValues() {
-        let strip = makeStrip(titles: ["Один", "Два", "Три", "Четыре"])
+        let strip = makeStrip(titles: ["One", "Two", "Three", "Four"])
 
         strip.apply(progress: -5)
         XCTAssertEqual(strip.selectedIndex, 0)
@@ -148,10 +148,10 @@ final class PivotHeaderStripViewTests: XCTestCase {
         XCTAssertEqual(strip.selectedIndex, 0)
     }
 
-    /// `select(index:)` — это `apply(progress:)` с целым `t`: индекс зажимается,
-    /// а `onSelect` не вызывается (программный выбор — не тап пользователя).
+    /// `select(index:)` is `apply(progress:)` with an integer `t`: the index is clamped,
+    /// and `onSelect` is not called (a programmatic selection is not a user tap).
     func testSelectIndexClampsAndDoesNotNotifySelection() {
-        let strip = makeStrip(titles: ["Один", "Два", "Три"])
+        let strip = makeStrip(titles: ["One", "Two", "Three"])
         var selections: [Int] = []
         strip.onSelect = { selections.append($0) }
 
@@ -165,11 +165,11 @@ final class PivotHeaderStripViewTests: XCTestCase {
         strip.select(index: -10)
         XCTAssertEqual(strip.selectedIndex, 0)
 
-        XCTAssertTrue(selections.isEmpty, "программный select не должен вызывать onSelect")
+        XCTAssertTrue(selections.isEmpty, "a programmatic select must not call onSelect")
     }
 
-    /// Смена набора заголовков зажимает сохранённый прогресс в новый диапазон:
-    /// после удаления секций лента не указывает на несуществующий заголовок.
+    /// Changing the set of headers clamps the stored progress to the new range:
+    /// after sections are removed the strip does not point to a nonexistent header.
     func testTitlesUpdateClampsSelectionToNewRange() {
         let strip = makeStrip(titles: ["0", "1", "2", "3", "4"])
 
@@ -184,10 +184,10 @@ final class PivotHeaderStripViewTests: XCTestCase {
         XCTAssertEqual(strip.selectedIndex, 0)
     }
 
-    /// Тап по заголовку — только `onSelect` с индексом в порядке чтения;
-    /// лента не меняет выделение и не двигает пейджер сама (§5).
+    /// A tap on a header is only `onSelect` with the index in reading order;
+    /// the strip does not change the selection or move the pager itself (§5).
     func testTapReportsSelectionWithoutChangingState() throws {
-        let strip = makeStrip(titles: ["Один", "Два", "Три"])
+        let strip = makeStrip(titles: ["One", "Two", "Three"])
         var selections: [Int] = []
         strip.onSelect = { selections.append($0) }
 
@@ -198,16 +198,16 @@ final class PivotHeaderStripViewTests: XCTestCase {
         )
 
         XCTAssertEqual(selections, [2])
-        XCTAssertEqual(strip.selectedIndex, 0, "тап не должен менять выделение напрямую")
+        XCTAssertEqual(strip.selectedIndex, 0, "a tap must not change the selection directly")
     }
 
-    // MARK: - Режимы ширины (§3)
+    // MARK: - Width modes (§3)
 
-    /// `.content`: ширина ячейки — по тексту, поэтому заголовки разной длины
-    /// получают разную ширину, а короткие упираются в минимум 44 pt (§3, §8).
+    /// `.content`: the cell width follows the text, so headers of different length
+    /// get different widths, and short ones hit the 44 pt minimum (§3, §8).
     func testContentModeSizesFollowText() throws {
         let strip = makeStrip(
-            titles: ["A", "Длинный заголовок секции", "BB"]
+            titles: ["A", "A long section title", "BB"]
         )
 
         let widths = try (0..<strip.titles.count).map { try itemWidth(of: strip, at: $0) }
@@ -218,17 +218,17 @@ final class PivotHeaderStripViewTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(
                 width,
                 strip.minimumItemWidth - 0.000_001,
-                "ячейка уже \(strip.minimumItemWidth) pt перестаёт быть тапабельной кнопкой"
+                "a cell narrower than \(strip.minimumItemWidth) pt stops being a tappable button"
             )
         }
     }
 
-    /// `.fill`: заголовки делят ширину ленты поровну, промежутки вычитаются до
-    /// деления (§3).
+    /// `.fill`: headers share the strip's width equally, and gaps are subtracted before
+    /// the division (§3).
     func testFillModeSplitsWidthEqually() throws {
         let strip = makeStrip(
             width: 320,
-            titles: ["Один", "Два", "Три"]
+            titles: ["One", "Two", "Three"]
         )
         strip.mode = .fill
 
@@ -240,32 +240,32 @@ final class PivotHeaderStripViewTests: XCTestCase {
         }
     }
 
-    /// Слишком узкие равные ячейки — не кнопки: `.fill` уступает `.content`,
-    /// и ширина возвращается к тексту с минимумом (§8, «Dynamic Type»).
+    /// Equal cells that are too narrow are not buttons: `.fill` yields to `.content`,
+    /// and the width returns to the text with a minimum (§8, Dynamic Type).
     func testFillModeFallsBackWhenCellsWouldBeTooNarrow() throws {
         let strip = makeStrip(
             width: 90,
-            titles: ["Один", "Два", "Три", "Четыре"]
+            titles: ["One", "Two", "Three", "Four"]
         )
         strip.mode = .fill
 
-        // (90 - 20 * 3) / 4 = 7.5 pt — нечитаемо и не тапабельно.
+        // (90 - 20 * 3) / 4 = 7.5 pt: unreadable and not tappable.
         let widths = try (0..<4).map { try itemWidth(of: strip, at: $0) }
 
         for width in widths {
             XCTAssertGreaterThanOrEqual(
                 width,
                 strip.minimumItemWidth - 0.000_001,
-                "на узкой ленте режим .fill должен отступить к .content (§8)"
+                "on a narrow strip the .fill mode must fall back to .content (§8)"
             )
         }
     }
 
-    // MARK: - Индикатор: вид и горячий путь (§4, §7)
+    // MARK: - Indicator: view and hot path (§4, §7)
 
-    /// Цвет активного заголовка из стиля доходит до подчёркивания-индикатора.
+    /// The active header's color from the style reaches the underline indicator.
     func testActiveColorPropagatesToIndicator() {
-        let strip = makeStrip(titles: ["Один", "Два"])
+        let strip = makeStrip(titles: ["One", "Two"])
 
         strip.activeColor = .systemRed
 
@@ -273,9 +273,9 @@ final class PivotHeaderStripViewTests: XCTestCase {
         XCTAssertEqual(strip.indicator.backgroundColor, .systemRed)
     }
 
-    /// После layout-прохода индикатор показан и прижат к нижней кромке ленты.
+    /// After a layout pass the indicator is shown and pinned to the strip's bottom edge.
     func testLayoutPlacesAndShowsIndicator() {
-        let strip = makeStrip(titles: ["Один", "Два", "Три"])
+        let strip = makeStrip(titles: ["One", "Two", "Three"])
 
         strip.layoutSubviews()
 
@@ -290,13 +290,13 @@ final class PivotHeaderStripViewTests: XCTestCase {
         XCTAssertFalse(strip.indicator.isHidden)
     }
 
-    /// Горячий путь свайпа: `apply(progress:)` двигает только `transform`
-    /// индикатора — `bounds`/`center` не меняются, коллекция не скроллится,
-    /// `contentOffset` не пишется (§4, §5, §7).
+    /// The swipe hot path: `apply(progress:)` moves only the indicator's `transform`:
+    /// `bounds`/`center` do not change, the collection does not scroll, and
+    /// `contentOffset` is not written (§4, §5, §7).
     func testApplyProgressMovesIndicatorOnlyByTransform() throws {
         let strip = makeStrip(
             width: 640,
-            titles: ["Один", "Два", "Три", "Четыре"]
+            titles: ["One", "Two", "Three", "Four"]
         )
         strip.layoutSubviews()
 

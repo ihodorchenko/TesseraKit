@@ -2,99 +2,98 @@
 //  TileGridView.swift
 //  TesseraStartScreen
 //
-//  Сетка ярлыков и папок рабочего стола: UICollectionView с кастомной
-//  раскладкой плюс фасад для хоста и режима редактирования.
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §2 «Архитектура»
-//  (StartPage: TileGridView — UICollectionView + кастомный layout), §3
-//  «Плиточная сетка» (юниты, четыре размера, кастомный layout, инвалидация),
-//  §4 «Live-плитки» (live-контент ярлыка обслуживает один
-//  `TesseraLiveTileEngine` на сетку: стахгер, флипы, паузы, Reduce Motion;
-//  бэйдж — отдельный view контейнера, не часть флипа), §5 «Режим
-//  редактирования» (хуки для E4.4: снэпшот, пустышка, инвалидация), §8
-//  «Параллакс фона» (колбэк прокрутки отдаёт offset наружу; в самом
-//  scrollViewDidScroll ничего не раскладывается) и §9 «Accessibility»
+//  Grid of tiles and folders of the desktop: a UICollectionView with a custom
+//  layout, plus a facade for the host and for edit mode.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md — §2 "Architecture"
+//  (StartPage: TileGridView — UICollectionView + custom layout), §3
+//  "Tile grid" (units, four sizes, custom layout, invalidation),
+//  §4 "Live tiles" (a tile's live content is served by a single
+//  `TesseraLiveTileEngine` per grid: stagger, flips, dwells, Reduce Motion;
+//  the badge is a separate container view, not part of the flip), §5 "Edit
+//  mode" (hooks for drag editing: snapshot, placeholder, invalidation), §8
+//  "Background parallax" (the scroll callback hands the offset outward;
+//  scrollViewDidScroll lays nothing out itself) and §9 "Accessibility"
 //  (VoiceOver, Dynamic Type, RTL).
-//  Уточнения пользователя: D12 (ярлык — действие), D14 (папки — элемент
-//  сетки), D15 (четыре размера и live-плитки) — docs/STATE.md; §14
+//  Clarifications: D12 (a tile is an action), D14 (folders are a grid
+//  item), D15 (four sizes and live tiles) — docs/STATE.md; §14
 //  STARTSCREEN-IOS-DESIGN.md.
-//  Задача плана: E4.2-UI (live-контент подключён в E5).
 //
-//  E8.8: переезд соседей при перестановке и resize идёт bounce-кривой
+//  Neighbors move during reorder and resize along a bounce curve
 //  `cubic-bezier(0.175, 0.885, 0.32, 1.1)` (``bounceTimingParameters()``),
-//  0,26 с; при Reduce Motion изменения применяются мгновенно. Кривая панели
-//  папки (0.1, 0.9, 0.2, 1) не меняется.
+//  over 0.26 s; with Reduce Motion changes are applied instantly. The folder panel
+//  curve (0.1, 0.9, 0.2, 1) is unchanged.
 //
-//  E8.9: наружу отдаётся геометрия виртуальной сетки для магнитизма —
-//  ``magnetSlotCenters(for:)`` возвращает центры слотов той же размерности, что
-//  и перетаскиваемая плитка (координаты сетки, с учётом `contentOffset`).
-//  Верхняя граница сетки — последняя занятая строка базовой упаковки, которую
-//  даёт `TesseraTileLayoutEngine.pack`; при раскрытой папке центры не отдаются, потому
-//  что панель сдвигает строки.
+//  The grid exposes the geometry of the virtual grid for magnetism:
+//  ``magnetSlotCenters(for:)`` returns slot centers with the same dimensions as
+//  the dragged tile (grid coordinates, including `contentOffset`).
+//  The upper bound of the grid is the last occupied row of the base layout produced by
+//  `TesseraTileLayoutEngine.pack`; no centers are returned while a folder is expanded,
+//  because the panel shifts the rows.
 //
-//  D17 (docs/STATE.md, E7.3) — нативное WP-раскрытие папки: под плиткой папки
-//  (она остаётся видимой) вставляется полноширинная панель
-//  `TesseraTileGridItem.folderContent` — отдельная строка сразу после строки, в которой
-//  заканчивается папка. Блокировка прокрутки на время анимации, каскад иконок
-//  после роста высоты, закрытие повторным тапом/тапом по пустому месту/Back и
-//  перехватчик `folderTapHandler` для хоста. Панель — ячейка коллекции
-//  (`TesseraFolderPanelCell`), поэтому строки под ней сдвигает штатная анимация
-//  batch-обновлений, а не ручной layout. Пока папка раскрыта, на её плитке
-//  скрыты мини-ярлыки превью 2×2 (подложка и заголовок остаются).
+//  D17 (docs/STATE.md) — native Windows Phone folder expansion: below the folder tile
+//  (which stays visible) a full-width panel
+//  `TesseraTileGridItem.folderContent` is inserted — a separate row right after the row where
+//  the folder ends. Scrolling is locked during the animation, icons cascade in
+//  after the height grows, and the panel closes on a repeated tap, a tap on empty space, or Back;
+//  the `folderTapHandler` interceptor is available to the host. The panel is a collection cell
+//  (`TesseraFolderPanelCell`), so the rows below it are shifted by the standard batch-update
+//  animation rather than by manual layout. While the folder is expanded, the 2×2 preview mini-tiles
+//  on its tile are hidden (the backing and the title remain).
 //
-//  W3 (E10.2) — анимации панели папки сериализованы конечным автоматом:
-//  `idle`/`opening`/`closing` плюс одна отложенная цель и один отложенный
-//  снимок. В одном проходе runloop выполняется либо `reloadData`, либо
-//  `performBatchUpdates`, но не оба (смена папки A → B сворачивает A сразу, а
-//  открытие B переносит на следующий проход). Прокрутка сетки имеет одного
-//  владельца — ``isScrollEnabled`` (запрошенное значение) плюс счётчик причин
-//  блокировки (панель папки); восстановление идёт только по снятии причины.
-//  `clampContentOffsetAfterCollapse` и `.layoutChanged` выполняются во всех
-//  ветках раскрытия/закрытия, включая Reduce Motion и отсутствие окна.
-//  `update(snapshot:)`/`reload(snapshot:)` во время перехода запоминаются и
-//  применяются после него.
+//  Folder panel animations are serialized by a state machine:
+//  `idle`/`opening`/`closing` plus one deferred target and one deferred
+//  snapshot. A single runloop pass runs either `reloadData` or
+//  `performBatchUpdates`, never both (switching from folder A to B collapses A immediately and
+//  defers opening B to the next pass). Grid scrolling has a single
+//  owner — ``isScrollEnabled`` (the requested value) plus a counter of lock reasons
+//  (the folder panel); scrolling is restored only once the reason is removed.
+//  `clampContentOffsetAfterCollapse` and `.layoutChanged` run in all
+//  expand/collapse branches, including Reduce Motion and the no-window case.
+//  `update(snapshot:)`/`reload(snapshot:)` calls made during a transition are remembered and
+//  applied after it.
 //
-//  W3 (E10.4) — снимок применяется диффом (`performBatchUpdates`
-//  insert/delete + переконфигурация видимых ячеек), а не `reloadData`:
-//  ячейки сохраняют регистрацию live-плитки и фазу превью папки. Move-ветка
-//  остаётся у resize/reorder; если вместе с составом меняется порядок общих
-//  элементов, применяется `reloadData` (смешивать move с insert/delete в одном
-//  batch ненадёжно). Владелец
-//  дима 0.7 режима редактирования — сетка (``setEditDimming(_:animated:)``,
-//  ячейка хранит целевую прозрачность и не сбрасывает её в `configure`).
-//  Ярлыки панели раскрытой папки активируются общим маршрутом `onTap`
-//  (в режиме редактирования — не активируются). ``magnetSlotCenters(for:)``
-//  считает сетку через `TesseraTileLayoutEngine.gridMetrics` и совпадает с рамками
-//  раскладки до пикселя. Live-контент сетки имеет публичную паузу
-//  (``isLiveContentPaused``), которая учитывается в `configure(isVisible:)` и
-//  не снимается `update` в обход контроллера.
+//  A snapshot is applied as a diff (`performBatchUpdates`
+//  insert/delete + reconfiguration of visible cells) rather than `reloadData`:
+//  cells keep their live-tile registration and the folder preview phase. The move branch
+//  remains for resize/reorder; if the order of common items changes along with the
+//  set of items, `reloadData` is applied (mixing move with insert/delete in a single
+//  batch is unreliable). The owner of the
+//  0.7 edit-mode dimming is the grid (``setEditDimming(_:animated:)``,
+//  the cell stores the target alpha and does not reset it in `configure`).
+//  Tiles in an expanded folder's panel are activated through the shared `onTap` route
+//  (they are not activated in edit mode). ``magnetSlotCenters(for:)``
+//  computes the grid via `TesseraTileLayoutEngine.gridMetrics` and matches the layout frames
+//  to the pixel. The grid's live content has a public pause
+//  (``isLiveContentPaused``), which is taken into account in `configure(isVisible:)` and
+//  is not lifted by `update` bypassing the controller.
 //
-//  W3 (E9.4/E10.14) — Reduce Motion проверяется через внутренний провайдер
-//  ``isReduceMotionEnabled``: кроссфейд смены состава отключается, Reduce Motion
-//  подтверждён как рабочий (ветка `animated: true` достижима только после
-//  `guard shouldAnimate`). W3 (E9.8в) — label live-плитки строится из
-//  `liveContent.frontFace` (title + detail), value — из бэйджа.
+//  Reduce Motion is checked via the internal provider
+//  ``isReduceMotionEnabled``: the cross-fade on content changes is disabled, and Reduce Motion
+//  is confirmed to work (the `animated: true` branch is reachable only after
+//  `guard shouldAnimate`). The label of a live tile is built from
+//  `liveContent.frontFace` (title + detail), and the value from the badge.
 //
-//  Границы ответственности:
-//  - сетка только отображает снимок TesseraTileGridSnapshot (E4.2) и сообщает о
-//    тапах/долгом нажатии; порядок, размеры, папки и действия — за TesseraTileStore и
-//    хостом (правило «один писатель», §6);
-//  - live-контент ярлыка (§4) обслуживает ``TesseraLiveTileEngine``: сетка
-//    держит один движок на все ячейки, регистрирует контейнер при показе
-//    ячейки и ставит на паузу при уходе с экрана; флипы, стахгер, паузы и
-//    Reduce Motion остаются внутри движка, ячейка лишь отдаёт контейнер;
-//  - в `scrollViewDidScroll` выполняется только `onScrollOffsetChanged`:
-//    ни `layoutIfNeeded`, ни `invalidateLayout`, ни `reloadData` (§3, §8,
-//    CORE-IOS-DESIGN.md §2). Параллакс — frame/transform/alpha на стороне
-//    подписчика (E4.6).
+//  Responsibilities:
+//  - the grid only displays a TesseraTileGridSnapshot and reports
+//    taps/long presses; order, sizes, folders and actions belong to TesseraTileStore and the
+//    host (the "single writer" rule, §6);
+//  - a tile's live content (§4) is served by ``TesseraLiveTileEngine``: the grid
+//    keeps one engine for all cells, registers the container when a
+//    cell is shown and pauses it when it leaves the screen; flips, stagger, dwells and
+//    Reduce Motion stay inside the engine, the cell only provides the container;
+//  - `scrollViewDidScroll` performs only `onScrollOffsetChanged`:
+//    no `layoutIfNeeded`, no `invalidateLayout`, no `reloadData` (§3, §8,
+//    CORE-IOS-DESIGN.md §2). Parallax is frame/transform/alpha on the
+//    subscriber side.
 //
 
 #if canImport(UIKit)
 import UIKit
 import TesseraCore
 
-/// Сетка ярлыков и папок рабочего стола (docs/STARTSCREEN-IOS-DESIGN.md §2, §3).
+/// Grid of tiles and folders of the desktop (docs/STARTSCREEN-IOS-DESIGN.md §2, §3).
 ///
-/// ## Использование
+/// ## Usage
 ///
 /// ```swift
 /// let grid = TesseraTileGridView()
@@ -107,209 +106,209 @@ import TesseraCore
 /// }
 /// grid.onLongPress = { item, point in editCoordinator.beginEditing(at: item, point: point) }
 /// grid.onScrollOffsetChanged = { offset in background.apply(offsetY: offset.y) }
-/// grid.reload(snapshot: store.snapshot(columns: grid.columns))   // с таблицей ячеек (E14.5)
+/// grid.reload(snapshot: store.snapshot(columns: grid.columns))   // with a cell table
 /// ```
 ///
-/// ## Данные
+/// ## Data
 ///
-/// Единственный вход данных — ``reload(snapshot:)`` и
-/// ``update(snapshot:animated:)``. Сетка не ходит в `TesseraTileStore` сама: хост
-/// передаёт снимок после каждого изменения (`TesseraTileStore.onChange`), поэтому
-/// экран и список приложений (§6) читают одно и то же состояние.
+/// The only data inputs are ``reload(snapshot:)`` and
+/// ``update(snapshot:animated:)``. The grid never reads `TesseraTileStore` itself: the host
+/// passes a snapshot after every change (`TesseraTileStore.onChange`), so the
+/// screen and the app list (§6) read the same state.
 ///
-/// ## Live-плитки (§4)
+/// ## Live tiles (§4)
 ///
-/// Живой контент задаётся провайдером в ``TesseraTileDescriptor/liveContent``: сетка
-/// создаёт один ``TesseraLiveTileEngine`` на себя, а ячейка с таким ярлыком
-/// показывает ``TesseraLiveTileView`` вместо статичной иконки и заголовка.
-/// Бэйдж остаётся снаружи флипа (им владеет контейнер).
+/// Live content is supplied by a provider in ``TesseraTileDescriptor/liveContent``: the grid
+/// creates one ``TesseraLiveTileEngine`` for itself, and a cell with such a tile
+/// shows ``TesseraLiveTileView`` instead of a static icon and title.
+/// The badge stays outside the flip (the container owns it).
 ///
-/// Жизненный цикл:
-/// - регистрация — в `willDisplay` (ячейка действительно на экране);
-/// - пауза — в `didEndDisplaying` и ``setItemHidden(_:forItemID:)``:
-///   движок сбрасывает незавершённый флип и не планирует новые;
-/// - снятие регистрации — в `prepareForReuse`, как требует контракт движка;
-/// - Reduce Motion — движок показывает статичный фронт, сетка его не дублирует.
+/// Lifecycle:
+/// - registration — in `willDisplay` (the cell is actually on screen);
+/// - pause — in `didEndDisplaying` and ``setItemHidden(_:forItemID:)``:
+///   the engine discards an unfinished flip and schedules no new ones;
+/// - unregistration — in `prepareForReuse`, as the engine contract requires;
+/// - Reduce Motion — the engine shows a static front face; the grid does not duplicate it.
 ///
-/// Расписание (`cycleInterval`, `flipDuration` и т. п.) настраивается через
-/// ``liveTileConfiguration``; провайдерам без подписки доступен явный
+/// The schedule (`cycleInterval`, `flipDuration`, etc.) is configured via
+/// ``liveTileConfiguration``; for providers without a subscription an explicit
 /// ``refreshLiveTile(forItemID:)``.
 ///
-/// ## Прокрутка и параллакс
+/// ## Scrolling and parallax
 ///
-/// ``onScrollOffsetChanged`` вызывается из `scrollViewDidScroll` с текущим
-/// `contentOffset`. Внутри сетки в этот момент не выполняется ни одной
-/// layout-операции (§3, §8): подписчик сам решает, что двинуть —
-/// `transform`/`frame`/`alpha` фона. При Reduce Motion подписчик обязан
-/// отключить параллакс (§9, E4.6), сетка настройку не проверяет.
+/// ``onScrollOffsetChanged`` is called from `scrollViewDidScroll` with the current
+/// `contentOffset`. No layout operation runs inside the grid at that moment
+/// (§3, §8): the subscriber decides what to move —
+/// the `transform`/`frame`/`alpha` of the background. With Reduce Motion the subscriber must
+/// disable parallax (§9); the grid does not check this setting.
 ///
-/// ## Режим редактирования (подготовка для E4.4)
+/// ## Edit mode (groundwork for drag editing)
 ///
-/// Сетка не реализует «желе», drag и resize — это задача `TileEditCoordinator`
-/// (E4.4). Наружу отдаются ровно те примитивы, которых координатору не хватает:
+/// The grid does not implement jiggle, drag or resize — that is the job of `TileEditCoordinator`.
+/// It exposes exactly the primitives the coordinator needs:
 ///
-/// - ``frame(forItemID:)`` — рамка плитки в координатах сетки (для наложения
-///   слоя перетаскивания и расчёта «расступания»);
-/// - ``magnetSlotCenters(for:)`` — центры виртуальных слотов той же
-///   размерности для магнитизма E8.9 (в координатах сетки);
-/// - ``item(at:)`` — хит-тест точки в координатах сетки (под пальцем/курсором);
-/// - ``snapshotView(forItemID:)`` — снимок видимой ячейки для drag; `nil`,
-///   если ячейка не видна;
-/// - ``cellView(forItemID:)`` — сама видимая ячейка для «желе» и подсветки
-///   (менять можно только `transform`/`alpha`, но не `frame`);
-/// - ``placeholderView(forItemID:)`` — готовый вид-пустышка с рамкой плитки
-///   (ещё не добавлен в иерархию; владелец — координатор);
-/// - ``setItemHidden(_:forItemID:)`` — скрыть исходную ячейку, не меняя
-///   раскладку (alpha 0 + исключение из VoiceOver);
-/// - ``update(snapshot:animated:)`` — применить новый снимок с анимацией
-///   resize/reorder (сдвиг соседних плиток анимирует UICollectionView
-///   bounce-кривой E8.8);
-/// - ``invalidateTileLayout(animated:)`` — пересчитать геометрию без смены
-///   снимка (например, после смены ширины контейнера или настроек сетки);
+/// - ``frame(forItemID:)`` — a tile's frame in grid coordinates (for the drag
+///   overlay layer and for computing how neighbors make room);
+/// - ``magnetSlotCenters(for:)`` — centers of virtual slots with the same
+///   dimensions, for magnetism (in grid coordinates);
+/// - ``item(at:)`` — hit test of a point in grid coordinates (under the finger/cursor);
+/// - ``snapshotView(forItemID:)`` — a snapshot of a visible cell for the drag; `nil`
+///   if the cell is not visible;
+/// - ``cellView(forItemID:)`` — the visible cell itself, for jiggle and highlighting
+///   (only `transform`/`alpha` may be changed, never `frame`);
+/// - ``placeholderView(forItemID:)`` — a ready-made placeholder view with the tile's frame
+///   (not yet added to the hierarchy; the coordinator owns it);
+/// - ``setItemHidden(_:forItemID:)`` — hide the source cell without changing the
+///   layout (alpha 0 + excluded from VoiceOver);
+/// - ``update(snapshot:animated:)`` — apply a new snapshot with a
+///   resize/reorder animation (UICollectionView animates the shift of neighboring tiles
+///   with the bounce curve);
+/// - ``invalidateTileLayout(animated:)`` — recompute geometry without changing the
+///   snapshot (for example, after the container width or grid settings change);
 /// - ``contentOffset``/``setContentOffset(_:animated:)``/``contentSize``/
-///   ``isScrollEnabled`` — для автоскролла у краёв во время перетаскивания.
+///   ``isScrollEnabled`` — for autoscroll at the edges while dragging.
 ///
-/// Сетка не запускает drag-жест сама: долгое нажатие только сообщает точку
-/// старта (``onLongPress``), дальнейшее ведение пальца — за координатором,
-/// иначе жест перетаскивания конфликтует с прокруткой и с правом хоста
-/// настраивать редактирование.
+/// The grid does not start the drag gesture itself: the long press only reports the start
+/// point (``onLongPress``); tracking the finger is up to the coordinator,
+/// otherwise the drag gesture would conflict with scrolling and with the host's right to
+/// customize editing.
 ///
-/// ## Раскрытие папки (D17, E7.3)
+/// ## Folder expansion (D17)
 ///
-/// Тап по закрытой папке раскрывает её нативно, как в Windows Phone: под
-/// плиткой папки (она остаётся на месте и видна) вставляется полноширинная
-/// панель с заголовком (в нижнем регистре) и сеткой ярлыков (то же число колонок, что у рабочего стола).
-/// Панель занимает отдельную строку сразу после строки, в которой заканчивается
-/// папка, и растёт вниз, поэтому всё, что начинается ниже этой строки,
-/// сдвигается под неё; иконки появляются каскадом после завершения роста. Пока
-/// папка раскрыта, на её плитке скрыты мини-ярлыки превью 2×2 — подложка и
-/// заголовок остаются; при закрытии превью возвращается. Панель — это
-/// UI-состояние, а не данные: в снимок `TesseraTileStore` она не попадает, а ``items``
-/// её не содержит.
+/// A tap on a closed folder expands it natively, as in Windows Phone: below the
+/// folder tile (which stays in place and visible) a full-width
+/// panel is inserted with a title (lowercase) and a grid of tiles (the same number of columns as the desktop).
+/// The panel takes a separate row right after the row where the folder
+/// ends and grows downward, so everything that starts below that row
+/// shifts down; icons appear in a cascade after the growth finishes. While the
+/// folder is expanded, the 2×2 preview mini-tiles on its tile are hidden — the backing and the
+/// title remain; the preview returns on close. The panel is a
+/// UI state, not data: it does not enter the `TesseraTileStore` snapshot, and ``items``
+/// does not contain it.
 ///
 /// - ``toggleFolder(_:)`` / ``openFolder(_:animated:)`` / ``closeFolder(animated:)``
-///   — программное управление; состояние читается через ``expandedFolderID``;
-/// - ``folderTapHandler`` — перехват: `true` отменяет нативное раскрытие;
-/// - закрытие: повторный тап по панели, тап по пустому месту коллекции,
-///   ``accessibilityPerformEscape()`` (Back/двумя пальцами) или явный вызов
-///   хоста; исчезновение папки из снимка тоже закрывает панель;
-/// - в режиме редактирования (`TesseraTileEditCoordinator`) раскрытие
-///   выполняется так же (E11.1): из панели ярлык берут долгим нажатием и
-///   выносят из папки; режим редактирования тап по папке не прерывает;
-/// - анимация — `cubic-bezier(0.1, 0.9, 0.2, 1)`, 0.28 с
-///   (``folderExpansionDuration``); при Reduce Motion (§9) раскрытие мгновенное.
+///   — programmatic control; the state is read via ``expandedFolderID``;
+/// - ``folderTapHandler`` — interception: `true` cancels the native expansion;
+/// - closing: a repeated tap on the panel, a tap on empty space of the collection,
+///   ``accessibilityPerformEscape()`` (Back/two-finger scrub) or an explicit host call;
+///   a folder disappearing from the snapshot also closes the panel;
+/// - in edit mode (`TesseraTileEditCoordinator`) expansion works the same way:
+///   a tile is picked from the panel with a long press and
+///   dragged out of the folder; a tap on a folder does not interrupt edit mode;
+/// - animation — `cubic-bezier(0.1, 0.9, 0.2, 1)`, 0.28 s
+///   (``folderExpansionDuration``); with Reduce Motion (§9) expansion is instant.
 ///
 /// ## Accessibility (§9)
 ///
-/// - плитка — один элемент VoiceOver с признаком кнопки; заголовок — label,
-///   счётчик бэйджа — value;
-/// - папка — один элемент с числом ярлыков в value;
-/// - Dynamic Type: шрифт заголовка пересобирается при смене категории;
-/// - RTL: порядок элементов задаётся раскладкой, иконка и бэйдж зеркалятся;
-/// - порядок обхода VoiceOver (E14.7) — порядок индексов коллекции (так
-///   работает `UICollectionView`, на устройстве с VoiceOver не проверялось):
-///   сетка не задаёт `accessibilityElements`, кадры не сортирует, а атрибуты
-///   раскладка отдаёт по индексу. Индексы идут в порядке чтения явных ячеек (строка, затем
-///   логическая колонка, в RTL тот же порядок — колонка 0 справа), в том числе
-///   с дырами; панель раскрытой папки (D17) стоит сразу после последнего
-///   элемента полосы папки, а её ярлыки читаются внутри панели после плитки
-///   папки. `TesseraTileStore` отдаёт снимок уже в таком порядке, а для хоста с таблицей
-///   ячеек без `TesseraTileStore` его восстанавливает сама сетка; без применимой таблицы
-///   (упаковка `pack`) порядок остаётся таким, как отдал хост.
+/// - a tile is one VoiceOver element with the button trait; the title is the label,
+///   the badge count is the value;
+/// - a folder is one element with the tile count in its value;
+/// - Dynamic Type: the title font is rebuilt when the category changes;
+/// - RTL: element order is set by the layout; the icon and badge are mirrored;
+/// - VoiceOver traversal order — the order of collection indexes (this is how
+///   `UICollectionView` works; not verified on a device with VoiceOver):
+///   the grid does not set `accessibilityElements` and does not sort frames; the layout provides attributes
+///   by index. Indexes follow the reading order of explicit cells (row, then
+///   logical column; in RTL the same order — column 0 is on the right), including
+///   those with holes; the expanded folder's panel (D17) comes right after the last
+///   element of the folder band, and its tiles are read inside the panel after the folder
+///   tile. `TesseraTileStore` already returns the snapshot in this order, and for a host with a cell table
+///   without `TesseraTileStore` the grid restores it itself; without an applicable table
+///   (`pack` layout) the order stays as the host delivered it.
 ///
-/// ## Поля и safe area
+/// ## Insets and safe area
 ///
-/// Сетка не подмешивает `safeAreaInsets` автоматически
-/// (`contentInsetAdjustmentBehavior = .never`): внешние поля задаются
-/// ``contentInsets``, и хост сам решает, сложить ли их с безопасной зоной.
-/// Это держит формулу юнита §3 в одном месте.
+/// The grid does not mix in `safeAreaInsets` automatically
+/// (`contentInsetAdjustmentBehavior = .never`): outer insets are set via
+/// ``contentInsets``, and the host decides whether to add the safe area to them.
+/// This keeps the unit formula of §3 in one place.
 ///
-/// Все методы — главный поток: UIKit-вью не рассчитана на фоновые вызовы
+/// All methods are main-thread: a UIKit view is not designed for background calls
 /// (docs/CORE-IOS-DESIGN.md §3).
 public final class TesseraTileGridView: UIView {
 
-    // MARK: - Публичные колбэки
+    // MARK: - Public callbacks
 
-    /// Тап по ярлыку или папке.
+    /// A tap on a tile or folder.
     ///
-    /// Сетка не выполняет действие ярлыка сама (D12): она отдаёт элемент, а
-    /// хост решает, вызвать `TesseraTileDescriptor.action` или открыть папку. Выбор
-    /// папки выполняется хостом — вложенность и навигация в модель не входят
+    /// The grid does not run a tile's action itself (D12): it hands over the item, and the
+    /// host decides whether to call `TesseraTileDescriptor.action` or open a folder. The folder
+    /// is chosen by the host — nesting and navigation are not part of the model
     /// (D14).
     ///
-    /// E10.4/m6: ярлыки внутри панели раскрытой папки приходят сюда же
-    /// (`.tile(descriptor)`) — раньше панель вызывала `TesseraTileDescriptor.action`
-    /// напрямую. Для интеграторов это breaking-изменение: действие ярлыка в
-    /// панели выполняет хост по ``onTap``; голосовая активация идёт тем же
-    /// путём. В режиме редактирования панель действие не активирует.
+    /// Tiles inside an expanded folder's panel arrive here as well
+    /// (`.tile(descriptor)`) — the panel used to call `TesseraTileDescriptor.action`
+    /// directly. For integrators this is a breaking change: the host runs a tile's action in
+    /// the panel from ``onTap``; voice activation takes the same
+    /// path. In edit mode the panel does not activate the action.
     ///
-    /// Колбэк синхронный (m5): не вызывайте из него ``reload(snapshot:)``/
-    /// ``update(snapshot:animated:)``/``openFolder(_:animated:)`` повторно —
-    /// это повторный вход в обновление сетки, где `reloadData` и
-    /// `performBatchUpdates` могут оказаться в одном проходе runloop.
-    /// Отложите такую реакцию на следующий проход (или в `delegate`-событие).
+    /// The callback is synchronous: do not call ``reload(snapshot:)``/
+    /// ``update(snapshot:animated:)``/``openFolder(_:animated:)`` from it again —
+    /// that re-enters the grid update, where `reloadData` and
+    /// `performBatchUpdates` could end up in the same runloop pass.
+    /// Defer such a reaction to the next pass (or to a `delegate` event).
     public var onTap: ((TesseraTileGridItem) -> Void)?
 
-    /// Долгое нажатие по элементу — вход в режим редактирования (E4.4).
+    /// A long press on an item enters edit mode.
     ///
-    /// Второй параметр — точка нажатия в координатах сетки: с неё координатор
-    /// запускает снэпшот и перетаскивание. Если замыкание не задано, жест
-    /// долгого нажатия отключён и не мешает обычным тапам.
+    /// The second parameter is the press point in grid coordinates: the coordinator
+    /// starts the snapshot and the drag from it. If the closure is not set, the long-press
+    /// gesture is disabled and does not interfere with ordinary taps.
     public var onLongPress: ((TesseraTileGridItem, CGPoint) -> Void)? {
         didSet {
             longPressRecognizer.isEnabled = onLongPress != nil
         }
     }
 
-    /// Изменение `contentOffset` при прокрутке сетки (§8).
+    /// A change of `contentOffset` while the grid scrolls (§8).
     ///
-    /// Вызывается из `scrollViewDidScroll`; внутри сетки в этот момент нет
-    /// layout-операций, поэтому подписчик обязан сам ограничиться
+    /// Called from `scrollViewDidScroll`; no layout operations run inside the grid
+    /// at that moment, so the subscriber must restrict itself to
     /// `frame`/`transform`/`alpha` (CORE-IOS-DESIGN.md §2).
     public var onScrollOffsetChanged: ((CGPoint) -> Void)?
 
-    /// Перехватчик тапа по папке (D17, E7.3).
+    /// Folder tap interceptor (D17).
     ///
-    /// Если замыкание задано и вернуло `true`, сетка **не** выполняет нативное
-    /// раскрытие: решение и показ экрана — за хостом (например, прежний экран
-    /// папки). В этом случае ``onTap`` тоже не вызывается, чтобы хост не
-    /// обработал тап дважды. `nil` или `false` — папка раскрывается встроенной
-    /// панелью (``toggleFolder(_:)``), а событие тапа по-прежнему приходит в
+    /// If the closure is set and returns `true`, the grid does **not** perform the native
+    /// expansion: the decision and presenting a screen are up to the host (for example, a legacy
+    /// folder screen). In that case ``onTap`` is not called either, so that the host does not
+    /// handle the tap twice. `nil` or `false` — the folder expands with the built-in
+    /// panel (``toggleFolder(_:)``), and the tap event is still delivered to
     /// ``onTap``.
     ///
-    /// E11.1: правило одинаково в обычном режиме и в режиме редактирования —
-    /// перехватчик вызывается и там (раньше в режиме редактирования он не
-    /// вызывался, а тап по папке лишь приходил в ``onTap``). Хост, который
-    /// показывает собственный экран папки, получит его и во время
-    /// редактирования; нативная панель в этом режиме открывается и даёт
-    /// вынести ярлык из папки перетаскиванием.
+    /// The rule is the same in normal and edit mode —
+    /// the interceptor is called in edit mode too (it used not to be called there, and a
+    /// folder tap only reached ``onTap``). A host that
+    /// shows its own folder screen gets it during
+    /// editing as well; the native panel in this mode opens and lets a tile be
+    /// dragged out of the folder.
     public var folderTapHandler: ((TesseraTileFolder) -> Bool)?
 
-    /// Обработчик переименования папки (D35, E15.5; W10M §6.7).
+    /// Folder rename handler (D35; Windows 10 Mobile §6.7).
     ///
-    /// Пока обработчик задан, заголовок открытой панели редактируется: долгое
-    /// нажатие по нему (≈0,5 с) превращает подпись в однострочное поле, return
-    /// («Готово») или тап мимо поля фиксируют имя, а у плитки папки и у
-    /// заголовка панели появляется действие VoiceOver «Переименовать». Без
-    /// обработчика заголовок статичен: сетка остаётся пригодной без хранилища.
+    /// While a handler is set, the title of an open panel is editable: a long
+    /// press on it (≈0.5 s) turns the caption into a single-line field; return
+    /// ("Done") or a tap outside the field commits the name, and the folder tile and the
+    /// panel title get a VoiceOver "Rename" action. Without a
+    /// handler the title is static: the grid stays usable without a store.
     ///
-    /// Колбэк получает идентификатор папки и **нормализованное** имя
-    /// (``TesseraTileFolder/normalizedTitle(_:)``: пробелы по краям отброшены, одна
-    /// строка, не длиннее ``TesseraTileFolder/maximumTitleLength`` символов); пустая
-    /// строка означает «вернуть имя по умолчанию» — его подставляет получатель
-    /// (`TesseraTileStore.renameFolder(_:to:)`, координатор). До применения нового
-    /// снимка заголовок показывает локализованное имя по умолчанию. Колбэк
-    /// вызывается только если имя отличается от показанного, синхронно и после
-    /// того, как панель вышла из правки; реакция хоста — новый снимок через
+    /// The callback receives the folder identifier and the **normalized** name
+    /// (``TesseraTileFolder/normalizedTitle(_:)``: surrounding whitespace trimmed, a single
+    /// line, no longer than ``TesseraTileFolder/maximumTitleLength`` characters); an empty
+    /// string means "restore the default name" — the receiver supplies it
+    /// (`TesseraTileStore.renameFolder(_:to:)`, the coordinator). Until a new
+    /// snapshot is applied, the title shows the localized default name. The callback
+    /// is called only if the name differs from the displayed one, synchronously, and after
+    /// the panel has left editing; the host reacts with a new snapshot via
     /// ``update(snapshot:animated:)``.
     ///
-    /// Закрытие панели, выход из окна, вход в режим редактирования и выход из
-    /// него завершают правку **фиксацией**, не отменой. Свойство занимает
-    /// `TesseraTileEditCoordinator` (он ставит обработчик, вызывающий
-    /// `TesseraTileStore.renameFolder`); хост с координатором задавать его не должен.
+    /// Closing the panel, leaving the window, and entering or leaving edit mode
+    /// finish editing by **committing**, not cancelling. The property is taken by
+    /// `TesseraTileEditCoordinator` (it installs a handler that calls
+    /// `TesseraTileStore.renameFolder`); a host with a coordinator must not set it.
     public var folderRenameHandler: ((AnyHashable, String) -> Void)? {
         willSet {
-            // Старый обработчик ещё получит имя, набранное до смены.
+            // The old handler still receives the name typed before the change.
             commitFolderNameEditing()
         }
         didSet {
@@ -317,86 +316,86 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Событие раскрытия/закрытия папки встроенной панелью (D17, E7.3).
+    /// Event of a folder expanding/closing through the built-in panel (D17).
     ///
-    /// Внутренний канал для SwiftUI-фасада: UIKit-хост читает состояние через
-    /// ``expandedFolderID`` и вызывает ``closeFolder(animated:)``. Первый
-    /// параметр — папка, второй — раскрыта ли она сейчас.
+    /// An internal channel for the SwiftUI facade: a UIKit host reads the state via
+    /// ``expandedFolderID`` and calls ``closeFolder(animated:)``. The first
+    /// parameter is the folder, the second is whether it is expanded now.
     ///
-    /// Колбэк синхронный (m5): повторный вход в ``reload(snapshot:)``/
-    /// ``update(snapshot:animated:)``/``openFolder(_:animated:)`` из него может
-    /// смешать `reloadData` и `performBatchUpdates` в одном проходе runloop —
-    /// откладывайте реакцию на следующий проход.
+    /// The callback is synchronous: re-entering ``reload(snapshot:)``/
+    /// ``update(snapshot:animated:)``/``openFolder(_:animated:)`` from it may
+    /// mix `reloadData` and `performBatchUpdates` in one runloop pass —
+    /// defer the reaction to the next pass.
     var onFolderExpansionChanged: ((TesseraTileFolder, Bool) -> Void)?
 
-    // MARK: - Публичные данные
+    // MARK: - Public data
 
-    /// Последний применённый снимок сетки.
+    /// The last snapshot applied to the grid.
     ///
-    /// Снимок — значение из `TesseraTileStore`: сетка его не меняет, только
-    /// отображает. Хост передаёт новый снимок через ``reload(snapshot:)`` или
-    /// ``update(snapshot:animated:)``. Наружу (в публичный API) отдаются только
-    /// ``items``: координатору редактирования снимок доступен внутри модуля,
-    /// а хосту достаточно самих элементов.
+    /// A snapshot is a value from `TesseraTileStore`: the grid does not change it, only
+    /// displays it. The host passes a new snapshot via ``reload(snapshot:)`` or
+    /// ``update(snapshot:animated:)``. Only ``items`` is exposed in the public API:
+    /// the edit coordinator gets the snapshot inside the module,
+    /// and the host needs only the items themselves.
     private(set) var snapshot: TesseraTileGridSnapshot?
 
-    /// Элементы сетки в порядке отображения (удобный доступ к снимку).
+    /// Grid items in display order (a convenient accessor for the snapshot).
     ///
-    /// Панель раскрытой папки (``TesseraTileGridItem/folderContent(_:)``, D17) сюда не
-    /// входит: это UI-состояние, а не данные. Хосту и координатору редактирования
-    /// нужен именно снимок `TesseraTileStore`, чтобы сравнение модели не зависело от
-    /// того, открыта ли папка. Состояние раскрытия — ``expandedFolderID``.
+    /// The panel of an expanded folder (``TesseraTileGridItem/folderContent(_:)``, D17) is not
+    /// included: it is UI state, not data. The host and the edit coordinator
+    /// need exactly the `TesseraTileStore` snapshot, so that model comparison does not depend on
+    /// whether a folder is open. The expansion state is ``expandedFolderID``.
     public var items: [TesseraTileGridItem] {
         snapshot?.items ?? []
     }
 
-    // MARK: - Раскрытие папки (D17, E7.3)
+    // MARK: - Folder expansion (D17)
 
-    /// Длительность анимации раскрытия/закрытия панели папки, секунды (D17).
+    /// Duration of the folder panel expand/close animation, in seconds (D17).
     ///
-    /// Кривая — `cubic-bezier(0.1, 0.9, 0.2, 1)`: быстрый старт и мягкое
-    /// торможение, как в Windows Phone.
+    /// The curve is `cubic-bezier(0.1, 0.9, 0.2, 1)`: a fast start and a soft
+    /// deceleration, as in Windows Phone.
     public static let folderExpansionDuration: TimeInterval = 0.28
 
-    /// Микро-задержка каскада иконок внутри панели на индекс, секунды (D17).
+    /// Per-index micro-delay of the icon cascade inside the panel, in seconds (D17).
     public static let folderIconStagger: TimeInterval = 0.035
 
-    /// Задержка появления иконки панели по её индексу (D17).
+    /// Delay before a panel icon appears, by its index (D17).
     ///
-    /// Чистая функция от индекса: отрицательные значения трактуются как 0.
-    /// Отдельная функция нужна тестам E7.4 — каскад проверяется без таймеров
-    /// и без UI-цикла.
+    /// A pure function of the index: negative values are treated as 0.
+    /// A separate function is needed by tests — the cascade is verified without timers
+    /// and without the UI loop.
     ///
-    /// - Parameter index: Индекс ярлыка в сетке содержимого панели.
-    /// - Returns: Задержка старта анимации в секундах.
+    /// - Parameter index: The tile index in the panel content grid.
+    /// - Returns: The animation start delay in seconds.
     public static func staggerDelay(index: Int) -> TimeInterval {
         TimeInterval(max(0, index)) * folderIconStagger
     }
 
-    // MARK: - Bounce-кривая перемещения (E8.8)
+    // MARK: - Bounce move curve
 
-    /// Длительность переезда соседей при перестановке, секунды (E8.8).
+    /// Duration of neighbors moving during reorder, in seconds.
     ///
-    /// 0,26 с — середина диапазона 0,22–0,28 с из задачи E8.8. Прежние
-    /// движения занимали 0,24 с (пустышка координатора) и ~0,25 с (стандартный
-    /// batch UIKit), поэтому темп drag-превью не меняется — новый только
-    /// профиль скорости, с лёгким перелётом в конце. Раскрытие/закрытие панели
-    /// папки идёт своей длительностью (``folderExpansionDuration``, 0,28 с) и
-    /// своей кривой, эта константа его не затрагивает.
+    /// 0.26 s is the middle of the 0.22–0.28 s range from the design brief. The previous
+    /// motions took 0.24 s (the coordinator placeholder) and ~0.25 s (the standard
+    /// UIKit batch), so the pace of the drag preview does not change — only the
+    /// speed profile is new, with a slight overshoot at the end. Folder panel
+    /// expand/close uses its own duration (``folderExpansionDuration``, 0.28 s) and
+    /// its own curve; this constant does not affect it.
     static let tileMoveDuration: TimeInterval = 0.26
 
-    /// Кривая переезда соседей — `cubic-bezier(0.175, 0.885, 0.32, 1.1)` (E8.8).
+    /// The neighbor-move curve is `cubic-bezier(0.175, 0.885, 0.32, 1.1)`.
     ///
-    /// Вторая контрольная точка по `y` больше единицы (`1.1`): кривая
-    /// перелетает цель на несколько процентов и возвращается — лёгкий
-    /// «отскок» из спецификации WP, без резких прыжков. Фабрика общая для
-    /// batch-анимации сетки (``update(snapshot:animated:)``) и переезда
-    /// пустышки в координаторе, иначе соседи и место захвата разъехались бы по
-    /// характеру движения. Объект создаётся на каждый вызов:
-    /// `UICubicTimingParameters` — неизменяемая величина, кешировать её не
-    /// нужно.
+    /// The second control point has `y` above one (`1.1`): the curve
+    /// overshoots the target by a few percent and returns — a slight
+    /// "bounce" from the Windows Phone design, without abrupt jumps. The factory is shared by
+    /// the grid batch animation (``update(snapshot:animated:)``) and the move of the
+    /// coordinator's placeholder; otherwise neighbors and the grab spot would drift apart in the
+    /// character of motion. A new object is created on every call:
+    /// `UICubicTimingParameters` is an immutable value, so there is no need to
+    /// cache it.
     ///
-    /// - Returns: Параметры кривой для `UIViewPropertyAnimator`.
+    /// - Returns: The curve parameters for `UIViewPropertyAnimator`.
     static func bounceTimingParameters() -> UICubicTimingParameters {
         UICubicTimingParameters(
             controlPoint1: CGPoint(x: 0.175, y: 0.885),
@@ -404,23 +403,23 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Идентификатор раскрытой папки; `nil` — все папки закрыты (D17).
+    /// The identifier of the expanded folder; `nil` means all folders are closed (D17).
     ///
-    /// Публично только чтение: состояние меняют ``toggleFolder(_:)``,
-    /// ``openFolder(_:animated:)`` и ``closeFolder(animated:)``. В режиме
-    /// редактирования нативное раскрытие не запускается, но явный вызов хоста
-    /// не блокируется: решение остаётся за хостом.
+    /// Read-only in the public API: the state is changed by ``toggleFolder(_:)``,
+    /// ``openFolder(_:animated:)`` and ``closeFolder(animated:)``. In edit
+    /// mode native expansion is not triggered, but an explicit host call
+    /// is not blocked: the decision stays with the host.
     public private(set) var expandedFolderID: AnyHashable?
 
-    /// Переключает раскрытие папки (D17): закрытую — открывает, открытую —
-    /// закрывает. Другая раскрытая папка сначала закрывается без анимации:
-    /// одновременно раскрыта максимум одна папка.
+    /// Toggles folder expansion (D17): opens a closed folder, closes an open one.
+    /// Another expanded folder is closed first without animation:
+    /// at most one folder is expanded at a time.
     ///
-    /// m4/E10.2: повторный тап по папке, которая уже закрывается (первые
-    /// ~0.12 с идут иконки, `expandedFolderID` ещё не снят), означает «открыть
-    /// снова», а не «закрыть ещё раз» — последняя цель побеждает.
+    /// A repeated tap on a folder that is already closing (for the first
+    /// ~0.12 s the icons fade out and `expandedFolderID` is not yet cleared) means "open
+    /// again", not "close once more" — the last target wins.
     ///
-    /// - Parameter folder: Папка из текущего снимка сетки.
+    /// - Parameter folder: A folder from the grid's current snapshot.
     public func toggleFolder(_ folder: TesseraTileFolder) {
         if folderTransition == .closing, expandedFolderID == folder.id {
             pendingFolderChange = .open(folder, animated: true)
@@ -433,43 +432,43 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Раскрывает папку встроенной панелью (D17).
+    /// Expands a folder with the built-in panel (D17).
     ///
-    /// Под плиткой папки появляется полноширинная панель
-    /// ``TesseraTileGridItem/folderContent(_:)``: в наборе коллекции она вставляется
-    /// отдельным элементом сразу после плитки папки, сама плитка остаётся на
-    /// месте и видна всё время раскрытия. Геометрически панель занимает строку
-    /// сразу после строки, в которой заканчивается папка, и растягивается на всю
-    /// ширину. Batch-обновление только вставляет панель: её высота растёт
-    /// 0 → `panelHeight`, а строки, начинающиеся ниже папки, сдвигаются под неё.
-    /// На время анимации прокрутка сетки блокируется (`isScrollEnabled = false`),
-    /// иконки появляются каскадом ~35 мс на индекс после завершения роста.
-    /// Пока папка раскрыта, на её плитке скрыты мини-ярлыки превью 2×2. При
-    /// Reduce Motion (§9) и вне окна панель появляется без анимации.
+    /// A full-width panel ``TesseraTileGridItem/folderContent(_:)`` appears below
+    /// the folder tile: in the collection's item set it is inserted as a
+    /// separate element right after the folder tile, while the tile itself stays in
+    /// place and visible throughout the expansion. Geometrically the panel occupies the row
+    /// right after the row where the folder ends and stretches to the full
+    /// width. The batch update only inserts the panel: its height grows
+    /// 0 → `panelHeight`, and rows that start below the folder shift down to make room.
+    /// Grid scrolling is blocked during the animation (`isScrollEnabled = false`),
+    /// and icons appear in a cascade of ~35 ms per index after the growth finishes.
+    /// While the folder is expanded, the 2×2 preview mini-tiles on its tile are hidden. With
+    /// Reduce Motion (§9) and when off-window the panel appears without animation.
     ///
-    /// Если папки нет в текущем снимке, вызов ничего не делает; если открыта
-    /// другая папка, она сначала закрывается.
+    /// If the folder is not in the current snapshot, the call does nothing; if another folder is
+    /// open, it is closed first.
     ///
-    /// E10.2: переходы панели сериализуются. Если анимация уже идёт, цель
-    /// запоминается (последняя побеждает) и выполняется после завершения
-    /// текущего перехода; при смене папки A → B открытая A сворачивается сразу,
-    /// а открытие B переносится на следующий проход runloop — `reloadData` и
-    /// `performBatchUpdates` никогда не оказываются в одном проходе.
+    /// Panel transitions are serialized. If an animation is already running, the target
+    /// is remembered (the last one wins) and executed after the current
+    /// transition finishes; when switching from folder A to B, the open A collapses immediately
+    /// and opening B is deferred to the next runloop pass — `reloadData` and
+    /// `performBatchUpdates` never end up in the same pass.
     ///
     /// - Parameters:
-    ///   - folder: Папка из текущего снимка сетки.
-    ///   - animated: Анимировать ли появление панели (при Reduce Motion
-    ///     игнорируется).
+    ///   - folder: A folder from the grid's current snapshot.
+    ///   - animated: Whether to animate the panel appearing (ignored with
+    ///     Reduce Motion).
     public func openFolder(_ folder: TesseraTileFolder, animated: Bool = true) {
-        // Явная команда хоста отменяет отложенную: побеждает последнее действие.
+        // An explicit host command cancels a deferred one: the last action wins.
         if folderTransition == .idle {
             pendingFolderChange = nil
         }
         guard currentFolder(withID: folder.id) != nil else { return }
 
-        // Пока идёт переход (в том числе первые ~0.12 с закрытия, когда папка
-        // ещё числится раскрытой), повторный тап по ней — это цель «открыть», а
-        // не no-op: последняя цель побеждает (E10.2, m4).
+        // While a transition is running (including the first ~0.12 s of closing, when the folder
+        // is still considered expanded), a repeated tap on it is an "open" target,
+        // not a no-op: the last target wins.
         if folderTransition != .idle {
             pendingFolderChange = .open(folder, animated: animated)
             return
@@ -478,9 +477,9 @@ public final class TesseraTileGridView: UIView {
         guard expandedFolderID != folder.id else { return }
 
         if expandedFolderID != nil {
-            // Другая папка раскрыта: сворачиваем её мгновенно (reloadData).
-            // Анимированное открытие цели откладываем на следующий проход
-            // runloop, чтобы batch-вставка панели не смешалась с reloadData.
+            // Another folder is expanded: collapse it instantly (reloadData).
+            // The animated opening of the target is deferred to the next runloop
+            // pass so the batch insertion of the panel does not mix with reloadData.
             let deferOpen = animated && canAnimateFolderChange
             collapseExpansion(animated: false, notify: true)
             if deferOpen {
@@ -493,21 +492,21 @@ public final class TesseraTileGridView: UIView {
         performOpen(folder, animated: animated)
     }
 
-    /// Закрывает панель раскрытой папки (D17).
+    /// Closes the panel of the expanded folder (D17).
     ///
-    /// Иконки панели гаснут, затем её высота схлопывается, а из набора
-    /// удаляется сама панель: плитка папки всё это время остаётся на своём
-    /// месте, а элементы под панелью поднимаются вверх. При закрытии на плитке
-    /// возвращаются мини-ярлыки превью. По завершении прокрутка разблокируется,
-    /// а `contentOffset` зажимается в новых границах контента. Хост может
-    /// вызвать метод для закрытия по Back, не дожидаясь тапа.
+    /// The panel icons fade out, then its height collapses and the panel itself is
+    /// removed from the item set: the folder tile stays in place the whole time, and the
+    /// items below the panel move up. On close the preview mini-tiles
+    /// return on the tile. When done, scrolling is unblocked and
+    /// `contentOffset` is clamped to the new content bounds. The host can
+    /// call this method to close on Back without waiting for a tap.
     ///
-    /// E10.2: закрытие во время идущего перехода откладывается (последняя цель
-    /// побеждает); неанимированная ветка тоже зажимает `contentOffset` и
-    /// публикует `.layoutChanged`.
+    /// Closing during a running transition is deferred (the last target
+    /// wins); the non-animated branch also clamps `contentOffset` and
+    /// posts `.layoutChanged`.
     ///
-    /// - Parameter animated: Анимировать ли закрытие (при Reduce Motion
-    ///   игнорируется).
+    /// - Parameter animated: Whether to animate closing (ignored with
+    ///   Reduce Motion).
     public func closeFolder(animated: Bool = true) {
         if folderTransition == .idle {
             pendingFolderChange = nil
@@ -515,14 +514,14 @@ public final class TesseraTileGridView: UIView {
         collapseExpansion(animated: animated, notify: true)
     }
 
-    // MARK: - Live-плитки (§4)
+    // MARK: - Live tiles (§4)
 
-    /// Параметры расписания live-флипов (§4).
+    /// Schedule parameters of live flips (§4).
     ///
-    /// По умолчанию — значения ``TesseraLiveTileEngine/Configuration``. Смена
-    /// применяется к уже созданному ``liveTileEngine`` сразу: движок
-    /// перепланирует цикл и обновит длительность флипа у зарегистрированных
-    /// плиток. Сетке без живых плиток настройка ничего не создаёт.
+    /// Defaults to the values of ``TesseraLiveTileEngine/Configuration``. A change
+    /// is applied immediately to an already created ``liveTileEngine``: the engine
+    /// reschedules the cycle and updates the flip duration of registered
+    /// tiles. For a grid without live tiles the setting creates nothing.
     public var liveTileConfiguration: TesseraLiveTileEngine.Configuration {
         get { storedLiveTileConfiguration }
         set {
@@ -531,14 +530,14 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Движок живых плиток сетки (docs/STARTSCREEN-IOS-DESIGN.md §4).
+    /// The grid's live tile engine (docs/STARTSCREEN-IOS-DESIGN.md §4).
     ///
-    /// Один на сетку: ячейки переиспользуются, движок — нет. Создаётся при
-    /// первом обращении, то есть при первой live-плитке в снимке: статичному
-    /// рабочему столу таймеры и подписки не нужны. Движок сам считает стахгер,
-    /// держит паузы (вне экрана, фон, Reduce Motion) и удерживает
-    /// зарегистрированные контейнеры — сетка обязана снимать регистрацию при
-    /// уходе ячейки с экрана, что и делает в `didEndDisplaying`/`prepareForReuse`.
+    /// One per grid: cells are reused, the engine is not. It is created on
+    /// first access, that is, on the first live tile in the snapshot: a static
+    /// desktop needs no timers or subscriptions. The engine computes the stagger itself,
+    /// holds the pauses (off-screen, background, Reduce Motion) and retains the
+    /// registered containers — the grid must unregister when a cell
+    /// leaves the screen, which it does in `didEndDisplaying`/`prepareForReuse`.
     public var liveTileEngine: TesseraLiveTileEngine {
         if let engine = storedLiveTileEngine {
             return engine
@@ -548,20 +547,20 @@ public final class TesseraTileGridView: UIView {
         return engine
     }
 
-    /// Пауза live-контента сетки (§4, «Паузы»; E10.4).
+    /// Pause of the grid's live content (§4, "Pauses").
     ///
-    /// `true` — живые плитки и idle-флип превью папок заморожены, но остаются
-    /// зарегистрированными: снятие паузы возобновляет расписание без
-    /// пересоздания ячеек. Хост включает паузу, пока страница START не показана
-    /// (пейджер пересылает appearance только текущей странице): иначе флипы
-    /// идут за кадром и тратят батарею.
+    /// `true` — live tiles and the idle flip of folder previews are frozen but stay
+    /// registered: lifting the pause resumes the schedule without
+    /// recreating cells. The host enables the pause while the START page is not shown
+    /// (the pager forwards appearance only to the current page): otherwise flips
+    /// run off-screen and drain the battery.
     ///
-    /// Пауза соблюдается в ``configure(_:with:isVisible:)`` (новые и
-    /// переиспользованные ячейки не регистрируются видимыми) и применяется к
-    /// видимым ячейкам при переключении. Поэтому `update(snapshot:)`/`reload`,
-    /// пришедшие в обход контроллера, не возобновляют плитки, пока пауза
-    /// включена. Скрытые на время drag ячейки (`setItemHidden`) пауза не
-    /// «воскрешает».
+    /// The pause is honored in ``configure(_:with:isVisible:)`` (new and
+    /// reused cells are not registered as visible) and is applied to
+    /// visible cells when toggled. Therefore `update(snapshot:)`/`reload`
+    /// that arrive bypassing the controller do not resume tiles while the pause
+    /// is on. Cells hidden during a drag (`setItemHidden`) are not
+    /// "resurrected" by the pause.
     public var isLiveContentPaused: Bool = false {
         didSet {
             guard isLiveContentPaused != oldValue else { return }
@@ -569,15 +568,15 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Перечитывает live-контент видимой плитки (§4).
+    /// Re-reads the live content of a visible tile (§4).
     ///
-    /// Нужен провайдерам без подписки `startObservingChanges` (v1, §10): после
-    /// изменения своего состояния они просят хост обновить плитку. Провайдеры
-    /// с подпиской получают то же самое автоматически. Обновление не запускает
-    /// флип — расписание остаётся прежним.
+    /// Needed by providers without a `startObservingChanges` subscription (§10): after
+    /// their state changes they ask the host to refresh the tile. Providers
+    /// with a subscription get the same automatically. The refresh does not start a
+    /// flip — the schedule stays as it was.
     ///
-    /// - Parameter id: Идентификатор ярлыка. Для статичной плитки, папки и
-    ///   элемента вне экрана вызов ничего не делает.
+    /// - Parameter id: The tile identifier. For a static tile, a folder, or an
+    ///   off-screen item the call does nothing.
     public func refreshLiveTile(forItemID id: AnyHashable) {
         guard let cell = cellView(forItemID: id) as? TesseraTileCell,
               let liveTileView = cell.liveTileView,
@@ -587,27 +586,27 @@ public final class TesseraTileGridView: UIView {
         engine.refresh(liveTileView)
     }
 
-    // MARK: - Конфигурация раскладки
+    // MARK: - Layout configuration
 
-    /// Число колонок сетки, по умолчанию 6 малых колонок (D26,
-    /// ``TesseraTileLayoutEngine/defaultColumns``): три средние плитки в ряд, как в
-    /// Windows 10 Mobile. Хост может задать своё значение.
+    /// Number of grid columns; defaults to 6 small columns (D26,
+    /// ``TesseraTileLayoutEngine/defaultColumns``): three medium tiles per row, as in
+    /// Windows 10 Mobile. The host may set its own value.
     ///
-    /// Менять до показа или вместе со сменой ширины экрана: сетка сразу
-    /// инвалидирует раскладку, но не анимирует это изменение — анимировать
-    /// число колонок в v1 не требуется.
+    /// Change before display or together with a screen width change: the grid
+    /// invalidates the layout immediately but does not animate the change —
+    /// animating the column count is not required in v1.
     public var columns: Int {
         get { tileLayout.columns }
         set {
             guard newValue != tileLayout.columns else { return }
-            // Место и высота панели раскрытой папки зависят от числа колонок:
-            // вместе с юнитом меняются ширина ячейки содержимого и упаковка
-            // соседей. Сбрасываем кеш элементов и, если папка открыта,
-            // перестраиваем набор целиком, иначе панель и соседи разъедутся.
+            // The position and height of an expanded folder's panel depend on the column count:
+            // together with the unit, the width of the content cell and the packing of
+            // neighbors change. Reset the item cache and, if a folder is open,
+            // rebuild the whole set, otherwise the panel and neighbors drift apart.
             invalidateDisplayItems()
             tileLayout.columns = newValue
-            // E14.7: от числа колонок зависит применимость таблицы ячеек, а с ней
-            // и порядок чтения; если он изменился, набор коллекции перестраивается.
+            // The applicability of the cell table depends on the column count, and with it
+            // the reading order; if it changed, the collection's item set is rebuilt.
             let orderChanged = reorderSnapshotForCurrentColumns()
             if expandedFolderID != nil || orderChanged {
                 pushDisplayItemsToLayout(reason: .items)
@@ -617,64 +616,64 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Внутренний колбэк смены числа колонок (E14.5).
+    /// Internal callback for a column count change.
     ///
-    /// Координатор редактирования сообщает новую ширину `TesseraTileStore` (ячейки
-    /// хранятся на холсте конкретной ширины, D32) и, если идёт правка,
-    /// пересобирает снимок под неё. Вызывается после того, как раскладка уже
-    /// получила новое значение; публичным API не является.
+    /// The edit coordinator reports the new width to `TesseraTileStore` (cells
+    /// are stored on a canvas of a specific width, D32) and, if editing is in progress,
+    /// rebuilds the snapshot for it. Called after the layout has already
+    /// received the new value; not public API.
     var columnsDidChange: ((Int) -> Void)?
 
-    /// Внешние поля сетки в точках. По умолчанию 16 со всех сторон.
+    /// Outer grid insets in points. 16 on all sides by default.
     ///
-    /// Задаются раскладке, а не `collectionView.contentInset`: у сетки один
-    /// источник полей, иначе формула юнита §3 начала бы двоиться.
+    /// Set on the layout, not on `collectionView.contentInset`: the grid has a single
+    /// source of insets, otherwise the unit formula of §3 would start to fork.
     public var contentInsets: UIEdgeInsets {
         get { tileLayout.contentInsets }
         set { tileLayout.contentInsets = newValue }
     }
 
-    /// Зазор между соседними юнитами сетки в точках. По умолчанию 8.
+    /// Gap between adjacent grid units in points. 8 by default.
     public var itemSpacing: CGFloat {
         get { tileLayout.itemSpacing }
         set { tileLayout.itemSpacing = newValue }
     }
 
-    // MARK: - Прокрутка
+    // MARK: - Scrolling
 
-    /// Текущее смещение прокрутки сетки.
+    /// The current scroll offset of the grid.
     public var contentOffset: CGPoint {
         collectionView.contentOffset
     }
 
-    /// Размер прокручиваемого контента сетки.
+    /// The size of the grid's scrollable content.
     ///
-    /// Берётся у раскладки, а не у `collectionView.contentSize`: UICollectionView
-    /// обновляет свой `contentSize` в конце layout-прохода, а координатору
-    /// перетаскивания значение нужно сразу после ``update(snapshot:animated:)``.
+    /// Taken from the layout rather than `collectionView.contentSize`: UICollectionView
+    /// updates its `contentSize` at the end of the layout pass, while the drag
+    /// coordinator needs the value right after ``update(snapshot:animated:)``.
     public var contentSize: CGSize {
         tileLayout.collectionViewContentSize
     }
 
-    /// Включена ли прокрутка сетки.
+    /// Whether grid scrolling is enabled.
     ///
-    /// Координатор редактирования (E4.4) отключает её на время перетаскивания,
-    /// если ведёт автоскролл у краёв сам; иначе палец прокручивал бы сетку и
-    /// перетаскивал плитку одновременно.
+    /// The edit coordinator disables it during a drag
+    /// if it drives autoscroll at the edges itself; otherwise the finger would scroll the grid and
+    /// drag the tile at the same time.
     ///
-    /// E10.2: сетка — единственный владелец флага. Свойство задаёт
-    /// *запрошенное* состояние; фактическое (`collectionView.isScrollEnabled`)
-    /// дополнительно учитывает причины временной блокировки — панель раскрытой
-    /// папки на время анимации. Снятие причины не «воскрешает» устаревший
-    /// снимок: если координатор держит прокрутку выключенной, она останется
-    /// выключенной и после завершения анимации.
+    /// The grid is the sole owner of the flag. The property sets the
+    /// *requested* state; the actual one (`collectionView.isScrollEnabled`)
+    /// additionally accounts for temporary lock reasons — the expanded
+    /// folder panel during its animation. Removing a reason does not "resurrect" a stale
+    /// value: if the coordinator keeps scrolling off, it stays
+    /// off after the animation finishes.
     ///
-    /// m1: getter возвращает фактическое состояние, а не запрошенное. Пара
-    /// getter/setter поэтому несимметрична, и паттерн read-modify-write
+    /// The getter returns the actual state, not the requested one. The getter/setter
+    /// pair is therefore asymmetric, and the read-modify-write pattern
     /// (`snapshot = grid.isScrollEnabled; …; grid.isScrollEnabled = snapshot`)
-    /// во время анимации панели не гарантирует восстановления: блокировка
-    /// панели — причина, а не запрос. Хосту, который временно выключает
-    /// прокрутку, следует хранить собственное намерение, а не читать getter.
+    /// does not guarantee restoration during the panel animation: the panel
+    /// lock is a reason, not a request. A host that temporarily disables
+    /// scrolling should store its own intent instead of reading the getter.
     public var isScrollEnabled: Bool {
         get { collectionView.isScrollEnabled }
         set {
@@ -683,213 +682,212 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    // MARK: - Внутреннее состояние
+    // MARK: - Internal state
 
-    /// Раскладка сетки; наружу не выходит — её настраивают свойства выше.
+    /// The grid layout; not exposed — it is configured by the properties above.
     private let tileLayout: TesseraTileCollectionViewLayout
 
-    /// Коллекция ячеек.
+    /// The collection of cells.
     private let collectionView: UICollectionView
 
-    /// Жест долгого нажатия (включается только при заданном ``onLongPress``).
+    /// The long-press gesture (enabled only when ``onLongPress`` is set).
     private let longPressRecognizer = UILongPressGestureRecognizer()
 
-    /// Тап по пустому месту сетки — закрытие раскрытой папки (D17).
+    /// A tap on empty grid space closes an expanded folder (D17).
     ///
-    /// Висит на коллекции, а не на самой сетке: обработчик сам проверяет
-    /// хит-тест, поэтому тап по ячейке (в том числе по панели) его не закрывает.
+    /// Attached to the collection rather than the grid itself: the handler checks
+    /// the hit test itself, so a tap on a cell (including the panel) does not close it.
     private let backgroundTapRecognizer = UITapGestureRecognizer()
 
-    /// Пассивный наблюдатель смещения касания (E12.7): выбор ячейки коллекции
-    /// не срабатывает как тап, если палец ушёл дальше допуска.
+    /// A passive observer of the touch offset: a collection cell selection
+    /// does not fire as a tap if the finger moved beyond the tolerance.
     ///
-    /// Сам выбор `UICollectionView` смещение не проверяет: когда собственный пан
-    /// коллекции не начался (горизонтальный свайп по вертикальной сетке, хост
-    /// без пейджера), отпускание над плиткой всё равно присылало `didSelect`.
-    /// Внутренний — тесты выставляют признак без реальных касаний.
+    /// `UICollectionView` selection itself does not check the offset: when the collection's own pan
+    /// did not begin (a horizontal swipe over a vertical grid, a host
+    /// without a pager), releasing over a tile still delivered `didSelect`.
+    /// Internal — tests set the flag without real touches.
     let tapSlopRecognizer = TesseraTileTapSlopRecognizer()
 
-    /// Кеш элементов с вставленной панелью раскрытой папки.
+    /// The item cache with the expanded folder's panel inserted.
     ///
-    /// Пересчитывается редко — при смене снимка, раскрытии/закрытии и числа
-    /// колонок, а не на каждый запрос коллекции: вставка ищет индекс папки по
-    /// снимку.
+    /// Recomputed rarely — when the snapshot changes, when a folder expands/closes, and when the
+    /// column count changes — rather than on every collection query: the insertion looks up the folder's index
+    /// in the snapshot.
     private var cachedDisplayItems: [TesseraTileGridItem]?
 
-    /// Переход панели папки (E10.2).
+    /// The folder panel transition.
     ///
-    /// Конечный автомат вместо флага: в одном проходе runloop выполняется либо
-    /// `reloadData`, либо `performBatchUpdates`, а конкурирующие команды
-    /// (вторая папка, закрытие, `update(snapshot:)`) ждут завершения перехода.
+    /// A state machine instead of a flag: a single runloop pass runs either
+    /// `reloadData` or `performBatchUpdates`, and competing commands
+    /// (a second folder, closing, `update(snapshot:)`) wait for the transition to finish.
     private enum FolderTransitionState: Equatable {
-        /// Панель стабильна: можно начинать переход.
+        /// The panel is stable: a transition can begin.
         case idle
-        /// Панель раскрывается (batch-вставка уже отправлена).
+        /// The panel is expanding (the batch insertion has already been sent).
         case opening
-        /// Панель закрывается (гаснут иконки, затем удаляется ячейка).
+        /// The panel is closing (the icons fade out, then the cell is removed).
         case closing
     }
 
-    /// Отложенная команда панели: последняя цель побеждает (E10.2).
+    /// A deferred panel command: the last target wins.
     private enum FolderChange {
         case open(TesseraTileFolder, animated: Bool)
         case close(animated: Bool)
     }
 
-    /// Текущий переход панели (E10.2).
+    /// The current panel transition.
     private var folderTransition = FolderTransitionState.idle
 
-    /// Отложенная цель панели, если команда пришла во время перехода (E10.2).
+    /// A deferred panel target if the command arrived during a transition.
     private var pendingFolderChange: FolderChange?
 
-    /// Снимок, пришедший во время перехода панели (E10.2).
+    /// A snapshot that arrived during a panel transition.
     ///
-    /// Применяется после завершения перехода: `reloadData`/дифф поверх неза-
-    /// вершённого batch-обновления UICollectionView не прощает.
+    /// Applied after the transition finishes: UICollectionView does not tolerate a `reloadData`/diff on top of an unfinished
+    /// batch update.
     private var pendingSnapshot: TesseraTileGridSnapshot?
 
-    /// Анимировать ли отложенный снимок.
+    /// Whether to animate the deferred snapshot.
     private var pendingSnapshotAnimated = false
 
-    /// Применялся ли последний снимок кроссфейдом (E9.4/E10.14).
+    /// Whether the last snapshot was applied with a cross-fade.
     ///
-    /// Внутренний признак для тестов: подтверждает, что при Reduce Motion
-    /// ветка с кроссфейдом не выполняется. Публичного значения не имеет.
+    /// An internal flag for tests: confirms that with Reduce Motion
+    /// the cross-fade branch does not run. Has no public value.
     private(set) var didApplyLastSnapshotWithCrossfade = false
 
-    /// Применялся ли последний снимок в контексте «без анимации» (M2).
+    /// Whether the last snapshot was applied in a "no animation" context.
     ///
-    /// Внутренний признак для тестов: неанимированный путь обязан идти через
-    /// `UIView.performWithoutAnimation`, иначе `performBatchUpdates` анимирует
-    /// смену состава дефолтной длительностью. Публичного значения не имеет.
+    /// An internal flag for tests: the non-animated path must go through
+    /// `UIView.performWithoutAnimation`, otherwise `performBatchUpdates` animates
+    /// the content change with the default duration. Has no public value.
     private(set) var didApplyLastSnapshotWithoutAnimation = false
 
-    /// Запланирован ли разбор отложенных команд на следующий проход runloop.
+    /// Whether processing of deferred commands is scheduled for the next runloop pass.
     private var hasScheduledFolderWork = false
 
-    /// Действия, которые ждут окончания перехода панели и применения
-    /// отложенных снимка и команды (D45).
+    /// Actions waiting for the panel transition to finish and for the deferred
+    /// snapshot and command to be applied (D45).
     ///
-    /// Внутренний шов координатора редактирования: после закрытия панели
-    /// распавшейся папки VoiceOver-фокус должен уйти на оставшийся ярлык **после**
-    /// того, как сетка применила отложенный снимок, а не на плитку папки,
-    /// которая вот-вот исчезнет (``postFolderLayoutChanged(expanded:folderID:)`` на
-    /// завершении закрытия ставит фокус на неё).
+    /// An internal seam for the edit coordinator: after the panel of a dissolved
+    /// folder closes, the VoiceOver focus must move to the remaining tile **after**
+    /// the grid applied the deferred snapshot, not to the folder tile
+    /// that is about to disappear (``postFolderLayoutChanged(expanded:folderID:)`` at the
+    /// end of closing puts the focus on it).
     private var folderSettleActions: [() -> Void] = []
 
-    /// Запрошенное извне состояние прокрутки (E10.2).
+    /// The scroll state requested from outside.
     private var isScrollEnabledRequested = true
 
-    /// Причина блокировки прокрутки: анимация панели папки (E10.2).
+    /// A scroll lock reason: the folder panel animation.
     private var isFolderPanelScrollLocked = false
 
-    /// Идёт ли анимация раскрытия/закрытия панели папки (D17).
+    /// Whether a folder panel expand/close animation is running (D17).
     ///
-    /// Внутренний признак (чтение для тестов): по нему вставка панели готовит
-    /// каскад, а тесты дожидаются завершения перехода без таймеров.
+    /// An internal flag (read by tests): the panel insertion uses it to prepare the
+    /// cascade, and tests wait for the transition to finish without timers.
     private(set) var isFolderChangeAnimating = false
 
-    /// Провайдер Reduce Motion (§9).
+    /// The Reduce Motion provider (§9).
     ///
-    /// По умолчанию — системная настройка. Внутренний шов для тестов: проверить
-    /// ветки Reduce Motion детерминированно, не меняя системную настройку.
+    /// The system setting by default. An internal seam for tests: to check
+    /// the Reduce Motion branches deterministically without changing the system setting.
     var isReduceMotionEnabled: () -> Bool = {
         TesseraAccessibility.isReduceMotionEnabled
     }
 
-    /// Публикация accessibility-уведомлений (§9).
+    /// Posting of accessibility notifications (§9).
     ///
-    /// По умолчанию — `UIAccessibility.post(notification:argument:)`.
-    /// Внутренний шов для тестов: `.layoutChanged` в ветках раскрытия/закрытия
-    /// панели нельзя наблюдать средствами системы без включённого VoiceOver.
+    /// `UIAccessibility.post(notification:argument:)` by default.
+    /// An internal seam for tests: `.layoutChanged` in the panel expand/close
+    /// branches cannot be observed by system means without VoiceOver enabled.
     var accessibilityNotificationPoster: (UIAccessibility.Notification, Any?) -> Void = {
         UIAccessibility.post(notification: $0, argument: $1)
     }
 
-    /// Вызывается после конфигурации панели раскрытой папки (E11.5).
+    /// Called after the expanded folder's panel is configured.
     ///
-    /// Внутренний шов координатора редактирования: получает папку и ячейки её
-    /// ярлыков, чтобы выставить им custom actions VoiceOver.
+    /// An internal seam for the edit coordinator: it receives the folder and the cells of its
+    /// tiles in order to set VoiceOver custom actions on them.
     var panelShortcutsDidConfigure: ((TesseraTileFolder, [TesseraTileCell]) -> Void)?
 
-    /// Вызывается, когда панель раскрытой папки меняет устойчивое состояние
-    /// (D46): начался анимированный переход, он завершился либо панель
-    /// открылась/закрылась без анимации.
+    /// Called when the expanded folder's panel changes its stable state
+    /// (D46): an animated transition began, it finished, or the panel
+    /// opened/closed without animation.
     ///
-    /// Внутренний шов координатора редактирования: он синхронно показывает
-    /// кнопки открепления на ярлыках панели, когда она устоялась, и снимает их,
-    /// пока панель едет (открытие, закрытие). Колбэк синхронный и не должен
-    /// менять снимок сетки (см. `onFolderExpansionChanged`).
+    /// An internal seam for the edit coordinator: it synchronously shows the
+    /// unpin buttons on the panel's tiles once it settles and removes them
+    /// while the panel is moving (opening, closing). The callback is synchronous and must not
+    /// change the grid snapshot (see `onFolderExpansionChanged`).
     var folderPanelStateDidChange: (() -> Void)?
 
-    /// Аниматор раскрытия/закрытия панели (D17).
+    /// The expand/close animator of the panel (D17).
     ///
-    /// Удерживается, пока идёт анимация: так её нельзя потерять между кадрами,
-    /// а завершение гарантированно разблокирует скролл.
+    /// Retained while the animation runs: this way it cannot be lost between frames,
+    /// and completion is guaranteed to unblock scrolling.
     private var folderAnimator: UIViewPropertyAnimator?
 
-    /// Аниматор последнего переезда соседей (E8.8).
+    /// The animator of the last neighbor move.
     ///
-    /// Удерживается на время анимации, как ``folderAnimator``: batch-обновление
-    /// должно доехать, даже если вызывающий код не держит локальную ссылку.
-    /// Завершение очищает свойство только для своего аниматора — быстрое
-    /// повторное обновление не должно «потерять» более новый.
+    /// Retained for the duration of the animation, like ``folderAnimator``: the batch update
+    /// must finish even if the calling code holds no local reference.
+    /// Completion clears the property only for its own animator — a quick
+    /// repeated update must not "lose" a newer one.
     private var tileMoveAnimator: UIViewPropertyAnimator?
 
-    /// Элементы, скрытые координатором редактирования.
+    /// Items hidden by the edit coordinator.
     ///
-    /// Хранятся по идентификатору, а не по индексу: после переупорядочивания
-    /// или перезагрузки индекс меняется, а скрытым должен остаться тот же
-    /// элемент. Раскладку скрытие не меняет — место плитки сохраняется.
+    /// Stored by identifier, not by index: after a reorder
+    /// or reload the index changes, but the same item must remain
+    /// hidden. Hiding does not change the layout — the tile's place is kept.
     private var hiddenItemIDs: Set<AnyHashable> = []
 
-    /// Целевые прозрачности содержимого плиток в режиме редактирования
-    /// (E8.2, E10.4).
+    /// Target alpha values of tile content in edit mode.
     ///
-    /// Сетка — владелец дима: ``configure(_:with:isVisible:)`` применяет
-    /// сохранённую прозрачность после содержимого ячейки, а не сбрасывает её
-    /// в 1. Координатор редактирования меняет только это состояние
-    /// (``setEditDimming(_:animated:)``), поэтому дим 0,7 переживает
-    /// `update`/resize/drop и переиспользование ячеек. Скрытие на время drag
-    /// (`hiddenItemIDs`) сильнее дима: `contentView.alpha` = 0.
+    /// The grid owns the dimming: ``configure(_:with:isVisible:)`` applies the
+    /// stored alpha after the cell content rather than resetting it
+    /// to 1. The edit coordinator changes only this state
+    /// (``setEditDimming(_:animated:)``), so the 0.7 dimming survives
+    /// `update`/resize/drop and cell reuse. Hiding during a drag
+    /// (`hiddenItemIDs`) overrides the dimming: `contentView.alpha` = 0.
     private var editDimmingAlphas: [AnyHashable: CGFloat] = [:]
 
-    /// Отступы бэйджей от стрелок размера режима редактирования (D29, E15.1).
+    /// Badge insets from the edit mode size arrows (D29).
     ///
-    /// Как и дим, принадлежат сетке: переживают обновление снимка и
-    /// переиспользование ячеек. Пустая запись — вне правки (0).
+    /// Like the dimming, they belong to the grid: they survive snapshot updates and
+    /// cell reuse. An empty entry means outside editing (0).
     private var badgeEditClearances: [AnyHashable: CGFloat] = [:]
 
-    /// Прозрачность невыбранной плитки в режиме редактирования (E8.2).
+    /// Alpha of an unselected tile in edit mode.
     ///
-    /// 0,7 — из спеки WP: плитки остаются читаемыми и доступными для действий,
-    /// но фон визуально уходит назад, а выбранная/перетаскиваемая — вперёд.
+    /// 0.7 comes from the Windows Phone spec: tiles stay readable and available for actions,
+    /// but the background visually recedes while the selected/dragged one comes forward.
     static let dimmedTileAlpha: CGFloat = 0.7
 
-    /// Длительность перехода димминга (E8.2).
+    /// Duration of the dimming transition.
     static let dimmingDuration: TimeInterval = 0.18
 
-    /// Идентификатор ячейки сетки.
+    /// The identifier of a grid cell.
     private static let cellReuseIdentifier = "TesseraTileCell"
 
-    /// Идентификатор ячейки-панели раскрытой папки (D17).
+    /// The identifier of the expanded folder's panel cell (D17).
     private static let folderPanelReuseIdentifier = "TesseraFolderPanelCell"
 
-    /// Движок live-плиток; `nil` — сетка ещё не встречала live-контент.
+    /// The live tile engine; `nil` means the grid has not yet seen live content.
     ///
-    /// Храним отдельно от вычисляемого ``liveTileEngine``, чтобы
-    /// ``liveTileConfiguration`` не создавал движок (и его наблюдатели) сетке
-    /// без живых плиток.
+    /// Stored separately from the computed ``liveTileEngine`` so that
+    /// ``liveTileConfiguration`` does not create an engine (and its observers) for a grid
+    /// without live tiles.
     private var storedLiveTileEngine: TesseraLiveTileEngine?
 
-    /// Параметры, с которыми будет создан ``liveTileEngine``.
+    /// Parameters with which ``liveTileEngine`` will be created.
     private var storedLiveTileConfiguration = TesseraLiveTileEngine.Configuration()
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт пустую сетку.
+    /// Creates an empty grid.
     ///
-    /// - Parameter frame: Начальный кадр; обычно сетку раскладывает хост.
+    /// - Parameter frame: The initial frame; the host usually lays out the grid.
     public override init(frame: CGRect) {
         let layout = TesseraTileCollectionViewLayout()
         tileLayout = layout
@@ -898,9 +896,9 @@ public final class TesseraTileGridView: UIView {
         commonInit()
     }
 
-    /// Создаёт сетку из архива/сториборда.
+    /// Creates a grid from an archive/storyboard.
     ///
-    /// - Parameter coder: Декодер архива.
+    /// - Parameter coder: The archive decoder.
     public required init?(coder: NSCoder) {
         let layout = TesseraTileCollectionViewLayout()
         tileLayout = layout
@@ -913,17 +911,17 @@ public final class TesseraTileGridView: UIView {
         NotificationCenter.default.removeObserver(self)
     }
 
-    /// Общая настройка: коллекция, ячейка, жест и Dynamic Type.
+    /// Shared setup: the collection, the cell, the gesture and Dynamic Type.
     private func commonInit() {
         backgroundColor = .clear
-        // §9: сетка — контейнер, элементы — ячейки; сама она не элемент.
+        // §9: the grid is a container, its items are cells; it is not an element itself.
         isAccessibilityElement = false
 
         collectionView.backgroundColor = .clear
         collectionView.alwaysBounceVertical = true
         collectionView.showsVerticalScrollIndicator = false
-        // Поля сетки живут в раскладке; contentInset коллекции не трогаем,
-        // иначе формула юнита §3 получила бы вторую поправку.
+        // The grid insets live in the layout; do not touch the collection's contentInset,
+        // otherwise the unit formula of §3 would get a second correction.
         collectionView.contentInset = .zero
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.dataSource = self
@@ -932,17 +930,17 @@ public final class TesseraTileGridView: UIView {
             TesseraTileCell.self,
             forCellWithReuseIdentifier: TesseraTileGridView.cellReuseIdentifier
         )
-        // D17: панель раскрытой папки — отдельная ячейка: при раскрытии она
-        // вставляется под плитку папки штатным batch-обновлением, поэтому соседи
-        // под панелью переезжают анимацией UICollectionView, без ручной геометрии.
+        // D17: the expanded folder's panel is a separate cell: on expansion it is
+        // inserted below the folder tile with a standard batch update, so the neighbors
+        // below the panel move with the UICollectionView animation, without manual geometry.
         collectionView.register(
             TesseraFolderPanelCell.self,
             forCellWithReuseIdentifier: TesseraTileGridView.folderPanelReuseIdentifier
         )
 
-        // D17: тап по пустому месту закрывает раскрытую папку. Жест не отменяет
-        // касания (`cancelsTouchesInView = false`), иначе перестал бы работать
-        // выбор ячеек; хит-тест в обработчике отсеивает тапы по элементам.
+        // D17: a tap on empty space closes the expanded folder. The gesture does not cancel
+        // touches (`cancelsTouchesInView = false`), otherwise cell
+        // selection would stop working; the hit test in the handler filters out taps on items.
         backgroundTapRecognizer.cancelsTouchesInView = false
         backgroundTapRecognizer.delegate = self
         backgroundTapRecognizer.addTarget(self, action: #selector(handleBackgroundTap(_:)))
@@ -952,23 +950,23 @@ public final class TesseraTileGridView: UIView {
         longPressRecognizer.minimumPressDuration = 0.45
         longPressRecognizer.delegate = self
         longPressRecognizer.addTarget(self, action: #selector(handleLongPress(_:)))
-        // Пока хост не задал onLongPress, жест выключен и не перехватывает
-        // касания у обычных тапов.
+        // Until the host sets onLongPress, the gesture is off and does not steal
+        // touches from ordinary taps.
         longPressRecognizer.isEnabled = false
         collectionView.addGestureRecognizer(longPressRecognizer)
 
         addSubview(collectionView)
 
-        // §9, Dynamic Type: шрифты ячеек пересобираются при смене категории.
-        // Один наблюдатель на сетку вместо наблюдателя в каждой ячейке.
+        // §9, Dynamic Type: cell fonts are rebuilt when the category changes.
+        // One observer per grid instead of an observer in every cell.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(contentSizeCategoryDidChange),
             name: UIContentSizeCategory.didChangeNotification,
             object: nil
         )
-        // E15.5: клавиатура при переименовании папки. Наблюдатели постоянные —
-        // см. ``lastKeyboardFrame``.
+        // Keyboard handling while renaming a folder. The observers are permanent —
+        // see ``lastKeyboardFrame``.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(keyboardWillChangeFrame(_:)),
@@ -983,7 +981,7 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    // MARK: - Размер
+    // MARK: - Size
 
     public override func layoutSubviews() {
         super.layoutSubviews()
@@ -992,54 +990,53 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    // MARK: - Данные
+    // MARK: - Data
 
-    /// Заменяет снимок сетки без анимации.
+    /// Replaces the grid snapshot without animation.
     ///
-    /// Используется при первом показе, после `TesseraTileStore.load()` и там, где
-    /// хост сам анимирует изменение (например, fly-out при unpin в E4.4).
+    /// Used on first display, after `TesseraTileStore.load()`, and wherever the
+    /// host animates the change itself (for example, the fly-out on unpin).
     ///
-    /// E10.2: если в этот момент идёт переход панели папки, снимок запоминается
-    /// и применяется сразу после его завершения — `reloadData`/дифф не должны
-    /// попасть внутрь незавершённого batch-обновления.
+    /// If a folder panel transition is running at that moment, the snapshot is remembered
+    /// and applied right after it finishes — `reloadData`/a diff must not
+    /// land inside an unfinished batch update.
     ///
-    /// - Parameter snapshot: Новый снимок сетки.
+    /// - Parameter snapshot: The new grid snapshot.
     public func reload(snapshot: TesseraTileGridSnapshot) {
         let snapshot = readingOrdered(snapshot)
         if deferSnapshotIfTransitioning(snapshot, animated: false) { return }
         apply(snapshot, animated: false)
     }
 
-    /// Применяет снимок с анимацией resize/reorder (§5).
+    /// Applies a snapshot with a resize/reorder animation (§5).
     ///
-    /// Если состав тот же (меняются только размеры и порядок), UICollectionView
-    /// анимирует перестановку ячеек, а раскладка переупаковывается через
-    /// инвалидацию с контекстом (§3). Переезд идёт bounce-кривой E8.8
-    /// (``bounceTimingParameters()``): соседи слегка перелетают цель и
-    /// возвращаются, без резких прыжков. При смене состава (pin/unpin) сетка
-    /// применяет снимок диффом (E10.4) с кроссфейдом: точечные insert/delete
-    /// анимирует координатор редактирования, если ему нужен собственный эффект
-    /// (E4.4).
+    /// If the set of items is the same (only sizes and order change), UICollectionView
+    /// animates the cell reorder, and the layout is repacked through
+    /// invalidation with a context (§3). The move uses the bounce curve
+    /// (``bounceTimingParameters()``): neighbors slightly overshoot the target and
+    /// return, without abrupt jumps. When the set of items changes (pin/unpin), the grid
+    /// applies the snapshot as a diff with a cross-fade: point insert/delete
+    /// is animated by the edit coordinator if it needs its own effect.
     ///
-    /// E10.2: снимок, пришедший во время перехода панели папки, запоминается
-    /// (последний побеждает) и применяется после завершения перехода.
+    /// A snapshot that arrives during a folder panel transition is remembered
+    /// (the last one wins) and applied after the transition finishes.
     ///
-    /// E14.3: таблица явных ячеек снимка (``TesseraTileGridSnapshot/placementTable``)
-    /// входит в ключ геометрии раскладки, поэтому снимок, у которого поменялись
-    /// только ячейки (те же элементы в том же порядке), — изменение раскладки:
-    /// он идёт той же веткой «тот же состав», что и перестановка, и переезжает
-    /// batch-анимацией bounce-кривой. Неизменённый снимок геометрию не
-    /// пересчитывает (ключ равен).
+    /// The table of explicit cells of the snapshot (``TesseraTileGridSnapshot/placementTable``)
+    /// is part of the layout geometry key, so a snapshot in which only
+    /// the cells changed (the same items in the same order) is a layout change:
+    /// it takes the same "same set of items" branch as a reorder and moves with the
+    /// batch animation on the bounce curve. An unchanged snapshot does not
+    /// recompute the geometry (the key is equal).
     ///
-    /// При Reduce Motion (§9) анимация отключается: снимок применяется сразу,
-    /// без кроссфейда (E9.4/E10.14).
+    /// With Reduce Motion (§9) the animation is disabled: the snapshot is applied immediately,
+    /// without a cross-fade.
     ///
     /// - Parameters:
-    ///   - newSnapshot: Новый снимок сетки.
-    ///   - animated: Анимировать ли изменение, если сетка на экране.
+    ///   - newSnapshot: The new grid snapshot.
+    ///   - animated: Whether to animate the change if the grid is on screen.
     public func update(snapshot rawSnapshot: TesseraTileGridSnapshot, animated: Bool) {
-        // E14.7: порядок элементов — порядок чтения ячеек; сравнение «до/после»
-        // ниже идёт уже в нём.
+        // Item order is the reading order of cells; the before/after comparison
+        // below already works in that order.
         let newSnapshot = readingOrdered(rawSnapshot)
         if deferSnapshotIfTransitioning(newSnapshot, animated: animated) { return }
 
@@ -1051,10 +1048,10 @@ public final class TesseraTileGridView: UIView {
 
         hiddenItemIDs.formIntersection(newIDs)
 
-        // D17: при раскрытой папке в наборе есть панель, и индексы элементов не
-        // совпадают с индексами снимка. Перестановки панели не нужны — снимок
-        // применяется целиком (диффом с кроссфейдом, если сетка на экране),
-        // раскрытие сохраняется, пока папка есть в новом снимке (E10.2/E10.4).
+        // D17: while a folder is expanded the item set contains the panel, and item indexes do not
+        // match the snapshot indexes. Moves are not needed for the panel — the snapshot is
+        // applied as a whole (a diff with a cross-fade if the grid is on screen),
+        // and expansion is kept as long as the folder is in the new snapshot.
         if expandedFolderID != nil {
             apply(newSnapshot, animated: shouldAnimate)
             return
@@ -1066,28 +1063,28 @@ public final class TesseraTileGridView: UIView {
         }
 
         if Set(oldIDs) == Set(newIDs) {
-            // Состав тот же: resize/reorder. Снимок обновляем до batch updates,
-            // чтобы dataSource уже отдавал новые элементы, а раскладку
-            // переупаковываем внутри того же прохода — тогда UICollectionView
-            // анимирует сдвиг соседних плиток сам (§3, §5).
+            // Same set of items: resize/reorder. The snapshot is updated before the batch updates
+            // so that the dataSource already returns the new items, and the layout is
+            // repacked within the same pass — then UICollectionView
+            // animates the shift of neighboring tiles itself (§3, §5).
             snapshot = newSnapshot
             invalidateDisplayItems()
 
-            // Если порядок не менялся (только resize/бэйджи), содержимое ячеек
-            // можно обновить сразу — переезжать им не с чем. При перестановке
-            // содержимое приедет с ячейкой, а обновим его по завершении.
+            // If the order did not change (only resize/badges), the cell content
+            // can be updated right away — there is nothing for the cells to move with. On a reorder
+            // the content travels with the cell and is updated on completion.
             if oldIDs == newIDs {
                 refreshVisibleCells()
             }
 
-            // n1: перестановка идёт bounce-кривой, а не кроссфейдом; флаги
-            // применения снимка не должны оставаться от предыдущего вызова.
+            // A reorder uses the bounce curve, not a cross-fade; the flags
+            // of snapshot application must not be left over from the previous call.
             didApplyLastSnapshotWithCrossfade = false
             didApplyLastSnapshotWithoutAnimation = false
 
-            // E8.8: batch-обновление внутри UIViewPropertyAnimator наследует
-            // длительность и кривую — UICollectionView везёт каждую съехавшую
-            // плитку с лёгким «отскоком», а не стандартной кривой UIKit.
+            // A batch update inside a UIViewPropertyAnimator inherits the
+            // duration and curve — UICollectionView moves each shifted
+            // tile with a slight "bounce" rather than the standard UIKit curve.
             let animator = UIViewPropertyAnimator(
                 duration: TesseraTileGridView.tileMoveDuration,
                 timingParameters: TesseraTileGridView.bounceTimingParameters()
@@ -1114,12 +1111,12 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Запоминает снимок, если сейчас идёт переход панели папки (E10.2).
+    /// Remembers the snapshot if a folder panel transition is running.
     ///
     /// - Parameters:
-    ///   - snapshot: Снимок, который нужно применить.
-    ///   - animated: Анимировать ли его применение.
-    /// - Returns: `true`, если снимок отложен.
+    ///   - snapshot: The snapshot to apply.
+    ///   - animated: Whether to animate its application.
+    /// - Returns: `true` if the snapshot was deferred.
     private func deferSnapshotIfTransitioning(
         _ snapshot: TesseraTileGridSnapshot,
         animated: Bool
@@ -1130,36 +1127,36 @@ public final class TesseraTileGridView: UIView {
         return true
     }
 
-    /// Применяет снимок к коллекции.
+    /// Applies a snapshot to the collection.
     ///
-    /// E10.4: на экране состав применяется диффом (`performBatchUpdates`
-    /// insert/delete; move — в resize/reorder-ветке), а не `reloadData`:
-    /// оставшиеся на месте ячейки сохраняют регистрацию live-плитки и фазу
-    /// idle-флипа превью папки. Видимые ячейки переконфигурируются по
-    /// завершении (бэйдж, заголовок, содержимое панели). Вне окна, при первом
-    /// показе и при смене порядка общих элементов применяется `reloadData`
-    /// (смешивать move с insert/delete ненадёжно).
+    /// On screen, the set of items is applied as a diff (`performBatchUpdates`
+    /// insert/delete; moves belong to the resize/reorder branch) rather than `reloadData`:
+    /// cells that stay in place keep their live-tile registration and the phase of the
+    /// folder preview idle flip. Visible cells are reconfigured on
+    /// completion (badge, title, panel content). Off-window, on first
+    /// display, and when the order of common items changes, `reloadData` is applied
+    /// (mixing move with insert/delete is unreliable).
     ///
     /// - Parameters:
-    ///   - newSnapshot: Новый снимок.
-    ///   - animated: Кроссфейд при смене состава; вызов уже учитывает Reduce
+    ///   - newSnapshot: The new snapshot.
+    ///   - animated: Cross-fade when the set of items changes; the call already accounts for Reduce
     ///     Motion.
     private func apply(_ newSnapshot: TesseraTileGridSnapshot, animated: Bool) {
-        // Batch-обновление опирается на прежнее число элементов коллекции:
-        // если снимок пришёл раньше первого layout-прохода (редкий, но
-        // возможный случай у только что созданной страницы), доводим layout
-        // до изменения модели. Вне окна дифф не нужен — см. ниже.
+        // A batch update relies on the previous number of collection items:
+        // if the snapshot arrived before the first layout pass (a rare but
+        // possible case for a just-created page), bring the layout up to date
+        // before the model changes. Off-window no diff is needed — see below.
         if window != nil {
             collectionView.layoutIfNeeded()
         }
 
-        // Ключи набора «до»: по ним считается дифф. Панель и её папка делят
-        // идентификатор, поэтому в ключ входит признак панели.
+        // Keys of the "before" set: the diff is computed from them. The panel and its folder share
+        // an identifier, so the key includes the panel flag.
         let oldKeys = displayItems.map(DisplayItemKey.init)
 
-        // D17: если открытая папка исчезла из модели (распущена, откреплена),
-        // раскрытие снимается — панель без папки остаться не может. Хосту
-        // сообщаем о закрытии уже после применения снимка.
+        // D17: if the open folder disappeared from the model (dissolved, unpinned),
+        // expansion is cleared — a panel cannot remain without its folder. The host is
+        // notified about the close only after the snapshot is applied.
         var collapsedFolder: TesseraTileFolder?
         if let expandedID = expandedFolderID,
            newSnapshot.items.compactMap({ $0.folder }).first(where: { $0.id == expandedID }) == nil {
@@ -1169,8 +1166,8 @@ public final class TesseraTileGridView: UIView {
 
         snapshot = newSnapshot
         hiddenItemIDs.formIntersection(newSnapshot.items.map { $0.id })
-        // Дим принадлежит сетке (E10.4): записи исчезнувших элементов не храним,
-        // иначе после повторного pin дим вернулся бы к чужой ячейке.
+        // The dimming belongs to the grid: entries of vanished items are not kept,
+        // otherwise after a repeated pin the dimming would return to someone else's cell.
         editDimmingAlphas = editDimmingAlphas.filter { entry in
             newSnapshot.items.contains { $0.id == entry.key }
         }
@@ -1182,19 +1179,19 @@ public final class TesseraTileGridView: UIView {
         let update = { [weak self] in
             guard let self else { return }
             let newKeys = self.displayItems.map(DisplayItemKey.init)
-            // Состав тот же: меняются только содержимое/геометрия.
+            // Same set of items: only content/geometry change.
             if oldKeys == newKeys {
                 self.pushDisplayItemsToLayout(reason: .items)
                 self.refreshVisibleCells()
                 return
             }
-            // Дифф допустим только на экране и когда общие элементы сохраняют
-            // взаимный порядок: тогда достаточны вставки и удаления, а сдвиги
-            // UICollectionView делает сам. Первый показ/полная замена,
-            // комбинированный случай «состав + переупорядочивание» и сетка вне
-            // окна (визуального состояния нет) идут через `reloadData`:
-            // смешивать `move` с insert/delete в одном batch ненадёжно, а
-            // move-ветка уже есть у resize/reorder
+            // A diff is allowed only on screen and when common items keep their
+            // relative order: then insertions and deletions suffice, and
+            // UICollectionView does the shifts itself. The first display/full replacement,
+            // the combined "set + reorder" case, and a grid off-window
+            // (no visual state) go through `reloadData`:
+            // mixing `move` with insert/delete in one batch is unreliable, and
+            // the move branch already exists for resize/reorder
             // (``applyIndexMoves(from:to:)``).
             let canApplyDiff = self.window != nil
                 && self.collectionView.bounds.width > 0
@@ -1215,8 +1212,8 @@ public final class TesseraTileGridView: UIView {
             })
         }
 
-        // E9.4/E10.14: кроссфейд только если снимок действительно анимируется;
-        // при Reduce Motion вызов приходит с animated == false из `update`.
+        // A cross-fade only if the snapshot is actually animated;
+        // with Reduce Motion the call arrives with animated == false from `update`.
         didApplyLastSnapshotWithCrossfade = animated && window != nil
         didApplyLastSnapshotWithoutAnimation = !didApplyLastSnapshotWithCrossfade
         if didApplyLastSnapshotWithCrossfade {
@@ -1228,11 +1225,11 @@ public final class TesseraTileGridView: UIView {
                 completion: nil
             )
         } else {
-            // M2: контракт `reload(snapshot:)`/`update(animated: false)` —
-            // применить снимок без анимации. `performBatchUpdates` вне
-            // анимационного блока иначе анимирует insert/delete дефолтной
-            // длительностью UIKit (~0,25 с); `performWithoutAnimation` гасит и
-            // batch-анимации, и неявные действия слоёв (как в diffable data
+            // Contract of `reload(snapshot:)`/`update(animated: false)`:
+            // apply the snapshot without animation. `performBatchUpdates` outside an
+            // animation block would otherwise animate insert/delete with the UIKit default
+            // duration (~0.25 s); `performWithoutAnimation` suppresses both batch animations
+            // and implicit layer actions (as in a diffable data
             // source).
             UIView.performWithoutAnimation {
                 update()
@@ -1244,41 +1241,40 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Идентичность элемента набора коллекции для дифф-применения снимка
-    /// (E10.4).
+    /// Identity of a collection item for diff-applying a snapshot.
     ///
-    /// Идентификатор панели раскрытой папки совпадает с идентификатором самой
-    /// папки, поэтому одной пары «id» недостаточно: признак панели входит в
-    /// ключ, иначе панель и её папка считались бы одним элементом.
+    /// The identifier of the expanded folder's panel matches the identifier of the
+    /// folder itself, so a single "id" is not enough: the panel flag is part of the
+    /// key, otherwise the panel and its folder would count as one item.
     private struct DisplayItemKey: Hashable {
-        /// Идентификатор элемента.
+        /// The item identifier.
         let id: AnyHashable
 
-        /// Является ли элемент панелью раскрытой папки.
+        /// Whether the item is an expanded folder's panel.
         let isPanel: Bool
 
-        /// Ключ по элементу сетки.
+        /// The key for a grid item.
         ///
-        /// - Parameter item: Элемент набора коллекции.
+        /// - Parameter item: A collection item.
         init(_ item: TesseraTileGridItem) {
             id = item.id
             isPanel = item.isFolderPanel
         }
     }
 
-    /// Проверяет, сохраняют ли общие элементы взаимный порядок (E10.4).
+    /// Checks whether common items keep their relative order.
     ///
-    /// Если да, смену состава можно применить только вставками и удалениями:
-    /// неизменившиеся элементы UICollectionView сдвигает сам, а ячейки
-    /// сохраняют регистрацию live-плитки и фазу превью папки. Если порядок
-    /// общих элементов поменялся, нужны `move`, а смешивать их с
-    /// insert/delete в одном batch ненадёжно — вызывающий код применяет
-    /// снимок через `reloadData`.
+    /// If so, a change of the item set can be applied with insertions and deletions only:
+    /// unchanged items are shifted by UICollectionView itself, and cells
+    /// keep their live-tile registration and folder preview phase. If the order
+    /// of common items changed, `move` is needed, and mixing it with
+    /// insert/delete in one batch is unreliable — the caller applies the
+    /// snapshot through `reloadData`.
     ///
     /// - Parameters:
-    ///   - oldKeys: Ключи элементов в прежнем порядке.
-    ///   - newKeys: Ключи элементов в новом порядке.
-    /// - Returns: `true`, если порядок общих ключей одинаков.
+    ///   - oldKeys: Item keys in the old order.
+    ///   - newKeys: Item keys in the new order.
+    /// - Returns: `true` if the order of common keys is the same.
     private static func preservesRelativeOrder(
         from oldKeys: [DisplayItemKey],
         to newKeys: [DisplayItemKey]
@@ -1298,17 +1294,17 @@ public final class TesseraTileGridView: UIView {
         return true
     }
 
-    /// Дифф состава набора коллекции (E10.4).
+    /// Diff of the collection's item set.
     ///
-    /// Вызывается **внутри** `performBatchUpdates` и только когда общие
-    /// элементы сохранили взаимный порядок (``preservesRelativeOrder(from:to:)``):
-    /// удаления — в координатах старого набора, вставки — нового; элементы,
-    /// оставшиеся в наборе, не трогаются и сохраняют своё состояние, а сдвиг
-    /// от вставок/удалений UICollectionView делает сам.
+    /// Called **inside** `performBatchUpdates` and only when common
+    /// items kept their relative order (``preservesRelativeOrder(from:to:)``):
+    /// deletions are in coordinates of the old set, insertions in those of the new one; items
+    /// that stay in the set are not touched and keep their state, while the shift
+    /// caused by insertions/deletions is done by UICollectionView itself.
     ///
     /// - Parameters:
-    ///   - oldKeys: Ключи элементов в прежнем порядке.
-    ///   - newKeys: Ключи элементов в новом порядке.
+    ///   - oldKeys: Item keys in the old order.
+    ///   - newKeys: Item keys in the new order.
     private func applyDisplayDiff(
         from oldKeys: [DisplayItemKey],
         to newKeys: [DisplayItemKey]
@@ -1331,20 +1327,20 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Переставляет ячейки вслед за моделью, чтобы анимация везла каждую плитку
-    /// с её содержимым.
+    /// Reorders cells to follow the model so that the animation carries each tile
+    /// with its content.
     ///
-    /// Для каждой плитки, съехавшей с прежнего места, отправляется один
-    /// `moveItem`: `from` — индекс в исходном порядке, `to` — индекс в новом.
-    /// Это контракт batch-обновлений UICollectionView (как у IGListKit): все
-    /// перемещения описываются в координатах «до/после» одной пачкой, а не
-    /// последовательно, поэтому обмен двух плиток — это два встречных move.
-    /// Метод вызывается только когда состав тот же, поэтому перемещения не
-    /// меняют число элементов коллекции.
+    /// For every tile that moved from its previous place, one
+    /// `moveItem` is sent: `from` is the index in the original order, `to` is the index in the new one.
+    /// This is the UICollectionView batch update contract (as in IGListKit): all
+    /// moves are described in "before/after" coordinates as a single batch, not
+    /// sequentially, so swapping two tiles is two opposing moves.
+    /// The method is called only when the set of items is the same, so moves do not
+    /// change the number of collection items.
     ///
     /// - Parameters:
-    ///   - oldIDs: Идентификаторы в прежнем порядке.
-    ///   - newIDs: Идентификаторы в новом порядке.
+    ///   - oldIDs: Identifiers in the old order.
+    ///   - newIDs: Identifiers in the new order.
     private func applyIndexMoves(from oldIDs: [AnyHashable], to newIDs: [AnyHashable]) {
         for (oldIndex, itemID) in oldIDs.enumerated() {
             guard let newIndex = newIDs.firstIndex(of: itemID), newIndex != oldIndex else {
@@ -1358,20 +1354,20 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Перечитывает содержимое видимых ячеек без перезагрузки коллекции.
+    /// Re-reads the content of visible cells without reloading the collection.
     ///
-    /// Нужно после анимированного resize/reorder и после дифф-применения
-    /// снимка (E10.4): рамки и порядок уже обновлены, а бэйдж/размер/состав
-    /// папки могли измениться у ячеек, которые не переезжали. Раскладка при
-    /// этом не вызывается.
+    /// Needed after an animated resize/reorder and after a diff-applied
+    /// snapshot: frames and order are already updated, but the badge/size/folder
+    /// contents may have changed for cells that did not move. The layout is not
+    /// invoked.
     private func refreshVisibleCells() {
         for indexPath in collectionView.indexPathsForVisibleItems {
             guard let item = displayItem(atIndex: indexPath.item) else { continue }
 
             if item.isFolderPanel {
-                // E10.4: панель раскрытой папки переконфигурируется, а не только
-                // пересобирает шрифт: состав/бейджи её ярлыков могли измениться
-                // в новом снимке, а `reloadData` больше не пересоздаёт ячейку.
+                // An expanded folder's panel is reconfigured rather than just
+                // rebuilding the font: the set/badges of its tiles may have changed
+                // in the new snapshot, and `reloadData` no longer recreates the cell.
                 guard let panelCell = collectionView.cellForItem(
                     at: indexPath
                 ) as? TesseraFolderPanelCell else {
@@ -1389,14 +1385,14 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Настраивает ячейку-панель раскрытой папки (D17, E10.4).
+    /// Configures the expanded folder's panel cell (D17).
     ///
-    /// Панель переиспользуется: при том же составе `configure` только
-    /// перенастраивает ярлыки, поэтому обновление снимка не «мигает».
+    /// The panel is reused: with the same set of tiles `configure` only
+    /// reconfigures the tiles, so a snapshot update does not "flicker".
     ///
     /// - Parameters:
-    ///   - cell: Ячейка-панель.
-    ///   - item: Элемент `folderContent` из набора коллекции.
+    ///   - cell: The panel cell.
+    ///   - item: The `folderContent` item from the collection's item set.
     private func configure(_ cell: TesseraFolderPanelCell, with item: TesseraTileGridItem) {
         guard let folder = item.panelFolder else { return }
 
@@ -1405,12 +1401,12 @@ public final class TesseraTileGridView: UIView {
             columns: tileLayout.columns,
             spacing: tileLayout.itemSpacing
         )
-        // D17: тап по фону/заголовку панели закрывает папку.
+        // D17: a tap on the panel background/title closes the folder.
         cell.onBackgroundTap = { [weak self] in
             self?.closeFolder(animated: true)
         }
-        // E15.5, D35: переименование — заголовок редактируется, пока у сетки есть
-        // обработчик. Начать можно только на устоявшейся панели этой же папки.
+        // D35: renaming — the title is editable while the grid has a
+        // handler. Editing can start only on a settled panel of the same folder.
         let folderID = folder.id
         cell.isTitleEditable = folderRenameHandler != nil
         cell.canBeginTitleEditing = { [weak self] in
@@ -1424,28 +1420,28 @@ public final class TesseraTileGridView: UIView {
             guard let self, let cell else { return }
             self.folderNameEditingDidChange(isEditing, in: cell)
         }
-        // E10.4: ярлык панели активируется тем же маршрутом, что и плитка сетки
-        // (onTap хоста), а не вызовом `action` мимо события. В режиме
-        // редактирования действие не выполняется: панель — представление, а
-        // тап в режиме редактирования принадлежит координатору.
+        // A panel tile is activated through the same route as a grid tile
+        // (the host's onTap), not by calling `action` bypassing the event. In edit
+        // mode the action is not run: the panel is a presentation, and a
+        // tap in edit mode belongs to the coordinator.
         cell.onTapShortcut = { [weak self] descriptor in
             guard let self, !self.isEditModeActive else { return }
             self.handleItemTap(.tile(descriptor))
         }
-        // Панель вставляется анимацией раскрытия: иконки уже спрятаны, чтобы
-        // каскад после роста высоты начался без «вспышки».
+        // The panel is inserted by the expansion animation: icons are already hidden so that
+        // the cascade after the height growth starts without a "flash".
         if isFolderChangeAnimating {
             cell.prepareIconCascade()
         }
-        // E11.5: координатор редактирования вешает на ярлыки панели custom
-        // actions VoiceOver; панель переконфигурируется при каждом снимке.
+        // The edit coordinator attaches VoiceOver custom actions to the panel's
+        // tiles; the panel is reconfigured on every snapshot.
         panelShortcutsDidConfigure?(folder, cell.shortcutCells)
     }
 
-    /// Ярлыки видимой панели раскрытой папки (E11.5).
+    /// Tiles of the visible expanded folder's panel.
     ///
-    /// - Returns: Папка из снимка и ячейки её ярлыков (по порядку состава) или
-    ///   `nil`, если панели нет.
+    /// - Returns: The folder from the snapshot and the cells of its tiles (in item order), or
+    ///   `nil` if there is no panel.
     func panelShortcuts() -> (folder: TesseraTileFolder, cells: [TesseraTileCell])? {
         guard expandedFolderID != nil, let folder = expandedFolder,
               let panel = collectionView.visibleCells
@@ -1456,16 +1452,16 @@ public final class TesseraTileGridView: UIView {
         return (folder, panel.shortcutCells)
     }
 
-    /// Рамки ярлыков видимой панели раскрытой папки в координатах сетки (D46).
+    /// Frames of the visible expanded folder panel's tiles in grid coordinates (D46).
     ///
-    /// Нужны координатору редактирования, чтобы поставить кнопки открепления на
-    /// ярлыки панели так же, как на плитки сетки: рамка считается по центру и
-    /// границам ячейки (без `transform` каскада появления) и учитывает
-    /// прокрутку, поэтому следует за панелью при каждом вызове.
+    /// Needed by the edit coordinator to place the unpin buttons on the
+    /// panel's tiles the same way as on grid tiles: the frame is computed from the center and
+    /// bounds of the cell (without the appearance cascade `transform`) and accounts for
+    /// scrolling, so it follows the panel on every call.
     ///
-    /// - Returns: Идентификаторы ярлыков, их рамки по порядку состава папки и
-    ///   зазор сетки; `nil`, если панели нет или её ячейки ещё не соответствуют
-    ///   составу папки.
+    /// - Returns: Tile identifiers, their frames in folder item order, and
+    ///   the grid gap; `nil` if there is no panel or its cells do not yet match
+    ///   the folder's contents.
     func panelShortcutGeometry() -> TesseraPanelShortcutGeometry? {
         guard let panel = panelShortcuts(),
               let cell = collectionView.visibleCells
@@ -1495,29 +1491,29 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Настраивает ячейку под элемент и подписывает её активацию VoiceOver.
+    /// Configures a cell for an item and wires up its VoiceOver activation.
     ///
-    /// Ячейка — один accessibility-элемент (§9), поэтому двойной тап VoiceOver
-    /// приходит в неё, а не в `didSelectItemAt`. Замыкание переводит активацию
-    /// в тот же ``onTap``, что и обычный тап.
+    /// The cell is a single accessibility element (§9), so the VoiceOver double tap
+    /// goes to it, not to `didSelectItemAt`. The closure routes the activation
+    /// to the same ``onTap`` as an ordinary tap.
     ///
-    /// E10.4: здесь же применяются дим режима редактирования (сетка — его
-    /// владелец) и общая пауза live-контента: `configure` больше не сбрасывает
-    /// ни прозрачность, ни расписание.
+    /// The edit mode dimming (the grid is its owner) and the shared live content pause
+    /// are applied here too: `configure` no longer resets either the alpha
+    /// or the schedule.
     ///
     /// - Parameters:
-    ///   - cell: Ячейка сетки.
-    ///   - item: Элемент, который она показывает.
-    ///   - isVisible: Показывается ли ячейка на экране. Для `false` движок не
-    ///     создаётся вовсе: `cellForItemAt` лишь готовит ячейку, а регистрацию
-    ///     в движке выполняет `willDisplay`.
+    ///   - cell: The grid cell.
+    ///   - item: The item it shows.
+    ///   - isVisible: Whether the cell is on screen. For `false` the engine is not
+    ///     created at all: `cellForItemAt` only prepares the cell, and registration
+    ///     in the engine is done by `willDisplay`.
     private func configure(_ cell: TesseraTileCell, with item: TesseraTileGridItem, isVisible: Bool) {
-        // Движок создаётся только для live-ярлыка: статичной плите и папке
-        // расписание флипов не нужно.
+        // An engine is created only for a live tile: a static tile and a folder
+        // do not need a flip schedule.
         let engine = isVisible ? liveEngine(for: item) : nil
-        // Скрытая на время drag ячейка не должна флипаться «в себя», но её
-        // регистрация нужна: возврат из скрытия возобновит расписание без
-        // повторного `willDisplay`. Пауза live-контента (E10.4) сильнее.
+        // A cell hidden during a drag must not flip "into itself", but its
+        // registration is needed: returning from hiding resumes the schedule without a
+        // repeated `willDisplay`. The live content pause is stronger.
         let isHidden = hiddenItemIDs.contains(item.id)
         let isLiveVisible = isVisible && !isHidden && !isLiveContentPaused
         cell.configure(
@@ -1526,7 +1522,7 @@ public final class TesseraTileGridView: UIView {
             isVisible: isLiveVisible,
             isFolderExpanded: item.id == expandedFolderID
         )
-        // E8.2/E10.4: дим применяется после содержимого ячейки.
+        // The dimming is applied after the cell content.
         cell.setDimmingAlpha(editDimmingAlpha(for: item.id))
         cell.setBadgeEditClearance(badgeEditClearances[item.id] ?? 0, animated: false)
         cell.setSourceHidden(isHidden)
@@ -1535,7 +1531,7 @@ public final class TesseraTileGridView: UIView {
         cell.onActivate = { [weak self] in
             self?.activate(itemID: itemID)
         }
-        // E15.5, D35: у плитки папки — действие VoiceOver «Переименовать».
+        // D35: a folder tile gets the VoiceOver "Rename" action.
         if case .folder = item, folderRenameHandler != nil {
             cell.onRename = { [weak self] in
                 _ = self?.beginRenamingFolder(itemID)
@@ -1545,13 +1541,13 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Движок для элемента: `nil` — ярлык статичный или это папка.
+    /// The engine for an item: `nil` means the tile is static or it is a folder.
     ///
-    /// Обращение к ``liveTileEngine`` лениво создаёт движок, поэтому сетка без
-    /// live-контента не заводит таймеров и наблюдателей.
+    /// Accessing ``liveTileEngine`` lazily creates the engine, so a grid without
+    /// live content creates no timers or observers.
     ///
-    /// - Parameter item: Элемент сетки.
-    /// - Returns: Движок либо `nil`, если живой стороны у элемента нет.
+    /// - Parameter item: A grid item.
+    /// - Returns: The engine, or `nil` if the item has no live side.
     private func liveEngine(for item: TesseraTileGridItem) -> TesseraLiveTileEngine? {
         guard case .tile(let descriptor) = item, descriptor.liveContent != nil else {
             return nil
@@ -1559,12 +1555,12 @@ public final class TesseraTileGridView: UIView {
         return liveTileEngine
     }
 
-    /// Применяет ``isLiveContentPaused`` к видимым ячейкам (E10.4).
+    /// Applies ``isLiveContentPaused`` to visible cells.
     ///
-    /// Скрытые на время drag ячейки остаются на паузе; возобновление снимает
-    /// паузу только с видимых и не скрытых. Новые ячейки получают состояние в
-    /// ``configure(_:with:isVisible:)``, поэтому `update`/`reload` в обход
-    /// контроллера паузу не снимают.
+    /// Cells hidden during a drag stay paused; resuming lifts the
+    /// pause only from visible, non-hidden cells. New cells get the state in
+    /// ``configure(_:with:isVisible:)``, so `update`/`reload` bypassing the
+    /// controller do not lift the pause.
     private func applyLiveContentPause() {
         let isPaused = isLiveContentPaused
         for indexPath in collectionView.indexPathsForVisibleItems {
@@ -1578,9 +1574,9 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Активация элемента VoiceOver: тот же путь, что у тапа пальцем.
+    /// VoiceOver activation of an item: the same path as a finger tap.
     ///
-    /// - Parameter itemID: Идентификатор ярлыка или папки.
+    /// - Parameter itemID: The tile or folder identifier.
     private func activate(itemID: AnyHashable) {
         guard !hiddenItemIDs.contains(itemID),
               let index = index(ofItemID: itemID),
@@ -1590,30 +1586,30 @@ public final class TesseraTileGridView: UIView {
         handleItemTap(item)
     }
 
-    // MARK: - Запросы для хоста и редактирования
+    // MARK: - Queries for the host and for editing
 
-    /// Индекс элемента в порядке сетки.
+    /// The index of an item in grid order.
     ///
-    /// Индекс считается по снимку `TesseraTileStore`, без панели раскрытой папки:
-    /// он совпадает с порядком чтения ячеек модели, по нему координатор
-    /// сообщает делегату итоговую позицию (`didMove(_:toCell:)` несёт ячейку,
-    /// индекс остаётся для VoiceOver и анонсов). Панель адресуется отдельно —
+    /// The index is computed from the `TesseraTileStore` snapshot, without the expanded folder's panel:
+    /// it matches the reading order of the model's cells, and the coordinator
+    /// reports the final position to the delegate with it (`didMove(_:toCell:)` carries the cell;
+    /// the index remains for VoiceOver and announcements). The panel is addressed separately —
     /// ``expandedFolderID``.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Индекс или `nil`, если элемента нет в снимке.
+    /// - Parameter id: The tile or folder identifier.
+    /// - Returns: The index, or `nil` if the item is not in the snapshot.
     public func index(ofItemID id: AnyHashable) -> Int? {
         snapshot?.items.firstIndex { $0.id == id }
     }
 
-    /// Элемент под точкой в координатах сетки.
+    /// The item under a point in grid coordinates.
     ///
-    /// Хит-тест идёт по фактическим атрибутам ячеек: попадание в зазор или
-    /// между строками даёт `nil`. Используется координатором перетаскивания,
-    /// чтобы найти плитку под пальцем.
+    /// The hit test uses the actual cell attributes: a hit in a gap or
+    /// between rows gives `nil`. Used by the drag coordinator
+    /// to find the tile under the finger.
     ///
-    /// - Parameter point: Точка в координатах сетки (не контента).
-    /// - Returns: Элемент или `nil`.
+    /// - Parameter point: A point in grid coordinates (not content coordinates).
+    /// - Returns: The item or `nil`.
     public func item(at point: CGPoint) -> TesseraTileGridItem? {
         let pointInCollection = collectionView.convert(point, from: self)
         guard let indexPath = collectionView.indexPathForItem(at: pointInCollection) else {
@@ -1622,56 +1618,56 @@ public final class TesseraTileGridView: UIView {
         return displayItem(atIndex: indexPath.item)
     }
 
-    /// Рамка элемента в координатах сетки.
+    /// The frame of an item in grid coordinates.
     ///
-    /// Координаты сетки — это `bounds` этого view: рамка уже учитывает
-    /// `contentOffset` и поля. Для ячеек за пределами экрана рамка может быть
-    /// отрицательной — это нормально, слой перетаскивания сам решает, что
-    /// показывать.
+    /// Grid coordinates are the `bounds` of this view: the frame already accounts for
+    /// `contentOffset` and insets. For off-screen cells the frame may be
+    /// negative — that is fine, the drag layer decides what
+    /// to show.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Рамка в точках или `nil`, если элемента нет в снимке либо сетка
-    ///   ещё ни разу не раскладывалась. У раскрытой папки возвращается рамка её
-    ///   плитки: плитка остаётся на месте, панель встаёт под ней.
+    /// - Parameter id: The tile or folder identifier.
+    /// - Returns: The frame in points, or `nil` if the item is not in the snapshot or the grid
+    ///   has never been laid out yet. For an expanded folder the frame of its
+    ///   tile is returned: the tile stays in place and the panel sits below it.
     public func frame(forItemID id: AnyHashable) -> CGRect? {
         guard let contentFrame = tileLayout.frame(forItemID: id) else { return nil }
         return collectionView.convert(contentFrame, to: self)
     }
 
-    /// Центры виртуальных слотов для плитки заданного размера (E8.9).
+    /// Centers of virtual slots for a tile of the given size.
     ///
-    /// Координатор редактирования строит по ним магнитизм: если палец попадает
-    /// в радиус притяжения к ближайшему центру, снимок плавно встаёт в ячейку.
-    /// Возвращаются центры всех ячеек виртуальной сетки, в которые помещается
-    /// плитка `size` (с учётом ужимания под узкую сетку), в координатах сетки.
+    /// The edit coordinator builds magnetism from them: if the finger enters
+    /// the attraction radius of the nearest center, the drag image smoothly settles into the cell.
+    /// Returns the centers of all cells of the virtual grid that can fit a
+    /// tile of `size` (accounting for shrinking on a narrow grid), in grid coordinates.
     ///
-    /// Сетка считается по текущей геометрии (``columns``, ``contentInsets``,
-    /// ``itemSpacing``, ``contentOffset``) и занятым строкам раскладки: слоты
-    /// перебираются с шагом в один юнит, поэтому центры находятся и над пустыми
-    /// ячейками, но не ниже последней занятой строки базовой упаковки.
-    /// Направление чтения (RTL) на результат не влияет: зеркалирование
-    /// переставляет колонки, но множество центров остаётся тем же.
+    /// The grid is computed from the current geometry (``columns``, ``contentInsets``,
+    /// ``itemSpacing``, ``contentOffset``) and the occupied layout rows: slots
+    /// are enumerated in steps of one unit, so centers are found over empty
+    /// cells too, but not below the last occupied row of the base layout.
+    /// The reading direction (RTL) does not affect the result: mirroring
+    /// permutes the columns, but the set of centers stays the same.
     ///
-    /// E10.4: геометрия берётся у ``TesseraTileLayoutEngine/gridMetrics`` — ровно так
-    /// же, как её считает `TesseraTileCollectionViewLayout` (края контента и
-    /// зазор на пиксельной сетке, юнит вниз до пикселя, остаток ширины —
-    /// поровну на поля). Поэтому центры слотов совпадают с рамками раскладки до
-    /// пикселя, а не расходятся с ними на доли точки.
+    /// The geometry comes from ``TesseraTileLayoutEngine/gridMetrics`` — exactly
+    /// as `TesseraTileCollectionViewLayout` computes it (content edges and
+    /// gap on the pixel grid, the unit rounded down to a pixel, the remaining width
+    /// split evenly between the insets). So the slot centers match the layout frames to the
+    /// pixel instead of differing from them by fractions of a point.
     ///
-    /// При раскрытой папке (D17) возвращается пустой массив: панель сдвигает
-    /// строки, виртуальная сетка перестала бы совпадать с фактическими слотами,
-    /// и притягивать снимок «в пустоту» под панелью нельзя.
+    /// With an expanded folder (D17) an empty array is returned: the panel shifts
+    /// the rows, the virtual grid would stop matching the actual slots,
+    /// and the drag image must not be attracted "into the void" under the panel.
     ///
-    /// - Parameter size: Размер перетаскиваемой плитки (D15).
-    /// - Returns: Центры слотов в координатах сетки.
+    /// - Parameter size: The size of the dragged tile (D15).
+    /// - Returns: Slot centers in grid coordinates.
     public func magnetSlotCenters(for size: TesseraTileSize) -> [CGPoint] {
-        // D17: раскрытая панель сдвигает строки — виртуальная сетка по базовой
-        // упаковке перестала бы совпадать с экраном.
+        // D17: an expanded panel shifts the rows — a virtual grid from the base
+        // layout would stop matching the screen.
         guard expandedFolderID == nil else { return [] }
 
-        // Повторяем горизонтальную геометрию раскладки один в один (E10.1):
-        // края контента округляются до пикселя, ширина контента — их разность,
-        // юнит и зазор считает gridMetrics, остаток ширины уходит в поля.
+        // Repeat the horizontal geometry of the layout exactly:
+        // content edges are rounded to a pixel, the content width is their difference,
+        // the unit and gap are computed by gridMetrics, and the remaining width goes to the insets.
         let insets = sanitized(contentInsets)
         let columnCount = columns
         let scale = TesseraTileCollectionViewLayout.resolvedDisplayScale(
@@ -1697,12 +1693,12 @@ public final class TesseraTileGridView: UIView {
             y: TesseraTileLayoutEngine.pixelRound(insets.top, scale: scale)
         )
 
-        // Верхняя граница виртуальной сетки — последняя занятая строка базовой
-        // упаковки: ниже неё слотов нет. Панели в снимке нет по построению, а
-        // при раскрытой папке метод вышел бы раньше.
-        // E14.5: с применимой таблицей явных ячеек (`TesseraTileGridPlacementTable`)
-        // последняя занятая строка берётся по ячейкам — дыры внутри раскладки
-        // входят в виртуальную сетку; без таблицы — упаковка по порядку.
+        // The upper bound of the virtual grid is the last occupied row of the base
+        // layout: there are no slots below it. The snapshot has no panel by construction, and
+        // with an expanded folder the method would have returned earlier.
+        // With an applicable table of explicit cells (`TesseraTileGridPlacementTable`)
+        // the last occupied row is taken from the cells — holes inside the layout
+        // are part of the virtual grid; without a table — packing in order.
         let rowCount: Int
         if let placements = explicitPlacements(for: items, table: snapshot?.placementTable) {
             rowCount = placements.reduce(0) { result, placed in
@@ -1739,12 +1735,12 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Ключ геометрии базовой раскладки (E11.7).
+    /// The geometry key of the base layout.
     ///
-    /// Всё, от чего зависят рамки ``baseContentFrames(for:)``: размер сетки,
-    /// число колонок, направление чтения, масштаб экрана, поля и зазор.
-    /// Координатор drag хранит рамки в сессии и перестраивает их, когда ключ
-    /// изменился (поворот, смена колонок/полей на лету).
+    /// Everything the ``baseContentFrames(for:)`` frames depend on: the grid size,
+    /// column count, reading direction, screen scale, insets and gap.
+    /// The drag coordinator keeps the frames in its session and rebuilds them when the key
+    /// changes (rotation, columns/insets changing on the fly).
     struct BaseFramesKey: Equatable {
         var size: CGSize
         var columns: Int
@@ -1754,7 +1750,7 @@ public final class TesseraTileGridView: UIView {
         var spacing: CGFloat
     }
 
-    /// Текущий ключ геометрии базовой раскладки (E11.7).
+    /// The current geometry key of the base layout.
     func baseFramesKey() -> BaseFramesKey {
         BaseFramesKey(
             size: collectionView.bounds.size,
@@ -1767,31 +1763,31 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Рамки элементов, как их раскладывает сетка без панели и превью (E11.7).
+    /// Item frames as the grid lays them out without the panel and the preview.
     ///
-    /// Нужны хит-тесту drag: рамки `frame(forItemID:)` уже сдвинуты push-превью,
-    /// а цель (центр/край, группировка) решается по тому, что пользователь
-    /// видел до сдвига, — то есть по раскладке базового порядка. Геометрия
-    /// повторяет `TesseraTileCollectionViewLayout.rebuild` без панели: пиксельные
-    /// края контента, `gridMetrics`, упаковка `TesseraTileLayoutEngine.pack` по
-    /// ужатым размерам и зеркалирование RTL внутри ширины сетки.
+    /// Needed by the drag hit test: the `frame(forItemID:)` frames are already shifted by the push preview,
+    /// while the target (center/edge, grouping) is decided by what the user
+    /// saw before the shift — that is, by the base-order layout.
+    /// The geometry repeats `TesseraTileCollectionViewLayout.rebuild` without the panel: pixel
+    /// content edges, `gridMetrics`, `TesseraTileLayoutEngine.pack` packing over the
+    /// shrunk sizes, and RTL mirroring within the grid width.
     ///
-    /// Рамки — в **координатах контента**: при прокрутке они не меняются,
-    /// в координаты сетки их переводит ``gridFrame(fromContentFrame:)``.
+    /// The frames are in **content coordinates**: they do not change on scroll;
+    /// ``gridFrame(fromContentFrame:)`` converts them to grid coordinates.
     ///
-    /// E14.3: источник слотов тот же, что у раскладки. С применимой таблицей
-    /// явных ячеек (`placementTable`: полная, корректная для текущих колонок,
-    /// ``TesseraTileGridPlacementTable``) слоты берутся по ячейкам, с дырами; иначе —
-    /// упаковка по порядку `items`. Так рамки совпадают с тем, что рисует
-    /// раскладка, и для снимка с дырами. Без параметра (по умолчанию) поведение
-    /// прежнее: упаковка по порядку.
+    /// The slot source is the same as the layout's. With an applicable table of
+    /// explicit cells (`placementTable`: complete, valid for the current columns,
+    /// ``TesseraTileGridPlacementTable``) slots are taken from cells, with holes; otherwise
+    /// from packing `items` in order. So the frames match what the
+    /// layout draws, including for a snapshot with holes. Without the parameter (the default) the behavior
+    /// is as before: packing in order.
     ///
     /// - Parameters:
-    ///   - items: Элементы в базовом порядке (без панели).
-    ///   - placementTable: Таблица явных ячеек снимка, к которому относятся
-    ///     `items`; `nil` — упаковка по порядку.
-    /// - Returns: Рамки по идентификатору или `nil`, если геометрию не
-    ///   посчитать (нулевая ширина).
+    ///   - items: Items in base order (without the panel).
+    ///   - placementTable: The explicit cell table of the snapshot that `items`
+    ///     belong to; `nil` means packing in order.
+    /// - Returns: Frames by identifier, or `nil` if the geometry cannot be
+    ///   computed (zero width).
     func baseContentFrames(
         for items: [TesseraTileGridItem],
         placementTable: TesseraTileGridPlacementTable? = nil
@@ -1833,13 +1829,13 @@ public final class TesseraTileGridView: UIView {
         return result
     }
 
-    /// Общая геометрия базовой раскладки: ключ, метрики юнита и начало сетки
-    /// в координатах контента (E11.7, E12.1).
+    /// Shared geometry of the base layout: the key, the unit metrics and the grid origin
+    /// in content coordinates.
     ///
-    /// Повторяет `TesseraTileCollectionViewLayout.rebuild` без панели: пиксельные
-    /// края контента и `gridMetrics`.
+    /// Repeats `TesseraTileCollectionViewLayout.rebuild` without the panel: pixel
+    /// content edges and `gridMetrics`.
     ///
-    /// - Returns: Геометрия или `nil` (нулевая ширина).
+    /// - Returns: The geometry, or `nil` (zero width).
     private func baseLayoutGeometry() -> (
         key: BaseFramesKey,
         metrics: TesseraTileLayoutEngine.GridMetrics,
@@ -1870,19 +1866,19 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Логическая ячейка базовой раскладки под точкой (E14.5, D21, D33).
+    /// The logical cell of the base layout under a point (D21, D33).
     ///
-    /// Палец решает, **в какую клетку** падает элемент: строка и колонка
-    /// считаются по шагу `юнит + зазор` от начала сетки (зазор между клетками
-    /// относится к клетке слева/выше, как хвост клетки). Колонка
-    /// логическая, незеркальная: в RTL точка отражается внутри ширины сетки, так
-    /// что колонка 0 — начало чтения. Результат **не ограничен** холстом: над
-    /// полями и ниже контента он выходит за `0 ..< columns` / занятые строки, это
-    /// решает вызывающий (`clamped`, цель «новая строка»).
+    /// The finger decides **which cell** an item lands in: the row and column
+    /// are computed in steps of `unit + gap` from the grid origin (the gap between cells
+    /// belongs to the cell on the left/above, as the tail of the cell). The column is
+    /// logical, not mirrored: in RTL the point is reflected within the grid width, so
+    /// column 0 is the start of reading. The result is **not clamped** to the canvas: over the
+    /// insets and below the content it falls outside `0 ..< columns` / the occupied rows; the
+    /// caller decides what to do (`clamped`, the "new row" target).
     ///
-    /// - Parameter point: Точка в координатах сетки.
-    /// - Returns: Строка и колонка или `nil`, если раскладку посчитать нельзя
-    ///   (нулевая ширина, нечисловая точка).
+    /// - Parameter point: A point in grid coordinates.
+    /// - Returns: The row and column, or `nil` if the layout cannot be computed
+    ///   (zero width, a non-finite point).
     func baseCell(forGridPoint point: CGPoint) -> (row: Int, column: Int)? {
         guard let geometry = baseLayoutGeometry() else { return nil }
         let key = geometry.key
@@ -1896,25 +1892,25 @@ public final class TesseraTileGridView: UIView {
             : content.x - geometry.gridLeft
         guard localX.isFinite, content.y.isFinite else { return nil }
 
-        // Границы в Double до приведения к Int: при немыслимых координатах
-        // `Int(_:)` не должен упасть.
+        // Bounds in Double before conversion to Int: with absurd coordinates
+        // `Int(_:)` must not crash.
         let limit: CGFloat = 1_000_000
         let column = min(max((localX / pitch).rounded(.down), -limit), limit)
         let row = min(max(((content.y - geometry.top) / pitch).rounded(.down), -limit), limit)
         return (row: Int(row), column: Int(column))
     }
 
-    /// Рамка в координатах сетки, которую элемент размера `size` займёт на
-    /// ячейке `cell` базовой раскладки (E14.5).
+    /// The frame in grid coordinates that an item of size `size` will occupy at
+    /// cell `cell` of the base layout.
     ///
-    /// Ячейка ограничивается холстом (`TesseraTileLayoutEngine.clamped`), след ужимается
-    /// под узкую сетку; RTL зеркалируется внутри ширины сетки, как в раскладке.
-    /// Магнит снимка (E8.9) притягивает его к центру этой рамки.
+    /// The cell is clamped to the canvas (`TesseraTileLayoutEngine.clamped`), the footprint shrinks
+    /// for a narrow grid; RTL is mirrored within the grid width, as in the layout.
+    /// The drag image's magnet pulls it to the center of this frame.
     ///
     /// - Parameters:
-    ///   - cell: Желаемая ячейка левого верхнего угла (логическая).
-    ///   - size: Размер элемента (D15).
-    /// - Returns: Рамка или `nil`, если геометрию не посчитать.
+    ///   - cell: The desired cell of the top-left corner (logical).
+    ///   - size: The item size (D15).
+    /// - Returns: The frame, or `nil` if the geometry cannot be computed.
     func baseFrame(forCell cell: TesseraTileGridPlacement, size: TesseraTileSize) -> CGRect? {
         guard let geometry = baseLayoutGeometry() else { return nil }
         let key = geometry.key
@@ -1941,36 +1937,36 @@ public final class TesseraTileGridView: UIView {
         return gridFrame(fromContentFrame: rect)
     }
 
-    /// Переводит рамку из координат контента в координаты сетки (E11.7).
+    /// Converts a frame from content coordinates to grid coordinates.
     ///
-    /// Учитывает текущий `contentOffset`, поэтому кадр автопрокрутки видит
-    /// те же базовые рамки, сдвинутые на актуальное смещение.
+    /// Accounts for the current `contentOffset`, so an autoscroll frame sees
+    /// the same base frames shifted by the actual offset.
     ///
-    /// - Parameter frame: Рамка в координатах контента.
-    /// - Returns: Рамка в координатах сетки.
+    /// - Parameter frame: A frame in content coordinates.
+    /// - Returns: The frame in grid coordinates.
     func gridFrame(fromContentFrame frame: CGRect) -> CGRect {
         collectionView.convert(frame, to: self)
     }
 
-    /// Переводит точку из координат сетки в координаты контента (E12.1).
+    /// Converts a point from grid coordinates to content coordinates.
     ///
-    /// Обратное к ``gridFrame(fromContentFrame:)``: drag сравнивает палец с
-    /// кэшированными рамками контента, не пересчитывая их на каждом шаге.
+    /// The inverse of ``gridFrame(fromContentFrame:)``: the drag compares the finger with
+    /// cached content frames without recomputing them on every step.
     ///
-    /// - Parameter point: Точка в координатах сетки.
-    /// - Returns: Та же точка в координатах контента.
+    /// - Parameter point: A point in grid coordinates.
+    /// - Returns: The same point in content coordinates.
     func contentPoint(fromGridPoint point: CGPoint) -> CGPoint {
         collectionView.convert(point, from: self)
     }
 
-    /// Санитизирует внешние поля сетки так же, как раскладка (E8.9).
+    /// Sanitizes the outer grid insets the same way the layout does.
     ///
-    /// Отрицательные и нечисловые значения трактуются как 0: виртуальная сетка
-    /// притяжения обязана совпадать с фактическими слотами, а раскладка
-    /// считает юнит по уже санитизированным полям.
+    /// Negative and non-finite values are treated as 0: the virtual attraction
+    /// grid must match the actual slots, and the layout
+    /// computes the unit from already sanitized insets.
     ///
-    /// - Parameter insets: Поля сетки из ``contentInsets``.
-    /// - Returns: Поля без отрицательных и нечисловых значений.
+    /// - Parameter insets: The grid insets from ``contentInsets``.
+    /// - Returns: Insets without negative or non-finite values.
     private func sanitized(_ insets: UIEdgeInsets) -> UIEdgeInsets {
         UIEdgeInsets(
             top: sanitized(insets.top),
@@ -1980,73 +1976,73 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Санитизирует одну длину: отрицательная или нечисловая — 0 (E8.9).
+    /// Sanitizes a single length: negative or non-finite becomes 0.
     ///
-    /// - Parameter value: Значение в точках.
-    /// - Returns: Неотрицательное конечное значение.
+    /// - Parameter value: The value in points.
+    /// - Returns: A non-negative finite value.
     private func sanitized(_ value: CGFloat) -> CGFloat {
         guard value.isFinite else { return 0 }
         return max(0, value)
     }
 
-    /// Снимок видимой ячейки для перетаскивания (E4.4).
+    /// A snapshot of a visible cell for dragging.
     ///
-    /// Возвращает `cell.snapshotView(afterScreenUpdates: false)`: копию
-    /// отрисованной ячейки. Для ячейки вне экрана и для ещё не разложенной
-    /// коллекции возвращает `nil` — координатор должен начинать drag только по
-    /// видимой плитке (под пальцем она видима по определению). Снимайте копию
-    /// **до** ``setItemHidden(_:forItemID:)``: у скрытой ячейки снимок пустой.
+    /// Returns `cell.snapshotView(afterScreenUpdates: false)`: a copy of the
+    /// rendered cell. For an off-screen cell and for a collection not yet laid out
+    /// returns `nil` — the coordinator must start a drag only on a
+    /// visible tile (under the finger it is visible by definition). Take the copy
+    /// **before** ``setItemHidden(_:forItemID:)``: a hidden cell yields an empty snapshot.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Снимок ячейки или `nil`.
+    /// - Parameter id: The tile or folder identifier.
+    /// - Returns: The cell snapshot or `nil`.
     public func snapshotView(forItemID id: AnyHashable) -> UIView? {
         cellView(forItemID: id)?.snapshotView(afterScreenUpdates: false)
     }
 
-    /// Видимая ячейка элемента — для «желе» и подсветки в редактировании (E4.4).
+    /// The visible cell of an item — for jiggle and highlighting while editing.
     ///
-    /// Координатор редактирования может навесить на неё анимации («желе» §5:
-    /// `CAKeyframeAnimation` поворота ±2°) или изменить `alpha`. Менять `frame`
-    /// и вложенную раскладку нельзя: позицией владеет
-    /// `TesseraTileCollectionViewLayout`, а ручной frame-проход в обход layout
-    /// сломает соответствие модели. Анимации координатор снимает сам по
-    /// завершении редактирования; для «желе» надёжнее `CAAnimation` на слое
-    /// ячейки/контента, чем `UIView.animate(transform:)`: UICollectionView
-    /// применяет к ячейке layout attributes и сбрасывает `cell.transform`.
+    /// The edit coordinator may attach animations to it (jiggle, §5:
+    /// a `CAKeyframeAnimation` rotation of ±2°) or change `alpha`. Do not change `frame`
+    /// or the nested layout: the position is owned by
+    /// `TesseraTileCollectionViewLayout`, and a manual frame pass bypassing the layout
+    /// would break the correspondence with the model. The coordinator removes animations itself when
+    /// editing ends; for jiggle a `CAAnimation` on the cell/content layer
+    /// is more reliable than `UIView.animate(transform:)`: UICollectionView
+    /// applies layout attributes to the cell and resets `cell.transform`.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Ячейка или `nil`, если элемент не на экране.
+    /// - Parameter id: The tile or folder identifier.
+    /// - Returns: The cell, or `nil` if the item is not on screen.
     public func cellView(forItemID id: AnyHashable) -> UIView? {
         guard let indexPath = indexPath(forItemID: id) else { return nil }
         return collectionView.cellForItem(at: indexPath)
     }
 
-    /// Готовая пустышка под плитку — место, откуда ярлык «взяли» (E4.4).
+    /// A ready-made placeholder for a tile — the spot the tile was "picked up" from.
     ///
-    /// Возвращает новый вид с рамкой плитки в координатах сетки, но **не
-    /// добавляет его в иерархию**: владельцем пустышки остаётся координатор
-    /// редактирования, который кладёт её под слой перетаскивания и убирает
-    /// после отпускания. Вид не перехватывает касания и скрыт от VoiceOver.
-    /// Пустышка не следит за прокруткой: если сетка прокручивается во время
-    /// drag, координатор пересчитывает её `frame` по ``frame(forItemID:)``.
+    /// Returns a new view with the tile's frame in grid coordinates, but **does not
+    /// add it to the hierarchy**: the placeholder remains owned by the edit
+    /// coordinator, which puts it under the drag layer and removes it
+    /// on release. The view does not intercept touches and is hidden from VoiceOver.
+    /// The placeholder does not follow scrolling: if the grid scrolls during a
+    /// drag, the coordinator recomputes its `frame` from ``frame(forItemID:)``.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Вид-пустышка или `nil`, если элемента нет в снимке.
+    /// - Parameter id: The tile or folder identifier.
+    /// - Returns: The placeholder view or `nil` if the item is not in the snapshot.
     public func placeholderView(forItemID id: AnyHashable) -> UIView? {
         guard let frame = frame(forItemID: id) else { return nil }
         return TesseraTilePlaceholderView(frame: frame)
     }
 
-    /// Скрывает исходную ячейку на время перетаскивания (E4.4).
+    /// Hides the source cell while dragging.
     ///
-    /// Раскладку скрытие не меняет: место плитки остаётся занятым, поэтому
-    /// остальные ярлыки не «прыгают». Скрытая ячейка получает `alpha = 0` и
-    /// исключается из VoiceOver; после показа состояния снимка скрытие
-    /// сохраняется до явного `false` или до исчезновения элемента из снимка.
+    /// Hiding does not change the layout: the tile's place stays occupied, so the
+    /// other tiles do not "jump". A hidden cell gets `alpha = 0` and is
+    /// excluded from VoiceOver; after the snapshot state is shown, hiding
+    /// persists until an explicit `false` or until the item disappears from the snapshot.
     ///
     /// - Parameters:
-    ///   - hidden: `true` — скрыть, `false` — вернуть.
-    ///   - id: Идентификатор ярлыка или папки.
+    ///   - hidden: `true` to hide, `false` to restore.
+    ///   - id: The tile or folder identifier.
     public func setItemHidden(_ hidden: Bool, forItemID id: AnyHashable) {
         if hidden {
             hiddenItemIDs.insert(id)
@@ -2059,32 +2055,31 @@ public final class TesseraTileGridView: UIView {
             return
         }
         cell.setSourceHidden(hidden)
-        // Скрытая на время drag плитка не должна флипаться «в себя»: пауза
-        // движка сбрасывает незавершённый флип и не планирует новые (§4,
-        // «Паузы»). Возврат ячейки возобновляет расписание без перерегистрации,
-        // но общая пауза live-контента (E10.4) сильнее.
+        // A tile hidden during a drag must not flip "into itself": the engine
+        // pause discards an unfinished flip and schedules no new ones (§4,
+        // "Pauses"). Returning the cell resumes the schedule without re-registration,
+        // but the shared live content pause is stronger.
         cell.setLiveTileVisible(!hidden && !isLiveContentPaused)
     }
 
-    /// Применяет прозрачности содержимого плиток режима редактирования
-    /// (E8.2, E10.4).
+    /// Applies the alpha values of tile content for edit mode.
     ///
-    /// Сетка — единственный владелец дима. Координатор редактирования считает
-    /// целевые значения (выбранная/цель под пальцем — 1, остальные —
-    /// ``dimmedTileAlpha``) и передаёт их сюда; сетка применяет их к видимым
-    /// ячейкам и хранит, чтобы ``configure(_:with:isVisible:)`` не стирал дим
-    /// при обновлении снимка, resize и переиспользовании ячеек.
+    /// The grid is the sole owner of the dimming. The edit coordinator computes
+    /// the target values (the selected tile / the target under the finger — 1, the others —
+    /// ``dimmedTileAlpha``) and passes them here; the grid applies them to visible
+    /// cells and stores them so that ``configure(_:with:isVisible:)`` does not erase the dimming
+    /// on snapshot updates, resize and cell reuse.
     ///
-    /// Семантика — слияние: записи переданных идентификаторов обновляются,
-    /// записи остальных элементов сохраняются (горячий путь прокрутки передаёт
-    /// только плитки с кнопками). Скрытые на время drag ячейки остаются
-    /// прозрачными, даже если им назначили дим.
+    /// The semantics are merge: entries for the passed identifiers are updated,
+    /// entries for other items are kept (the hot scroll path passes
+    /// only tiles with buttons). Cells hidden during a drag stay
+    /// transparent even if they were assigned a dimming.
     ///
     /// - Parameters:
-    ///   - targetAlphas: Целевая прозрачность содержимого по идентификатору
-    ///     элемента (`1` — полная яркость).
-    ///   - animated: Анимировать переход ``dimmingDuration`` (при Reduce Motion
-    ///     анимации нет, но сам дим применяется: это не движение).
+    ///   - targetAlphas: Target content alpha by item
+    ///     identifier (`1` is full brightness).
+    ///   - animated: Animate the transition over ``dimmingDuration`` (with Reduce Motion
+    ///     there is no animation, but the dimming itself is applied: it is not motion).
     func setEditDimming(_ targetAlphas: [AnyHashable: CGFloat], animated: Bool) {
         guard !targetAlphas.isEmpty else { return }
 
@@ -2123,18 +2118,18 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Сообщает ячейкам, сколько угла занимает стрелка размера (D29, E15.1).
+    /// Tells cells how much of the corner the size arrow occupies (D29).
     ///
-    /// Бэйдж плитки обходит стрелку режима редактирования: координатор считает
-    /// для каждой плитки со стрелкой занятую часть угла
+    /// A tile's badge avoids the edit mode arrow: the coordinator computes,
+    /// for each tile with an arrow, the occupied part of the corner
     /// (``TesseraTileEditControlView/badgeClearance(forTileSize:maxDiameter:)``),
-    /// сетка хранит значения и применяет их к ячейкам, в том числе созданным
-    /// позже. Семантика — слияние, как у ``setEditDimming(_:animated:)``; `0`
-    /// возвращает бэйдж в угол.
+    /// the grid stores the values and applies them to cells, including ones created
+    /// later. The semantics are merge, like ``setEditDimming(_:animated:)``; `0`
+    /// returns the badge to the corner.
     ///
     /// - Parameters:
-    ///   - clearances: Отступ по идентификатору элемента, pt.
-    ///   - animated: Плавный сдвиг (при Reduce Motion — мгновенно).
+    ///   - clearances: The inset by item identifier, in pt.
+    ///   - animated: A smooth shift (instant with Reduce Motion).
     func setBadgeEditClearances(_ clearances: [AnyHashable: CGFloat], animated: Bool) {
         guard !clearances.isEmpty else { return }
 
@@ -2154,32 +2149,32 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Возвращает бэйджи всех плиток в угол: правка закончилась (E15.1).
+    /// Returns all tiles' badges to the corner: editing has ended.
     ///
-    /// - Parameter animated: Плавный сдвиг (при Reduce Motion — мгновенно).
+    /// - Parameter animated: A smooth shift (instant with Reduce Motion).
     func resetBadgeEditClearances(animated: Bool) {
         let ids = Set(badgeEditClearances.keys)
         guard !ids.isEmpty else { return }
         setBadgeEditClearances(Dictionary(uniqueKeysWithValues: ids.map { ($0, CGFloat(0)) }), animated: animated)
     }
 
-    /// Целевая прозрачность содержимого элемента (E8.2, E10.4).
+    /// The target content alpha of an item.
     ///
-    /// - Parameter itemID: Идентификатор ярлыка или папки.
-    /// - Returns: Сохранённая прозрачность или 1, если дим к элементу не
-    ///   применялся.
+    /// - Parameter itemID: The tile or folder identifier.
+    /// - Returns: The stored alpha, or 1 if no dimming was
+    ///   applied to the item.
     private func editDimmingAlpha(for itemID: AnyHashable) -> CGFloat {
         editDimmingAlphas[itemID] ?? 1
     }
 
-    /// Пересчитывает геометрию сетки без смены снимка (§3).
+    /// Recomputes the grid geometry without changing the snapshot (§3).
     ///
-    /// Нужен, когда изменилась ширина/высота контейнера, поля, зазор или число
-    /// колонок: модель та же, рамки другие. `animated` анимирует переезд
-    /// ячеек через `performBatchUpdates`; при Reduce Motion анимация
-    /// отключается (§9, внутренний провайдер ``isReduceMotionEnabled``).
+    /// Needed when the container width/height, insets, gap or column
+    /// count changed: the model is the same, the frames differ. `animated` animates the move of
+    /// cells through `performBatchUpdates`; with Reduce Motion the animation
+    /// is disabled (§9, the internal ``isReduceMotionEnabled`` provider).
     ///
-    /// - Parameter animated: Анимировать ли переезд ячеек.
+    /// - Parameter animated: Whether to animate the cell move.
     public func invalidateTileLayout(animated: Bool) {
         guard snapshot != nil else { return }
 
@@ -2189,8 +2184,8 @@ public final class TesseraTileGridView: UIView {
 
         if shouldAnimate {
             collectionView.performBatchUpdates({
-                // displayItems, а не snapshot.items: открытая панель раскрытой
-                // папки должна остаться в наборе и переехать вместе с сеткой.
+                // displayItems, not snapshot.items: the open panel of an expanded
+                // folder must stay in the set and move together with the grid.
                 self.pushDisplayItemsToLayout(reason: .geometry)
             }, completion: { [weak self] _ in
                 self?.refreshVisibleCells()
@@ -2201,108 +2196,108 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Прокручивает сетку. Используется автоскроллом при перетаскивании.
+    /// Scrolls the grid. Used by autoscroll during a drag.
     ///
     /// - Parameters:
-    ///   - offset: Целевое смещение; UIKit сам не зажимает программные
-    ///     значения, поэтому границы — забота вызывающего.
-    ///   - animated: Анимировать ли прокрутку.
+    ///   - offset: The target offset; UIKit does not clamp programmatic
+    ///     values itself, so bounds are the caller's concern.
+    ///   - animated: Whether to animate the scroll.
     public func setContentOffset(_ offset: CGPoint, animated: Bool) {
         collectionView.setContentOffset(offset, animated: animated)
     }
 
-    // MARK: - Переименование папки (E15.5, D35)
+    // MARK: - Folder renaming (D35)
 
-    /// Ячейка-панель, в которой сейчас идёт правка имени.
+    /// The panel cell in which the name is currently being edited.
     private weak var renamingPanelCell: TesseraFolderPanelCell?
 
-    /// Снимок состояния прокрутки на время правки имени: поля коллекции и
-    /// смещение до того, как сетка уступила место клавиатуре.
+    /// A snapshot of the scroll state while the name is edited: the collection insets and
+    /// the offset from before the grid made room for the keyboard.
     private struct RenameKeyboardState {
-        /// Нижнее поле коллекции до правки.
+        /// The bottom collection inset before editing.
         var originalBottomInset: CGFloat
-        /// Вертикальное смещение до правки.
+        /// The vertical offset before editing.
         var originalOffsetY: CGFloat
-        /// Смещение, которое выставила сама сетка (`nil` — не прокручивала).
+        /// The offset that the grid set itself (`nil` — it did not scroll).
         var appliedOffsetY: CGFloat?
     }
 
-    /// Состояние клавиатуры на время правки имени; `nil` — вне правки.
+    /// Keyboard state while the name is edited; `nil` means outside editing.
     private var renameKeyboard: RenameKeyboardState?
 
-    /// Последняя известная рамка клавиатуры в координатах экрана; `nil` —
-    /// клавиатура скрыта. Наблюдатели постоянные (`commonInit`): уведомление о
-    /// показе может прийти уже во время `becomeFirstResponder`, до того как
-    /// правка успела зарегистрироваться.
+    /// The last known keyboard frame in screen coordinates; `nil` means the
+    /// keyboard is hidden. The observers are permanent (`commonInit`): the
+    /// show notification can arrive during `becomeFirstResponder`, before
+    /// editing has had time to register.
     private var lastKeyboardFrame: CGRect?
 
-    /// Не возвращать фокус VoiceOver на заголовок (правка завершается
-    /// закрытием панели: фокус уйдёт на плитку папки).
+    /// Do not return VoiceOver focus to the title (editing ends by
+    /// closing the panel: focus will go to the folder tile).
     private var suppressesRenameFocusReturn = false
 
-    /// Идёт ли правка имени папки в открытой панели.
+    /// Whether a folder name is being edited in the open panel.
     var isEditingFolderName: Bool {
         renamingPanelCell?.isEditingTitle == true
     }
 
-    /// Видимая ячейка-панель раскрытой папки.
+    /// The visible panel cell of the expanded folder.
     private var visiblePanelCell: TesseraFolderPanelCell? {
         collectionView.visibleCells.compactMap { $0 as? TesseraFolderPanelCell }.first
     }
 
-    // MARK: - Перестановка внутри панели (E16.1, D40)
+    // MARK: - Reordering inside the panel (D40)
 
-    /// Начинает перестановку ярлыка в открытой панели: ярлык скрывается, на его
-    /// слоте появляется пустышка (``TesseraFolderPanelCell/beginReorder(sourceIndex:)``).
+    /// Starts reordering a tile in the open panel: the tile is hidden and a placeholder
+    /// appears in its slot (``TesseraFolderPanelCell/beginReorder(sourceIndex:)``).
     ///
-    /// - Parameter sourceIndex: Индекс поднятого ярлыка в порядке папки.
-    /// - Returns: `false`, если панели нет или индекс неверен.
+    /// - Parameter sourceIndex: The index of the lifted tile in folder order.
+    /// - Returns: `false` if there is no panel or the index is invalid.
     @discardableResult
     func beginPanelReorder(sourceIndex: Int) -> Bool {
         visiblePanelCell?.beginReorder(sourceIndex: sourceIndex) ?? false
     }
 
-    /// Сдвигает ярлыки панели, открывая слот `slot` (E16.1).
+    /// Shifts the panel tiles to open the slot `slot`.
     ///
     /// - Parameters:
-    ///   - slot: Индекс слота-цели.
-    ///   - animated: Анимировать ли сдвиг (bounce E8.8).
+    ///   - slot: The index of the target slot.
+    ///   - animated: Whether to animate the shift (bounce curve).
     func setPanelReorderSlot(_ slot: Int, animated: Bool) {
         visiblePanelCell?.setReorderSlot(slot, animated: animated)
     }
 
-    /// Слот, в котором сейчас стоит пустышка перестановки; `nil` — перестановки нет.
+    /// The slot where the reorder placeholder currently sits; `nil` means no reorder is in progress.
     var panelReorderSlot: Int? {
         visiblePanelCell?.reorderSlot
     }
 
-    /// Заканчивает превью перестановки без анимации (E16.1): ярлыки на слотах
-    /// раскладки, скрытый показан, пустышки нет.
+    /// Ends the reorder preview without animation: tiles are in the layout
+    /// slots, the hidden one is shown, and there is no placeholder.
     func endPanelReorder() {
         for cell in collectionView.visibleCells.compactMap({ $0 as? TesseraFolderPanelCell }) {
             cell.endReorder()
         }
     }
 
-    /// Скрывает или показывает ярлык панели по индексу (E16.1): на время полёта
-    /// снимка в новый слот ярлык под ним не дублируется.
+    /// Hides or shows a panel tile by index: while the drag image flies
+    /// into the new slot, the tile under it is not duplicated.
     ///
     /// - Parameters:
-    ///   - hidden: `true` — скрыть.
-    ///   - index: Индекс ярлыка в порядке папки.
+    ///   - hidden: `true` to hide.
+    ///   - index: The tile index in folder order.
     func setPanelShortcutHidden(_ hidden: Bool, at index: Int) {
         guard let panel = visiblePanelCell, panel.shortcutCells.indices.contains(index) else { return }
         panel.shortcutCells[index].setSourceHidden(hidden)
     }
 
-    /// Попадает ли точка в имя папки раскрытой панели (E15.5).
+    /// Whether a point falls on the name of the expanded panel's folder.
     ///
-    /// Долгое нажатие по имени — переименование: ни жест сетки, ни жест
-    /// координатора (вход в правку, drag) касания по нему не принимают. Область —
-    /// вся строка заголовка (полная ширина панели, высота `panelHeaderHeight`);
-    /// вне панели и без обработчика переименования ответ всегда `false`.
+    /// A long press on the name starts renaming: neither the grid gesture nor the
+    /// coordinator gesture (entering editing, drag) accepts touches on it. The area is
+    /// the whole title row (the full panel width, height `panelHeaderHeight`);
+    /// outside the panel and without a rename handler the answer is always `false`.
     ///
-    /// - Parameter point: Точка в координатах сетки.
+    /// - Parameter point: A point in grid coordinates.
     func isFolderNameHit(at point: CGPoint) -> Bool {
         guard folderRenameHandler != nil, expandedFolderID != nil,
               let panel = visiblePanelCell else {
@@ -2311,15 +2306,15 @@ public final class TesseraTileGridView: UIView {
         return panel.isTitleHit(convert(point, to: panel.contentView))
     }
 
-    /// Начинает переименование папки (действие VoiceOver «Переименовать» на
-    /// плитке папки приходит сюда; на заголовке панели — в ячейку напрямую).
+    /// Starts renaming a folder (the VoiceOver "Rename" action on the
+    /// folder tile comes here; on the panel title it goes directly to the cell).
     ///
-    /// Закрытая папка сначала раскрывается (без анимации при Reduce Motion), и
-    /// правка начинается, когда панель устоялась.
+    /// A closed folder is expanded first (without animation under Reduce Motion), and
+    /// editing starts once the panel has settled.
     ///
-    /// - Parameter folderID: Идентификатор папки из снимка.
-    /// - Returns: `true`, если правка началась или запланирована; `false` —
-    ///   обработчика нет или папки нет в снимке.
+    /// - Parameter folderID: The folder identifier from the snapshot.
+    /// - Returns: `true` if editing started or is scheduled; `false` if there is
+    ///   no handler or the folder is not in the snapshot.
     @discardableResult
     func beginRenamingFolder(_ folderID: AnyHashable) -> Bool {
         guard folderRenameHandler != nil,
@@ -2337,11 +2332,11 @@ public final class TesseraTileGridView: UIView {
         return true
     }
 
-    /// Фиксирует правку имени, если она идёт (D35: закрытие панели, вход в режим
-    /// редактирования и выход из него, смена обработчика).
+    /// Commits the name edit if one is in progress (D35: closing the panel, entering and leaving
+    /// edit mode, changing the handler).
     ///
-    /// - Parameter restoresFocus: Вернуть ли фокус VoiceOver на заголовок (при
-    ///   закрытии панели — нет).
+    /// - Parameter restoresFocus: Whether to return VoiceOver focus to the title (when
+    ///   closing the panel — no).
     func commitFolderNameEditing(restoresFocus: Bool = true) {
         guard let cell = renamingPanelCell, cell.isEditingTitle else { return }
         let saved = suppressesRenameFocusReturn
@@ -2350,24 +2345,24 @@ public final class TesseraTileGridView: UIView {
         suppressesRenameFocusReturn = saved
     }
 
-    /// Панель сообщила о начале или конце правки имени.
+    /// The panel reported the start or end of name editing.
     private func folderNameEditingDidChange(_ isEditing: Bool, in cell: TesseraFolderPanelCell) {
         if isEditing {
             renamingPanelCell = cell
             beginRenameKeyboardHandling()
-            // VoiceOver: фокус на поле, а не на спрятанный заголовок.
+            // VoiceOver: focus on the field, not on the hidden title.
             accessibilityNotificationPoster(.layoutChanged, cell.titleTextField)
         } else {
             if renamingPanelCell === cell { renamingPanelCell = nil }
             endRenameKeyboardHandling(restoresOffset: !suppressesRenameFocusReturn)
-            // Фокус возвращается на заголовок, пока панель на месте.
+            // Focus returns to the title while the panel is in place.
             if !suppressesRenameFocusReturn, cell.superview != nil, expandedFolderID != nil {
                 accessibilityNotificationPoster(.layoutChanged, cell.titleHeaderLabel)
             }
         }
     }
 
-    /// Запоминает поля и смещение и подстраивает прокрутку под клавиатуру.
+    /// Remembers the insets and offset and adjusts scrolling for the keyboard.
     private func beginRenameKeyboardHandling() {
         renameKeyboard = RenameKeyboardState(
             originalBottomInset: collectionView.contentInset.bottom,
@@ -2381,8 +2376,8 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Возвращает поля коллекции и (если пользователь не прокручивал сам)
-    /// прежнее смещение.
+    /// Restores the collection insets and (if the user did not scroll
+    /// themselves) the previous offset.
     private func endRenameKeyboardHandling(restoresOffset: Bool) {
         guard let state = renameKeyboard else { return }
         renameKeyboard = nil
@@ -2416,11 +2411,11 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Применяет рамку клавиатуры (координаты экрана): перекрытие низа сетки
-    /// становится нижним полем коллекции, поле имени прокручивается в видимую
-    /// часть.
+    /// Applies the keyboard frame (screen coordinates): the overlap of the grid bottom
+    /// becomes the collection's bottom inset, and the name field is scrolled into the
+    /// visible part.
     ///
-    /// - Parameter screenFrame: Конечная рамка клавиатуры в координатах экрана.
+    /// - Parameter screenFrame: The final keyboard frame in screen coordinates.
     func applyKeyboardFrame(_ screenFrame: CGRect) {
         guard let screen = window?.screen else {
             applyKeyboardOverlap(0)
@@ -2430,16 +2425,16 @@ public final class TesseraTileGridView: UIView {
         applyKeyboardOverlap(max(0, min(bounds.height, bounds.maxY - frame.minY)))
     }
 
-    /// Нижнее поле коллекции = исходное + перекрытие клавиатурой.
+    /// The collection's bottom inset = the original one + the keyboard overlap.
     private func applyKeyboardOverlap(_ overlap: CGFloat) {
         guard let state = renameKeyboard else { return }
         collectionView.contentInset.bottom = state.originalBottomInset + overlap
         revealRenameField()
     }
 
-    /// Прокручивает коллекцию так, чтобы поле имени (с запасом 8 pt) было в
-    /// видимой части над клавиатурой; заголовок остаётся виден, а при нехватке
-    /// места верх поля важнее низа.
+    /// Scrolls the collection so the name field (with an 8 pt margin) is in the
+    /// visible part above the keyboard; the title stays visible, and when there
+    /// is not enough room the top of the field matters more than the bottom.
     private func revealRenameField() {
         guard var state = renameKeyboard, let cell = renamingPanelCell else { return }
         let field = cell.titleTextField
@@ -2463,24 +2458,24 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    // MARK: - Внутренние помощники
+    // MARK: - Internal helpers
 
-    /// Элементы снимка в порядке сетки (без панели раскрытой папки).
+    /// Snapshot items in grid order (without the expanded folder's panel).
     private var baseItems: [TesseraTileGridItem] {
         snapshot?.items ?? []
     }
 
-    /// Элементы в порядке коллекции: снимок, в который при раскрытой папке
-    /// добавлена панель (D17).
+    /// Items in collection order: the snapshot with the panel added when a folder
+    /// is expanded (D17).
     ///
-    /// Число элементов при раскрытии равно `baseItems.count + 1`: панель —
-    /// отдельный элемент сразу после плитки папки, сама плитка остаётся в
-    /// наборе. Кеш сбрасывается только при смене снимка, раскрытия и числа
-    /// колонок — на каждый запрос коллекции индекс вставки не пересчитывается.
-    /// Доступ внутренний (не публичный): это представление сетки, а не данные;
-    /// наружу отдаются ``items`` и ``expandedFolderID``. Тестам E7.4 нужен
-    /// именно набор коллекции — по нему проверяются вставка панели под папку и
-    /// её удаление.
+    /// When expanded, the item count is `baseItems.count + 1`: the panel is a
+    /// separate item right after the folder tile, and the tile itself stays in the
+    /// set. The cache is reset only when the snapshot, expansion or column count
+    /// changes — the insertion index is not recomputed on every collection query.
+    /// Access is internal (not public): this is a grid representation, not data;
+    /// ``items`` and ``expandedFolderID`` are exposed publicly. Tests need
+    /// the collection's item set itself — it is used to check the panel insertion below the folder and
+    /// its removal.
     var displayItems: [TesseraTileGridItem] {
         if let cachedDisplayItems {
             return cachedDisplayItems
@@ -2490,36 +2485,36 @@ public final class TesseraTileGridView: UIView {
         return items
     }
 
-    /// Сбрасывает кеш элементов с панелью.
+    /// Resets the item cache with the panel.
     private func invalidateDisplayItems() {
         cachedDisplayItems = nil
     }
 
-    /// Снимок с элементами в порядке чтения явных ячеек (E14.7).
+    /// A snapshot with items in the reading order of explicit cells.
     ///
-    /// Порядок элементов снимка — порядок индексов коллекции, а он — порядок
-    /// обхода VoiceOver (см. «Accessibility»): сетка не задаёт
-    /// `accessibilityElements`, не сортирует кадры и не переопределяет порядок
-    /// ячеек, а `layoutAttributesForElements(in:)` раскладчика отдаёт атрибуты
-    /// по индексу. Поэтому сетка сама приводит набор к порядку чтения
-    /// (строка, затем логическая колонка; в RTL тот же порядок), если снимок
-    /// несёт применимую для текущих колонок таблицу ячеек. Без таблицы или с
-    /// неприменимой порядок остаётся таким, как отдал хост: так же идёт упаковка
-    /// ``TesseraTileLayoutEngine/pack(items:columns:unit:)``. Внутренний: координатор
-    /// сравнивает по нему ожидаемые снимки с тем, что показывает сетка.
+    /// The order of snapshot items is the order of collection indexes, which is the VoiceOver
+    /// traversal order (see "Accessibility"): the grid does not set
+    /// `accessibilityElements`, does not sort frames and does not override the cell
+    /// order, and the layout's `layoutAttributesForElements(in:)` returns attributes
+    /// by index. So the grid brings the set to the reading order itself
+    /// (row, then logical column; the same order in RTL) if the snapshot
+    /// carries a cell table applicable to the current columns. Without a table or with an
+    /// inapplicable one the order stays as the host delivered it: packing works the same way,
+    /// ``TesseraTileLayoutEngine/pack(items:columns:unit:)``. Internal: the coordinator
+    /// uses it to compare expected snapshots with what the grid shows.
     ///
-    /// - Parameter snapshot: Снимок хоста.
-    /// - Returns: Снимок в порядке чтения.
+    /// - Parameter snapshot: The host snapshot.
+    /// - Returns: The snapshot in reading order.
     func readingOrdered(_ snapshot: TesseraTileGridSnapshot) -> TesseraTileGridSnapshot {
         snapshot.readingOrdered(columns: columns)
     }
 
-    /// Переупорядочивает текущий снимок под текущие колонки (E14.7).
+    /// Reorders the current snapshot for the current columns.
     ///
-    /// Нужен, когда число колонок изменилось: таблица ячеек могла стать
-    /// применимой (или перестать ей быть), а с ней меняется порядок чтения.
+    /// Needed when the column count changed: the cell table may have become
+    /// applicable (or stopped being so), and the reading order changes with it.
     ///
-    /// - Returns: `true`, если порядок элементов снимка изменился.
+    /// - Returns: `true` if the order of snapshot items changed.
     private func reorderSnapshotForCurrentColumns() -> Bool {
         guard let current = snapshot else { return false }
         let ordered = readingOrdered(current)
@@ -2529,31 +2524,30 @@ public final class TesseraTileGridView: UIView {
         return true
     }
 
-    /// Передаёт раскладке набор коллекции вместе с таблицей явных ячеек снимка
-    /// (E14.3).
+    /// Passes the layout the collection's item set together with the snapshot's table of explicit cells.
     ///
-    /// Единственная точка, через которую набор попадает в раскладку: так
-    /// таблица ячеек (``TesseraTileGridSnapshot/placementTable``) не теряется ни в одном
-    /// из путей — `reloadData`, дифф, переезд перестановки, смена колонок,
-    /// раскрытие папки. Решает, применима ли таблица к текущим колонкам, сама
-    /// раскладка.
+    /// The only point through which the set reaches the layout: this way the
+    /// cell table (``TesseraTileGridSnapshot/placementTable``) is not lost in any
+    /// of the paths — `reloadData`, diff, reorder move, column change,
+    /// folder expansion. The layout itself decides whether the table applies to the current
+    /// columns.
     ///
-    /// - Parameter reason: Причина пересчёта.
+    /// - Parameter reason: The reason for recomputation.
     private func pushDisplayItemsToLayout(reason: TesseraTileLayoutInvalidationReason) {
         tileLayout.setItems(displayItems, placements: snapshot?.placementTable, reason: reason)
     }
 
-    /// Размещения элементов по явным ячейкам снимка или `nil`, если таблица
-    /// не применима (E14.3).
+    /// Placements of items by the snapshot's explicit cells, or `nil` if the table
+    /// does not apply.
     ///
-    /// Правило отката (нет таблицы, неполная, другая ширина, не проходит
-    /// ``TesseraTileLayoutEngine/validate(_:columns:)``) — одно на раскладку и на
-    /// вспомогательные расчёты сетки: ``TesseraTileGridPlacementTable/resolve(items:cells:placementColumns:columns:)``.
+    /// The fallback rule (no table, incomplete, a different width, fails
+    /// ``TesseraTileLayoutEngine/validate(_:columns:)``) is one for the layout and for
+    /// the grid's helper computations: ``TesseraTileGridPlacementTable/resolve(items:cells:placementColumns:columns:)``.
     ///
     /// - Parameters:
-    ///   - items: Элементы в порядке снимка; панель раскрытой папки игнорируется.
-    ///   - table: Таблица явных ячеек.
-    /// - Returns: Размещения в порядке `items` либо `nil` — упаковка по порядку.
+    ///   - items: Items in snapshot order; the expanded folder's panel is ignored.
+    ///   - table: The table of explicit cells.
+    /// - Returns: Placements in `items` order, or `nil` — packing in order.
     private func explicitPlacements(
         for items: [TesseraTileGridItem],
         table: TesseraTileGridPlacementTable?
@@ -2568,16 +2562,15 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Индекс вставки панели раскрытой папки в набор без панели (D17, E10.1,
-    /// E14.3).
+    /// The insertion index of the expanded folder's panel into the set without the panel (D17).
     ///
-    /// С применимой таблицей явных ячеек индекс считается по ячейкам, без
-    /// упаковки, чтобы порядок набора совпадал с тем, что рисует раскладка;
-    /// иначе — прежний расчёт по упаковке порядка.
+    /// With an applicable table of explicit cells the index is computed from cells, without
+    /// packing, so that the set order matches what the layout draws;
+    /// otherwise — the previous computation by packing in order.
     ///
-    /// - Parameter folderID: Идентификатор раскрываемой папки.
-    /// - Returns: Индекс вставки либо `nil`, если папки нет или панель уже в
-    ///   наборе.
+    /// - Parameter folderID: The identifier of the folder being expanded.
+    /// - Returns: The insertion index, or `nil` if there is no such folder or the panel is already in
+    ///   the set.
     private func panelInsertionIndex(forFolder folderID: AnyHashable) -> Int? {
         let items = baseItems
         if let placements = explicitPlacements(for: items, table: snapshot?.placementTable),
@@ -2596,8 +2589,8 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Собирает элементы коллекции: вставляет панель раскрытой папки после её
-    /// плитки, не убирая саму плитку.
+    /// Builds the collection items: inserts the expanded folder's panel after its
+    /// tile, without removing the tile itself.
     private func makeDisplayItems() -> [TesseraTileGridItem] {
         guard let snapshot else { return [] }
         guard let expandedID = expandedFolderID,
@@ -2606,66 +2599,66 @@ public final class TesseraTileGridView: UIView {
             return snapshot.items
         }
 
-        // D17: панель — отдельная полноширинная строка сразу после строки
-        // папки. Плитка папки остаётся на своём индексе; строки ниже панели
-        // сдвигает раскладка.
+        // D17: the panel is a separate full-width row right after the
+        // folder's row. The folder tile stays at its index; rows below the panel
+        // are shifted by the layout.
         var items = snapshot.items
         items.insert(.folderContent(folder), at: insertionIndex)
         return items
     }
 
-    /// Элемент снимка по индексу (без панели).
+    /// A snapshot item by index (without the panel).
     private func baseItem(atIndex index: Int) -> TesseraTileGridItem? {
         guard let snapshot, snapshot.items.indices.contains(index) else { return nil }
         return snapshot.items[index]
     }
 
-    /// Элемент коллекции по индексу (с панелью раскрытой папки).
+    /// A collection item by index (with the expanded folder's panel).
     private func displayItem(atIndex index: Int) -> TesseraTileGridItem? {
         let items = displayItems
         guard items.indices.contains(index) else { return nil }
         return items[index]
     }
 
-    /// Индекс элемента в коллекции; панель пропускается: она делит
-    /// идентификатор с папкой, но не является адресуемым элементом модели.
+    /// The index of an item in the collection; the panel is skipped: it shares an
+    /// identifier with the folder but is not an addressable model item.
     private func displayIndex(ofItemID id: AnyHashable) -> Int? {
         displayItems.firstIndex { !$0.isFolderPanel && $0.id == id }
     }
 
-    /// `IndexPath` элемента в текущей коллекции.
+    /// The `IndexPath` of an item in the current collection.
     private func indexPath(forItemID id: AnyHashable) -> IndexPath? {
         guard let index = displayIndex(ofItemID: id) else { return nil }
         return IndexPath(item: index, section: 0)
     }
 
-    /// Папка из текущего снимка по идентификатору.
+    /// A folder from the current snapshot by identifier.
     private func currentFolder(withID id: AnyHashable) -> TesseraTileFolder? {
         snapshot?.items.compactMap { $0.folder }.first { $0.id == id }
     }
 
-    /// Разрешена ли анимация раскрытия/закрытия панели.
+    /// Whether the panel expand/close animation is allowed.
     ///
-    /// Вне окна и при Reduce Motion (§9) панель меняет состояние мгновенно:
-    /// тесты и первый layout не ждут анимационного цикла. Reduce Motion
-    /// спрашивается через ``isReduceMotionEnabled`` (внутренний провайдер).
+    /// Off-window and with Reduce Motion (§9) the panel changes state instantly:
+    /// tests and the first layout do not wait for an animation cycle. Reduce Motion
+    /// is queried through ``isReduceMotionEnabled`` (the internal provider).
     private var canAnimateFolderChange: Bool {
         window != nil && !isReduceMotionEnabled()
     }
 
-    /// Пересчитывает фактическое состояние прокрутки по запросу и причинам
-    /// блокировки (E10.2).
+    /// Recomputes the actual scroll state from the request and the lock
+    /// reasons.
     ///
-    /// Единственный владелец `collectionView.isScrollEnabled`: снимает
-    /// блокировку панели панель и восстанавливает запрошенное значение только
-    /// когда причин не осталось.
+    /// The sole owner of `collectionView.isScrollEnabled`: it removes the
+    /// panel lock and restores the requested value only
+    /// when no reasons remain.
     private func updateScrollEnabled() {
         collectionView.isScrollEnabled = isScrollEnabledRequested && !isFolderPanelScrollLocked
     }
 
-    /// Начинает анимированный переход панели (E10.2): блокирует прокрутку.
+    /// Starts an animated panel transition: blocks scrolling.
     ///
-    /// - Parameter state: `.opening` или `.closing`.
+    /// - Parameter state: `.opening` or `.closing`.
     private func beginAnimatedFolderTransition(_ state: FolderTransitionState) {
         folderTransition = state
         isFolderChangeAnimating = true
@@ -2674,10 +2667,10 @@ public final class TesseraTileGridView: UIView {
         folderPanelStateDidChange?()
     }
 
-    /// Завершает состояние перехода, не разбирая отложенные команды (E10.2).
+    /// Ends the transition state without processing deferred commands.
     ///
-    /// Вызывается в конце анимации: после этого можно применять отложенный
-    /// снимок и следующую цель панели.
+    /// Called at the end of an animation: after this the deferred
+    /// snapshot and the next panel target can be applied.
     private func completeFolderTransitionState() {
         folderTransition = .idle
         isFolderChangeAnimating = false
@@ -2686,11 +2679,10 @@ public final class TesseraTileGridView: UIView {
         folderPanelStateDidChange?()
     }
 
-    /// Планирует разбор отложенной команды панели на следующий проход runloop
-    /// (E10.2).
+    /// Schedules processing of a deferred panel command for the next runloop pass.
     ///
-    /// Нужен для смены папки A → B: A сворачивается мгновенным `reloadData`, а
-    /// batch-вставка B не должна попасть в тот же проход runloop.
+    /// Needed for switching from folder A to B: A collapses with an instant `reloadData`, and
+    /// the batch insertion of B must not land in the same runloop pass.
     private func scheduleDeferredFolderWork() {
         guard !hasScheduledFolderWork else { return }
         hasScheduledFolderWork = true
@@ -2703,27 +2695,27 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Применяет отложенные снимок и цель панели (E10.2).
+    /// Applies the deferred snapshot and panel target.
     ///
-    /// Порядок: сначала снимок (он мог убрать папку-цель), затем команда
-    /// раскрытия/закрытия. Обе операции выполняются только в состоянии `idle`.
+    /// Order: first the snapshot (it may have removed the target folder), then the
+    /// expand/close command. Both operations run only in the `idle` state.
     ///
-    /// M1/E10.2: если отложенный снимок применён, цель панели не исполняется в
-    /// этом же стеке. Снимок мог уйти в `reloadData` (fallback диффа), и
-    /// синхронная batch-вставка панели вслед за ним повторила бы класс дефекта
-    /// «reloadData + batch в одном проходе runloop». Цель переоткладывается на
-    /// следующий проход; `last-wins` сохраняется, потому что цель остаётся в
-    /// `pendingFolderChange` до исполнения (busy-loop нет: следующий проход
-    /// увидит, что снимок уже применён).
+    /// If a deferred snapshot was applied, the panel target is not executed in
+    /// the same stack. The snapshot may have fallen back to `reloadData` (the diff fallback), and
+    /// a synchronous batch insertion of the panel right after it would repeat the class of defect
+    /// "reloadData + batch in one runloop pass". The target is deferred again to the
+    /// next pass; `last-wins` is preserved because the target stays in
+    /// `pendingFolderChange` until executed (there is no busy loop: the next pass
+    /// will see that the snapshot is already applied).
     private func runDeferredFolderWork() {
         defer { flushFolderSettleActions() }
         guard folderTransition == .idle else { return }
 
         if let deferredSnapshot = pendingSnapshot {
             pendingSnapshot = nil
-            // m2: анимацию применения пересчитываем в момент применения, а не
-            // берём «запомненную»: окно/Reduce Motion могли измениться, пока
-            // снимок ждал завершения перехода.
+            // The application animation is recomputed at the time of application rather than
+            // taken as "remembered": the window/Reduce Motion may have changed while the
+            // snapshot waited for the transition to finish.
             let animated = pendingSnapshotAnimated
                 && window != nil
                 && !isReduceMotionEnabled()
@@ -2746,15 +2738,15 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Выполняет действие, когда переход панели папки закончился и отложенных
-    /// снимка и команды не осталось (D45).
+    /// Runs an action when the folder panel transition has finished and no deferred
+    /// snapshot or command is left (D45).
     ///
-    /// Если сетка спокойна, действие уходит на **следующий проход runloop**
-    /// (E10.5-B6: к этому моменту коллекция уже разложила новые рамки); иначе
-    /// оно ждёт конца перехода и применения отложенного снимка и тоже
-    /// выполняется на следующем проходе.
+    /// If the grid is idle, the action goes to the **next runloop pass**
+    /// (by then the collection has laid out the new frames); otherwise
+    /// it waits for the end of the transition and for the deferred snapshot to be applied, and also
+    /// runs on the next pass.
     ///
-    /// - Parameter action: Действие на главном потоке.
+    /// - Parameter action: An action on the main thread.
     func performAfterFolderTransition(_ action: @escaping () -> Void) {
         folderSettleActions.append(action)
         if isFolderSettled {
@@ -2764,36 +2756,36 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Спокойна ли панель: нет перехода и нет отложенных команд (D45).
+    /// Whether the panel is idle: no transition and no deferred commands (D45).
     private var isFolderSettled: Bool {
         folderTransition == .idle && pendingSnapshot == nil && pendingFolderChange == nil
     }
 
-    /// Запускает ожидающие действия, если панель спокойна (D45).
+    /// Runs pending actions if the panel is idle (D45).
     private func flushFolderSettleActions() {
         guard isFolderSettled, !folderSettleActions.isEmpty else { return }
         let actions = folderSettleActions
         folderSettleActions = []
         DispatchQueue.main.async { [weak self] in
-            // Ячейки применённого снимка создаёт layout-проход коллекции: доводим
-            // его до действий, чтобы фокус VoiceOver указывал на существующую ячейку.
+            // The cells of the applied snapshot are created by the collection's layout pass: bring
+            // it up to date before the actions so that VoiceOver focus points to an existing cell.
             self?.collectionView.layoutIfNeeded()
             for action in actions { action() }
         }
     }
 
-    /// Раскрывает папку панелью из состояния `idle` (E10.2).
+    /// Expands a folder with the panel from the `idle` state.
     ///
     /// - Parameters:
-    ///   - folder: Папка из текущего снимка сетки.
-    ///   - animated: Анимировать ли появление панели.
+    ///   - folder: A folder from the grid's current snapshot.
+    ///   - animated: Whether to animate the panel appearing.
     private func performOpen(_ folder: TesseraTileFolder, animated: Bool) {
         guard folderTransition == .idle else { return }
         guard expandedFolderID != folder.id else { return }
         guard let currentFolder = currentFolder(withID: folder.id) else { return }
 
-        // D17: панель вставляется отдельным элементом сразу после плитки папки;
-        // сама плитка остаётся в наборе.
+        // D17: the panel is inserted as a separate item right after the folder tile;
+        // the tile itself stays in the set.
         guard let insertionIndex = panelInsertionIndex(forFolder: currentFolder.id) else {
             return
         }
@@ -2811,13 +2803,13 @@ public final class TesseraTileGridView: UIView {
         setFolderCellExpanded(true, forItemID: currentFolder.id)
 
         guard animated, canAnimateFolderChange else {
-            // Неанимированная ветка (Reduce Motion, вне окна): панель
-            // появляется сразу; `.layoutChanged` и событие хосту — как в
-            // анимированной ветке (E10.2).
+            // The non-animated branch (Reduce Motion, off-window): the panel
+            // appears immediately; `.layoutChanged` and the host event are as in the
+            // animated branch.
             pushDisplayItemsToLayout(reason: .items)
             collectionView.reloadData()
-            // m3: ячейка панели создаётся в layout-проходе — доводим его, иначе
-            // `.layoutChanged` уходит с фокусом на папку, а не на панель.
+            // The panel cell is created in the layout pass — bring it up to date, otherwise
+            // `.layoutChanged` goes out with focus on the folder, not on the panel.
             collectionView.layoutIfNeeded()
             postFolderLayoutChanged(expanded: true, folderID: currentFolder.id)
             folderPanelStateDidChange?()
@@ -2826,9 +2818,9 @@ public final class TesseraTileGridView: UIView {
             return
         }
 
-        // D17: на время анимации сетка не прокручивается — иначе элементы под
-        // панелью «спорили» бы с пальцем за одно и то же движение. Блокировка
-        // идёт причиной, а не снимком значения (E10.2).
+        // D17: the grid does not scroll during the animation — otherwise the items under
+        // the panel would "fight" the finger for the same motion. The lock
+        // is a reason, not a snapshot of the value.
         beginAnimatedFolderTransition(.opening)
 
         let panel = IndexPath(item: insertionIndex, section: 0)
@@ -2836,9 +2828,9 @@ public final class TesseraTileGridView: UIView {
             guard let self else { return }
             self.pushDisplayItemsToLayout(reason: .items)
             self.collectionView.performBatchUpdates({
-                // Плитка папки никуда не девается: вставляется только панель,
-                // которая растёт из нулевой высоты от своей строки (атрибуты —
-                // в раскладке), а строки под ней сдвигаются вниз.
+                // The folder tile does not go anywhere: only the panel is inserted,
+                // growing from zero height from its row (attributes are
+                // in the layout), and rows below it shift down.
                 self.collectionView.insertItems(at: [panel])
             }, completion: nil)
         } completion: { [weak self] in
@@ -2846,8 +2838,8 @@ public final class TesseraTileGridView: UIView {
             self.completeFolderTransitionState()
 
             if let panelCell = self.collectionView.cellForItem(at: panel) as? TesseraFolderPanelCell {
-                // Каскад запускается открытием, а не показом ячейки: прокрутка
-                // и переиспользование не должны повторять анимацию.
+                // The cascade is triggered by the opening, not by the cell being shown: scrolling
+                // and reuse must not repeat the animation.
                 panelCell.playIconCascade()
             }
             self.postFolderLayoutChanged(expanded: true, folderID: currentFolder.id)
@@ -2856,25 +2848,25 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Снимает раскрытие папки; общая реализация ``closeFolder(animated:)``.
+    /// Collapses the folder expansion; the common implementation of ``closeFolder(animated:)``.
     ///
-    /// Панель схлопывается и удаляется из набора; плитка папки всё это время
-    /// остаётся на своём месте. Batch-обновление удаляет только панель, поэтому
-    /// строки под ней поднимаются вместе с уменьшением её высоты.
+    /// The panel collapses and is removed from the set; the folder tile stays
+    /// in place the whole time. The batch update removes only the panel, so the
+    /// rows below it rise as its height shrinks.
     ///
-    /// E10.2: если переход панели уже идёт, закрытие откладывается (последняя
-    /// цель побеждает); неанимированные ветки тоже зажимают `contentOffset` и
-    /// публикуют `.layoutChanged`.
+    /// If a panel transition is already running, closing is deferred (the last
+    /// target wins); the non-animated branches also clamp `contentOffset` and
+    /// post `.layoutChanged`.
     ///
     /// - Parameters:
-    ///   - animated: Анимировать ли схлопывание.
-    ///   - notify: Сообщать ли хосту о закрытии (при смене папки на другую
-    ///     событие тоже нужно: одна папка закрылась, другая открылась).
+    ///   - animated: Whether to animate the collapse.
+    ///   - notify: Whether to report the close to the host (when switching to another folder
+    ///     the event is needed too: one folder closed, another opened).
     private func collapseExpansion(animated: Bool, notify: Bool) {
         guard let expandedID = expandedFolderID else { return }
 
-        // E15.5: закрытие панели посреди правки имени фиксирует имя (D35); фокус
-        // VoiceOver после закрытия уходит на плитку папки, а не на заголовок.
+        // Closing the panel in the middle of a name edit commits the name (D35); VoiceOver
+        // focus after closing goes to the folder tile, not to the title.
         commitFolderNameEditing(restoresFocus: false)
 
         if folderTransition != .idle {
@@ -2888,8 +2880,8 @@ public final class TesseraTileGridView: UIView {
         guard let panelIndex = displayItems.firstIndex(where: {
             $0.isFolderPanel && $0.id == expandedID
         }) else {
-            // Панели в наборе уже нет (например, папка исчезла из снимка):
-            // остаётся только синхронизировать состояние.
+            // The panel is no longer in the set (for example, the folder disappeared from the snapshot):
+            // only the state needs synchronizing.
             performImmediateCollapse(
                 expandedID: expandedID,
                 folder: folder,
@@ -2909,9 +2901,9 @@ public final class TesseraTileGridView: UIView {
 
         beginAnimatedFolderTransition(.closing)
 
-        // Состояние модели снимается только перед batch-обновлением: пока
-        // иконки гаснут, dataSource обязан отдавать прежнее число элементов,
-        // иначе UICollectionView увидел бы рассогласование до `deleteItems`.
+        // The model state is cleared only before the batch update: while the
+        // icons fade out, the dataSource must keep returning the previous item count,
+        // otherwise UICollectionView would see a mismatch before `deleteItems`.
         let collapse = { [weak self] in
             guard let self else { return }
             self.expandedFolderID = nil
@@ -2922,8 +2914,8 @@ public final class TesseraTileGridView: UIView {
             self.animateFolderChange {
                 self.pushDisplayItemsToLayout(reason: .items)
                 self.collectionView.performBatchUpdates({
-                    // D17: уходит только панель — плитка папки из набора не
-                    // удалялась и остаётся на месте.
+                    // D17: only the panel leaves — the folder tile was not removed
+                    // from the set and stays in place.
                     self.collectionView.deleteItems(at: [replacement])
                 }, completion: nil)
             } completion: { [weak self] in
@@ -2938,8 +2930,8 @@ public final class TesseraTileGridView: UIView {
             }
         }
 
-        // D17: сначала гаснут иконки, затем схлопывается высота панели и
-        // поднимаются элементы под ней. Если панель уже вне экрана — сразу высота.
+        // D17: first the icons fade out, then the panel height collapses and the
+        // items under it rise. If the panel is already off-screen, only the height changes.
         if let panelCell = collectionView.cellForItem(
             at: IndexPath(item: panelIndex, section: 0)
         ) as? TesseraFolderPanelCell {
@@ -2949,16 +2941,16 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// Мгновенно снимает раскрытие панели (E10.2).
+    /// Instantly clears the panel expansion.
     ///
-    /// Общая ветка для Reduce Motion, отсутствия окна и случая, когда панели в
-    /// наборе уже нет: состояние, раскладка и `reloadData` в одном проходе,
-    /// затем `clamp`, `.layoutChanged` и событие хосту.
+    /// A common branch for Reduce Motion, no window, and the case when the panel is
+    /// already absent from the set: state, layout and `reloadData` in one pass,
+    /// then `clamp`, `.layoutChanged` and the host event.
     ///
     /// - Parameters:
-    ///   - expandedID: Идентификатор раскрытой папки.
-    ///   - folder: Папка для события хоста; `nil` — папки уже нет в снимке.
-    ///   - notify: Сообщать ли хосту о закрытии.
+    ///   - expandedID: The identifier of the expanded folder.
+    ///   - folder: The folder for the host event; `nil` means the folder is already not in the snapshot.
+    ///   - notify: Whether to report the close to the host.
     private func performImmediateCollapse(
         expandedID: AnyHashable,
         folder: TesseraTileFolder?,
@@ -2969,8 +2961,8 @@ public final class TesseraTileGridView: UIView {
         setFolderCellExpanded(false, forItemID: expandedID)
         pushDisplayItemsToLayout(reason: .items)
         collectionView.reloadData()
-        // m3: доводим layout до публикации `.layoutChanged` — фокус должен
-        // уходить на реально существующую ячейку папки.
+        // Bring the layout up to date before posting `.layoutChanged` — focus must
+        // go to a really existing folder cell.
         collectionView.layoutIfNeeded()
         clampContentOffsetAfterCollapse()
         postFolderLayoutChanged(expanded: false, folderID: expandedID)
@@ -2981,14 +2973,14 @@ public final class TesseraTileGridView: UIView {
         runDeferredFolderWork()
     }
 
-    /// Публикует `.layoutChanged` для VoiceOver (§9, E10.2).
+    /// Posts `.layoutChanged` for VoiceOver (§9).
     ///
-    /// Работает во всех ветках раскрытия/закрытия: при раскрытии фокус уходит
-    /// на панель (если она на экране), иначе — на плитку папки.
+    /// Works in all expand/close branches: on expansion focus goes
+    /// to the panel (if it is on screen), otherwise to the folder tile.
     ///
     /// - Parameters:
-    ///   - expanded: Раскрыта ли папка сейчас.
-    ///   - folderID: Идентификатор папки.
+    ///   - expanded: Whether the folder is expanded now.
+    ///   - folderID: The folder identifier.
     private func postFolderLayoutChanged(expanded: Bool, folderID: AnyHashable) {
         let argument: Any?
         if expanded,
@@ -3008,15 +3000,15 @@ public final class TesseraTileGridView: UIView {
         accessibilityNotificationPoster(.layoutChanged, argument)
     }
 
-    /// Активен ли режим редактирования координатора (E7.3).
+    /// Whether the coordinator's edit mode is active.
     ///
-    /// Сетка не хранит ссылку на `TesseraTileEditCoordinator`, а публичного
-    /// флага режима у неё нет. Единственный сигнал, который координатор
-    /// оставляет на сетке, — собственный tap-жест по фону: он включается только
-    /// в режиме редактирования (`beginEditing`/`endEditing`), а его делегатом
-    /// выступает сам координатор. Свои жесты сетка ставит на коллекцию, поэтому
-    /// в `gestureRecognizers` их нет, а чужие tap-жесты хоста не путаются с
-    /// координатором: проверяется и тип, и делегат.
+    /// The grid holds no reference to `TesseraTileEditCoordinator` and has no public
+    /// mode flag. The only signal the coordinator leaves on the grid is
+    /// its own background tap gesture: it is enabled only
+    /// in edit mode (`beginEditing`/`endEditing`), and the coordinator itself
+    /// is its delegate. The grid puts its own gestures on the collection, so
+    /// they are absent from `gestureRecognizers`, and the host's foreign tap gestures are not confused with the
+    /// coordinator: both the type and the delegate are checked.
     private var isEditModeActive: Bool {
         gestureRecognizers?.contains { recognizer in
             recognizer.isEnabled
@@ -3025,22 +3017,22 @@ public final class TesseraTileGridView: UIView {
         } ?? false
     }
 
-    /// Маршрутизация тапа по элементу (палец или активация VoiceOver).
+    /// Routing of a tap on an item (a finger or VoiceOver activation).
     ///
-    /// Папку можно перехватить через ``folderTapHandler``; без перехвата она
-    /// раскрывается нативной панелью (D17), а событие ``onTap`` по-прежнему
-    /// уходит подписчику. E11.1: правило одно и для обычного режима, и для
-    /// редактирования — в режиме редактирования панель тоже открывается (из неё
-    /// ярлык берут пальцем и выносят из папки), а режим редактирования не
-    /// прерывается. Ярлык (`.tile`) в обоих режимах — только событие ``onTap``.
+    /// A folder can be intercepted via ``folderTapHandler``; without interception it
+    /// expands with the native panel (D17), and the ``onTap`` event still
+    /// goes to the subscriber. The rule is the same in normal mode and in
+    /// edit mode — in edit mode the panel opens too (a tile is picked
+    /// from it with a finger and dragged out of the folder), and edit mode is not
+    /// interrupted. A tile (`.tile`) in both modes produces only the ``onTap`` event.
     private func handleItemTap(_ item: TesseraTileGridItem) {
         switch item {
         case .tile:
             onTap?(item)
 
         case .folder(let folder):
-            // Перехватчик полностью владеет тапом папки, когда вернул true:
-            // и раскрытие, и событие onTap тогда не выполняются.
+            // When the interceptor returns true it fully owns the folder tap:
+            // neither expansion nor the onTap event is performed.
             if folderTapHandler?(folder) == true {
                 return
             }
@@ -3048,35 +3040,35 @@ public final class TesseraTileGridView: UIView {
             toggleFolder(folder)
 
         case .folderContent:
-            // Панель — представление, а не элемент модели: выбор по ней
-            // отключён (`shouldSelectItemAt`), а тап по фону/заголовку
-            // закрывает папку жестом самой ячейки-панели (D17).
+            // The panel is a presentation, not a model item: selection on it
+            // is disabled (`shouldSelectItemAt`), and a tap on the background/title
+            // closes the folder via the gesture of the panel cell itself (D17).
             break
         }
     }
 
-    /// Пересылает тап по ярлыку из другого представления в общий маршрут.
+    /// Forwards a tile tap from another view into the common route.
     ///
-    /// E10.5-C3: встроенный экран папки (`TesseraFolderViewController`) больше
-    /// не вызывает `TesseraTileDescriptor.action` напрямую — тап приходит сюда и
-    /// уходит в ``onTap`` ровно так же, как тап по плитке сетки. Хост
-    /// обрабатывает событие один раз и одним маршрутом.
+    /// The built-in folder screen (`TesseraFolderViewController`) no longer
+    /// calls `TesseraTileDescriptor.action` directly — the tap arrives here and
+    /// goes to ``onTap`` exactly like a tap on a grid tile. The host
+    /// handles the event once and through a single route.
     ///
-    /// - Parameter descriptor: Ярлык, по которому тапнули вне сетки.
+    /// - Parameter descriptor: The tile that was tapped outside the grid.
     func forwardTileTap(_ descriptor: TesseraTileDescriptor) {
         handleItemTap(.tile(descriptor))
     }
 
-    /// Ярлык панели раскрытой папки под точкой (E11.1).
+    /// The tile of the expanded folder's panel under a point.
     ///
-    /// Нужен координатору редактирования: долгое нажатие по иконке панели
-    /// поднимает ярлык для переноса. Снимок берётся (как у ячеек сетки — с
-    /// принудительным обновлением экрана), пока панель ещё на месте: после её
-    /// закрытия ячейка исчезнет.
+    /// Needed by the edit coordinator: a long press on a panel icon
+    /// lifts the tile for moving. The snapshot is taken (as for grid cells — with
+    /// a forced screen update) while the panel is still in place: after it
+    /// closes the cell will disappear.
     ///
-    /// - Parameter point: Точка в координатах сетки.
-    /// - Returns: Описание ярлыка или `nil`, если точка не над иконкой панели
-    ///   (панель закрыта, идёт её переход, попадание в заголовок/фон).
+    /// - Parameter point: A point in grid coordinates.
+    /// - Returns: The tile descriptor, or `nil` if the point is not over a panel icon
+    ///   (the panel is closed, its transition is running, or the hit is on the title/background).
     func panelTile(at point: CGPoint) -> TesseraPanelTileHit? {
         guard expandedFolderID != nil, !isFolderChangeAnimating,
               let folder = expandedFolder,
@@ -3091,7 +3083,7 @@ public final class TesseraTileGridView: UIView {
             return nil
         }
 
-        // Рамка — по центру и границам, без `transform` каскада появления.
+        // The frame is based on the center and bounds, without the appearance cascade `transform`.
         let size = hit.cell.bounds.size
         let center = container.convert(hit.cell.center, to: self)
         let frame = CGRect(
@@ -3116,16 +3108,16 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Раскрытая папка из текущего снимка.
+    /// The expanded folder from the current snapshot.
     private var expandedFolder: TesseraTileFolder? {
         guard let expandedFolderID else { return nil }
         return snapshot?.items.compactMap { $0.folder }.first { $0.id == expandedFolderID }
     }
 
-    /// Тап по пустому месту сетки закрывает раскрытую папку (D17).
+    /// A tap on empty grid space closes the expanded folder (D17).
     @objc private func handleBackgroundTap(_ recognizer: UITapGestureRecognizer) {
-        // E15.5: тап мимо поля имени фиксирует имя и больше ничего не делает —
-        // папка остаётся открытой (тап в самой панели обрабатывает панель).
+        // A tap outside the name field commits the name and does nothing else —
+        // the folder stays open (a tap inside the panel is handled by the panel).
         if isEditingFolderName {
             let point = recognizer.location(in: collectionView)
             if let indexPath = collectionView.indexPathForItem(at: point),
@@ -3137,24 +3129,24 @@ public final class TesseraTileGridView: UIView {
         }
         guard expandedFolderID != nil else { return }
 
-        // Хит-тест по коллекции: тап по ячейке (включая панель и её иконки)
-        // закрытием не считается — у панели своя обработка, у плиток своя.
+        // Hit test on the collection: a tap on a cell (including the panel and its icons)
+        // does not count as a close — the panel has its own handling, and so do the tiles.
         let point = recognizer.location(in: collectionView)
         guard collectionView.indexPathForItem(at: point) == nil else { return }
 
         closeFolder(animated: true)
     }
 
-    /// Выполняет анимацию раскрытия/закрытия с кривой D17.
+    /// Runs the expand/close animation with the D17 curve.
     ///
-    /// `UIViewPropertyAnimator` с `UICubicTimingParameters` даёт ровно
-    /// `cubic-bezier(0.1, 0.9, 0.2, 1)`; `performBatchUpdates` внутри его
-    /// анимационного блока наследует длительность и кривую, поэтому появление
-    /// (схлопывание) панели и сдвиг элементов под ней идут одним движением.
+    /// `UIViewPropertyAnimator` with `UICubicTimingParameters` gives exactly
+    /// `cubic-bezier(0.1, 0.9, 0.2, 1)`; `performBatchUpdates` inside its
+    /// animation block inherits the duration and curve, so the appearance
+    /// (collapse) of the panel and the shift of the items under it share one motion.
     ///
     /// - Parameters:
-    ///   - changes: Изменения модели коллекции (batch updates и раскладка).
-    ///   - completion: Завершение анимации (уже на главном потоке).
+    ///   - changes: Collection model changes (batch updates and layout).
+    ///   - completion: Animation completion (already on the main thread).
     private func animateFolderChange(
         changes: @escaping () -> Void,
         completion: @escaping () -> Void
@@ -3176,8 +3168,8 @@ public final class TesseraTileGridView: UIView {
         animator.startAnimation()
     }
 
-    /// Зажимает `contentOffset` после закрытия: контент стал короче, и позиция
-    /// прокрутки могла оказаться за его пределами.
+    /// Clamps `contentOffset` after closing: the content became shorter, and the scroll
+    /// position could end up beyond its bounds.
     private func clampContentOffsetAfterCollapse() {
         let maximumY = max(0, contentSize.height - collectionView.bounds.height)
         let offset = collectionView.contentOffset
@@ -3188,17 +3180,17 @@ public final class TesseraTileGridView: UIView {
         )
     }
 
-    /// Сообщает видимой ячейке папки о раскрытии/закрытии (D17).
+    /// Tells the visible folder cell about expansion/closing (D17).
     ///
     /// - Parameters:
-    ///   - expanded: Раскрыта ли папка.
-    ///   - id: Идентификатор папки.
+    ///   - expanded: Whether the folder is expanded.
+    ///   - id: The folder identifier.
     private func setFolderCellExpanded(_ expanded: Bool, forItemID id: AnyHashable) {
         guard let cell = cellView(forItemID: id) as? TesseraTileCell else { return }
         cell.setFolderExpanded(expanded)
     }
 
-    /// Долгое нажатие: сообщает элемент и точку старта, дальше ведёт хост.
+    /// Long press: reports the item and the start point; the host drives it from there.
     @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
         guard recognizer.state == .began, onLongPress != nil else { return }
 
@@ -3207,7 +3199,7 @@ public final class TesseraTileGridView: UIView {
         onLongPress?(item, point)
     }
 
-    /// §9, Dynamic Type: пересобрать шрифты видимых ячеек и панели папки.
+    /// Dynamic Type: rebuild the fonts of visible cells and of the folder panel.
     @objc private func contentSizeCategoryDidChange() {
         for indexPath in collectionView.indexPathsForVisibleItems {
             if let tileCell = collectionView.cellForItem(at: indexPath) as? TesseraTileCell {
@@ -3218,7 +3210,7 @@ public final class TesseraTileGridView: UIView {
         }
     }
 
-    /// §9: VoiceOver «два пальца влево»/Back закрывают раскрытую папку (D17).
+    /// VoiceOver "two-finger scrub"/Back closes the expanded folder (D17).
     public override func accessibilityPerformEscape() -> Bool {
         guard expandedFolderID != nil else {
             return super.accessibilityPerformEscape()
@@ -3227,8 +3219,8 @@ public final class TesseraTileGridView: UIView {
         return true
     }
 
-    /// §9, RTL: направление чтения изменилось — пересчитать раскладку и
-    /// зеркалирование содержимого ячеек.
+    /// RTL: the reading direction changed — recompute the layout and
+    /// the mirroring of cell content.
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
 
@@ -3236,10 +3228,10 @@ public final class TesseraTileGridView: UIView {
             return
         }
 
-        // Раскладка сама заметит смену направления в `shouldInvalidateLayout`,
-        // но UICollectionView не обязан её опрашивать при смене trait'ов,
-        // поэтому инвалидируем явно. Пересчёт заодно переконфигурирует ячейки
-        // (иконка и бэйдж зеркалятся по направлению чтения).
+        // The layout itself notices the direction change in `shouldInvalidateLayout`,
+        // but UICollectionView is not obliged to query it on trait changes,
+        // so invalidate explicitly. The recomputation also reconfigures the cells
+        // (the icon and badge are mirrored by reading direction).
         invalidateTileLayout(animated: false)
     }
 }
@@ -3248,14 +3240,14 @@ public final class TesseraTileGridView: UIView {
 
 extension TesseraTileGridView: UIGestureRecognizerDelegate {
 
-    /// Разрешает координатору редактирования (E4.4) вести свой жест
-    /// перетаскивания одновременно с долгим нажатием сетки.
+    /// Allows the edit coordinator to run its own drag gesture
+    /// simultaneously with the grid's long press.
     ///
-    /// Одновременность разрешена только жестам на самой сетке или её коллекции
-    /// (туда координатор и добавляет pan перетаскивания). С прокруткой сетки
-    /// одновременность запрещена: иначе длинное нажатие срабатывало бы во время
-    /// обычного скролла; с панорамным пейджером-родителем (E4.1) — тоже, иначе
-    /// арбитраж осей в Core получил бы два активных жеста.
+    /// Simultaneity is allowed only for gestures on the grid itself or its collection
+    /// (that is where the coordinator adds the drag pan). With grid scrolling
+    /// simultaneity is forbidden: otherwise the long press would fire during
+    /// ordinary scrolling; with a panorama pager parent it is too, otherwise the
+    /// axis arbitration in Core would get two active gestures.
     public func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
@@ -3264,8 +3256,8 @@ extension TesseraTileGridView: UIGestureRecognizerDelegate {
         return otherGestureRecognizer.view === self || otherGestureRecognizer.view === collectionView
     }
 
-    /// Долгое нажатие по имени папки (E15.5) принадлежит заголовку панели, а не
-    /// сетке; тап по самому полю во время правки не считается тапом «по фону».
+    /// A long press on a folder name belongs to the panel title, not to the
+    /// grid; a tap on the field itself during editing does not count as a "background" tap.
     public func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
         shouldReceive touch: UITouch
@@ -3284,7 +3276,7 @@ extension TesseraTileGridView: UIGestureRecognizerDelegate {
 
 extension TesseraTileGridView: UICollectionViewDataSource {
 
-    /// Число элементов в коллекции: снимок плюс панель раскрытой папки (D17).
+    /// Number of items in the collection: the snapshot plus the expanded folder's panel (D17).
     public func collectionView(
         _ collectionView: UICollectionView,
         numberOfItemsInSection section: Int
@@ -3292,16 +3284,16 @@ extension TesseraTileGridView: UICollectionViewDataSource {
         displayItems.count
     }
 
-    /// Ячейка ярлыка, папки или панели раскрытой папки.
+    /// The cell of a tile, a folder, or an expanded folder's panel.
     ///
-    /// Содержимое плитки готовит ``configure(_:with:isVisible:)``: статичные
-    /// иконка, заголовок и бэйдж либо live-контейнер, если у ярлыка есть
-    /// ``TesseraTileDescriptor/liveContent``. Регистрация live-плитки в движке
-    /// выполняется на `willDisplay`, а не здесь: ячейка, подготовленная для
-    /// prefetch, может так и не появиться на экране.
+    /// The tile content is prepared by ``configure(_:with:isVisible:)``: a static
+    /// icon, title and badge, or a live container if the tile has
+    /// ``TesseraTileDescriptor/liveContent``. Registering a live tile in the engine
+    /// happens in `willDisplay`, not here: a cell prepared for
+    /// prefetch may never appear on screen.
     ///
-    /// Панель раскрытой папки (D17) — отдельный тип ячейки: она не перехватывает
-    /// тапы сетки и рисует заголовок с сеткой ярлыков в колонках рабочего стола.
+    /// The expanded folder's panel (D17) is a separate cell type: it does not intercept
+    /// grid taps and draws the title with a grid of tiles in the desktop columns.
     public func collectionView(
         _ collectionView: UICollectionView,
         cellForItemAt indexPath: IndexPath
@@ -3335,21 +3327,21 @@ extension TesseraTileGridView: UICollectionViewDataSource {
     }
 }
 
-// MARK: - Допуск смещения тапа (E12.7)
+// MARK: - Tap movement tolerance
 
-/// Пассивный распознаватель: запоминает, ушло ли касание дальше допуска тапа.
+/// A passive recognizer: remembers whether the touch moved beyond the tap tolerance.
 ///
-/// Никогда не распознаётся, не задерживает и не отменяет касания и не мешает
-/// остальным жестам коллекции — только считает смещение от точки касания (в
-/// координатах окна, чтобы прокрутка контента не искажала расстояние). Признак
-/// сбрасывается в начале следующего касания и остаётся после его завершения:
-/// `didSelectItemAt` приходит на отпускании, когда признак уже выставлен.
+/// It never recognizes, never delays or cancels touches and does not interfere with the
+/// other collection gestures — it only counts the offset from the touch-down point (in
+/// window coordinates, so content scrolling does not distort the distance). The flag
+/// is reset at the start of the next touch and persists after it ends:
+/// `didSelectItemAt` arrives on release, when the flag is already set.
 final class TesseraTileTapSlopRecognizer: UIGestureRecognizer {
 
-    /// Допуск смещения в точках — как у системного тапа.
+    /// The movement tolerance in points — the same as the system tap.
     static let slop: CGFloat = 10
 
-    /// Ушло ли последнее касание дальше допуска.
+    /// Whether the last touch moved beyond the tolerance.
     var exceededSlop = false
 
     private var startPoint: CGPoint = .zero
@@ -3387,12 +3379,12 @@ final class TesseraTileTapSlopRecognizer: UIGestureRecognizer {
 
 extension TesseraTileGridView: UICollectionViewDelegate {
 
-    /// Можно ли выбрать элемент коллекции.
+    /// Whether a collection item can be selected.
     ///
-    /// Панель раскрытой папки — представление, а не элемент модели (D17):
-    /// выбор по ней не нужен. Жест самой панели уже обработал попадание в
-    /// ярлык или закрытие по фону, а лишний `didSelect` после закрытия мог бы
-    /// прийти по индексу, где панели уже нет, и сработать по чужому элементу.
+    /// The expanded folder's panel is a presentation, not a model item (D17):
+    /// selection on it is not needed. The panel's own gesture has already handled a hit on a
+    /// tile or a close on the background, and an extra `didSelect` after closing could
+    /// arrive at an index where the panel no longer exists and trigger on someone else's item.
     public func collectionView(
         _ collectionView: UICollectionView,
         shouldSelectItemAt indexPath: IndexPath
@@ -3401,15 +3393,15 @@ extension TesseraTileGridView: UICollectionViewDelegate {
         return !item.isFolderPanel
     }
 
-    /// Тап по элементу: маршрутизация в ``handleItemTap(_:)`` (D12, D17).
+    /// A tap on an item: routing to ``handleItemTap(_:)`` (D12, D17).
     public func collectionView(
         _ collectionView: UICollectionView,
         didSelectItemAt indexPath: IndexPath
     ) {
         collectionView.deselectItem(at: indexPath, animated: false)
 
-        // E12.7: касание, ушедшее дальше допуска, — не тап (длинный свайп,
-        // который не забрал ни пан сетки, ни пейджер).
+        // A touch that moved beyond the tolerance is not a tap (a long swipe
+        // that neither the grid's pan nor the pager took).
         guard !tapSlopRecognizer.exceededSlop else { return }
 
         guard let item = displayItem(atIndex: indexPath.item),
@@ -3419,16 +3411,16 @@ extension TesseraTileGridView: UICollectionViewDelegate {
         handleItemTap(item)
     }
 
-    /// Показ ячейки: регистрирует live-плитку в движке и возвращает скрытое
-    /// состояние после переиспользования.
+    /// Cell display: registers a live tile in the engine and restores the hidden
+    /// state after reuse.
     ///
-    /// Регистрация именно здесь, а не в `cellForItemAt`: UICollectionView
-    /// сообщает о фактическом появлении ячейки на экране, включая возврат
-    /// после прокрутки. Один движок на сетку при этом не пересоздаётся — он
-    /// лишь получает контейнер и провайдера.
+    /// Registration happens here, not in `cellForItemAt`: UICollectionView
+    /// reports the actual appearance of a cell on screen, including a return
+    /// after scrolling. The single grid engine is not recreated by this — it
+    /// only receives the container and the provider.
     ///
-    /// Панель раскрытой папки каскад здесь не запускает: анимация принадлежит
-    /// открытию папки, иначе прокрутка повторяла бы её на каждом показе.
+    /// The expanded folder's panel does not start the cascade here: the animation belongs
+    /// to the folder opening, otherwise scrolling would repeat it on every display.
     public func collectionView(
         _ collectionView: UICollectionView,
         willDisplay cell: UICollectionViewCell,
@@ -3436,8 +3428,8 @@ extension TesseraTileGridView: UICollectionViewDelegate {
     ) {
         guard let item = displayItem(atIndex: indexPath.item) else { return }
 
-        // E10.2: у панели папки шрифт заголовка тоже пересобирается на показе —
-        // категория Dynamic Type могла смениться, пока ячейка была вне экрана.
+        // The panel's title font is also rebuilt on display —
+        // the Dynamic Type category may have changed while the cell was off-screen.
         if let panelCell = cell as? TesseraFolderPanelCell, item.isFolderPanel {
             configure(panelCell, with: item)
             panelCell.refreshTypography()
@@ -3448,80 +3440,80 @@ extension TesseraTileGridView: UICollectionViewDelegate {
             return
         }
         configure(tileCell, with: item, isVisible: true)
-        // Динамический шрифт мог смениться, пока ячейка была вне экрана
-        // (например, в prefetch): пересобираем метрики на показе.
+        // The dynamic font may have changed while the cell was off-screen
+        // (for example, in prefetch): rebuild the metrics on display.
         tileCell.refreshTypography()
     }
 
-    /// Уход ячейки с экрана: live-плитка ставится на паузу (§4, «Паузы»).
+    /// The cell leaves the screen: a live tile is paused (§4, "Pauses").
     ///
-    /// Движок сбрасывает незавершённый флип и не планирует новые, но
-    /// сохраняет подписку провайдера и состояние сторон — возврат на экран не
-    /// требует перерегистрации. Регистрацию окончательно снимает
-    /// `prepareForReuse`, как требует контракт движка.
+    /// The engine discards an unfinished flip and schedules no new ones, but
+    /// keeps the provider subscription and the state of the faces — returning to the screen does not
+    /// require re-registration. Registration is finally removed by
+    /// `prepareForReuse`, as the engine contract requires.
     public func collectionView(
         _ collectionView: UICollectionView,
         didEndDisplaying cell: UICollectionViewCell,
         forItemAt indexPath: IndexPath
     ) {
         guard let tileCell = cell as? TesseraTileCell else { return }
-        // UIKit может вызвать метод уже после переиспользования ячейки: если
-        // она снова в коллекции, пауза относилась бы к другой (новой) плите.
+        // UIKit may call this after the cell has already been reused: if
+        // it is back in the collection, the pause would apply to another (new) tile.
         guard collectionView.indexPath(for: cell) == nil else { return }
         tileCell.setLiveTileVisible(false)
     }
 
-    /// Прокрутка сетки: наружу отдаётся только offset — никакого layout
+    /// Grid scrolling: only the offset is passed outward — no layout
     /// (§3, §8, CORE-IOS-DESIGN.md §2).
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
         onScrollOffsetChanged?(scrollView.contentOffset)
     }
 }
 
-// MARK: - Ячейка сетки
+// MARK: - Grid cell
 
-/// Ячейка ярлыка или папки.
+/// The cell of a tile or folder.
 ///
-/// Одна ячейка на оба вида элементов: у ярлыка и папки одинаковый каркас
-/// (иконка + заголовок в квадрате), различаются только содержимое и наличие
-/// бэйджа. Это упрощает переиспользование, когда на месте ярлыка появляется
-/// папка (D14: создание папки из ярлыка) — тип ячейки не меняется.
+/// One cell for both kinds of items: a tile and a folder have the same skeleton
+/// (icon + title in a square), differing only in content and the presence of a
+/// badge. This simplifies reuse when a folder appears in place of a tile
+/// (D14: folder creation from a tile) — the cell type does not change.
 ///
-/// Ячейка не знает про layout: рамку задаёт раскладка, содержимое —
-/// ``configure(with:liveTileEngine:isVisible:)``. В горячем пути скролла она не
-/// участвует.
+/// The cell knows nothing about layout: the layout sets the frame, and
+/// ``configure(with:liveTileEngine:isVisible:)`` sets the content. It does not take part
+/// in the hot scroll path.
 ///
-/// ## Live-контент (§4, D15)
+/// ## Live content (§4, D15)
 ///
-/// Если у ярлыка задан ``TesseraTileDescriptor/liveContent``, статичные подвиды
-/// (иконка, заголовок, бэйдж) уступают место ``TesseraLiveTileView``: он
-/// рисует фронт и бэк, а его бэйдж живёт поверх сторон и не участвует во
-/// флипе. Контейнер создаётся один раз и переиспользуется вместе с ячейкой —
-/// пересоздание на каждом reuse сбрасывало бы флип и подписку провайдера.
-/// Расписание флипов ведёт движок сетки, ячейка лишь сообщает ему видимость.
+/// If a tile has ``TesseraTileDescriptor/liveContent``, the static subviews
+/// (icon, title, badge) give way to ``TesseraLiveTileView``: it
+/// draws the front and back, and its badge lives above the faces and does not take part in the
+/// flip. The container is created once and reused with the cell —
+/// recreating it on every reuse would reset the flip and the provider subscription.
+/// The engine of the grid drives the flip schedule; the cell only reports its visibility to it.
 final class TesseraTileCell: UICollectionViewCell {
 
-    /// Идентификатор элемента, который сейчас показан.
+    /// The identifier of the item currently shown.
     private(set) var itemID: AnyHashable?
 
-    /// Действие VoiceOver-активации (§9).
+    /// The VoiceOver activation action (§9).
     ///
-    /// Сетка подписывает замыкание при конфигурации ячейки: двойной тап
-    /// VoiceOver попадает в accessibility-элемент плитки, а не в
+    /// The grid sets the closure when configuring the cell: the VoiceOver double tap
+    /// lands on the tile's accessibility element, not on
     /// `collectionView(_:didSelectItemAt:)`.
     var onActivate: (() -> Void)?
 
-    /// Переименование папки (E15.5, D35): сетка задаёт замыкание у плитки папки,
-    /// пока у неё есть обработчик переименования. Не `nil` — у ячейки-папки есть
-    /// действие VoiceOver «Переименовать».
+    /// Folder rename (D35): the grid sets the closure on a folder tile
+    /// while it has a rename handler. When not `nil`, a folder cell has the
+    /// VoiceOver "Rename" action.
     var onRename: (() -> Void)?
 
-    /// Показывает ли ячейка сейчас папку (а не ярлык): действие
-    /// «Переименовать» есть только у папки.
+    /// Whether the cell currently shows a folder (not a tile): the
+    /// "Rename" action exists only for a folder.
     private var showsFolderItem = false
 
-    /// Действия, выставленные координатором редактирования (resize, unpin, «в
-    /// папку»); к ним в ``accessibilityCustomActions`` добавляется «Переименовать».
+    /// Actions set by the edit coordinator (resize, unpin, "into
+    /// folder"); "Rename" is added to them in ``accessibilityCustomActions``.
     private var assignedCustomActions: [UIAccessibilityCustomAction]?
 
     private lazy var renameAction = UIAccessibilityCustomAction(
@@ -3533,9 +3525,9 @@ final class TesseraTileCell: UICollectionViewCell {
         return true
     }
 
-    /// Custom actions ячейки: заданные снаружи плюс «Переименовать» у папки с
-    /// обработчиком. Редактор по-прежнему назначает и снимает **свои** действия
-    /// (`= nil` не стирает «Переименовать»): оно доступно и вне правки (D35).
+    /// The cell's custom actions: the externally set ones plus "Rename" for a folder with a
+    /// handler. The editor still assigns and removes **its own** actions
+    /// (`= nil` does not erase "Rename"): it is available outside editing too (D35).
     override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
         get {
             var actions = assignedCustomActions ?? []
@@ -3552,121 +3544,121 @@ final class TesseraTileCell: UICollectionViewCell {
     private let iconView = UIImageView()
     private let titleLabel = UILabel()
 
-    /// Бэйдж ярлыка — отдельный view поверх плитки (§4).
+    /// A tile's badge is a separate view above the tile (§4).
     ///
-    /// Переиспользуется готовый ``TesseraLiveTileBadgeView`` из E4.3: он уже
-    /// умеет точку/счётчик, «99+», Dynamic Type и не входит во флип. В
-    /// live-режиме его заменяет бэйдж ``TesseraLiveTileView``.
+    /// The ready-made ``TesseraLiveTileBadgeView`` is reused: it already
+    /// supports a dot/counter, "99+" and Dynamic Type and is not part of the flip. In
+    /// live mode it is replaced by the ``TesseraLiveTileView`` badge.
     private let badgeView = TesseraLiveTileBadgeView()
 
-    /// Контейнер живой плитки; `nil` — ячейка ещё не встречала live-контент.
+    /// The live tile container; `nil` means the cell has not yet seen live content.
     private(set) var liveTileView: TesseraLiveTileView?
 
-    /// Показывает ли ячейка сейчас live-контент.
+    /// Whether the cell currently shows live content.
     private var showsLiveContent = false
 
-    /// Превью закрытой папки — мини-сетка 2×2 с idle-флипом (D17).
+    /// The closed folder preview — a 2×2 mini-grid with an idle flip (D17).
     ///
-    /// Создаётся лениво: у ярлыка и у пустой папки превью нет. View живёт
-    /// вместе с ячейкой и переиспользуется, чтобы фаза флипа не начиналась
-    /// заново при каждом появлении на экране.
+    /// Created lazily: a tile and an empty folder have no preview. The view lives
+    /// with the cell and is reused so the flip phase does not restart
+    /// every time it appears on screen.
     private(set) var folderPreviewView: TesseraFolderPreviewView?
 
-    /// Показывает ли ячейка сейчас превью папки, а не одиночную иконку.
+    /// Whether the cell currently shows a folder preview rather than a single icon.
     private var showsFolderPreview = false
 
-    /// Раскрыта ли папка (D17, E7.3).
+    /// Whether the folder is expanded (D17).
     ///
-    /// Саму панель раскрытия рисует сетка/хост, а не ячейка: ячейке достаточно
-    /// поставить превью на паузу и скрыть мини-ярлыки 2×2, пока панель открыта.
-    /// Подложка и заголовок плитки остаются — панель встаёт под плиткой, а не
-    /// вместо неё.
+    /// The expansion panel itself is drawn by the grid/host, not by the cell: the cell only needs to
+    /// pause the preview and hide the 2×2 mini-tiles while the panel is open.
+    /// The tile's backing and title stay — the panel sits below the tile, not
+    /// in place of it.
     private var isFolderExpanded = false
 
-    /// Движок, в котором зарегистрирован ``liveTileView``.
+    /// The engine in which ``liveTileView`` is registered.
     ///
-    /// Ссылка слабая: владелец движка — сетка. При `nil` (сетка уже
-    /// освободилась) снимать регистрацию не с кого, и это безопасно.
+    /// The reference is weak: the grid owns the engine. With `nil` (the grid has already
+    /// been released) there is nothing to unregister from, and that is safe.
     private weak var liveTileEngine: TesseraLiveTileEngine?
 
-    /// Провайдер, с которым контейнер зарегистрирован в движке.
+    /// The provider with which the container is registered in the engine.
     ///
-    /// Нужен, чтобы при повторной конфигурации не пересоздавать подписку:
-    /// тот же провайдер — только обновление видимости и бэйджа.
+    /// Needed so that reconfiguring does not recreate the subscription:
+    /// the same provider — only the visibility and badge are updated.
     private weak var registeredLiveProvider: TesseraLiveTileContentProvider?
 
-    /// Зарегистрирован ли ``liveTileView`` в ``liveTileEngine``.
+    /// Whether ``liveTileView`` is registered in ``liveTileEngine``.
     private var isLiveRegistered = false
 
-    /// bucket размера, для которого собран шрифт (0 — компактные плитки,
-    /// 1 — средние, 2 — крупные; границы — по фактической стороне).
+    /// The size bucket for which the font was built (0 — compact tiles,
+    /// 1 — medium, 2 — large; the boundaries are by the actual side).
     private var titleFontBucket = -1
 
-    /// Потолок размера шрифта заголовка (pt), для которого он собран (E12.6).
+    /// The cap of the title font size (pt) for which it was built.
     private var titleFontCap: CGFloat = 0
 
-    /// Категория Dynamic Type, для которой собран шрифт заголовка (E12.6).
+    /// The Dynamic Type category for which the title font was built.
     private var titleFontCategory: UIContentSizeCategory?
 
-    /// Шрифт заголовка до подгонки под ширину плитки (E12.6).
+    /// The title font before fitting to the tile width.
     ///
-    /// `titleLabel.font` в раскладке может быть уменьшен, чтобы самое длинное
-    /// слово влезло в строку целиком; от этого эталона уменьшение считается
-    /// заново при каждой раскладке.
+    /// `titleLabel.font` may be reduced in the layout so that the longest
+    /// word fits on a line whole; the reduction is recomputed from this reference
+    /// on every layout.
     private var titleBaseFont = UIFont.systemFont(ofSize: 12, weight: .semibold)
 
-    /// Нижняя граница подгонки шрифта заголовка под ширину (доля от базового).
+    /// The lower bound of fitting the title font to the width (a fraction of the base size).
     ///
-    /// Ниже — текст нечитаем: тогда заголовок остаётся в одну строку и
-    /// усекается многоточием, но не рвётся посреди слова.
+    /// Below it the text is unreadable: then the title stays on one line and
+    /// is truncated with an ellipsis, but is not broken mid-word.
     static let titleMinimumScaleFactor: CGFloat = 0.6
 
-    /// Доля меньшей стороны плитки, выше которой шрифт заголовка не растёт
-    /// при увеличении Dynamic Type (E12.6): подпись не должна съедать плитку.
+    /// The fraction of the tile's shorter side above which the title font does not grow
+    /// as Dynamic Type increases: the caption must not eat up the tile.
     static let titleFontSideFraction: CGFloat = 0.2
 
-    /// Целевая прозрачность содержимого в режиме редактирования (E8.2, E10.4).
+    /// The target content alpha in edit mode.
     ///
-    /// Владелец дима — сетка: она передаёт сюда целевое значение
-    /// (`TesseraTileGridView.setEditDimming(_:animated:)`), а ячейка лишь
-    /// хранит его и не сбрасывает в ``configure(with:liveTileEngine:isVisible:isFolderExpanded:)``.
+    /// The grid owns the dimming: it passes the target value here
+    /// (`TesseraTileGridView.setEditDimming(_:animated:)`), and the cell only
+    /// stores it and does not reset it in ``configure(with:liveTileEngine:isVisible:isFolderExpanded:)``.
     private var dimmingAlpha: CGFloat = 1
 
-    /// Скрыта ли ячейка координатором на время drag (E4.4).
+    /// Whether the coordinator hid the cell during a drag.
     ///
-    /// Скрытие сильнее дима: `contentView.alpha` = 0, пока флаг включён.
+    /// Hiding overrides the dimming: `contentView.alpha` = 0 while the flag is on.
     private var isSourceHidden = false
 
-    /// Ярлык в модели — малый (1×1, ``TesseraTileSize/small``), D47.
+    /// The tile in the model is small (1×1, ``TesseraTileSize/small``), D47.
     ///
-    /// Малая плитка с видимым бэйджем и иконкой показывает иконку и бэйдж без
-    /// подписи (``TesseraTileBadgeLayout/Arrangement/iconAndBadge``). Признак
-    /// берётся из модели, а не из геометрии: на любой ширине сетки малая плитка
-    /// ведёт себя одинаково, а 2×2 и больше не затрагиваются. Выставляет
-    /// `configure`; у папки и переиспользованной ячейки — `false`.
+    /// A small tile with a visible badge and an icon shows the icon and badge without a
+    /// caption (``TesseraTileBadgeLayout/Arrangement/iconAndBadge``). The flag
+    /// comes from the model, not from geometry: at any grid width a small tile
+    /// behaves the same, and 2×2 and larger are unaffected. Set by
+    /// `configure`; for a folder and a reused cell — `false`.
     private(set) var isSmallTile = false
 
-    /// Папка в модели — малая (1×1, ``TesseraTileSize/small``), E15.7.
+    /// The folder in the model is small (1×1, ``TesseraTileSize/small``).
     ///
-    /// Малая папка с видимым бэйджем не рисует подпись (как малая плитка с
-    /// иконкой, D47): мини-сетка превью стоит над рядом бэйджа, бэйдж — в
-    /// нижнем углу. Без бэйджа и у папок 2×2 и больше раскладка прежняя.
-    /// Выставляет `configure`; у ярлыка и переиспользованной ячейки — `false`.
+    /// A small folder with a visible badge draws no caption (like a small tile with an
+    /// icon, D47): the preview mini-grid sits above the badge row, and the badge is in the
+    /// bottom corner. Without a badge, and for 2×2 and larger folders, the layout is as before.
+    /// Set by `configure`; for a tile and a reused cell — `false`.
     private var isSmallFolder = false
 
-    /// Текстовая часть `accessibilityValue` плитки-папки для бэйджа-агрегата
-    /// (D44, E15.7): число для суммы, «есть уведомление» для точки; `nil` —
-    /// бэйджа нет.
+    /// The text part of a folder tile's `accessibilityValue` for the aggregate badge
+    /// (D44): a number for a sum, "has notification" for a dot; `nil` means
+    /// no badge.
     private var folderAccessibilityBadgeText: String?
 
-    /// Текстовая часть `accessibilityValue` для плитки-папки без состояния
-    /// раскрытия (число ярлыков), E10.2.
+    /// The text part of `accessibilityValue` for a folder tile without the expansion
+    /// state (the tile count).
     ///
-    /// Хранится отдельно, чтобы ``setFolderExpanded(_:)`` мог добавить к числу
-    /// состояние «раскрыта», не теряя существующее value.
+    /// Stored separately so that ``setFolderExpanded(_:)`` can add the "expanded"
+    /// state to the count without losing the existing value.
     private var folderAccessibilityCountText: String?
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -3679,21 +3671,21 @@ final class TesseraTileCell: UICollectionViewCell {
     }
 
     deinit {
-        // Страховка на случай перезагрузки коллекции без `prepareForReuse`:
-        // движок удерживает контейнер и провайдера, поэтому исчезнувшая
-        // ячейка обязана снять свою регистрацию.
+        // A safeguard for the case of a collection reload without `prepareForReuse`:
+        // the engine retains the container and the provider, so a vanished
+        // cell must remove its own registration.
         if isLiveRegistered, let liveTileView {
             liveTileEngine?.unregister(liveTileView)
         }
     }
 
-    /// Общая настройка: квадратная плитка, один accessibility-элемент (§9).
+    /// Shared setup: a square tile, one accessibility element (§9).
     private func setUp() {
         backgroundColor = .clear
         contentView.backgroundColor = .secondarySystemBackground
         contentView.clipsToBounds = true
 
-        // §9: плитка — один элемент; иконка, заголовок и бэйдж — её части.
+        // §9: a tile is one element; the icon, title and badge are its parts.
         isAccessibilityElement = true
         accessibilityTraits = .button
 
@@ -3706,15 +3698,15 @@ final class TesseraTileCell: UICollectionViewCell {
         titleLabel.textAlignment = .natural
         titleLabel.textColor = .label
         titleLabel.isAccessibilityElement = false
-        // Шрифт собирается вручную в `updateTitleFontIfNeeded()`: сетка
-        // оповещает ячейки о смене категории (см. `refreshTypography()`),
-        // поэтому автоматическое масштабирование UILabel отключено — иначе
-        // масштаб применился бы дважды.
+        // The font is built manually in `updateTitleFontIfNeeded()`: the grid
+        // notifies cells of a category change (see `refreshTypography()`),
+        // so UILabel automatic scaling is disabled — otherwise the
+        // scale would be applied twice.
         titleLabel.adjustsFontForContentSizeCategory = false
 
         contentView.addSubview(iconView)
         contentView.addSubview(titleLabel)
-        // Бэйдж последним: он должен быть выше иконки и заголовка.
+        // The badge goes last: it must sit above the icon and the title.
         contentView.addSubview(badgeView)
 
         badgeView.onBadgeChange = { [weak self] in
@@ -3722,22 +3714,22 @@ final class TesseraTileCell: UICollectionViewCell {
         }
     }
 
-    // MARK: - Содержимое
+    // MARK: - Content
 
-    /// Применяет элемент сетки.
+    /// Applies a grid item.
     ///
-    /// Статичная плитка и папка рисуются как раньше (иконка + заголовок +
-    /// бэйдж). Если у ярлыка есть ``TesseraTileDescriptor/liveContent``, содержимое
-    /// отдаётся ``TesseraLiveTileView`` и регистрируется в движке.
+    /// A static tile and a folder are drawn as before (icon + title +
+    /// badge). If a tile has ``TesseraTileDescriptor/liveContent``, the content
+    /// is handed to ``TesseraLiveTileView`` and registered in the engine.
     ///
     /// - Parameters:
-    ///   - item: Ярлык или папка из снимка `TesseraTileStore`.
-    ///   - engine: Движок live-плиток. `nil` — ячейка только готовится к показу
-    ///     (`cellForItemAt`): стороны отрисовываются без расписания флипов.
-    ///   - isVisible: Видима ли ячейка сейчас; движок не флипает невидимые
-    ///     плитки (§4, «Паузы»).
-    ///   - isFolderExpanded: Раскрыта ли эта папка панелью (D17): раскрытая
-    ///     папка ставит idle-флип превью на паузу. Для ярлыка не имеет значения.
+    ///   - item: A tile or folder from the `TesseraTileStore` snapshot.
+    ///   - engine: The live tile engine. `nil` means the cell is only being prepared for display
+    ///     (`cellForItemAt`): the faces are rendered without a flip schedule.
+    ///   - isVisible: Whether the cell is visible now; the engine does not flip invisible
+    ///     tiles (§4, "Pauses").
+    ///   - isFolderExpanded: Whether this folder is expanded by the panel (D17): an expanded
+    ///     folder pauses the preview idle flip. Irrelevant for a tile.
     func configure(
         with item: TesseraTileGridItem,
         liveTileEngine engine: TesseraLiveTileEngine?,
@@ -3775,15 +3767,15 @@ final class TesseraTileCell: UICollectionViewCell {
             endLiveContent()
             configureStaticFolder(folder, isVisible: isVisible)
             configureAccessibility(for: folder)
-            // D17: раскрытая папка ставит idle-флип превью на паузу, чтобы
-            // каскад иконок панели не спорил с переворотом мини-плиток.
+            // D17: an expanded folder pauses the preview idle flip so that the
+            // panel icon cascade does not compete with the mini-tile flip.
             setFolderExpanded(isFolderExpanded)
 
         case .folderContent(let folder):
-            // Панель раскрытой папки (E7.1) рисует волна 2 отдельным видом
-            // панели, а не ячейка плитки (D17, E7.3). Защитный запасной путь:
-            // только заголовок папки — ячейка не притворяется закрытой папкой
-            // с мини-сеткой и не запускает idle-флип.
+            // The expanded folder's panel is drawn by a separate panel view,
+            // not by the tile cell (D17). A defensive fallback path:
+            // only the folder title — the cell does not pretend to be a closed folder
+            // with a mini-grid and does not start the idle flip.
             endLiveContent()
             endFolderPreview()
             self.isFolderExpanded = false
@@ -3796,44 +3788,44 @@ final class TesseraTileCell: UICollectionViewCell {
             configureAccessibility(for: folder)
         }
 
-        // Размер мог измениться (resize, D15): шрифт пересоберётся в layout.
+        // The size may have changed (resize, D15): the font is rebuilt in layout.
         titleFontBucket = -1
         accessibilityElementsHidden = false
-        // E10.4: прозрачность не сбрасывается — ею владеет сетка (дим 0,7
-        // режима редактирования переживает обновление снимка и resize). Ячейка
-        // лишь применяет сохранённую цель.
+        // Alpha is not reset — the grid owns it (the 0.7 dimming of
+        // edit mode survives snapshot updates and resize). The cell
+        // only applies the stored target.
         updateContentAlpha()
         setNeedsLayout()
     }
 
-    /// Статичная плитка: иконка, заголовок и бэйдж ярлыка (прежнее поведение).
+    /// A static tile: the tile's icon, title and badge (the previous behavior).
     private func configureStaticTile(_ descriptor: TesseraTileDescriptor) {
         iconView.image = descriptor.icon
         iconView.tintColor = nil
         titleLabel.text = descriptor.title
         badgeView.badge = descriptor.badge
-        // После папки ячейка могла остаться в её раскладке: бэйдж возвращаем
-        // в иерархию (при `.none` он невидим сам по себе).
+        // After a folder the cell may have kept its layout: return the badge
+        // to the hierarchy (with `.none` it is invisible by itself).
         badgeView.isHidden = false
     }
 
-    /// Папка: мини-сетка содержимого либо иконка-превью/заглушка, заголовок и
-    /// бэйдж-агрегат (D44, E15.7).
+    /// A folder: a mini-grid of content or a preview icon/placeholder, a title and
+    /// the aggregate badge (D44).
     ///
-    /// Бэйдж папки — сумма числовых бэйджей её ярлыков (точка, если числовых
-    /// нет): ``TesseraTileFolder/aggregateBadge(of:)``. Считается здесь, при применении
-    /// снимка, а не в layout. Мини-иконки превью сохраняют свои бэйджи.
+    /// A folder's badge is the sum of the numeric badges of its tiles (a dot if there are
+    /// no numeric ones): ``TesseraTileFolder/aggregateBadge(of:)``. It is computed here, when applying
+    /// the snapshot, not in layout. Preview mini-icons keep their own badges.
     ///
-    /// Закрытая папка показывает до четырёх первых иконок ярлыков (D17): это
-    /// WP-превью содержимого вместо одиночной иконки. Пустая папка сохраняет
-    /// прежнее поведение — явную иконку-превью ``TesseraTileFolder/icon``, а без неё
-    /// заглушку `folder.fill`.
+    /// A closed folder shows up to the first four tile icons (D17): this is the
+    /// Windows Phone content preview instead of a single icon. An empty folder keeps
+    /// the previous behavior — the explicit preview icon ``TesseraTileFolder/icon``, or, without one,
+    /// the `folder.fill` placeholder.
     ///
     /// - Parameters:
-    ///   - folder: Модель папки.
-    ///   - isVisible: Видима ли ячейка: idle-флип превью идёт только на экране.
+    ///   - folder: The folder model.
+    ///   - isVisible: Whether the cell is visible: the preview idle flip runs only on screen.
     private func configureStaticFolder(_ folder: TesseraTileFolder, isVisible: Bool) {
-        // E12.7: папка без названия подписывается локализованным по умолчанию.
+        // A folder without a title is captioned with the localized default.
         titleLabel.text = folder.title.isEmpty
             ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
             : folder.title
@@ -3847,8 +3839,8 @@ final class TesseraTileCell: UICollectionViewCell {
                 iconView.image = icon
                 iconView.tintColor = nil
             } else {
-                // Иконка-заглушка папки; шаблонный символ красится в
-                // secondaryLabel и адаптируется к тёмной теме.
+                // The folder placeholder icon; the template symbol is tinted
+                // secondaryLabel and adapts to the dark theme.
                 iconView.image = UIImage(systemName: "folder.fill")
                 iconView.tintColor = .secondaryLabel
             }
@@ -3864,26 +3856,26 @@ final class TesseraTileCell: UICollectionViewCell {
         preview.setExpanded(isFolderExpanded)
         preview.setVisible(isVisible)
         showsFolderPreview = true
-        // D17: у раскрытой папки мини-ярлыки превью скрыты — плитка остаётся
-        // видимой подложкой с заголовком.
+        // D17: for an expanded folder the preview mini-tiles are hidden — the tile stays
+        // a visible backing with a title.
         updateFolderPreviewVisibility()
 
-        // Одиночная иконка уступает место мини-сетке; у её мини-плиток иконки
-        // свои, поэтому общая иконка ячейки не нужна.
+        // The single icon gives way to the mini-grid; its mini-tiles have
+        // their own icons, so the cell's shared icon is not needed.
         iconView.image = nil
         iconView.tintColor = nil
         iconView.isHidden = true
     }
 
-    // MARK: - Live-контент
+    // MARK: - Live content
 
-    /// Готовит live-сторону: контейнер, бэйдж и регистрация в движке.
+    /// Prepares the live side: the container, the badge and registration in the engine.
     ///
     /// - Parameters:
-    ///   - provider: Провайдер контента ярлыка.
-    ///   - badge: Бэйдж ярлыка (D12/D15) — рисуется контейнером поверх сторон.
-    ///   - engine: Движок сетки; `nil` — предпросмотр без расписания.
-    ///   - isVisible: Видима ли ячейка.
+    ///   - provider: The tile's content provider.
+    ///   - badge: The tile badge (D12/D15) — drawn by the container above the faces.
+    ///   - engine: The grid engine; `nil` means a preview without a schedule.
+    ///   - isVisible: Whether the cell is visible.
     private func configureLiveContent(
         provider: TesseraLiveTileContentProvider,
         badge: TesseraTileBadge,
@@ -3893,8 +3885,8 @@ final class TesseraTileCell: UICollectionViewCell {
         let liveView = liveTileView ?? makeLiveTileView()
         showsLiveContent = true
 
-        // Фронт/бэк и бэйдж рисует контейнер: статичные подвиды уступают ему
-        // место. Бэйдж контейнера не участвует во флипе (§4, D15).
+        // The container draws the front/back and the badge: the static subviews give
+        // way to it. The container badge does not take part in the flip (§4, D15).
         iconView.isHidden = true
         titleLabel.isHidden = true
         badgeView.isHidden = true
@@ -3904,8 +3896,8 @@ final class TesseraTileCell: UICollectionViewCell {
         liveView.badgeEditClearance = badgeEditClearance
 
         guard let engine else {
-            // Ячейка ещё не показана: стороны без регистрации, чтобы движок не
-            // планировал флипы для ячейки, которая может так и не появиться.
+            // The cell is not yet shown: faces without registration, so the engine does not
+            // schedule flips for a cell that may never appear.
             if !isLiveRegistered {
                 liveView.setFaces(front: provider.frontFace, back: provider.backFace)
                 liveView.show(.front, animated: false)
@@ -3921,11 +3913,11 @@ final class TesseraTileCell: UICollectionViewCell {
         )
     }
 
-    /// Регистрирует контейнер в движке либо, если провайдер тот же,
-    /// ограничивается обновлением видимости.
+    /// Registers the container in the engine or, if the provider is the same,
+    /// limits itself to updating visibility.
     ///
-    /// Повторная регистрация на каждом обновлении снимка не нужна: движок
-    /// удерживает провайдера и сам перечитывает стороны по подписке.
+    /// Re-registering on every snapshot update is not needed: the engine
+    /// retains the provider and re-reads the faces itself via the subscription.
     private func attachLiveContent(
         of provider: TesseraLiveTileContentProvider,
         to liveView: TesseraLiveTileView,
@@ -3934,7 +3926,7 @@ final class TesseraTileCell: UICollectionViewCell {
     ) {
         if isLiveRegistered,
            registeredLiveProvider !== provider || liveTileEngine !== engine {
-            // Провайдер или движок сменились: прежняя регистрация неактуальна.
+            // The provider or the engine changed: the previous registration is stale.
             liveTileEngine?.unregister(liveView)
             isLiveRegistered = false
         }
@@ -3947,19 +3939,19 @@ final class TesseraTileCell: UICollectionViewCell {
         }
 
         registeredLiveProvider = provider
-        // Новая регистрация всегда стартует с фронта: ячейка могла прийти из
-        // reuse на бэке (движок при `unregister` сторону не меняет), а фронт —
-        // устоявшееся состояние плитки (§4).
+        // A new registration always starts from the front: the cell may have come from
+        // reuse on the back (the engine does not change the face on `unregister`), and the front is
+        // the settled state of a tile (§4).
         liveView.show(.front, animated: false)
         engine.register(liveView, provider: provider, isVisible: isVisible)
         isLiveRegistered = true
     }
 
-    /// Создаёт контейнер живой плитки один раз на ячейку.
+    /// Creates the live tile container once per cell.
     ///
-    /// Контейнер не перехватывает касания и не является отдельным
-    /// accessibility-элементом: тап и озвучивание остаются за ячейкой (§9,
-    /// «плитка — один элемент»).
+    /// The container does not intercept touches and is not a separate
+    /// accessibility element: the tap and the spoken output stay with the cell (§9,
+    /// "a tile is one element").
     private func makeLiveTileView() -> TesseraLiveTileView {
         let liveView = TesseraLiveTileView(frame: contentView.bounds)
         liveView.isAccessibilityElement = false
@@ -3969,11 +3961,11 @@ final class TesseraTileCell: UICollectionViewCell {
         return liveView
     }
 
-    /// Снимает live-режим: регистрация в движке отменяется, статичные подвиды
-    /// возвращаются в раскладку.
+    /// Turns live mode off: the registration in the engine is cancelled, the static subviews
+    /// return to the layout.
     ///
-    /// Сам контейнер не уничтожается — он переиспользуется, если ярлык снова
-    /// окажется живым.
+    /// The container itself is not destroyed — it is reused if the tile becomes
+    /// live again.
     private func endLiveContent() {
         if isLiveRegistered, let liveTileView {
             liveTileEngine?.unregister(liveTileView)
@@ -3982,8 +3974,8 @@ final class TesseraTileCell: UICollectionViewCell {
         registeredLiveProvider = nil
         liveTileEngine = nil
         showsLiveContent = false
-        // Переиспользованная ячейка уходит в устоявшееся состояние: после
-        // `unregister` движок сторону не меняет, поэтому фронт выставляем сами.
+        // A reused cell goes to the settled state: after
+        // `unregister` the engine does not change the face, so set the front ourselves.
         liveTileView?.show(.front, animated: false)
         liveTileView?.isHidden = true
         badgeView.isHidden = false
@@ -3991,59 +3983,59 @@ final class TesseraTileCell: UICollectionViewCell {
         titleLabel.isHidden = false
     }
 
-    /// Ставит live-плитку и idle-флип папки на паузу или возобновляет их (§4).
+    /// Pauses or resumes a live tile and a folder's idle flip (§4).
     ///
-    /// Движок не флипает невидимую плитку и сбрасывает незавершённый флип, но
-    /// сохраняет подписку провайдера и состояние сторон — возврат на экран не
-    /// требует перерегистрации. Превью папки ведёт собственный таймер, но
-    /// пауза у него та же: вне экрана мини-иконки возвращаются к иконкам и не
-    /// переворачиваются (D17).
+    /// The engine does not flip an invisible tile and discards an unfinished flip, but
+    /// keeps the provider subscription and the state of the faces — returning to the screen does not
+    /// require re-registration. The folder preview runs its own timer, but
+    /// the pause is the same: off-screen the mini-icons return to icons and do not
+    /// flip (D17).
     ///
-    /// - Parameter visible: Видима ли ячейка на экране.
+    /// - Parameter visible: Whether the cell is on screen.
     func setLiveTileVisible(_ visible: Bool) {
         folderPreviewView?.setVisible(visible)
         guard isLiveRegistered, let liveTileView, let liveTileEngine else { return }
         liveTileEngine.setVisible(visible, for: liveTileView)
     }
 
-    /// Сообщает ячейке, что папка раскрыта панелью (D17, E7.3).
+    /// Tells the cell that the folder is expanded by the panel (D17).
     ///
-    /// Раскрытие рисует панель сетки, а не ячейка: ячейка ставит превью на
-    /// паузу (idle-флип не должен спорить с каскадом иконок панели) и прячет
-    /// мини-ярлыки 2×2, оставляя подложку и заголовок плитки. Закрытие папки
-    /// возвращает превью в расписание (если ячейка видима) и показывает
-    /// мини-ярлыки снова.
+    /// The expansion is drawn by the grid's panel, not by the cell: the cell pauses the preview
+    /// (the idle flip must not compete with the panel icon cascade) and hides the
+    /// 2×2 mini-tiles, leaving the tile's backing and title. Closing the folder
+    /// returns the preview to the schedule (if the cell is visible) and shows the
+    /// mini-tiles again.
     ///
-    /// Состояние хранится флагом, а не только у превью: ячейка
-    /// переиспользуется, и `configure(with:isFolderExpanded:)` применяет флаг
-    /// заново при каждом показе, поэтому чужая папка не унаследует скрытое или
-    /// показанное превью.
+    /// The state is stored as a flag, not only on the preview: the cell
+    /// is reused, and `configure(with:isFolderExpanded:)` reapplies the flag
+    /// on every display, so another folder does not inherit a hidden or
+    /// shown preview.
     ///
-    /// - Parameter expanded: Раскрыта ли папка этим элементом сетки.
+    /// - Parameter expanded: Whether the folder is expanded by this grid item.
     func setFolderExpanded(_ expanded: Bool) {
         isFolderExpanded = expanded
         folderPreviewView?.setExpanded(expanded)
         updateFolderPreviewVisibility()
-        // E10.2: состояние «раскрыта» должно озвучиваться VoiceOver. Число
-        // ярлыков в value сохраняется, к нему добавляется состояние.
+        // The "expanded" state must be announced by VoiceOver. The tile
+        // count in the value is kept, and the state is appended to it.
         updateFolderAccessibilityValue()
     }
 
-    /// Показывает мини-ярлыки превью только у закрытой папки (D17).
+    /// Shows the preview mini-tiles only for a closed folder (D17).
     ///
-    /// Скрывается именно блок мини-иконок 2×2 (`TesseraFolderPreviewView`), а не
-    /// вся ячейка: подложка и заголовок остаются. `isHidden` надёжнее `alpha`:
-    /// он исключает превью из отрисовки и hit-теста, а неявные анимации
-    /// переиспользованной ячейки не могут вернуть ему видимость.
+    /// The 2×2 mini-icon block (`TesseraFolderPreviewView`) is hidden, not
+    /// the whole cell: the backing and the title stay. `isHidden` is more reliable than `alpha`:
+    /// it excludes the preview from rendering and hit testing, and implicit animations
+    /// of a reused cell cannot make it visible again.
     private func updateFolderPreviewVisibility() {
         folderPreviewView?.isHidden = !showsFolderPreview || isFolderExpanded
     }
 
-    /// Создаёт превью папки один раз на ячейку.
+    /// Creates the folder preview once per cell.
     ///
-    /// Превью не перехватывает касания и не является accessibility-элементом:
-    /// папка остаётся одним элементом VoiceOver (§9). Слой — под заголовком,
-    /// чтобы текст папки всегда читался поверх сетки иконок.
+    /// The preview does not intercept touches and is not an accessibility element:
+    /// the folder stays one VoiceOver element (§9). The layer is under the title,
+    /// so the folder text always reads on top of the icon grid.
     private func makeFolderPreviewView() -> TesseraFolderPreviewView {
         let preview = TesseraFolderPreviewView(frame: .zero)
         contentView.insertSubview(preview, belowSubview: titleLabel)
@@ -4051,22 +4043,22 @@ final class TesseraTileCell: UICollectionViewCell {
         return preview
     }
 
-    /// Снимает превью папки: возвращает к иконке/заглушке и останавливает
-    /// idle-флип. Сам view не уничтожается — он переиспользуется, если ячейка
-    /// снова покажет папку.
+    /// Removes the folder preview: returns to the icon/placeholder and stops the
+    /// idle flip. The view itself is not destroyed — it is reused if the cell
+    /// shows a folder again.
     private func endFolderPreview() {
         showsFolderPreview = false
         folderPreviewView?.stop()
         folderPreviewView?.isHidden = true
     }
 
-    /// §9: ярлык — один элемент; label — заголовок (live-плитка — с фронта),
-    /// value — счётчик бэйджа.
+    /// §9: a tile is one element; the label is the title (for a live tile — from the front),
+    /// the value is the badge count.
     ///
-    /// E9.8в: у live-плитки показывается сторона фронта, поэтому label берётся
-    /// из ``TesseraTileDescriptor/liveContent`` (`frontFace.title` плюс `detail` через
-    /// запятую): VoiceOver должен читать то, что видно на лицевой стороне, а не
-    /// прежний статичный заголовок. Если фронт пуст, остаётся `title` ярлыка.
+    /// A live tile shows the front face, so the label is taken
+    /// from ``TesseraTileDescriptor/liveContent`` (`frontFace.title` plus `detail`, joined
+    /// with a comma): VoiceOver must read what is visible on the front face, not the
+    /// previous static title. If the front is empty, the tile's `title` remains.
     private func configureAccessibility(for descriptor: TesseraTileDescriptor) {
         let frontFace = descriptor.liveContent?.frontFace
         var labelParts: [String] = []
@@ -4080,29 +4072,28 @@ final class TesseraTileCell: UICollectionViewCell {
         }
         accessibilityLabel = labelParts.isEmpty ? nil : labelParts.joined(separator: ", ")
 
-        // D34/E15.4: точка без числа озвучивается строкой «есть уведомление»,
-        // счётчик — числом, `.none` — без значения.
+        // D34: a dot without a number is spoken as the string "has notification",
+        // a counter as a number, and `.none` has no value.
         accessibilityValue = descriptor.badge.accessibilityValueText
     }
 
-    /// §9: папка — один элемент; число ярлыков в value.
+    /// §9: a folder is one element; the tile count is in the value.
     private func configureAccessibility(for folder: TesseraTileFolder) {
         accessibilityLabel = folder.title.isEmpty
             ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
             : folder.title
         folderAccessibilityCountText = folder.tiles.isEmpty ? nil : String(folder.tiles.count)
-        // D44/E15.7: тот же помощник, что у плитки (D34): число суммы либо
-        // «есть уведомление» для точки.
+        // D44: the same helper as for a tile (D34): the sum number or
+        // "has notification" for a dot.
         folderAccessibilityBadgeText = folder.aggregateBadge.accessibilityValueText
         updateFolderAccessibilityValue()
     }
 
-    /// Собирает `accessibilityValue` папки с учётом бэйджа и раскрытия (E10.2,
-    /// E15.7).
+    /// Builds the folder's `accessibilityValue` accounting for the badge and expansion.
     ///
-    /// Первым идёт значение бэйджа-агрегата (если он есть), затем число
-    /// ярлыков и состояние «раскрыта». Папка без бэйджа озвучивается как
-    /// раньше — число ярлыков, закрытая — только оно.
+    /// First comes the aggregate badge value (if there is one), then the tile
+    /// count and the "expanded" state. A folder without a badge is spoken as
+    /// before — the tile count, and when closed, only it.
     private func updateFolderAccessibilityValue() {
         var parts: [String] = []
         if let folderAccessibilityBadgeText {
@@ -4117,69 +4108,68 @@ final class TesseraTileCell: UICollectionViewCell {
         accessibilityValue = parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
-    /// Пересобирает шрифт заголовка под текущую категорию Dynamic Type.
+    /// Rebuilds the title font for the current Dynamic Type category.
     ///
-    /// Вызывается сеткой при смене категории (одна нотификация на всю сетку
-    /// дешевле, чем наблюдатель в каждой ячейке) и перед показом ячейки —
-    /// категория могла измениться, пока ячейка была в prefetch.
+    /// Called by the grid on a category change (one notification for the whole grid
+    /// is cheaper than an observer in every cell) and before a cell is shown —
+    /// the category may have changed while the cell was in prefetch.
     func refreshTypography() {
         titleFontBucket = -1
         setNeedsLayout()
     }
 
-    /// VoiceOver-активация плитки (§9): двойной тап вызывает действие ярлыка.
+    /// VoiceOver activation of a tile (§9): a double tap runs the tile's action.
     override func accessibilityActivate() -> Bool {
         guard let onActivate else { return super.accessibilityActivate() }
         onActivate()
         return true
     }
 
-    /// Скрывает/показывает исходную ячейку на время drag (E4.4).
+    /// Hides/shows the source cell during a drag.
     ///
-    /// Меняется `alpha` у `contentView`, а не у ячейки: UICollectionView
-    /// применяет к ячейке layout attributes и может вернуть `cell.alpha` к 1
-    /// на ближайшем layout-проходе, а `contentView` от атрибутов не зависит.
-    /// Рамка и место в раскладке остаются прежними, поэтому соседние плитки
-    /// не сдвигаются.
+    /// `alpha` is changed on `contentView`, not on the cell: UICollectionView
+    /// applies layout attributes to the cell and may return `cell.alpha` to 1
+    /// on the next layout pass, while `contentView` does not depend on attributes.
+    /// The frame and place in the layout stay the same, so neighboring tiles
+    /// do not shift.
     ///
-    /// - Parameter hidden: `true` — ячейка невидима и не озвучивается.
+    /// - Parameter hidden: `true` — the cell is invisible and not spoken.
     func setSourceHidden(_ hidden: Bool) {
         isSourceHidden = hidden
         updateContentAlpha()
         accessibilityElementsHidden = hidden
     }
 
-    /// Применяет целевую прозрачность содержимого в режиме редактирования
-    /// (E8.2, E10.4).
+    /// Applies the target content alpha in edit mode.
     ///
-    /// Владелец значения — сетка: она передаёт сюда дим и не сбрасывает его в
-    /// `configure`, поэтому ни обновление снимка, ни resize, ни переиспользование
-    /// ячейки не «поднимают» плитку обратно до 1.
+    /// The value owner is the grid: it passes the dimming here and does not reset it in
+    /// `configure`, so neither a snapshot update, nor resize, nor cell reuse
+    /// "lifts" the tile back to 1.
     ///
-    /// - Parameter alpha: Прозрачность содержимого: 1 — полная яркость,
-    ///   ``TesseraTileGridView/dimmedTileAlpha`` — дим режима редактирования.
+    /// - Parameter alpha: Content alpha: 1 is full brightness,
+    ///   ``TesseraTileGridView/dimmedTileAlpha`` is the edit mode dimming.
     func setDimmingAlpha(_ alpha: CGFloat) {
         guard alpha.isFinite else { return }
         dimmingAlpha = min(max(alpha, 0), 1)
         updateContentAlpha()
     }
 
-    /// Сколько нижнего угла у конца строки занимает стрелка размера режима
-    /// редактирования, pt; `0` — вне правки либо стрелки нет (D29, E15.1).
+    /// How much of the bottom corner at the end of the line the edit mode size
+    /// arrow occupies, in pt; `0` means outside editing or no arrow (D29).
     ///
-    /// Бэйдж обходит эту область: сдвигается от угла вдоль нижнего ряда
-    /// (``TesseraTileBadgeLayout``). Значением владеет сетка
-    /// (``TesseraTileGridView/setBadgeEditClearances(_:animated:)``), как и
-    /// димом: `configure` применяет сохранённое значение, а переиспользование
-    /// ячейки возвращает 0.
+    /// The badge avoids this area: it shifts from the corner along the bottom row
+    /// (``TesseraTileBadgeLayout``). The value is owned by the grid
+    /// (``TesseraTileGridView/setBadgeEditClearances(_:animated:)``), like
+    /// the dimming: `configure` applies the stored value, and cell reuse
+    /// returns 0.
     private(set) var badgeEditClearance: CGFloat = 0
 
-    /// Применяет отступ бэйдж от стрелки размера (D29, E15.1).
+    /// Applies the badge inset from the size arrow (D29).
     ///
     /// - Parameters:
-    ///   - clearance: Занятая стрелкой часть угла внутри плитки, pt.
-    ///   - animated: Плавно сдвинуть бэйдж и подпись; без анимации раскладка
-    ///     обновляется на ближайшем layout.
+    ///   - clearance: The part of the corner inside the tile occupied by the arrow, in pt.
+    ///   - animated: Smoothly shift the badge and caption; without animation the layout
+    ///     is updated on the next layout pass.
     func setBadgeEditClearance(_ clearance: CGFloat, animated: Bool) {
         let value = clearance.isFinite ? max(0, clearance) : 0
         guard value != badgeEditClearance else { return }
@@ -4200,30 +4190,30 @@ final class TesseraTileCell: UICollectionViewCell {
         )
     }
 
-    /// Пересчитывает фактическую прозрачность содержимого (E10.4).
+    /// Recomputes the actual content alpha.
     ///
-    /// Скрытие на время drag сильнее дима: у скрытой ячейки `alpha` = 0, иначе
-    /// — сохранённая целевая прозрачность.
+    /// Hiding during a drag overrides the dimming: a hidden cell has `alpha` = 0, otherwise
+    /// the stored target alpha.
     private func updateContentAlpha() {
         contentView.alpha = isSourceHidden ? 0 : dimmingAlpha
     }
 
-    // MARK: - Переиспользование
+    // MARK: - Reuse
 
     override func prepareForReuse() {
         super.prepareForReuse()
 
-        // Движок удерживает контейнер и провайдера: без явной отмены ячейка
-        // осталась бы зарегистрированной после переиспользования (§4).
+        // The engine retains the container and the provider: without an explicit cancel the cell
+        // would stay registered after reuse (§4).
         endLiveContent()
-        // Превью папки тоже обязано вернуться к иконкам: иначе чужая папка
-        // унаследует счётчик и фазу флипа (D17).
+        // The folder preview must also return to icons: otherwise another folder
+        // would inherit the counter and the flip phase (D17).
         endFolderPreview()
         isFolderExpanded = false
 
-        // «Желе» режима редактирования (E4.4) живёт на ячейке анимациями слоя.
-        // Переиспользованная ячейка не должна унаследовать чужую анимацию или
-        // поворот от прежнего элемента.
+        // The jiggle of edit mode lives on the cell as layer animations.
+        // A reused cell must not inherit someone else's animation or
+        // rotation from the previous item.
         layer.removeAllAnimations()
         contentView.layer.removeAllAnimations()
         transform = .identity
@@ -4244,8 +4234,8 @@ final class TesseraTileCell: UICollectionViewCell {
         accessibilityLabel = nil
         accessibilityValue = nil
         titleFontBucket = -1
-        // Диму и скрытию принадлежит сетка: чистое состояние — полная яркость.
-        // Очередной `configure` применит сохранённую цель (E10.4).
+        // The dimming and hiding belong to the grid: the clean state is full brightness.
+        // The next `configure` applies the stored target.
         dimmingAlpha = 1
         badgeEditClearance = 0
         liveTileView?.badgeEditClearance = 0
@@ -4254,14 +4244,14 @@ final class TesseraTileCell: UICollectionViewCell {
         setSourceHidden(false)
     }
 
-    // MARK: - Раскладка
+    // MARK: - Layout
 
     override func layoutSubviews() {
         super.layoutSubviews()
 
         if showsLiveContent {
-            // Контейнер занимает всю плитку; содержимое сторон, бэйдж и RTL он
-            // раскладывает сам (§4), ячейка только даёт ему рамку.
+            // The container fills the whole tile; it lays out the face content, the badge and RTL
+            // itself (§4), and the cell only gives it a frame.
             liveTileView?.frame = contentView.bounds
             return
         }
@@ -4270,7 +4260,7 @@ final class TesseraTileCell: UICollectionViewCell {
         layoutContent()
     }
 
-    /// §9, RTL: смена направления чтения переставляет иконку и бэйдж.
+    /// §9, RTL: a reading direction change swaps the icon and the badge.
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
 
@@ -4280,13 +4270,13 @@ final class TesseraTileCell: UICollectionViewCell {
         setNeedsLayout()
     }
 
-    /// Собирает шрифт заголовка под фактический размер плитки.
+    /// Builds the title font for the actual tile size.
     ///
-    /// Ячейка не знает модель размера напрямую (раскладка могла ужать след),
-    /// поэтому ориентируется на собственные `bounds`: компактные, средние и
-    /// крупные плитки дают разные базовые размеры. Метрики Dynamic Type
-    /// применяются поверх базового размера; повторная сборка — только при
-    /// смене bucket'а или по ``refreshTypography()``.
+    /// The cell does not know the size model directly (the layout may have shrunk the footprint),
+    /// so it relies on its own `bounds`: compact, medium and
+    /// large tiles give different base sizes. Dynamic Type metrics
+    /// are applied on top of the base size; rebuilding happens only when the
+    /// bucket changes or via ``refreshTypography()``.
     private func updateTitleFontIfNeeded() {
         let side = min(contentView.bounds.width, contentView.bounds.height)
         let bucket: Int
@@ -4305,8 +4295,8 @@ final class TesseraTileCell: UICollectionViewCell {
         default: baseSize = 17
         }
 
-        // E12.6: Dynamic Type растёт, но не выше доли стороны плитки
-        // (на accessibility-размерах 12 pt иначе даёт ~30 pt на плитке 73 pt).
+        // Dynamic Type grows, but not beyond a fraction of the tile side
+        // (at accessibility sizes 12 pt would otherwise give ~30 pt on a 73 pt tile).
         let cap = max(baseSize, floor(side * TesseraTileCell.titleFontSideFraction))
         let category = traitCollection.preferredContentSizeCategory
 
@@ -4327,17 +4317,17 @@ final class TesseraTileCell: UICollectionViewCell {
         titleLabel.font = font
     }
 
-    /// Подгоняет шрифт заголовка так, чтобы самое длинное слово влезло в
-    /// строку целиком (E12.6).
+    /// Fits the title font so that the longest word fits on a
+    /// line whole.
     ///
-    /// `UILabel` рвёт слово, не помещающееся в строку, посреди символа
-    /// («Календар/ь»). Поэтому шрифт уменьшается (до
-    /// ``titleMinimumScaleFactor`` от базового) под ширину самого длинного
-    /// слова. Если и так не помещается, возвращается `false`: вызывающий
-    /// ставит одну строку, и заголовок усекается многоточием, а не рвётся.
+    /// `UILabel` breaks a word that does not fit on a line in the middle of a character
+    /// ("Calenda/r"). So the font is reduced (down to
+    /// ``titleMinimumScaleFactor`` of the base) to fit the width of the longest
+    /// word. If it still does not fit, `false` is returned: the caller
+    /// sets a single line, and the title is truncated with an ellipsis instead of being broken.
     ///
-    /// - Parameter width: Доступная ширина строки.
-    /// - Returns: Помещается ли самое длинное слово целиком.
+    /// - Parameter width: The available line width.
+    /// - Returns: Whether the longest word fits whole.
     @discardableResult
     private func fitTitleFont(toWidth width: CGFloat) -> Bool {
         titleLabel.font = titleBaseFont
@@ -4359,10 +4349,10 @@ final class TesseraTileCell: UICollectionViewCell {
         return longest(scaled) <= width
     }
 
-    /// Раскладывает иконку, заголовок и бэйдж.
+    /// Lays out the icon, title and badge.
     ///
-    /// Только ручные `frame`: ячейка — квадрат сетки, Auto Layout здесь
-    /// избыточен и добавил бы лишний проход на каждый resize.
+    /// Manual `frame`s only: the cell is a grid square, Auto Layout is
+    /// redundant here and would add an extra pass on every resize.
     private func layoutContent() {
         let bounds = contentView.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
@@ -4377,13 +4367,13 @@ final class TesseraTileCell: UICollectionViewCell {
         let contentWidth = max(0, bounds.width - inset * 2)
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
 
-        // Бэйдж — в нижнем углу у конца строки (D29, E15.1; §4, §9, RTL); в
-        // правке он обходит стрелку размера. Подпись уступает ему место:
-        // сужается рядом с ним либо поднимается над его рядом.
+        // The badge is in the bottom corner at the end of the line (D29; §4, §9, RTL); in
+        // editing it avoids the size arrow. The caption gives it room:
+        // it narrows next to it or moves up above its row.
         let badgeSize = badgeView.intrinsicContentSize
         let hasImage = iconView.image != nil
-        // D47: малая плитка с бэйджем и иконкой — иконка и бэйдж, подписи нет
-        // (label и value VoiceOver не меняются). Без иконки подпись остаётся.
+        // D47: a small tile with a badge and an icon shows the icon and badge, no caption
+        // (the VoiceOver label and value do not change). Without an icon the caption stays.
         let badgeLayout = TesseraTileBadgeLayout.make(
             tileSize: bounds.size,
             badgeSize: badgeSize,
@@ -4411,13 +4401,13 @@ final class TesseraTileCell: UICollectionViewCell {
         let titleWidth = max(0, contentWidth - badgeLayout.titleTrailingReserve)
         let titleFits = fitTitleFont(toWidth: titleWidth)
 
-        // Иконка — в верхнем углу по направлению чтения (§9).
+        // The icon is in the top corner by reading direction (§9).
         var iconSide = hasImage ? max(14, min(34, minimumSide * 0.22)) : 0
         let lineHeight = titleLabel.font.lineHeight
 
-        // Заголовок прижат к низу и не заходит в верхнюю зону, занятую иконкой,
-        // и в нижний ряд бэйджа, если подпись над ним. Если места на строку не
-        // остаётся, иконку прячем — текст важнее для 1×1 и крупного Dynamic
+        // The title is pinned to the bottom and does not enter the top zone occupied by the icon,
+        // or the bottom badge row if the caption is above it. If there is no room for a line,
+        // the icon is hidden — text matters more for 1×1 and for large Dynamic
         // Type.
         let bottomReserve = badgeLayout.titleBottomReserve
         var topReserve = hasImage ? iconSide : 0
@@ -4444,8 +4434,8 @@ final class TesseraTileCell: UICollectionViewCell {
         }
 
         if !titleFits {
-            // E12.6: слово не влезает даже в минимальном масштабе —
-            // одна строка с многоточием вместо разрыва посреди слова.
+            // The word does not fit even at the minimum scale —
+            // a single line with an ellipsis instead of a break mid-word.
             titleLabel.numberOfLines = 1
         } else if titleHeightLimit >= lineHeight * 2.5 {
             titleLabel.numberOfLines = 3
@@ -4459,7 +4449,7 @@ final class TesseraTileCell: UICollectionViewCell {
             CGSize(width: titleWidth, height: CGFloat.greatestFiniteMagnitude)
         )
         let titleHeight = min(ceil(measured.height), max(0, titleHeightLimit))
-        // В RTL бэйдж слева, поэтому подпись «рядом» сдвигается вправо.
+        // In RTL the badge is on the left, so a "nearby" caption shifts to the right.
         let titleX = isRightToLeft ? inset + badgeLayout.titleTrailingReserve : inset
         titleLabel.frame = CGRect(
             x: titleX,
@@ -4469,27 +4459,27 @@ final class TesseraTileCell: UICollectionViewCell {
         )
     }
 
-    /// Раскладывает превью папки, заголовок под ним и бэйдж-агрегат (D17, D44).
+    /// Lays out the folder preview, the title under it and the aggregate badge (D17, D44).
     ///
-    /// Превью — квадрат 2×2, прижатый к **верхнему** углу плитки по направлению
-    /// чтения (§9): в LTR — к левому, в RTL — к правому. Так закрытая папка
-    /// читается как сетка рабочего стола: мини-иконки начинаются от того же края,
-    /// что и плитки, а не висят по центру. Отступ от края — как у плитки
-    /// (`inset`), поэтому превью не липнет к границе ячейки. Заголовок прижат
-    /// к низу, как у ярлыка.
+    /// The preview is a 2×2 square pinned to the **top** corner of the tile by
+    /// reading direction (§9): left in LTR, right in RTL. This way a closed folder
+    /// reads like the desktop grid: mini-icons start from the same edge
+    /// as tiles rather than hanging in the center. The edge inset is the same as for a tile
+    /// (`inset`), so the preview does not stick to the cell border. The title is pinned
+    /// to the bottom, like a tile's.
     ///
-    /// Бэйдж-агрегат (E15.7) сидит в нижнем углу у конца строки и обходит
-    /// стрелку размера в правке — той же раскладкой ``TesseraTileBadgeLayout``,
-    /// что у плитки: подпись сужается рядом с ним либо поднимается над его рядом,
-    /// а превью уступает место подписи и ряду бэйджа. Малая папка (1×1) с
-    /// видимым бэйджем не рисует подпись (как малая плитка с иконкой, D47):
-    /// мини-сетка стоит по центру над рядом бэйджа. Малая папка без бэйджа и
-    /// папки 2×2 и больше без бэйджа раскладываются как раньше.
+    /// The aggregate badge sits in the bottom corner at the end of the line and avoids the
+    /// size arrow while editing — using the same ``TesseraTileBadgeLayout`` layout
+    /// as a tile: the caption narrows next to it or moves up above its row,
+    /// and the preview gives way to the caption and the badge row. A small (1×1) folder with a
+    /// visible badge draws no caption (like a small tile with an icon, D47):
+    /// the mini-grid sits centered above the badge row. A small folder without a badge and
+    /// folders 2×2 and larger without a badge are laid out as before.
     ///
-    /// Если плитка низкая (крупный Dynamic Type, тонкая 1×1-папка), приоритет у
-    /// заголовка: превью ужимается вместе с мини-плитками.
+    /// If the tile is short (large Dynamic Type, a thin 1×1 folder), the title has
+    /// priority: the preview shrinks together with its mini-tiles.
     ///
-    /// - Parameter bounds: Границы контента ячейки.
+    /// - Parameter bounds: The cell content bounds.
     private func layoutFolderPreview(in bounds: CGRect) {
         guard let preview = folderPreviewView else { return }
 
@@ -4500,11 +4490,11 @@ final class TesseraTileCell: UICollectionViewCell {
 
         iconView.isHidden = true
         iconView.frame = .zero
-        // Подпись могла быть скрыта прежним ярлыком малой плитки (D47).
+        // The caption may have been hidden by a previous small tile (D47).
         titleLabel.isHidden = false
 
-        // E15.7: бэйдж-агрегат — в нижнем углу у конца строки; без бэйджа
-        // `intrinsicContentSize` нулевой и раскладка пустая.
+        // The aggregate badge is in the bottom corner at the end of the line; without a badge
+        // `intrinsicContentSize` is zero and the layout is empty.
         let badgeSize = badgeView.intrinsicContentSize
         let hasBadge = badgeSize.width > 0 && badgeSize.height > 0
         let badgeLayout = TesseraTileBadgeLayout.make(
@@ -4519,8 +4509,8 @@ final class TesseraTileCell: UICollectionViewCell {
         badgeView.alpha = badgeLayout.isHiddenByEditControls ? 0 : 1
 
         if badgeLayout.arrangement == .iconAndBadge {
-            // 1×1 с бэйджем: подписи нет (label и value VoiceOver прежние),
-            // мини-сетка — по центру верхней зоны над рядом бэйджа.
+            // 1×1 with a badge: no caption (the VoiceOver label and value are as before),
+            // the mini-grid is centered in the top zone above the badge row.
             titleLabel.isHidden = true
             titleLabel.frame = .zero
             preview.frame = TesseraTileBadgeLayout.smallTileIconFrame(
@@ -4543,7 +4533,7 @@ final class TesseraTileCell: UICollectionViewCell {
             titleLabel.font.lineHeight * 2,
             max(0, bounds.height - bottomReserve) * 0.32
         )
-        // В RTL бэйдж слева, поэтому подпись «рядом» сдвигается вправо.
+        // In RTL the badge is on the left, so a "nearby" caption shifts to the right.
         let titleX = isRightToLeft ? inset + badgeLayout.titleTrailingReserve : inset
         titleLabel.frame = CGRect(
             x: titleX,
@@ -4552,8 +4542,8 @@ final class TesseraTileCell: UICollectionViewCell {
             height: titleHeight
         )
 
-        // Нижний ряд — подпись и бэйдж рядом: если бэйдж выше подписи (одна
-        // строка при крупной капсуле), превью уступает место ему.
+        // The bottom row is the caption and the badge side by side: if the badge is taller than the caption (a single
+        // line with a large capsule), the preview gives way to it.
         let bottomRowHeight = badgeLayout.arrangement == .beside
             ? max(titleHeight, badgeSize.height)
             : titleHeight
@@ -4565,9 +4555,9 @@ final class TesseraTileCell: UICollectionViewCell {
             return
         }
 
-        // §9, RTL: мини-сетка зеркалится — прижимается к правому верхнему углу,
-        // чтобы порядок чтения остался прежним. Заголовок внизу не зеркалится:
-        // его выравнивание задаёт сама подпись (`.natural`).
+        // RTL: the mini-grid is mirrored — pinned to the top right corner,
+        // so the reading order stays the same. The title at the bottom is not mirrored:
+        // its alignment is set by the caption itself (`.natural`).
         preview.frame = CGRect(
             x: isRightToLeft ? bounds.width - inset - blockSide : inset,
             y: inset,
@@ -4577,104 +4567,104 @@ final class TesseraTileCell: UICollectionViewCell {
     }
 }
 
-/// Геометрия ярлыков видимой панели раскрытой папки (D46).
+/// Geometry of the tiles of the visible expanded folder's panel (D46).
 struct TesseraPanelShortcutGeometry {
 
-    /// Раскрытая папка.
+    /// The expanded folder.
     let folderID: AnyHashable
 
-    /// Идентификаторы ярлыков в порядке состава папки.
+    /// Tile identifiers in folder order.
     let tileIDs: [AnyHashable]
 
-    /// Рамки ярлыков в координатах сетки (по порядку ``tileIDs``).
+    /// Tile frames in grid coordinates (in ``tileIDs`` order).
     let frames: [CGRect]
 
-    /// Зазор между ярлыками панели (`itemSpacing` сетки).
+    /// The gap between the panel's tiles (the grid's `itemSpacing`).
     let spacing: CGFloat
 
-    /// Рамки **слотов** панели в координатах сетки (по порядку ``tileIDs``), E16.1.
+    /// Frames of the panel **slots** in grid coordinates (in ``tileIDs`` order).
     ///
-    /// Слот — место ярлыка в раскладке панели (колонки сетки, RTL
-    /// зеркалит их). В отличие от ``frames`` не зависит от превью
-    /// перестановки: при drag внутри панели ярлыки-соседи сдвинуты, а слоты
-    /// остаются на месте. По ним хит-тест выбирает слот под пальцем.
+    /// A slot is a tile's place in the panel layout (the grid columns, mirrored
+    /// in RTL). Unlike ``frames`` it does not depend on the reorder preview:
+    /// during a drag inside the panel the neighbor tiles are shifted, while the slots
+    /// stay in place. The hit test uses them to pick the slot under the finger.
     let slotFrames: [CGRect]
 
-    /// Рамка самой панели (ячейки раскрытой папки) в координатах сетки (E16.1).
+    /// The frame of the panel itself (the expanded folder's cell) in grid coordinates.
     ///
-    /// Выход пальца за неё (с запасом) переводит drag внутри панели в вынос
-    /// ярлыка на рабочий стол.
+    /// When the finger leaves it (with a margin), a drag inside the panel becomes taking
+    /// the tile out onto the desktop.
     let panelFrame: CGRect
 }
 
-/// Ярлык панели раскрытой папки, найденный под пальцем (E11.1).
+/// A tile of the expanded folder's panel found under the finger.
 struct TesseraPanelTileHit {
 
-    /// Раскрытая папка (из снимка сетки).
+    /// The expanded folder (from the grid snapshot).
     let folder: TesseraTileFolder
 
-    /// Ярлык, по иконке которого нажали.
+    /// The tile whose icon was pressed.
     let tile: TesseraTileDescriptor
 
-    /// Рамка иконки в координатах сетки.
+    /// The icon frame in grid coordinates.
     let frame: CGRect
 
-    /// Снимок иконки (копия, живущая после закрытия панели).
+    /// A snapshot of the icon (a copy that outlives the panel closing).
     let snapshot: UIView
 }
 
-// MARK: - Панель раскрытой папки (D17, E7.3)
+// MARK: - Expanded folder panel (D17)
 
-/// Ячейка-панель раскрытой папки: заголовок и сетка ярлыков (D17).
+/// The cell of the expanded folder's panel: a title and a grid of tiles (D17).
 ///
-/// Панель — полноширинная ячейка коллекции, которая вставляется отдельной
-/// строкой сразу после строки, в которой заканчивается плитка-папка
-/// (``TesseraTileGridItem/folderContent(_:)``); сама плитка папки остаётся видимой.
-/// Геометрию задаёт `TesseraTileCollectionViewLayout` (верхний край — строка
-/// сразу под папкой, высота — формула
-/// ``TesseraTileLayoutEngine/panelHeight(for:width:columns:)``), поэтому ячейка только
-/// раскладывает содержимое по тем же константам. Сами константы берутся
-/// у движка (`Metrics`): формула высоты и раскладка содержимого обязаны
-/// считаться по одним числам.
+/// The panel is a full-width collection cell inserted as a separate
+/// row right after the row where the folder tile ends
+/// (``TesseraTileGridItem/folderContent(_:)``); the folder tile itself stays visible.
+/// The geometry is set by `TesseraTileCollectionViewLayout` (the top edge is the row
+/// right below the folder, the height follows the formula
+/// ``TesseraTileLayoutEngine/panelHeight(for:width:columns:)``), so the cell only
+/// lays out its content with the same constants. The constants themselves are taken
+/// from the engine (`Metrics`): the height formula and the content layout must
+/// be computed from the same numbers.
 ///
-/// ## Отрисовка ярлыков
+/// ## Drawing tiles
 ///
-/// Внутри переиспользуется ``TesseraTileCell`` — та же плитка, что и на сетке:
-/// подложка, иконка, заголовок, бэйдж. Ячейка настраивается так же, как на
-/// рабочем столе (фон не обнуляется), а её сторона и колонки — те же, что у
-/// сетки (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``
-/// с `itemSpacing` сетки, E10.1), поэтому ярлык в панели
-/// — настоящая small-плитка 1×1, совпадающая с плитками под панелью по размеру
-/// и колонкам. Тап по ярлыку вызывает ``TesseraTileDescriptor/action`` и **не**
-/// закрывает папку (D17); VoiceOver-активация идёт тем же путём через
-/// `TesseraTileCell.onActivate`. Тап по фону или заголовку вызывает
-/// ``onBackgroundTap`` — так сетка закрывает папку повторным тапом.
+/// ``TesseraTileCell`` is reused inside — the same tile as on the grid:
+/// backing, icon, title, badge. The cell is configured the same way as on the
+/// desktop (the background is not cleared), and its side and columns are the same as the
+/// grid's (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``
+/// with the grid's `itemSpacing`), so a tile in the panel
+/// is a real small 1×1 tile matching the tiles below the panel in size
+/// and columns. A tap on a tile is reported through ``onTapShortcut`` and does **not**
+/// close the folder (D17); VoiceOver activation takes the same path through
+/// `TesseraTileCell.onActivate`. A tap on the background or title calls
+/// ``onBackgroundTap`` — this is how the grid closes the folder on a repeated tap.
 ///
-/// ## Анимация
+/// ## Animation
 ///
-/// Каскад появления (`playIconCascade`) и угасания (`animateIconsOut`) —
-/// единственные анимации панели. Задержка по индексу считается чистой функцией
-/// ``TesseraTileGridView/staggerDelay(index:)``; при Reduce Motion (§9) каскада
-/// нет. Панель не трогает раскладку сетки: соседей сдвигает UICollectionView
-/// при вставке/удалении ячейки.
+/// The appearance cascade (`playIconCascade`) and fade-out (`animateIconsOut`) are the
+/// panel's only animations. The per-index delay is computed by the pure function
+/// ``TesseraTileGridView/staggerDelay(index:)``; with Reduce Motion (§9) there is no
+/// cascade. The panel does not touch the grid layout: neighbors are shifted by UICollectionView
+/// when the cell is inserted/removed.
 ///
-/// Высота панели тоже анимируется — но раскладкой, а не ячейкой: при вставке
-/// UICollectionView растит рамку от 0 до полной высоты
-/// (``TesseraTileCollectionViewLayout``). Ячейка раскладывает содержимое **один
-/// раз** по ширине и прижимает к верхнему краю; высота в расчёте не участвует,
-/// поэтому во время роста внутренняя раскладка не запускается покадрово, а
-/// ячейка только обрезает контент снизу (`clipsToBounds`). Иконки на время
-/// роста спрятаны (``prepareIconCascade()``) и появляются каскадом после его
-/// завершения — без перескакивания из старой раскладки в новую.
+/// The panel height is animated too — but by the layout, not by the cell: on insertion
+/// UICollectionView grows the frame from 0 to the full height
+/// (``TesseraTileCollectionViewLayout``). The cell lays out its content **once**
+/// by width and pins it to the top edge; the height does not take part in the calculation,
+/// so during growth the inner layout is not run frame by frame, and
+/// the cell only clips the content from below (`clipsToBounds`). Icons are hidden during
+/// the growth (``prepareIconCascade()``) and appear in a cascade after it
+/// finishes — without jumping from the old layout to the new one.
 final class TesseraFolderPanelCell: UICollectionViewCell {
 
-    // MARK: - Метрики
+    // MARK: - Metrics
 
-    /// Константы совпадают с формулой высоты панели в `TesseraTileLayoutEngine`.
+    /// The constants match the panel height formula in `TesseraTileLayoutEngine`.
     ///
-    /// Значения берутся у движка, а не дублируются: высота панели и раскладка
-    /// её содержимого обязаны считаться по одним числам, иначе последняя строка
-    /// ярлыков либо обрежется, либо не заполнит панель.
+    /// The values are taken from the engine rather than duplicated: the panel height and the layout of
+    /// its content must be computed from the same numbers, otherwise the last row of
+    /// tiles would either be clipped or not fill the panel.
     private enum Metrics {
         static let padding = TesseraTileLayoutEngine.panelPadding
         static let headerHeight = TesseraTileLayoutEngine.panelHeaderHeight
@@ -4684,15 +4674,15 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         static let collapseDuration: TimeInterval = 0.12
     }
 
-    // MARK: - Состояние
+    // MARK: - State
 
-    /// Ярлык панели под точкой (E11.1).
+    /// The panel tile under a point.
     ///
-    /// - Parameter point: Точка в координатах `contentView` панели.
-    /// - Returns: Ячейка-иконка и её дескриптор или `nil`.
+    /// - Parameter point: A point in the panel's `contentView` coordinates.
+    /// - Returns: The icon cell and its descriptor, or `nil`.
     func shortcut(at point: CGPoint) -> (cell: TesseraTileCell, tile: TesseraTileDescriptor)? {
         for (index, cell) in shortcutCells.enumerated() where tiles.indices.contains(index) {
-            // Рамка без учёта transform каскада: он двигает иконку на 10 pt.
+            // The frame ignores the cascade transform: it moves the icon by 10 pt.
             let size = cell.bounds.size
             let frame = CGRect(
                 x: cell.center.x - size.width / 2,
@@ -4707,38 +4697,38 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         return nil
     }
 
-    /// Заголовок папки (как набран; приведение к нижнему регистру снято в E12.7).
+    /// The folder title (as typed; lowercasing is no longer applied).
     private let titleLabel = UILabel()
 
-    // MARK: - Переименование (E15.5, D35)
+    // MARK: - Renaming (D35)
 
-    /// Поле имени папки: на время переименования занимает рамку заголовка
-    /// (тот же шрифт и та же высота строки), поэтому плитки под панелью не
-    /// сдвигаются. Вне переименования скрыто и не участвует в раскладке.
+    /// The folder name field: during renaming it takes the title's frame
+    /// (the same font and line height), so tiles under the panel do not
+    /// shift. Outside renaming it is hidden and does not take part in the layout.
     private let titleField = UITextField()
 
-    /// Подчёркивание поля: признак «имя редактируется» (на время правки).
+    /// The field underline: a sign that "the name is being edited" (during editing).
     private let titleUnderline = UIView()
 
-    /// Долгое нажатие по заголовку — вход в переименование (W10M §6.7).
+    /// A long press on the title enters renaming (Windows 10 Mobile §6.7).
     private let titleLongPress = UILongPressGestureRecognizer()
 
-    /// Текст, который сейчас показывает заголовок: название папки или название
-    /// по умолчанию, если у папки пусто. По нему отсекается «ничего не
-    /// изменилось»: обработчик переименования не зовётся впустую.
+    /// The text the title currently shows: the folder name or the default
+    /// name if the folder's is empty. It is used to filter out "nothing
+    /// changed": the rename handler is not called needlessly.
     private var shownTitle = ""
 
-    /// Касание тапа по панели началось во время переименования (E15.5): такой тап
-    /// только завершает правку имени, а не закрывает папку и не активирует ярлык.
+    /// A tap touch on the panel began during renaming: such a tap
+    /// only finishes the name edit, and neither closes the folder nor activates a tile.
     ///
-    /// Флаг выставляется в `shouldReceive` (на касании), а не при распознавании:
-    /// сетка может завершить правку своим жестом раньше, чем сработает жест
-    /// панели.
+    /// The flag is set in `shouldReceive` (on touch), not on recognition:
+    /// the grid may finish editing with its own gesture before the panel's
+    /// gesture fires.
     private var tapBeganWhileEditingTitle = false
 
-    /// Можно ли переименовать папку (E15.5): сетка включает, когда у неё есть
-    /// обработчик ``TesseraTileGridView/folderRenameHandler``. Без обработчика
-    /// заголовок не реагирует на долгое нажатие и у него нет действия VoiceOver.
+    /// Whether the folder can be renamed: the grid enables it when it has a
+    /// ``TesseraTileGridView/folderRenameHandler``. Without a handler the
+    /// title does not react to a long press and has no VoiceOver action.
     var isTitleEditable = false {
         didSet {
             guard isTitleEditable != oldValue else { return }
@@ -4746,104 +4736,104 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
     }
 
-    /// Идёт ли правка имени прямо сейчас.
+    /// Whether a name edit is in progress right now.
     private(set) var isEditingTitle = false
 
-    /// Завершение правки: итоговое **нормализованное** название
-    /// (``TesseraTileFolder/normalizedTitle(_:)``); пустая строка — «вернуть название по
-    /// умолчанию». Вызывается только если название отличается от показанного.
+    /// Edit completion: the final **normalized** title
+    /// (``TesseraTileFolder/normalizedTitle(_:)``); an empty string means "restore the default
+    /// title". Called only if the title differs from the displayed one.
     var onTitleCommit: ((String) -> Void)?
 
-    /// Начало (`true`) и конец (`false`) правки: сетка следит за клавиатурой и
-    /// возвращает фокус VoiceOver. Конец приходит до `onTitleCommit`.
+    /// The start (`true`) and end (`false`) of editing: the grid watches the keyboard and
+    /// restores VoiceOver focus. The end arrives before `onTitleCommit`.
     var onTitleEditingChanged: ((Bool) -> Void)?
 
-    /// Разрешает ли сетка начать правку сейчас (панель устоялась, папка та же).
+    /// Whether the grid allows editing to begin now (the panel has settled, the folder is the same).
     var canBeginTitleEditing: (() -> Bool)?
 
-    /// Поле имени — для фокуса VoiceOver и тестов.
+    /// The name field — for VoiceOver focus and tests.
     var titleTextField: UITextField { titleField }
 
-    /// Заголовок — для фокуса VoiceOver и тестов.
+    /// The title — for VoiceOver focus and tests.
     var titleHeaderLabel: UILabel { titleLabel }
 
-    /// Ярлыки папки в порядке отображения.
+    /// The folder tiles in display order.
     private var tiles: [TesseraTileDescriptor] = []
 
-    /// Переиспользуемые мини-ячейки ярлыков (та же отрисовка, что на сетке).
+    /// Reusable mini tile cells (the same rendering as on the grid).
     ///
-    /// Чтение внутреннее: тесты проверяют подпись ярлыка панели и то, что
-    /// активация идёт общим маршрутом сетки (E10.4).
+    /// Internal read access: tests check the panel tile's caption and that
+    /// activation goes through the grid's common route.
     private(set) var shortcutCells: [TesseraTileCell] = []
 
-    /// Число колонок сетки содержимого (по умолчанию как у сетки — D26).
+    /// The column count of the content grid (by default the same as the grid's — D26).
     private var columnCount = TesseraTileLayoutEngine.defaultColumns
 
-    /// Зазор сетки рабочего стола (`itemSpacing`, E10.1): ярлыки панели
-    /// встают в те же колонки, что и плитки сетки.
+    /// The desktop grid gap (`itemSpacing`): panel tiles
+    /// sit in the same columns as the grid tiles.
     private var contentSpacing = TesseraTileLayoutEngine.panelContentSpacing
 
-    /// Тап по фону или заголовку панели (D17): сетка закрывает папку.
+    /// A tap on the panel background or title (D17): the grid closes the folder.
     ///
-    /// Внутренний канал для `TesseraTileGridView`: ячейка не знает про
-    /// состояние сетки, а её собственный жест уже отсеял попадания в ярлыки.
+    /// An internal channel for `TesseraTileGridView`: the cell does not know about
+    /// the grid state, and its own gesture has already filtered out hits on tiles.
     var onBackgroundTap: (() -> Void)?
 
-    /// Активация ярлыка панели (E10.4): сетка переводит её в общий маршрут
-    /// `onTap`/`handleItemTap` и сама решает, можно ли активировать действие
-    /// (в режиме редактирования — нельзя).
+    /// Activation of a panel tile: the grid routes it into the common
+    /// `onTap`/`handleItemTap` route and decides itself whether the action may be activated
+    /// (in edit mode it may not).
     ///
-    /// Панель не вызывает ``TesseraTileDescriptor/action`` напрямую: действие
-    /// выполняет хост по событию тапа (D12), тот же путь, что и у плитки сетки.
+    /// The panel does not call ``TesseraTileDescriptor/action`` directly: the action
+    /// is run by the host on the tap event (D12), the same path as for a grid tile.
     var onTapShortcut: ((TesseraTileDescriptor) -> Void)?
 
     private let tapRecognizer = UITapGestureRecognizer()
 
-    // MARK: - Внутренняя раскладка
+    // MARK: - Internal layout
 
-    /// Готовая внутренняя раскладка панели.
+    /// A ready internal layout of the panel.
     ///
-    /// Зависит только от ширины, числа колонок, направления чтения и числа
-    /// ярлыков — **но не от высоты**. Панель растёт от 0 до финальной высоты в
-    /// batch-анимации, и UICollectionView зовёт `layoutSubviews` на каждом кадре
-    /// роста; расчёт по высоте сдвигал бы контент покадрово. Поэтому раскладка
-    /// считается один раз на ключ и применяется один раз, а высота работает
-    /// только как обрезка (`clipsToBounds`).
+    /// Depends only on the width, column count, reading direction and the number
+    /// of tiles — **but not on the height**. The panel grows from 0 to the final height in a
+    /// batch animation, and UICollectionView calls `layoutSubviews` on every growth
+    /// frame; computing from the height would shift the content frame by frame. So the layout
+    /// is computed once per key and applied once, while the height works
+    /// only as clipping (`clipsToBounds`).
     private struct ContentLayout: Equatable {
 
-        /// Ширина панели, для которой посчитана раскладка.
+        /// The panel width the layout was computed for.
         var width: CGFloat
 
-        /// Число колонок сетки содержимого.
+        /// The column count of the content grid.
         var columns: Int
 
-        /// Направление чтения: в RTL колонки зеркалятся (§9).
+        /// The reading direction: in RTL the columns are mirrored (§9).
         var rightToLeft: Bool
 
-        /// Число ярлыков: от него зависит набор рамок.
+        /// The tile count: the set of frames depends on it.
         var tileCount: Int
 
-        /// Зазор сетки (E10.1).
+        /// The grid gap.
         var spacing: CGFloat
 
-        /// Масштаб пиксельного выравнивания (E10.1).
+        /// The pixel alignment scale.
         var scale: CGFloat
 
-        /// Рамка заголовка.
+        /// The title frame.
         var titleFrame: CGRect
 
-        /// Рамки ярлыков по порядку.
+        /// The tile frames in order.
         var tileFrames: [CGRect]
     }
 
-    /// Последняя посчитанная раскладка (ключ — ширина/колонки/RTL/состав).
+    /// The last computed layout (the key is width/columns/RTL/tile set).
     private var contentLayout: ContentLayout?
 
-    /// Раскладка, уже применённая к подвью. Повторно рамки не выставляются:
-    /// рост высоты не должен запускать внутренний layout.
+    /// The layout already applied to the subviews. Frames are not set again:
+    /// height growth must not trigger the inner layout.
     private var appliedContentLayout: ContentLayout?
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -4856,17 +4846,17 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     }
 
     private func commonInit() {
-        // D17: фон панели — системный, чтобы она читалась как «выдвинутая»
-        // поверх обоев часть рабочего стола в любой теме.
+        // D17: the panel background is a system one so that it reads as a "pulled-out"
+        // part of the desktop over the wallpaper in any theme.
         backgroundColor = .systemBackground
         contentView.backgroundColor = .clear
         isAccessibilityElement = false
 
-        // D17, E7: при вставке панель приходит с высотой 0 и вырастает до
-        // полной в batch-анимации сетки, при закрытии — схлопывается обратно.
-        // Содержимое прижато к верху (`layoutSubviews` считает рамки от
-        // верхнего края), поэтому обрезаем его по границам ячейки: иначе при
-        // малой высоте заголовок и иконки вылезали бы за панель.
+        // On insertion the panel arrives with height 0 and grows to
+        // full height in the grid's batch animation, and collapses back on close.
+        // The content is pinned to the top (`layoutSubviews` computes frames from the
+        // top edge), so clip it to the cell bounds: otherwise at
+        // a small height the title and icons would stick out of the panel.
         clipsToBounds = true
 
         titleLabel.font = TesseraFolderPanelCell.makeTitleFont(compatibleWith: nil)
@@ -4878,8 +4868,8 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         titleLabel.accessibilityTraits = .header
         contentView.addSubview(titleLabel)
 
-        // E15.5: поле имени и подчёркивание лежат над заголовком и скрыты; одна
-        // строка, без автокоррекции, return — «Готово».
+        // The name field and the underline sit above the title and are hidden; a single
+        // line, no autocorrection, return is "Done".
         titleField.font = TesseraFolderPanelCell.makeTitleFont(compatibleWith: nil)
         titleField.textColor = .label
         titleField.textAlignment = .natural
@@ -4900,10 +4890,10 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         titleUnderline.isHidden = true
         contentView.addSubview(titleUnderline)
 
-        // Долгое нажатие по заголовку (≈0,5 с) — переименование. Жест на самом
-        // заголовке; пока переименование не включено, он выключен и не мешает
-        // обычному тапу. Тап по панели ждёт его отказа: удержание не закрывает
-        // папку, а короткое касание отрабатывает сразу после отпускания.
+        // A long press on the title (≈0.5 s) is renaming. The gesture is on the
+        // title itself; until renaming is enabled it is off and does not interfere with
+        // an ordinary tap. A tap on the panel waits for its failure: a hold does not close
+        // the folder, while a short touch fires right after release.
         titleLabel.isUserInteractionEnabled = true
         titleLongPress.minimumPressDuration = 0.5
         titleLongPress.delegate = self
@@ -4911,10 +4901,10 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         titleLongPress.addTarget(self, action: #selector(handleTitleLongPress(_:)))
         titleLabel.addGestureRecognizer(titleLongPress)
 
-        // Тап по ярлыку — действие ярлыка; панель остаётся открытой. Тап мимо
-        // ярлыков (фон/заголовок) закрывает папку через `onBackgroundTap`.
-        // Жест не отменяет касания: выбор ячейки коллекции для панели всё равно
-        // отключён (`shouldSelectItemAt`), а прокрутка не должна ломаться.
+        // A tap on a tile is the tile's action; the panel stays open. A tap outside
+        // tiles (background/title) closes the folder via `onBackgroundTap`.
+        // The gesture does not cancel touches: collection cell selection for the panel is disabled anyway
+        // (`shouldSelectItemAt`), and scrolling must not break.
         tapRecognizer.cancelsTouchesInView = false
         tapRecognizer.delegate = self
         tapRecognizer.addTarget(self, action: #selector(handleTap(_:)))
@@ -4922,31 +4912,31 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         contentView.addGestureRecognizer(tapRecognizer)
     }
 
-    // MARK: - Содержимое
+    // MARK: - Content
 
-    /// Применяет папку: заголовок и сетку её ярлыков.
+    /// Applies a folder: the title and the grid of its tiles.
     ///
-    /// Состав переиспользуется: при том же числе ярлыков плитки панели только
-    /// перенастраиваются, поэтому панель не «мигает» при обновлении снимка.
+    /// The set is reused: with the same tile count the panel tiles are only
+    /// reconfigured, so the panel does not "flicker" on a snapshot update.
     ///
     /// - Parameters:
-    ///   - folder: Раскрытая папка.
-    ///   - columns: Число колонок сетки содержимого (число колонок рабочего
-    ///     стола; по умолчанию 6).
-    ///   - spacing: Зазор сетки рабочего стола (`itemSpacing`, E10.1).
+    ///   - folder: The expanded folder.
+    ///   - columns: The column count of the content grid (the desktop column
+    ///     count; 6 by default).
+    ///   - spacing: The desktop grid gap (`itemSpacing`).
     func configure(
         folder: TesseraTileFolder,
         columns: Int,
         spacing: CGFloat = TesseraTileLayoutEngine.panelContentSpacing
     ) {
-        // E16.1: перенастройка (новый снимок) заканчивает превью перестановки:
-        // ярлыки снова привязаны к слотам по индексу.
+        // Reconfiguration (a new snapshot) ends the reorder preview:
+        // tiles are bound to slots by index again.
         endReorder()
         columnCount = max(1, columns)
         contentSpacing = spacing
-        // E12.7: заголовок показывается как набран (как подпись плитки папки);
-        // прежнее приведение к нижнему регистру (D17) снято. Пустое название
-        // (папка из старого хранилища/хоста) — локализованное по умолчанию.
+        // The title is shown as typed (like a folder tile's caption);
+        // the former lowercasing (D17) was removed. An empty name
+        // (a folder from an old store/host) shows the localized default.
         let title = folder.title.isEmpty
             ? TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
             : folder.title
@@ -4961,9 +4951,9 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
         while shortcutCells.count < tiles.count {
             let cell = TesseraTileCell(frame: .zero)
-            // D17: ярлык в панели — настоящая плитка small, а не «иконка с
-            // подписью»: подложку, бэйдж, иконку и заголовок рисует та же
-            // ячейка, что и на сетке, поэтому фон не обнуляем.
+            // D17: a tile in the panel is a real small tile, not an "icon with a
+            // caption": the backing, badge, icon and title are drawn by the same
+            // cell as on the grid, so the background is not cleared.
             contentView.addSubview(cell)
             shortcutCells.append(cell)
         }
@@ -4971,70 +4961,70 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         for (index, cell) in shortcutCells.enumerated() {
             let descriptor = tiles[index]
             cell.configure(with: .tile(descriptor), liveTileEngine: nil, isVisible: true)
-            // E10.4: активация (палец и VoiceOver) идёт общим маршрутом сетки.
+            // Activation (a finger and VoiceOver) goes through the grid's common route.
             cell.onActivate = { [weak self] in
                 self?.onTapShortcut?(descriptor)
             }
-            // Ячейка могла прийти из середины прошлого каскада. Сброс — без
-            // неявной анимации: configure вызывается и внутри batch-обновления.
+            // The cell may have arrived in the middle of a previous cascade. The reset happens without
+            // implicit animation: configure is also called inside a batch update.
             withoutImplicitAnimations {
                 cell.layer.removeAllAnimations()
                 cell.alpha = 1
                 cell.transform = .identity
             }
-            // E16.1: скрытие на время полёта снимка при перестановке не переживает
-            // перенастройку.
+            // Hiding while the drag image flies during a reorder does not survive
+            // reconfiguration.
             cell.setSourceHidden(false)
         }
 
-        // Состав/колонки могли измениться — раскладка пересчитывается один раз
-        // и сразу применяется, ещё до начала анимации роста высоты.
+        // The set/columns may have changed — the layout is recomputed once
+        // and applied right away, before the height growth animation starts.
         invalidateContentLayout()
         applyContentLayoutIfNeeded()
         setNeedsLayout()
     }
 
-    /// Пересобирает шрифты под текущую категорию Dynamic Type (§9).
+    /// Rebuilds the fonts for the current Dynamic Type category (§9).
     func refreshTypography() {
         titleLabel.font = TesseraFolderPanelCell.makeTitleFont(
             compatibleWith: traitCollection
         )
         titleField.font = titleLabel.font
         shortcutCells.forEach { $0.refreshTypography() }
-        // Рамки от шрифта не зависят (заголовок — одна строка фиксированной
-        // высоты), поэтому раскладку не сбрасываем: достаточно перерисовать.
+        // Frames do not depend on the font (the title is a single line of fixed
+        // height), so the layout is not reset: a redraw is enough.
         setNeedsLayout()
     }
 
-    // MARK: - Перестановка ярлыков внутри панели (E16.1, D40)
+    // MARK: - Reordering tiles inside the panel (D40)
 
-    /// Индекс ярлыка, который сейчас тащат внутри панели; `nil` — перестановки нет.
+    /// The index of the tile currently being dragged inside the panel; `nil` means no reorder is in progress.
     private(set) var reorderSourceIndex: Int?
 
-    /// Слот, который сейчас занимает пустышка (индекс в порядке папки).
+    /// The slot the placeholder currently occupies (an index in folder order).
     private(set) var reorderSlot: Int?
 
-    /// Пустышка на месте поднятого ярлыка: рисуется в слоте, куда он «встанет».
+    /// The placeholder at the lifted tile's place: drawn in the slot it will "land" in.
     private var reorderPlaceholder: TesseraTilePlaceholderView?
 
-    /// Аниматор сдвига соседей (E8.8): удерживается, чтобы следующий шаг
-    /// останавливал прошлый переезд в текущем кадре.
+    /// The animator of the neighbor shift: retained so that the next step
+    /// stops the previous move at its current frame.
     private var reorderAnimator: UIViewPropertyAnimator?
 
-    /// Рамки слотов раскладки панели в координатах `contentView` (E16.1).
+    /// Frames of the panel layout slots in `contentView` coordinates.
     ///
-    /// Слот — место ярлыка в раскладке (колонки сетки; в RTL зеркально). Не
-    /// зависит от превью перестановки.
+    /// A slot is a tile's place in the layout (the grid columns; mirrored in RTL). It does not
+    /// depend on the reorder preview.
     var slotFrames: [CGRect] {
         applyContentLayoutIfNeeded()
         return contentLayout?.tileFrames ?? []
     }
 
-    /// Начинает перестановку: ярлык `sourceIndex` скрывается, на его слоте
-    /// появляется пустышка. Соседей двигает ``setReorderSlot(_:animated:)``.
+    /// Starts a reorder: the tile `sourceIndex` is hidden and a placeholder appears
+    /// in its slot. Neighbors are moved by ``setReorderSlot(_:animated:)``.
     ///
-    /// - Parameter sourceIndex: Индекс поднятого ярлыка в порядке папки.
-    /// - Returns: `false`, если индекс вне диапазона или раскладка не готова.
+    /// - Parameter sourceIndex: The index of the lifted tile in folder order.
+    /// - Returns: `false` if the index is out of range or the layout is not ready.
     @discardableResult
     func beginReorder(sourceIndex: Int) -> Bool {
         endReorder()
@@ -5047,23 +5037,23 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
 
         shortcutCells[sourceIndex].setSourceHidden(true)
         let placeholder = TesseraTilePlaceholderView(frame: slots[sourceIndex])
-        // Под ярлыками: сдвигающиеся соседи проезжают поверх, а не под пустышкой.
+        // Under the tiles: shifting neighbors pass over, not under, the placeholder.
         contentView.insertSubview(placeholder, at: 0)
         reorderPlaceholder = placeholder
         return true
     }
 
-    /// Ставит пустышку в слот `slot` и сдвигает соседей, освобождая его (E16.1).
+    /// Puts the placeholder into the slot `slot` and shifts neighbors to free it.
     ///
-    /// Раскладка считается **от базового порядка**, а не от прошлого превью:
-    /// ярлык `sourceIndex` вынимается и вставляется на `slot`, остальные идут
-    /// подряд по свободным слотам. Сдвиг — короткая batch-анимация с bounce-кривой
-    /// E8.8 (``TesseraTileGridView/bounceTimingParameters()``); при `animated ==
-    /// false` (Reduce Motion) — мгновенно. Слот вне диапазона ужимается.
+    /// The layout is computed **from the base order**, not from the previous preview:
+    /// the tile `sourceIndex` is taken out and inserted at `slot`, and the others follow
+    /// in sequence through the free slots. The shift is a short batch animation with the
+    /// bounce curve (``TesseraTileGridView/bounceTimingParameters()``); with `animated ==
+    /// false` (Reduce Motion) it is instant. An out-of-range slot is clamped.
     ///
     /// - Parameters:
-    ///   - slot: Индекс слота-цели в порядке папки.
-    ///   - animated: Анимировать ли сдвиг.
+    ///   - slot: The index of the target slot in folder order.
+    ///   - animated: Whether to animate the shift.
     func setReorderSlot(_ slot: Int, animated: Bool) {
         guard let source = reorderSourceIndex, let placeholder = reorderPlaceholder else { return }
         let slots = slotFrames
@@ -5081,8 +5071,8 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
         let placeholderFrame = slots[target]
 
-        // Незавершённый переезд: фиксируем кадр, который видит пользователь, и
-        // стартуем от него (иначе анимация началась бы с конечного кадра прошлой).
+        // An unfinished move: freeze the frame the user sees and
+        // start from it (otherwise the animation would begin from the end frame of the previous one).
         if reorderAnimator != nil {
             let presented = shortcutCells.map { $0.layer.presentation()?.frame ?? $0.frame }
             let placeholderPresented = placeholder.layer.presentation()?.frame ?? placeholder.frame
@@ -5116,10 +5106,10 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         animator.startAnimation()
     }
 
-    /// Заканчивает перестановку: ярлыки возвращаются на слоты раскладки, поднятый
-    /// показывается, пустышка уходит (E16.1). Без анимации — вызывающий либо
-    /// сразу применяет новый порядок снимком (drop), либо возвращает прежний
-    /// (отмена), и картинка не должна мигать.
+    /// Ends the reorder: tiles return to the layout slots, the lifted one
+    /// is shown, the placeholder leaves. Without animation — the caller either
+    /// applies the new order with a snapshot right away (drop), or restores the previous one
+    /// (cancel), and the picture must not flicker.
     func endReorder() {
         reorderAnimator?.stopAnimation(true)
         reorderAnimator = nil
@@ -5139,14 +5129,14 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
     }
 
-    // MARK: - Каскад (D17)
+    // MARK: - Cascade (D17)
 
-    /// Прячет иконки перед ростом высоты панели (D17, E7).
+    /// Hides the icons before the panel height grows (D17).
     ///
-    /// Вызывается сеткой на вставке панели. Если иконки остались бы видимыми
-    /// на время роста, каскад в конце «перепрятал» бы их и они бы прыгнули.
-    /// Состояние применяется без неявной анимации: это подготовка кадра, а не
-    /// движение.
+    /// Called by the grid on panel insertion. If the icons stayed visible
+    /// during the growth, the cascade at the end would "re-hide" them and they would jump.
+    /// The state is applied without implicit animation: this is frame preparation, not
+    /// motion.
     func prepareIconCascade() {
         guard !shortcutCells.isEmpty, !TesseraAccessibility.isReduceMotionEnabled else { return }
 
@@ -5159,10 +5149,10 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
     }
 
-    /// Запускает каскад появления иконок: opacity 0 → 1, сдвиг 10 → 0.
+    /// Starts the icon appearance cascade: opacity 0 → 1, shift 10 → 0.
     ///
-    /// Вызывается сеткой по завершении роста высоты панели. При Reduce Motion
-    /// (§9) иконки сразу видны: движение отключено, состояние — устоявшееся.
+    /// Called by the grid when the panel height growth finishes. With Reduce Motion
+    /// (§9) the icons are visible at once: motion is disabled, the state is settled.
     func playIconCascade() {
         guard !shortcutCells.isEmpty else { return }
 
@@ -5174,8 +5164,8 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             return
         }
 
-        // Стартовое состояние ставим без анимации, чтобы каскад не подхватил
-        // незавершённое движение панели.
+        // Set the start state without animation so the cascade does not pick up
+        // an unfinished panel motion.
         withoutImplicitAnimations {
             for cell in shortcutCells {
                 cell.alpha = 0
@@ -5197,13 +5187,13 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
     }
 
-    /// Гасит иконки перед схлопыванием панели (D17).
+    /// Fades the icons out before the panel collapses (D17).
     ///
-    /// Сетка выполняет удаление ячейки в `completion`, поэтому порядок обратной
-    /// анимации — «иконки → высота 0 → строки вверх» — соблюдается.
+    /// The grid performs the cell removal in `completion`, so the order of the reverse
+    /// animation — "icons → height 0 → rows up" — is preserved.
     ///
-    /// - Parameter completion: Вызывается по завершении угасания (на главном
-    ///   потоке, синхронно при Reduce Motion).
+    /// - Parameter completion: Called when the fade-out finishes (on the main
+    ///   thread, synchronously with Reduce Motion).
     func animateIconsOut(completion: @escaping () -> Void) {
         guard !shortcutCells.isEmpty, !TesseraAccessibility.isReduceMotionEnabled else {
             shortcutCells.forEach { $0.alpha = 0 }
@@ -5228,26 +5218,26 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         )
     }
 
-    // MARK: - Действия
+    // MARK: - Actions
 
-    /// Активация ярлыка внутри панели (D17, E10.4): папка остаётся открытой.
+    /// Activation of a tile inside the panel (D17): the folder stays open.
     ///
-    /// Само действие не выполняется: сетка получает дескриптор через
-    /// ``onTapShortcut`` и переводит событие в общий маршрут `onTap` (действие
-    /// выполняет хост, D12). В режиме редактирования сетка активацию не
-    /// выполняет.
+    /// The action itself is not run: the grid receives the descriptor via
+    /// ``onTapShortcut`` and turns the event into the common `onTap` route (the action is
+    /// run by the host, D12). In edit mode the grid does not
+    /// perform the activation.
     ///
-    /// - Parameter index: Индекс ярлыка в папке.
+    /// - Parameter index: The tile index in the folder.
     private func activateTile(at index: Int) {
         guard tiles.indices.contains(index) else { return }
         onTapShortcut?(tiles[index])
     }
 
-    /// Тап по панели: попал в ярлык — выполнить его действие; мимо ярлыков —
-    /// закрыть папку (D17, «повторный тап» по панели).
+    /// A tap on the panel: if it hit a tile — run its action; outside tiles —
+    /// close the folder (D17, a "repeated tap" on the panel).
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
-        // E15.5: тап, начатый во время правки имени (не по самому полю), только
-        // завершает правку — папку не закрывает и ярлык не активирует.
+        // A tap that began during name editing (not on the field itself) only
+        // finishes editing — it neither closes the folder nor activates a tile.
         if tapBeganWhileEditingTitle {
             tapBeganWhileEditingTitle = false
             endTitleEditing()
@@ -5261,10 +5251,10 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         onBackgroundTap?()
     }
 
-    // MARK: - Переименование (E15.5, D35)
+    // MARK: - Renaming (D35)
 
-    /// Включает или выключает долгое нажатие и действие VoiceOver «Переименовать»
-    /// на заголовке.
+    /// Enables or disables the long press and the VoiceOver "Rename" action
+    /// on the title.
     private func updateTitleEditability() {
         titleLongPress.isEnabled = isTitleEditable
         if isTitleEditable {
@@ -5287,18 +5277,18 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         beginTitleEditing()
     }
 
-    /// Попадает ли точка в область заголовка (долгое нажатие по нему — не вход
-    /// в редактирование и не drag).
+    /// Whether a point falls in the title area (a long press on it is neither entry
+    /// into editing nor a drag).
     ///
-    /// - Parameter point: Точка в координатах `contentView` панели.
+    /// - Parameter point: A point in the panel's `contentView` coordinates.
     func isTitleHit(_ point: CGPoint) -> Bool {
         titleLabel.frame.contains(point)
     }
 
-    /// Начинает правку имени: заголовок превращается в поле с текущим названием,
-    /// весь текст выделен (как при переименовании в «Файлах»).
+    /// Starts a name edit: the title turns into a field with the current name,
+    /// all text selected (as when renaming in Files).
     ///
-    /// - Returns: `true`, если правка началась (поле стало первым респондером).
+    /// - Returns: `true` if editing began (the field became the first responder).
     @discardableResult
     func beginTitleEditing() -> Bool {
         guard isTitleEditable, !isEditingTitle else { return isEditingTitle }
@@ -5329,17 +5319,17 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         return true
     }
 
-    /// Завершает правку имени **фиксацией** (D35): и return, и тап мимо, и закрытие
-    /// панели, и вход в режим правки/выход из него фиксируют набранное, отмены
-    /// нет. Пустое имя — «вернуть название по умолчанию».
+    /// Ends a name edit by **committing** (D35): return, a tap outside, closing the
+    /// panel, and entering/leaving edit mode all commit what was typed; there is no
+    /// cancel. An empty name means "restore the default name".
     ///
-    /// Порядок: поле прячется и теряет фокус, заголовок показывает итог,
-    /// `onTitleEditingChanged(false)` (сетка отпускает клавиатуру) и только затем
-    /// `onTitleCommit` — если обработчик синхронно обновит снимок сетки, панель
-    /// уже вне правки.
+    /// Order: the field hides and loses focus, the title shows the result,
+    /// `onTitleEditingChanged(false)` (the grid releases the keyboard), and only then
+    /// `onTitleCommit` — if the handler synchronously updates the grid snapshot, the panel
+    /// is already out of editing.
     ///
-    /// - Parameter deferringHandler: Вызвать `onTitleCommit` на следующем проходе
-    ///   runloop (переиспользование ячейки внутри обновления коллекции).
+    /// - Parameter deferringHandler: Call `onTitleCommit` on the next runloop
+    ///   pass (cell reuse inside a collection update).
     func endTitleEditing(deferringHandler: Bool = false) {
         guard isEditingTitle else { return }
         let normalized = TesseraTileFolder.normalizedTitle(titleField.text ?? "")
@@ -5371,22 +5361,22 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         }
     }
 
-    // MARK: - Раскладка
+    // MARK: - Layout
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // Высота панели в расчёте не участвует: содержимое прижато к верхнему
-        // краю и считается по ширине. При росте высоты этот метод вызывается
-        // каждый кадр, но раскладка уже применена — рамки не пересчитываются и
-        // не переставляются, поэтому контент не дёргается.
+        // The panel height does not take part in the calculation: the content is pinned to the top
+        // edge and computed by width. During height growth this method is called
+        // every frame, but the layout is already applied — frames are neither recomputed nor
+        // reassigned, so the content does not jitter.
         applyContentLayoutIfNeeded()
     }
 
-    /// Применяет внутреннюю раскладку, если она ещё не применена.
+    /// Applies the inner layout if it has not been applied yet.
     ///
-    /// Ключ — ширина, число колонок, направление чтения и число ярлыков.
-    /// Высота в ключ не входит намеренно: она меняется на каждом кадре анимации
-    /// роста, а контент от неё не зависит.
+    /// The key is the width, column count, reading direction and tile count.
+    /// The height is intentionally not in the key: it changes on every frame of the growth
+    /// animation, and the content does not depend on it.
     private func applyContentLayoutIfNeeded() {
         let width = contentView.bounds.width
         guard width.isFinite, width > 0 else { return }
@@ -5409,10 +5399,10 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
 
         guard layout != appliedContentLayout else { return }
 
-        // Во время batch-обновления UICollectionView включает анимационный
-        // контекст: обычная установка frame у подвью анимировала бы их из нуля,
-        // и иконки «прыгали» бы на первом кадре роста панели. Отключаем
-        // неявные анимации — это подготовка кадра, а не движение.
+        // During a batch update UICollectionView turns on an animation
+        // context: setting a subview frame normally would animate it from zero,
+        // and the icons would "jump" on the first frame of the panel growth. Implicit
+        // animations are disabled — this is frame preparation, not motion.
         withoutImplicitAnimations {
             titleLabel.frame = layout.titleFrame
             titleField.frame = layout.titleFrame
@@ -5426,9 +5416,9 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             where layout.tileFrames.indices.contains(index) {
                 cell.frame = layout.tileFrames[index]
             }
-            // Дочерние ячейки получают рамки сразу и раскладываются внутри один
-            // раз, пока действия слоя отключены: иначе их иконки/подписи тоже
-            // приехали бы из нулевого кадра.
+            // Child cells get frames immediately and lay out inside once
+            // while layer actions are disabled: otherwise their icons/captions would also
+            // arrive from a zero frame.
             for cell in shortcutCells {
                 cell.layoutIfNeeded()
             }
@@ -5437,28 +5427,28 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         appliedContentLayout = layout
     }
 
-    /// Считает внутреннюю раскладку по ширине панели.
+    /// Computes the inner layout from the panel width.
     ///
-    /// Сторона ярлыка и колонки — геометрия сетки
+    /// The tile side and columns are the grid geometry
     /// (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``):
-    /// юнит по всей ширине панели (она равна ширине контента сетки) и зазору
-    /// сетки `itemSpacing`, на пиксельной сетке, остаток — поровну на поля
-    /// (E10.1). Поэтому ярлыки встают в те же колонки, что и плитки под
-    /// панелью. Поля `Metrics.padding` действуют по вертикали и для заголовка.
+    /// a unit over the full panel width (equal to the grid content width) and the
+    /// grid gap `itemSpacing`, on the pixel grid, with the remainder split evenly between the insets.
+    /// So tiles sit in the same columns as the tiles below the
+    /// panel. The `Metrics.padding` insets apply vertically and to the title.
     ///
-    /// Высота в расчёт не входит: содержимое прижато к верхнему краю, а рост
-    /// панели только обрезает его снизу.
+    /// The height is not part of the calculation: the content is pinned to the top edge, and panel
+    /// growth only clips it from below.
     ///
-    /// - Parameter width: Текущая ширина панели (вся ширина контента сетки).
-    /// - Returns: Раскладка либо `nil` для вырожденной ширины.
+    /// - Parameter width: The current panel width (the full grid content width).
+    /// - Returns: The layout, or `nil` for a degenerate width.
     private func makeContentLayout(width: CGFloat) -> ContentLayout? {
         let padding = Metrics.padding
         let innerWidth = max(0, width - padding * 2)
         let columns = max(1, columnCount)
         let scale = displayScale
-        // E10.1: та же геометрия, что у сетки (юнит и зазор на пиксельной
-        // сетке, остаток ширины — поровну на поля), поэтому колонки ярлыков
-        // совпадают с колонками плиток до пикселя.
+        // The same geometry as the grid's (the unit and gap on the pixel
+        // grid, the remaining width split evenly between the insets), so tile columns
+        // match the columns of the tiles to the pixel.
         guard let metrics = TesseraTileLayoutEngine.gridMetrics(
             contentWidth: width,
             columns: columns,
@@ -5484,7 +5474,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         for index in shortcutCells.indices {
             let row = index / columns
             let logicalColumn = index % columns
-            // §9, RTL: первый ярлык — в правом верхнем углу сетки панели.
+            // RTL: the first tile is in the top right corner of the panel grid.
             let column = rightToLeft ? columns - 1 - logicalColumn : logicalColumn
             tileFrames.append(
                 CGRect(
@@ -5508,31 +5498,31 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         )
     }
 
-    /// Сбрасывает кеш раскладки: состав, колонки или направление изменились.
+    /// Resets the layout cache: the set, columns or direction changed.
     private func invalidateContentLayout() {
         contentLayout = nil
         appliedContentLayout = nil
     }
 
-    /// Масштаб пиксельного выравнивания — то же правило, что у раскладки
-    /// сетки (E10.1).
+    /// The pixel alignment scale — the same rule as the layout of the
+    /// grid.
     private var displayScale: CGFloat {
         TesseraTileCollectionViewLayout.resolvedDisplayScale(traitCollection.displayScale)
     }
 
-    /// Направление чтения панели (§9, RTL).
+    /// The panel's reading direction (§9, RTL).
     private var isRightToLeft: Bool {
         effectiveUserInterfaceLayoutDirection == .rightToLeft
     }
 
-    /// Выполняет изменения без неявных анимаций слоя.
+    /// Runs changes without implicit layer animations.
     ///
-    /// `layoutSubviews` панели вызывается в том числе внутри batch-обновления
-    /// UICollectionView, где включён анимационный контекст: без отключения
-    /// действий установка рамок подвью превратилась бы в анимацию «из нуля» и
-    /// содержимое панели поехало бы во время роста её высоты.
+    /// The panel's `layoutSubviews` is also called inside a UICollectionView
+    /// batch update, where an animation context is on: without disabling
+    /// actions, setting subview frames would turn into a "from zero" animation and
+    /// the panel content would move during the growth of its height.
     ///
-    /// - Parameter changes: Изменения, которые не должны анимироваться.
+    /// - Parameter changes: Changes that must not be animated.
     private func withoutImplicitAnimations(_ changes: () -> Void) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -5540,7 +5530,7 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         CATransaction.commit()
     }
 
-    /// §9, RTL: направление чтения меняет порядок колонок в сетке панели.
+    /// RTL: the reading direction changes the column order in the panel grid.
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
 
@@ -5548,23 +5538,23 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
             invalidateContentLayout()
             setNeedsLayout()
         }
-        // §9, Dynamic Type: панель могла быть вне экрана в момент смены
-        // категории — обновляем шрифт по своему trait'у, не дожидаясь сетки.
+        // Dynamic Type: the panel may have been off-screen when the
+        // category changed — update the font from its own trait, without waiting for the grid.
         if previousTraitCollection?.preferredContentSizeCategory
             != traitCollection.preferredContentSizeCategory {
             refreshTypography()
         }
     }
 
-    // MARK: - Переиспользование
+    // MARK: - Reuse
 
     override func prepareForReuse() {
         super.prepareForReuse()
 
-        // E16.1: перестановка внутри панели не переживает переиспользование.
+        // A reorder inside the panel does not survive reuse.
         endReorder()
-        // Панель могла быть удалена посреди каскада: следующая папка не должна
-        // унаследовать невидимые или сдвинутые иконки.
+        // The panel may have been removed in the middle of a cascade: the next folder must not
+        // inherit invisible or shifted icons.
         withoutImplicitAnimations {
             for cell in shortcutCells {
                 cell.layer.removeAllAnimations()
@@ -5572,9 +5562,9 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
                 cell.transform = .identity
             }
         }
-        // E15.5: панель ушла в переиспользование посреди правки имени — правка
-        // завершается фиксацией (D35), обработчик зовётся на следующем проходе
-        // runloop: переиспользование идёт внутри обновления коллекции.
+        // The panel went into reuse in the middle of a name edit — editing
+        // ends with a commit (D35), and the handler is called on the next runloop
+        // pass: reuse happens inside a collection update.
         endTitleEditing(deferringHandler: true)
         isTitleEditable = false
         onTitleCommit = nil
@@ -5591,24 +5581,24 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
         invalidateContentLayout()
     }
 
-    // MARK: - Шрифт
+    // MARK: - Font
 
-    /// Шрифт заголовка: масштабируется Dynamic Type, но с потолком — строка
-    /// заголовка в формуле панели фиксированной высоты (44 pt, E10.2).
+    /// The title font: scaled by Dynamic Type, but capped — the title line
+    /// in the panel formula has a fixed height (44 pt).
     ///
-    /// Потолок ограничен двумя условиями: намерением дизайна (не крупнее
-    /// 28 pt в нижнем регистре WP-заголовка) и высотой строки заголовка
-    /// (`panelHeaderHeight`): шрифт выше неё обрезался бы в собственной рамке
-    /// на accessibility-размерах Dynamic Type.
+    /// The cap is bounded by two conditions: the design intent (no larger than
+    /// 28 pt for the lowercase Windows Phone title) and the title line height
+    /// (`panelHeaderHeight`): a font taller than that would be clipped in its own frame
+    /// at Dynamic Type accessibility sizes.
     ///
-    /// - Parameter traitCollection: Trait-коллекция панели, по которой берётся
-    ///   категория размера текста; `nil` — текущая системная. Явный параметр
-    ///   нужен, чтобы тест проверил scaling и потолок детерминированно.
-    /// - Returns: Масштабированный шрифт заголовка.
+    /// - Parameter traitCollection: The panel's trait collection, from which the text size
+    ///   category is taken; `nil` means the current system one. The explicit parameter
+    ///   lets a test check scaling and the cap deterministically.
+    /// - Returns: The scaled title font.
     static func makeTitleFont(compatibleWith traitCollection: UITraitCollection?) -> UIFont {
         let base = UIFont.systemFont(ofSize: 16, weight: .semibold)
-        // 1,25 — запас отношения lineHeight/pointSize у системного шрифта:
-        // даже в худшем случае строка укладывается в высоту заголовка.
+        // 1.25 is a margin on the lineHeight/pointSize ratio of the system font:
+        // even in the worst case the line fits in the title height.
         let heightLimit = floor(TesseraTileLayoutEngine.panelHeaderHeight / 1.25)
         let maximumPointSize = min(28, heightLimit)
         return UIFontMetrics(forTextStyle: .headline).scaledFont(
@@ -5619,25 +5609,25 @@ final class TesseraFolderPanelCell: UICollectionViewCell {
     }
 }
 
-// MARK: - Поле имени и жесты панели (E15.5)
+// MARK: - Name field and panel gestures
 
 extension TesseraFolderPanelCell: UITextFieldDelegate, UIGestureRecognizerDelegate {
 
-    /// Return («Готово») фиксирует имя.
+    /// Return ("Done") commits the name.
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         endTitleEditing()
         return false
     }
 
-    /// Поле потеряло фокус не через нашу кнопку (смена респондера, уход из окна):
-    /// правка тоже завершается фиксацией.
+    /// The field lost focus not through our button (a responder change, leaving the window):
+    /// editing also ends with a commit.
     func textFieldDidEndEditing(_ textField: UITextField) {
         endTitleEditing()
     }
 
-    /// Предел длины (``TesseraTileFolder/maximumTitleLength``): правка, после которой
-    /// строка стала бы длиннее предела, не применяется (удаление и замена
-    /// короче предела проходят).
+    /// The length limit (``TesseraTileFolder/maximumTitleLength``): an edit after which
+    /// the string would exceed the limit is not applied (deletion and replacement
+    /// shorter than the limit go through).
     func textField(
         _ textField: UITextField,
         shouldChangeCharactersIn range: NSRange,
@@ -5649,11 +5639,11 @@ extension TesseraFolderPanelCell: UITextFieldDelegate, UIGestureRecognizerDelega
         return result.count <= TesseraTileFolder.maximumTitleLength
     }
 
-    /// Жесты панели решают по касанию.
+    /// The panel gestures decide per touch.
     ///
-    /// Долгое нажатие по заголовку работает только вне правки. Тап по панели не
-    /// принимает касания по самому полю (там каретка и выделение), а касание
-    /// мимо поля во время правки запоминает как «завершающий правку».
+    /// A long press on the title works only outside editing. A tap on the panel does not
+    /// accept touches on the field itself (the caret and selection live there), and a touch
+    /// outside the field during editing is remembered as "finishing the edit".
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if gestureRecognizer === titleLongPress {
             return isTitleEditable && !isEditingTitle
@@ -5670,58 +5660,58 @@ extension TesseraFolderPanelCell: UITextFieldDelegate, UIGestureRecognizerDelega
     }
 }
 
-// MARK: - Превью закрытой папки (D17)
+// MARK: - Closed folder preview (D17)
 
-/// Расписание idle-флипа превью папки (D17).
+/// The idle flip schedule of the folder preview (D17).
 ///
-/// Закрытая папка переворачивает мини-иконки не одновременно и не по общему
-/// таймеру: фаза зависит от идентификатора папки, поэтому соседние папки не
-/// «мигают» в такт. Расчёт — чистая функция от seed: один и тот же
-/// идентификатор и номер цикла дают одинаковые задержки, и это можно проверить
-/// без таймеров (тесты E7.4).
+/// A closed folder flips its mini-icons neither simultaneously nor on a shared
+/// timer: the phase depends on the folder identifier, so neighboring folders do not
+/// "blink" in unison. The computation is a pure function of the seed: the same
+/// identifier and cycle number give the same delays, which can be verified
+/// without timers.
 ///
-/// Seed считается стабильным FNV-1a по строковому описанию идентификатора:
-/// `hashValue` в Swift рандомизирован между запусками, а фаза должна оставаться
-/// воспроизводимой и предсказуемой в тестах.
+/// The seed is a stable FNV-1a over the string description of the identifier:
+/// `hashValue` in Swift is randomized between launches, while the phase must stay
+/// reproducible and predictable in tests.
 struct TesseraFolderFlipSchedule {
 
-    /// Минимальный интервал между циклами флипа, секунды (D17: 4–6 с).
+    /// The minimum interval between flip cycles, in seconds (D17: 4–6 s).
     static let minimumInterval: TimeInterval = 4
 
-    /// Максимальный интервал между циклами флипа, секунды.
+    /// The maximum interval between flip cycles, in seconds.
     static let maximumInterval: TimeInterval = 6
 
-    /// Минимальная задержка первого цикла после появления папки на экране:
-    /// флип не должен совпадать с появлением сетки.
+    /// The minimum delay of the first cycle after the folder appears on screen:
+    /// the flip must not coincide with the grid appearing.
     static let minimumInitialDelay: TimeInterval = 0.8
 
-    /// Максимальный разброс старта мини-иконок внутри одного цикла, секунды.
+    /// The maximum spread of the mini-icon start within a single cycle, in seconds.
     static let maximumStagger: TimeInterval = 0.35
 
-    /// Сколько мини-иконка держит счётчик бэйджа до возврата к иконке, секунды.
+    /// How long a mini-icon holds the badge counter before returning to the icon, in seconds.
     static let dwellDuration: TimeInterval = 2.6
 
-    /// Seed расписания.
+    /// The schedule seed.
     let seed: UInt64
 
-    /// Создаёт расписание по явному seed (тесты, повторное использование).
+    /// Creates a schedule from an explicit seed (tests, reuse).
     ///
-    /// - Parameter seed: Seed фаз и интервалов.
+    /// - Parameter seed: The seed of phases and intervals.
     init(seed: UInt64) {
         self.seed = seed
     }
 
-    /// Создаёт расписание для папки: фаза детерминированно зависит от `id`.
+    /// Creates a schedule for a folder: the phase deterministically depends on `id`.
     ///
-    /// - Parameter folderID: Идентификатор папки на рабочем столе.
+    /// - Parameter folderID: The folder identifier on the desktop.
     init(folderID: AnyHashable) {
         self.init(seed: TesseraFolderFlipSchedule.seed(for: folderID))
     }
 
-    /// Стабильный seed по идентификатору папки (FNV-1a по `String(describing:)`).
+    /// A stable seed from the folder identifier (FNV-1a over `String(describing:)`).
     ///
-    /// - Parameter folderID: Идентификатор папки.
-    /// - Returns: Seed, одинаковый в пределах и между запусками.
+    /// - Parameter folderID: The folder identifier.
+    /// - Returns: A seed that is the same within and between launches.
     static func seed(for folderID: AnyHashable) -> UInt64 {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         for byte in String(describing: folderID).utf8 {
@@ -5731,9 +5721,9 @@ struct TesseraFolderFlipSchedule {
         return hash &+ 0xE7_0002_0000_0001
     }
 
-    /// Задержка до первого цикла после появления папки на экране.
+    /// The delay before the first cycle after the folder appears on screen.
     ///
-    /// - Returns: Значение в диапазоне
+    /// - Returns: A value in the range
     ///   `minimumInitialDelay...maximumInterval`.
     func initialDelay() -> TimeInterval {
         let fraction = TesseraFolderFlipSchedule.fraction(seed: seed, salt: 0x1)
@@ -5742,10 +5732,10 @@ struct TesseraFolderFlipSchedule {
         return TesseraFolderFlipSchedule.minimumInitialDelay + fraction * span
     }
 
-    /// Интервал до следующего цикла.
+    /// The interval before the next cycle.
     ///
-    /// - Parameter cycle: Номер цикла, начиная с 1.
-    /// - Returns: Значение в диапазоне `minimumInterval...maximumInterval`.
+    /// - Parameter cycle: The cycle number, starting from 1.
+    /// - Returns: A value in the range `minimumInterval...maximumInterval`.
     func interval(cycle: Int) -> TimeInterval {
         let salt = UInt64(bitPattern: Int64(cycle)) &* 0x9E37_79B9_7F4A_7C15 &+ 0x2
         let fraction = TesseraFolderFlipSchedule.fraction(seed: seed, salt: salt)
@@ -5754,74 +5744,74 @@ struct TesseraFolderFlipSchedule {
         return TesseraFolderFlipSchedule.minimumInterval + fraction * span
     }
 
-    /// Задержка старта мини-иконки внутри цикла.
+    /// The start delay of a mini-icon within a cycle.
     ///
-    /// - Parameter miniIndex: Индекс мини-плитки (0...3).
-    /// - Returns: Значение в диапазоне `0...maximumStagger`.
+    /// - Parameter miniIndex: The mini-tile index (0...3).
+    /// - Returns: A value in the range `0...maximumStagger`.
     func stagger(miniIndex: Int) -> TimeInterval {
         let salt = UInt64(bitPattern: Int64(miniIndex)) &* 0xBF58_476D_1CE4_E5B9 &+ 0x3
         let fraction = TesseraFolderFlipSchedule.fraction(seed: seed, salt: salt)
         return fraction * TesseraFolderFlipSchedule.maximumStagger
     }
 
-    /// Равномерная дробь `[0, 1)` из seed и соли.
+    /// A uniform fraction in `[0, 1)` from the seed and a salt.
     private static func fraction(seed: UInt64, salt: UInt64) -> Double {
         var generator = TesseraSeededGenerator(seed: seed &+ salt)
-        // 53 старших бита — равномерная дробь без потери точности.
+        // The top 53 bits — a uniform fraction without loss of precision.
         return Double(generator.next() >> 11) / 9_007_199_254_740_992.0
     }
 }
 
-/// Превью закрытой папки: мини-сетка «до четырёх» иконок и idle-флип счётчиков
+/// The closed folder preview: a mini-grid of "up to four" icons and an idle flip of counters
 /// (D17).
 ///
-/// ## Почему собственная механика, а не ``TesseraLiveTileEngine``
+/// ## Why custom mechanics instead of ``TesseraLiveTileEngine``
 ///
-/// Движок и ``TesseraLiveTileView`` заточены под полноразмерную плитку:
-/// регистрация движка принимает конкретный ``TesseraLiveTileView`` (не
-/// протокол), а контейнер переворачивает две стороны вокруг оси **Y** и
-/// раскладывает заголовок/подпись стороны. Папке нужны четыре независимых
-/// мини-плитки, переворот вокруг оси **X** и никакого текста, поэтому
-/// переиспользовать пару напрямую нельзя, а менять контракт движка в задаче
-/// E7.2 нельзя (LiveTileEngine.swift вне её write-скоупа).
+/// The engine and ``TesseraLiveTileView`` are tailored to a full-size tile:
+/// the engine's registration accepts a concrete ``TesseraLiveTileView`` (not
+/// a protocol), and the container flips two faces around the **Y** axis and
+/// lays out the face title/caption. A folder needs four independent
+/// mini-tiles, a flip around the **X** axis and no text, so
+/// the pair cannot be reused directly, and changing the engine's contract is
+/// out of scope here.
 ///
-/// Контейнер повторяет принципы движка: таймер в `.common`, пауза вне экрана,
-/// в фоне и при Reduce Motion, только `layer.transform`/`isHidden` в горячем
-/// пути, seedable-расписание и сброс в устоявшееся состояние при
-/// переиспользовании. Бэйдж — общий ``TesseraLiveTileBadgeView`` из E4.3.
+/// The container follows the engine's principles: a timer in `.common`, a pause off-screen,
+/// in the background and with Reduce Motion, only `layer.transform`/`isHidden` in the
+/// hot path, a seedable schedule and a reset to the settled state on
+/// reuse. The badge is the shared ``TesseraLiveTileBadgeView``.
 ///
-/// ## Потоки
+/// ## Threading
 ///
-/// Только главный поток: таймер, уведомления и отложенные возвраты выполняются
-/// в main queue.
+/// Main thread only: the timer, notifications and deferred returns run
+/// on the main queue.
 final class TesseraFolderPreviewView: UIView {
 
-    // MARK: - Метрики
+    // MARK: - Metrics
 
     private enum Metrics {
-        /// Зазор между мини-плитками как доля стороны блока: малый, но заметный.
+        /// The gap between mini-tiles as a fraction of the block side: small but noticeable.
         static let spacingRatio: CGFloat = 0.05
         static let minimumSpacing: CGFloat = 2
     }
 
-    // MARK: - Состояние
+    // MARK: - State
 
-    /// Мини-плитки в порядке ярлыков (не больше четырёх).
+    /// The mini-tiles in tile order (at most four).
     private(set) var miniTileViews: [TesseraFolderMiniTileView] = []
 
-    /// Расписание флипа; задаётся в ``configure(tiles:schedule:)``.
+    /// The flip schedule; set in ``configure(tiles:schedule:)``.
     private(set) var schedule = TesseraFolderFlipSchedule(seed: 0)
 
-    /// Подпись содержимого (id + бэйдж): по ней ловится настоящее изменение
-    /// папки, чтобы не сбрасывать фазу на каждом обновлении снимка.
+    /// The content signature (id + badge): it catches a real change of the
+    /// folder so the phase is not reset on every snapshot update.
     private var signature: [String] = []
 
     private var isVisible = false
     private var isExpanded = false
     private var isApplicationActive = UIApplication.shared.applicationState != .background
 
-    /// Начиналось ли расписание: первый запуск идёт с ``initialDelay()``,
-    /// последующие — с интервала цикла.
+    /// Whether the schedule has started: the first start uses ``initialDelay()``,
+    /// later ones use the cycle interval.
     private var hasStarted = false
     private var cycleIndex = 0
 
@@ -5829,14 +5819,14 @@ final class TesseraFolderPreviewView: UIView {
     private var staggerWorkItems: [DispatchWorkItem] = []
     private var returnWorkItem: DispatchWorkItem?
 
-    /// Поколение расписания: отложенные флипы прошлого поколения игнорируются.
+    /// The schedule generation: deferred flips of a previous generation are ignored.
     private var generation: UInt64 = 0
 
     private var reduceMotionObserver: NSObjectProtocol?
     private var backgroundObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -5862,8 +5852,8 @@ final class TesseraFolderPreviewView: UIView {
     }
 
     private func commonInit() {
-        // Превью — декорация: папка остаётся одним accessibility-элементом
-        // ячейки (§9), касания ей тоже не нужны.
+        // The preview is decoration: the folder stays a single accessibility element
+        // of the cell (§9), and it needs no touches either.
         isAccessibilityElement = false
         isUserInteractionEnabled = false
         backgroundColor = .clear
@@ -5871,23 +5861,23 @@ final class TesseraFolderPreviewView: UIView {
         installObservers()
     }
 
-    // MARK: - Конфигурация
+    // MARK: - Configuration
 
-    /// Применяет первые ярлыки папки и расписание флипа.
+    /// Applies the folder's first tiles and the flip schedule.
     ///
-    /// Конфигурация идемпотентна: если состав и бэйджи не изменились (например,
-    /// сетка обновила снимок из-за resize), фаза и таймер не сбрасываются.
-    /// Настоящее изменение возвращает все мини-плитки к иконкам и запускает
-    /// расписание заново.
+    /// Configuration is idempotent: if the set and badges did not change (for example,
+    /// the grid updated the snapshot because of a resize), the phase and timer are not reset.
+    /// A real change returns all mini-tiles to icons and restarts
+    /// the schedule.
     ///
     /// - Parameters:
-    ///   - tiles: Ярлыки папки; берутся первые четыре.
-    ///   - schedule: Расписание флипа (фаза по идентификатору папки).
+    ///   - tiles: The folder's tiles; the first four are taken.
+    ///   - schedule: The flip schedule (phase by the folder identifier).
     func configure(tiles: [TesseraTileDescriptor], schedule: TesseraFolderFlipSchedule) {
         let limitedTiles = Array(tiles.prefix(4))
         let newSignature = limitedTiles.map { tile -> String in
-            // Идентичность иконки — через ObjectIdentifier: подмена картинки
-            // у того же ярлыка должна перерисовать мини-плитку.
+            // Icon identity via ObjectIdentifier: swapping the image
+            // of the same tile must redraw the mini-tile.
             let iconIdentity = tile.icon.map { String(describing: ObjectIdentifier($0)) } ?? "-"
             return "\(String(describing: tile.id))#\(String(describing: tile.badge))#\(iconIdentity)"
         }
@@ -5915,30 +5905,30 @@ final class TesseraFolderPreviewView: UIView {
         updateScheduling()
     }
 
-    // MARK: - Жизненный цикл и паузы
+    // MARK: - Lifecycle and pauses
 
-    /// Сообщает, видима ли папка на экране (§4, «Паузы»).
+    /// Reports whether the folder is visible on screen (§4, "Pauses").
     ///
-    /// Вызывается на каждом показе/уходе ячейки и при скрытии на время drag.
+    /// Called on every cell display/removal and when hidden during a drag.
     ///
-    /// - Parameter visible: Видима ли ячейка.
+    /// - Parameter visible: Whether the cell is visible.
     func setVisible(_ visible: Bool) {
         isVisible = visible
         updateScheduling()
     }
 
-    /// Ставит превью на паузу, пока папка раскрыта (хук волны 2, E7.3).
+    /// Pauses the preview while the folder is expanded.
     ///
-    /// - Parameter expanded: Раскрыта ли папка.
+    /// - Parameter expanded: Whether the folder is expanded.
     func setExpanded(_ expanded: Bool) {
         isExpanded = expanded
         updateScheduling()
     }
 
-    /// Полностью останавливает флип и возвращает иконки.
+    /// Fully stops the flip and returns the icons.
     ///
-    /// Используется при переиспользовании ячейки: чужая папка не должна
-    /// унаследовать фазу и счётчик.
+    /// Used when the cell is reused: another folder must not
+    /// inherit the phase and the counter.
     func stop() {
         isVisible = false
         isExpanded = false
@@ -5951,7 +5941,7 @@ final class TesseraFolderPreviewView: UIView {
         updateScheduling()
     }
 
-    /// §9, RTL: направление чтения меняет порядок мини-плиток в блоке.
+    /// RTL: the reading direction changes the order of mini-tiles in the block.
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
 
@@ -5960,14 +5950,14 @@ final class TesseraFolderPreviewView: UIView {
         }
     }
 
-    // MARK: - Расписание
+    // MARK: - Schedule
 
-    /// Можно ли сейчас крутить idle-флип.
+    /// Whether the idle flip may run now.
     ///
-    /// Условия те же, что у ``TesseraLiveTileEngine`` (§4): плитка видима, не
-    /// скрыта и в окне, приложение активно, Reduce Motion выключен и хотя бы у
-    /// одной мини-плитки есть видимый бэйдж. Ярлыки без бэйджа не
-    /// переворачиваются — у них остаётся иконка (D17).
+    /// The conditions are the same as for ``TesseraLiveTileEngine`` (§4): the tile is visible, not
+    /// hidden and in a window, the app is active, Reduce Motion is off, and at least one
+    /// mini-tile has a visible badge. Tiles without a badge do not
+    /// flip — they keep the icon (D17).
     private var isAnimationAllowed: Bool {
         isVisible
             && !isExpanded
@@ -5978,7 +5968,7 @@ final class TesseraFolderPreviewView: UIView {
             && miniTileViews.contains { $0.hasVisibleBadge }
     }
 
-    /// Перезапускает или останавливает расписание под текущее состояние.
+    /// Restarts or stops the schedule for the current state.
     private func updateScheduling() {
         guard isAnimationAllowed else {
             stopAnimation()
@@ -6001,8 +5991,8 @@ final class TesseraFolderPreviewView: UIView {
             self.runCycle()
         }
         cycleTimer = timer
-        // `.common` — таймер продолжает идти во время трекинга прокрутки
-        // коллекции, иначе превью «замирает» под пальцем (как у движка).
+        // `.common` — the timer keeps running during collection scroll
+        // tracking, otherwise the preview "freezes" under the finger (as in the engine).
         RunLoop.main.add(timer, forMode: .common)
     }
 
@@ -6049,12 +6039,12 @@ final class TesseraFolderPreviewView: UIView {
         returnWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + returnDelay, execute: workItem)
 
-        // Следующий цикл стартует от начала текущего: период не зависит от
-        // длительности возврата (D17: 4–6 с), а возврат гарантированно раньше.
+        // The next cycle starts from the start of the current one: the period does not depend on
+        // the duration of the return (D17: 4–6 s), and the return is guaranteed to be earlier.
         scheduleCycle(after: schedule.interval(cycle: cycleIndex))
     }
 
-    /// Сбрасывает таймеры и отложенные флипы, возвращая мини-плитки к иконкам.
+    /// Resets timers and deferred flips, returning the mini-tiles to icons.
     private func stopAnimation() {
         generation &+= 1
         cycleTimer?.invalidate()
@@ -6067,7 +6057,7 @@ final class TesseraFolderPreviewView: UIView {
         miniTileViews.forEach { $0.settleOnIcon() }
     }
 
-    // MARK: - Наблюдатели
+    // MARK: - Observers
 
     private func installObservers() {
         let center = NotificationCenter.default
@@ -6099,16 +6089,16 @@ final class TesseraFolderPreviewView: UIView {
         }
     }
 
-    // MARK: - Раскладка
+    // MARK: - Layout
 
-    /// Раскладывает мини-сетку 2×2 от верхнего угла по направлению чтения.
+    /// Lays out the 2×2 mini-grid from the top corner by reading direction.
     ///
-    /// Блок больше не центрируется: превью начинается с той же точки, что и
-    /// плитки рабочего стола (верхний левый угол в LTR, верхний правый в RTL),
-    /// поэтому закрытая папка читается как миниатюра настоящей сетки, а не как
-    /// «картинка по центру». Во втором случае блок сам зеркалится по колонкам —
-    /// первый ярлык остаётся первым в порядке чтения. Если ярлыков меньше
-    /// четырёх, блок прижат к тому же верхнему углу, а не к центру.
+    /// The block is no longer centered: the preview starts at the same point as the
+    /// desktop tiles (top left in LTR, top right in RTL),
+    /// so a closed folder reads like a miniature of the real grid, not like a
+    /// "picture in the center". In RTL the block itself is mirrored by columns —
+    /// the first tile stays first in reading order. If there are fewer than
+    /// four tiles, the block is pinned to the same top corner, not to the center.
     override func layoutSubviews() {
         super.layoutSubviews()
 
@@ -6125,14 +6115,14 @@ final class TesseraFolderPreviewView: UIView {
         let columns = min(2, miniTileViews.count)
         let contentWidth = CGFloat(columns) * miniSide + CGFloat(columns - 1) * spacing
         let isRightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
-        // Верхний угол по направлению чтения: в LTR — левый, в RTL — правый.
+        // The top corner by reading direction: left in LTR, right in RTL.
         let originX = isRightToLeft ? bounds.width - contentWidth : 0
         let originY: CGFloat = 0
 
         for (index, miniTile) in miniTileViews.enumerated() {
             let row = index / 2
             let logicalColumn = index % 2
-            // §9, RTL: первый ярлык — в правом верхнем углу блока.
+            // RTL: the first tile is in the top right corner of the block.
             let column = isRightToLeft ? columns - 1 - logicalColumn : logicalColumn
             miniTile.frame = CGRect(
                 x: originX + CGFloat(column) * (miniSide + spacing),
@@ -6144,18 +6134,18 @@ final class TesseraFolderPreviewView: UIView {
     }
 }
 
-/// Одна мини-плитка превью папки: иконка ярлыка и его бэйдж на обратной стороне
+/// A single folder preview mini-tile: a tile's icon and its badge on the back side
 /// (D17).
 ///
-/// Переворот — вокруг оси **X** (у большой плитки — вокруг Y): у закрытой папки
-/// мини-иконки «опрокидываются» вниз, как ячейки WP. Две фазы по половине
-/// ``flipDuration``: уходящая сторона в ребро (+90°, перспектива `m34`),
-/// подмена, доворот приходящей (−90° → 0°). Меняются только
-/// `layer.transform` и `isHidden`; `frame`/`bounds` не трогаются — дисциплина
-/// §4 и RISK.md R10.
+/// The flip is around the **X** axis (for a full-size tile it is around Y): in a closed folder
+/// the mini-icons "tip over" downward, like Windows Phone cells. Two phases of half
+/// ``flipDuration`` each: the outgoing face turns to the edge (+90°, `m34` perspective),
+/// the swap, then the incoming face turns the rest of the way (−90° → 0°). Only
+/// `layer.transform` and `isHidden` change; `frame`/`bounds` are not touched — the
+/// discipline of §4 and RISK.md R10.
 final class TesseraFolderMiniTileView: UIView {
 
-    /// Длительность полного переворота вокруг оси X, секунды.
+    /// The duration of a full flip around the X axis, in seconds.
     static let flipDuration: TimeInterval = 0.32
 
     private enum AnimationKey {
@@ -6163,8 +6153,8 @@ final class TesseraFolderMiniTileView: UIView {
         static let incoming = "tessera.folderMini.flip.incoming"
     }
 
-    /// Расстояние до точки схода перспективы. Меньше, чем у большой плитки
-    /// (500): на маленьком квадрате сильная перспектива «выворачивает» грань.
+    /// The distance to the perspective vanishing point. Smaller than for a full-size tile
+    /// (500): on a small square strong perspective "turns the face inside out".
     private static let perspectiveDistance: CGFloat = 320
 
     private let frontView = UIView()
@@ -6174,15 +6164,15 @@ final class TesseraFolderMiniTileView: UIView {
 
     private(set) var badge: TesseraTileBadge = .none
 
-    /// Показана ли сейчас обратная сторона со счётчиком.
+    /// Whether the back side with the counter is currently shown.
     private(set) var showsBadgeSide = false
 
     private var flipGeneration: UInt64 = 0
 
-    /// Есть ли что показывать на обратной стороне.
+    /// Whether there is anything to show on the back side.
     var hasVisibleBadge: Bool { badge.isVisible }
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -6195,7 +6185,7 @@ final class TesseraFolderMiniTileView: UIView {
     }
 
     private func commonInit() {
-        // Мини-плитка — декорация внутри одного accessibility-элемента папки.
+        // The mini-tile is decoration inside the folder's single accessibility element.
         isAccessibilityElement = false
         isUserInteractionEnabled = false
         backgroundColor = .clear
@@ -6221,13 +6211,13 @@ final class TesseraFolderMiniTileView: UIView {
         addSubview(backView)
     }
 
-    // MARK: - Содержимое
+    // MARK: - Content
 
-    /// Применяет иконку и бэйдж ярлыка; всегда возвращает плитку к иконке.
+    /// Applies a tile's icon and badge; always returns the tile to the icon.
     ///
     /// - Parameters:
-    ///   - icon: Иконка ярлыка; `nil` — нейтральный глиф-заглушка.
-    ///   - badge: Бэйдж ярлыка (точка или счётчик).
+    ///   - icon: The tile icon; `nil` means a neutral placeholder glyph.
+    ///   - badge: The tile badge (a dot or a counter).
     func configure(icon: UIImage?, badge: TesseraTileBadge) {
         self.badge = badge
 
@@ -6235,7 +6225,7 @@ final class TesseraFolderMiniTileView: UIView {
             iconView.image = icon
             iconView.tintColor = nil
         } else {
-            // Ярлык без иконки: место в мини-сетке не должно пустовать.
+            // A tile without an icon: the place in the mini-grid must not stay empty.
             iconView.image = UIImage(systemName: "app.fill")
             iconView.tintColor = .secondaryLabel
         }
@@ -6245,7 +6235,7 @@ final class TesseraFolderMiniTileView: UIView {
         setNeedsLayout()
     }
 
-    /// Возвращает плитку к иконке без анимации (устоявшееся состояние).
+    /// Returns the tile to the icon without animation (the settled state).
     func settleOnIcon() {
         flipGeneration &+= 1
         showsBadgeSide = false
@@ -6258,21 +6248,21 @@ final class TesseraFolderMiniTileView: UIView {
         badgeView.isHidden = true
     }
 
-    /// Переворачивает мини-плитку к счётчику бэйджа.
+    /// Flips the mini-tile to the badge counter.
     ///
-    /// - Parameter animated: `false` — мгновенная подмена (Reduce Motion).
+    /// - Parameter animated: `false` means an instant swap (Reduce Motion).
     func showBadge(animated: Bool) {
         transition(toBadgeSide: true, animated: animated)
     }
 
-    /// Переворачивает мини-плитку обратно к иконке.
+    /// Flips the mini-tile back to the icon.
     ///
-    /// - Parameter animated: `false` — мгновенная подмена.
+    /// - Parameter animated: `false` means an instant swap.
     func showIcon(animated: Bool) {
         transition(toBadgeSide: false, animated: animated)
     }
 
-    // MARK: - Флип
+    // MARK: - Flip
 
     private func transition(toBadgeSide: Bool, animated: Bool) {
         guard toBadgeSide != showsBadgeSide else { return }
@@ -6325,14 +6315,14 @@ final class TesseraFolderMiniTileView: UIView {
         duration: TimeInterval,
         generation: UInt64
     ) {
-        // Момент подмены: обе стороны повёрнуты ребром, смена видимости
-        // незаметна. Layout не меняется — только hidden/transform.
+        // The moment of the swap: both faces are turned edge-on, so the visibility
+        // change is not noticeable. The layout does not change — only hidden/transform.
         outgoing.isHidden = true
         outgoing.layer.transform = CATransform3DIdentity
         incoming.isHidden = false
         incoming.layer.transform = initialTransform
-        // Бэйдж — часть обратной стороны: появляется и скрывается в момент
-        // подмены, чтобы не «висеть» на поворачивающейся грани.
+        // The badge is part of the back side: it appears and hides at the moment of
+        // the swap so it does not "hang" on the turning face.
         badgeView.isHidden = !toBadgeSide
 
         let incomingAnimation = CABasicAnimation(keyPath: "transform")
@@ -6351,7 +6341,7 @@ final class TesseraFolderMiniTileView: UIView {
         CATransaction.commit()
     }
 
-    /// Приводит стороны к целевой стороне (мгновенно).
+    /// Brings the faces to the target face (instantly).
     private func settleOn(toBadgeSide: Bool) {
         showsBadgeSide = toBadgeSide
         frontView.layer.removeAllAnimations()
@@ -6363,17 +6353,17 @@ final class TesseraFolderMiniTileView: UIView {
         badgeView.isHidden = !toBadgeSide
     }
 
-    /// `CATransform3D` поворота вокруг оси X с перспективой (D17).
+    /// A `CATransform3D` rotation around the X axis with perspective (D17).
     ///
-    /// `m34` — перспективный член матрицы: без него переворот выглядит плоским
-    /// масштабированием.
+    /// `m34` is the perspective term of the matrix: without it the flip looks like flat
+    /// scaling.
     private static func perspectiveRotation(by angle: CGFloat) -> CATransform3D {
         var transform = CATransform3DIdentity
         transform.m34 = -1 / perspectiveDistance
         return CATransform3DRotate(transform, angle, 1, 0, 0)
     }
 
-    // MARK: - Раскладка
+    // MARK: - Layout
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -6383,7 +6373,7 @@ final class TesseraFolderMiniTileView: UIView {
 
         frontView.frame = bounds
         backView.frame = bounds
-        // Скругление как у иконки приложения: мини-плитка читается как ярлык.
+        // Rounding like an app icon: the mini-tile reads as a tile.
         backView.layer.cornerRadius = side * 0.22
 
         let inset = side * 0.1
@@ -6399,14 +6389,14 @@ final class TesseraFolderMiniTileView: UIView {
     }
 }
 
-// MARK: - Пустышка перетаскивания
+// MARK: - Drag placeholder
 
-/// Вид-пустышка под плитку на время перетаскивания (E4.4).
+/// A placeholder view for a tile while it is being dragged.
 ///
-/// Отдаётся координатору редактирования через
-/// `TesseraTileGridView.placeholderView(forItemID:)`. В иерархию сам не
-/// добавляется: место, слой и время жизни определяет координатор. Не ловит
-/// касания и скрыт от VoiceOver — это декорация, а не элемент сетки.
+/// Handed to the edit coordinator through
+/// `TesseraTileGridView.placeholderView(forItemID:)`. It does not add itself to the
+/// hierarchy: the place, layer and lifetime are decided by the coordinator. It does not catch
+/// touches and is hidden from VoiceOver — it is decoration, not a grid item.
 final class TesseraTilePlaceholderView: UIView {
 
     override init(frame: CGRect) {
@@ -6433,7 +6423,7 @@ final class TesseraTilePlaceholderView: UIView {
         updateBorderColor()
     }
 
-    /// CGColor не адаптируется автоматически при смене темы — обновляем вручную.
+    /// CGColor does not adapt automatically to a theme change — update it manually.
     private func updateBorderColor() {
         layer.borderColor = UIColor.label.withAlphaComponent(0.24).cgColor
     }

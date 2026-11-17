@@ -2,15 +2,15 @@
 //  TileMoveBounceCurveTests.swift
 //  TesseraStartScreenTests
 //
-//  Тесты bounce-кривой перемещения плиток (задача E8.8).
-//  Проектный документ: docs/PLAN.md, E8.8 — движения соседей при перестановке
-//  заканчиваются лёгким «отскоком» `cubic-bezier(0.175, 0.885, 0.32, 1.1)`,
-//  без резких прыжков.
+//  Tests for the tile move bounce curve.
+//  Design document: docs/PLAN.md: neighbor movements during a reorder
+//  end with a light "bounce" `cubic-bezier(0.175, 0.885, 0.32, 1.1)`,
+//  without abrupt jumps.
 //
-//  Проверяются контрольные точки общей фабрики и выбранная длительность:
-//  чистая логика, UI-цикл и таймеры не нужны. Кривая панели папки
-//  (`cubic-bezier(0.1, 0.9, 0.2, 1)`) этой задачей не меняется и здесь не
-//  проверяется — её контракт остаётся за E7.3/D17.
+//  The factory's control points and the chosen duration are checked:
+//  pure logic, no UI cycle or timers needed. The folder panel curve
+//  (`cubic-bezier(0.1, 0.9, 0.2, 1)`) is not changed by this and is not
+//  checked here; its contract belongs to D17.
 //
 
 #if canImport(UIKit)
@@ -21,7 +21,7 @@ import XCTest
 
 final class TileMoveBounceCurveTests: XCTestCase {
 
-    /// Контрольные точки фабрики совпадают со спецификацией E8.8.
+    /// The factory's control points match the specification.
     func testBounceControlPointsMatchSpecification() {
         let timing = TesseraTileGridView.bounceTimingParameters()
 
@@ -31,19 +31,19 @@ final class TileMoveBounceCurveTests: XCTestCase {
         XCTAssertEqual(timing.controlPoint2.y, 1.1, accuracy: 1e-9)
     }
 
-    /// `controlPoint2.y > 1` — кривая перелетает цель, то есть это именно
-    /// «отскок», а не обычное торможение.
+    /// `controlPoint2.y > 1`: the curve overshoots the target, so this is a real
+    /// "bounce" and not an ordinary deceleration.
     func testCurveOvershootsTarget() {
         let timing = TesseraTileGridView.bounceTimingParameters()
 
         XCTAssertGreaterThan(
             timing.controlPoint2.y,
             1,
-            "Кривая должна перелетать цель, иначе отскока не будет"
+            "The curve must overshoot the target, otherwise there is no bounce"
         )
     }
 
-    /// Длительность попадает в задокументированное окно E8.8 (0,22–0,28 с).
+    /// The duration falls into the documented window (0.22–0.28 s).
     func testTileMoveDurationIsInsideDocumentedWindow() {
         let duration = TesseraTileGridView.tileMoveDuration
 
@@ -51,8 +51,8 @@ final class TileMoveBounceCurveTests: XCTestCase {
         XCTAssertLessThanOrEqual(duration, 0.28)
     }
 
-    /// Переезд соседей короче раскрытия панели папки: кривую и длительность
-    /// D17 (0,28 с) задача E8.8 не трогает.
+    /// The neighbors' move is shorter than the folder panel expansion: the D17 curve and duration
+    /// (0.28 s) are not touched by this.
     func testTileMoveIsShorterThanFolderExpansion() {
         XCTAssertLessThan(
             TesseraTileGridView.tileMoveDuration,
@@ -60,7 +60,7 @@ final class TileMoveBounceCurveTests: XCTestCase {
         )
     }
 
-    /// Фабрика детерминирована: повторный вызов даёт те же контрольные точки.
+    /// The factory is deterministic: a repeated call gives the same control points.
     func testFactoryIsDeterministic() {
         let first = TesseraTileGridView.bounceTimingParameters()
         let second = TesseraTileGridView.bounceTimingParameters()

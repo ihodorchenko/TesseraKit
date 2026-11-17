@@ -2,18 +2,18 @@
 //  TesseraPagerSnapTests.swift
 //  TesseraCoreTests
 //
-//  Контрактные тесты снапа пейджера в режиме `.snapping` (E10.11, E9.2а).
-//  Проектный документ: docs/CORE-IOS-DESIGN.md §2 «Ключевые контракты»
-//  («Два режима пейджера»: ближайший центр + порог скорости; «Один писатель»).
+//  Contract tests for the pager's snapping in `.snapping` mode.
+//  Design document: docs/CORE-IOS-DESIGN.md §2 (key contracts:
+//  "Two pager modes": nearest center + velocity threshold; "Single writer").
 //
-//  Проверяются: перевод скорости UIKit (points/ms) в pt/s политики; шаг ±1 от
-//  страницы, с которой начался жест; доводка offset'а самим пейджером, когда
-//  жест закончился без инерции на невыровненном offset'е.
+//  Checked: converting UIKit velocity (points/ms) to the policy's pt/s; a ±1 step from
+//  the page where the gesture began; the pager settling the offset itself when
+//  a gesture ended without inertia at an unaligned offset.
 //
-//  Анимация `setContentOffset(_:animated:)` в тестовом процессе без приложения
-//  ведёт себя по-разному (без окна UIKit завершает её синхронно), поэтому
-//  тесты допускают оба исхода: синхронное завершение либо имитацию конца
-//  анимации вызовом `scrollViewDidEndScrollingAnimation`.
+//  The `setContentOffset(_:animated:)` animation behaves differently in a test process
+//  without an app (without a window UIKit completes it synchronously), so
+//  the tests accept both outcomes: synchronous completion or emulating the end of
+//  the animation by calling `scrollViewDidEndScrollingAnimation`.
 //
 
 #if canImport(UIKit)
@@ -22,7 +22,7 @@ import XCTest
 import UIKit
 @testable import TesseraCore
 
-/// Шпион делегата: индексы показанных страниц.
+/// A delegate spy: indexes of the shown pages.
 private final class SnapDelegateSpy: TesseraPagerDelegate {
     var shownIndexes: [Int] = []
 
@@ -36,11 +36,11 @@ final class TesseraPagerSnapTests: XCTestCase {
     private let pageWidth: CGFloat = 320
     private let pageHeight: CGFloat = 480
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func makePages(count: Int) -> [TesseraPageDescriptor] {
         (0..<count).map { index in
-            TesseraPageDescriptor(id: index, title: "Страница \(index)") { UIViewController() }
+            TesseraPageDescriptor(id: index, title: "Page \(index)") { UIViewController() }
         }
     }
 
@@ -58,9 +58,9 @@ final class TesseraPagerSnapTests: XCTestCase {
         return (pager, scrollView)
     }
 
-    /// Имитирует жест: старт на `start`, протяжка до `end`, отпускание со
-    /// скоростью UIKit `velocity` (points/ms) и предложенной целью `proposed`.
-    /// Возвращает цель, которую пейджер подставил системе.
+    /// Simulates a gesture: start at `start`, drag to `end`, release with
+    /// UIKit velocity `velocity` (points/ms) and the proposed target `proposed`.
+    /// Returns the target that the pager handed to the system.
     @discardableResult
     private func drag(
         _ pager: TesseraPagerViewController,
@@ -82,10 +82,10 @@ final class TesseraPagerSnapTests: XCTestCase {
         return target.x
     }
 
-    // MARK: - Единицы скорости и стартовая страница (E10.11)
+    // MARK: - Velocity units and the starting page
 
-    /// Протяжка 50 и флик 1 pt/ms (= 1000 pt/s > порога 600): соседняя
-    /// страница. До перевода единиц 1 «pt/s» было ниже порога — откат.
+    /// A 50 drag and a 1 pt/ms flick (= 1000 pt/s > the 600 threshold): the adjacent
+    /// page. Before unit conversion, 1 "pt/s" was below the threshold: a rollback.
     func testShortFastFlickMovesToNeighbourPage() throws {
         let (pager, scrollView) = try makeLoadedPager()
 
@@ -94,8 +94,8 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(target, pageWidth)
     }
 
-    /// Старт 0, протяжка 100, флик 3 pt/ms (инерция предлагает ≈397):
-    /// страница 1, а не 2 — шаг от страницы начала жеста.
+    /// Start 0, drag 100, flick 3 pt/ms (inertia proposes ≈397):
+    /// page 1, not 2: the step is from the page where the gesture began.
     func testStrongFlickDoesNotSkipPage() throws {
         let (pager, scrollView) = try makeLoadedPager()
 
@@ -104,7 +104,7 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(target, pageWidth)
     }
 
-    /// Флик назад со страницы 2: страница 1, а не 0.
+    /// A backward flick from page 2: page 1, not 0.
     func testStrongBackwardFlickDoesNotSkipPage() throws {
         let (pager, scrollView) = try makeLoadedPager()
 
@@ -113,7 +113,7 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(target, pageWidth)
     }
 
-    /// Медленный жест (0,4 pt/ms = 400 pt/s): ближайшая страница.
+    /// A slow gesture (0.4 pt/ms = 400 pt/s): the nearest page.
     func testSlowDragSnapsToNearestPage() throws {
         let (pager, scrollView) = try makeLoadedPager()
 
@@ -121,12 +121,12 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(drag(pager, scrollView, from: 0, to: 200, velocity: 0.4, proposed: 240), pageWidth)
     }
 
-    /// Стартовый offset одного жеста не переносится на следующий.
+    /// One gesture's starting offset is not carried over to the next one.
     func testStartOffsetIsConsumedByOneGesture() throws {
         let (pager, scrollView) = try makeLoadedPager()
         drag(pager, scrollView, from: 0, to: 100, velocity: 3, proposed: 397)
 
-        // Следующий «жест» без willBeginDragging: опора — ближайшая к proposed.
+        // The next "gesture" without willBeginDragging: the anchor is the one nearest to proposed.
         var target = CGPoint(x: 397, y: 0)
         pager.scrollViewWillEndDragging(
             scrollView,
@@ -136,11 +136,11 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(target.x, pageWidth * 2)
     }
 
-    // MARK: - Доводка без инерции (E9.2а)
+    // MARK: - Settling without inertia
 
-    /// Жест закончился без скорости на невыровненном offset'е: UIKit не
-    /// двигает offset к цели, пейджер сам запускает анимацию к ближайшей
-    /// странице и завершает переход по её окончании.
+    /// The gesture ended with no velocity at an unaligned offset: UIKit does not
+    /// move the offset to the target, so the pager itself starts an animation to the nearest
+    /// page and completes the transition when it ends.
     func testDragWithoutVelocityAlignsOffset() throws {
         let (pager, scrollView) = try makeLoadedPager()
         let spy = SnapDelegateSpy()
@@ -152,10 +152,10 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(target, pageWidth)
         pager.scrollViewDidEndDragging(scrollView, willDecelerate: false)
 
-        // Пейджер сам повёл offset к странице 1: без окна UIKit завершает
-        // анимацию синхронно; иначе имитируем её конец.
+        // The pager itself drove the offset to page 1: without a window UIKit completes
+        // the animation synchronously; otherwise we emulate its end.
         XCTAssertTrue(spy.shownIndexes.allSatisfy { $0 == 1 })
-        XCTAssertEqual(scrollView.contentOffset.x, pageWidth, "offset не выровнен после drag без скорости")
+        XCTAssertEqual(scrollView.contentOffset.x, pageWidth, "offset is not aligned after a drag with no velocity")
         if spy.shownIndexes.isEmpty {
             scrollView.setContentOffset(CGPoint(x: pageWidth, y: 0), animated: false)
             pager.scrollViewDidEndScrollingAnimation(scrollView)
@@ -165,7 +165,7 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(spy.shownIndexes, [1])
     }
 
-    /// Уже выровненный offset: доводка не нужна, переход завершается сразу.
+    /// An already aligned offset: no settling is needed, the transition completes at once.
     func testDragEndingAlignedFinishesImmediately() throws {
         let (pager, scrollView) = try makeLoadedPager()
         let spy = SnapDelegateSpy()
@@ -178,8 +178,8 @@ final class TesseraPagerSnapTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset.x, pageWidth)
     }
 
-    /// `.paged`: доводку выполняет `isPagingEnabled`, пейджер завершает
-    /// переход сразу и offset не трогает.
+    /// `.paged`: `isPagingEnabled` does the settling, and the pager completes
+    /// the transition at once and leaves the offset alone.
     func testPagedModeDoesNotAlignAfterDrag() throws {
         let (pager, scrollView) = try makeLoadedPager(mode: .paged)
         let spy = SnapDelegateSpy()

@@ -1,6 +1,6 @@
-// Раскладка бэйджа плитки в нижнем углу (D29, E15.1).
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md — §4 «Бэйдж»,
-// «Отступления реализации» (E15), пп. 59 и 60 (D47); docs/W10M-STARTSCREEN.md §1.
+// Layout of the tile badge in the bottom corner (D29).
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md — §4 "Badge" and
+// "Implementation deviations" (D47); docs/W10M-STARTSCREEN.md §1.
 
 #if canImport(UIKit)
 import UIKit
@@ -8,136 +8,136 @@ import UIKit
 import CoreGraphics
 #endif
 
-/// Раскладка бэйджа в **нижнем** углу плитки у конца строки и резерв места
-/// под него для подписи (D29, E15.1).
+/// The layout of the badge in the **bottom** corner of a tile at the end of the line, and the space
+/// reserved for it in the title (D29).
 ///
-/// Как в W10M, бэйдж (капсула со счётчиком или точка) сидит в правом нижнем
-/// углу в LTR и в левом нижнем в RTL. Один и тот же расчёт использует статичная
-/// ячейка сетки (``TesseraTileCell``) и живая плитка (``TesseraLiveTileView``),
-/// поэтому углы у них не расходятся.
+/// As in Windows 10 Mobile (W10M), the badge (a capsule with a counter, or a dot) sits in the bottom-right
+/// corner in LTR and in the bottom-left corner in RTL. The same calculation is used by the static
+/// grid cell (``TesseraTileCell``) and the live tile (``TesseraLiveTileView``),
+/// so their corners never diverge.
 ///
-/// ## Подпись и бэйдж
+/// ## Title and badge
 ///
-/// Подпись плитки прижата к низу, то есть делит нижний ряд с бэйджем. Чтобы они
-/// не наложились, бэйдж отнимает место у подписи одним из двух способов
+/// The tile title is pinned to the bottom, so it shares the bottom row with the badge. To keep them
+/// from overlapping, the badge takes space from the title in one of two ways
 /// (``Arrangement``):
-/// - ``Arrangement/beside`` — подпись остаётся в нижнем ряду, но становится
-///   уже на ширину бэйджа с зазором (``titleTrailingReserve``). Выбирается,
-///   пока подпись сохраняет не меньше ``minimumTitleFraction`` ширины контента и
-///   не меньше ``minimumTitleWidth`` pt;
-/// - ``Arrangement/above`` — на узкой плитке (1×1) подпись остаётся полной
-///   ширины, но поднимается над рядом бэйджа (``titleBottomReserve``). Если при
-///   этом иконке не хватает высоты, иконка уступает (правило «текст важнее»).
-///   Малая плитка с иконкой этот способ не использует (D47, ниже).
+/// - ``Arrangement/beside`` — the title stays in the bottom row but becomes
+///   narrower by the badge width plus a gap (``titleTrailingReserve``). It is chosen
+///   as long as the title keeps at least ``minimumTitleFraction`` of the content width and
+///   at least ``minimumTitleWidth`` pt;
+/// - ``Arrangement/above`` — on a narrow tile (1×1) the title keeps its full
+///   width but rises above the badge row (``titleBottomReserve``). If the icon then
+///   lacks height, the icon yields (the "text matters more" rule).
+///   A small tile with an icon does not use this way (D47, below).
 ///
-/// Способ выбирается по геометрии **без правки** и в правке не меняется:
-/// подпись не прыгает между режимами при входе в редактирование.
+/// The way is chosen by the geometry **outside edit mode** and does not change in edit mode:
+/// the title does not jump between modes when entering edit mode.
 ///
-/// ## Малая плитка 1×1 с бэйджем: иконка и бэйдж, без подписи (D47)
+/// ## Small 1×1 tile with a badge: icon and badge, no title (D47)
 ///
-/// Как в W10M, на малой плитке с видимым бэйджем (капсула или точка) подпись не
-/// рисуется: остаются иконка и бэйдж (``Arrangement/iconAndBadge``). Иконка
-/// стоит по центру верхней зоны плитки, над рядом бэйджа
-/// (``smallTileIconFrame(tileSize:inset:bottomReserve:)``), бэйдж — в нижнем углу
-/// у конца строки; они не пересекаются, и иконку не выдавливает ни бэйдж, ни
-/// подпись. Подпись в таком режиме скрыта только визуально: label и value
-/// VoiceOver остаются прежними. Решение «скрыть ли подпись» принимает вызывающий
+/// As in W10M, on a small tile with a visible badge (a capsule or a dot) the title is not
+/// drawn: the icon and the badge remain (``Arrangement/iconAndBadge``). The icon
+/// is centered in the upper zone of the tile, above the badge row
+/// (``smallTileIconFrame(tileSize:inset:bottomReserve:)``), and the badge is in the bottom corner
+/// at the end of the line; they do not intersect, and the icon is pushed out by neither the badge nor
+/// the title. In this mode the title is hidden only visually: the VoiceOver label and value
+/// stay the same. The decision whether to hide the title is made by the caller
 /// (``make(tileSize:badgeSize:inset:isRightToLeft:editClearance:hidesTitle:)``):
-/// ему известны размер ярлыка по модели (`TesseraTileSize.small`) и наличие иконки —
-/// без иконки подпись остаётся, иначе на плитке не было бы ничего, кроме бэйджа.
-/// Малая плитка без бэйджа и плитки 2×2, 4×2, 4×4 раскладываются как раньше.
+/// which knows the tile's model size (`TesseraTileSize.small`) and whether it has an icon —
+/// without an icon the title stays, otherwise the tile would show nothing but the badge.
+/// A small tile without a badge and the 2×2, 4×2, and 4×4 tiles are laid out as before.
 ///
-/// ## Правка: обход стрелки размера
+/// ## Edit mode: avoiding the size arrow
 ///
-/// В правке стрелка размера сидит в том же нижнем углу и заходит в плитку на
-/// `диаметр − выступ` (``TesseraTileEditControlView/badgeClearance(forTileSize:maxDiameter:)``).
-/// Бэйдж сдвигается вдоль нижнего ряда от угла на эту величину плюс
-/// ``editGap`` (в LTR влево, в RTL вправо), так что рамки бэйджа и стрелки не
-/// пересекаются. Это наименее навязчивое решение: бэйдж остаётся видимым,
-/// подпись в режиме «над» не страдает, а в режиме «рядом» подпись сужается
-/// на тот же сдвиг. Если бэйдж не помещается правее кнопки (капсула «99+» на
-/// 1×1 уже ≈ 57 pt, крупный Dynamic Type), он **скрывается только на время
-/// правки** (``isHiddenByEditControls``): поднять его вверх между кнопками
-/// значило бы наехать на иконку (D47) либо выдавить подпись 1×1.
+/// In edit mode the size arrow sits in the same bottom corner and reaches into the tile by
+/// `diameter − overhang` (``TesseraTileEditControlView/badgeClearance(forTileSize:maxDiameter:)``).
+/// The badge shifts along the bottom row away from the corner by this amount plus
+/// ``editGap`` (to the left in LTR, to the right in RTL), so the badge and arrow frames do not
+/// intersect. This is the least intrusive solution: the badge stays visible,
+/// the title in the "above" mode does not suffer, and in the "beside" mode the title narrows
+/// by the same shift. If the badge does not fit to the right of the button (the "99+" capsule on a
+/// 1×1 tile is already about 57 pt wide, with a large Dynamic Type), it is **hidden only while
+/// in edit mode** (``isHiddenByEditControls``): lifting it up between the buttons
+/// would run into the icon (D47) or push out the title of a 1×1 tile.
 struct TesseraTileBadgeLayout: Equatable {
 
-    /// Как подпись уступает место бэйджу.
+    /// How the title yields space to the badge.
     enum Arrangement: Equatable {
 
-        /// Бэйджа нет: подписи ничего не резервируется.
+        /// No badge: nothing is reserved for the title.
         case none
 
-        /// Подпись в нижнем ряду, уже на ширину бэйджа.
+        /// The title is in the bottom row, narrower by the badge width.
         case beside
 
-        /// Подпись над рядом бэйджа, полной ширины.
+        /// The title is above the badge row, at full width.
         case above
 
-        /// Подписи нет: иконка над рядом бэйджа и бэйдж в углу (D47).
+        /// No title: the icon is above the badge row and the badge is in the corner (D47).
         case iconAndBadge
     }
 
-    /// Наименьшая сторона иконки малой плитки с бэйджем, pt: даже когда бэйдж
-    /// раздут Dynamic Type и верхней зоне не хватает места, иконка не
-    /// пропадает (бэйдж рисуется поверх неё).
+    /// The smallest icon side of a small tile with a badge, in pt: even when the badge
+    /// is inflated by Dynamic Type and the upper zone lacks room, the icon does not
+    /// disappear (the badge is drawn over it).
     static let minimumSmallIconSide: CGFloat = 12
 
-    /// Наибольшая сторона иконки малой плитки с бэйджем, pt.
+    /// The largest icon side of a small tile with a badge, in pt.
     static let maximumSmallIconSide: CGFloat = 34
 
-    /// Доля меньшей стороны плитки, выше которой иконка малой плитки с бэйджем
-    /// не растёт.
+    /// The fraction of the tile's shorter side above which the icon of a small tile with a badge
+    /// does not grow.
     static let smallIconSideFraction: CGFloat = 0.45
 
-    /// Зазор между бэйджем и подписью, pt.
+    /// The gap between the badge and the title, in pt.
     static let titleGap: CGFloat = 4
 
-    /// Зазор между бэйджем и стрелкой размера в правке, pt.
+    /// The gap between the badge and the size arrow in edit mode, in pt.
     static let editGap: CGFloat = 2
 
-    /// Наименьшая ширина подписи в режиме «рядом», pt.
+    /// The smallest title width in the "beside" mode, in pt.
     static let minimumTitleWidth: CGFloat = 40
 
-    /// Наименьшая доля ширины контента, остающаяся подписи в режиме «рядом».
+    /// The smallest fraction of the content width left to the title in the "beside" mode.
     static let minimumTitleFraction: CGFloat = 0.6
 
-    /// Рамка бэйджа в координатах плитки; нулевая, если бэйджа нет.
+    /// The badge frame in tile coordinates; zero if there is no badge.
     var frame: CGRect = .zero
 
-    /// Способ, которым подпись обходит бэйдж.
+    /// The way the title avoids the badge.
     var arrangement: Arrangement = .none
 
-    /// Скрыт ли бэйдж на время правки, потому что не помещается рядом со
-    /// стрелкой размера.
+    /// Whether the badge is hidden in edit mode because it does not fit next to
+    /// the size arrow.
     var isHiddenByEditControls = false
 
-    /// Ширина, которую подпись отдаёт бэйджу со стороны конца строки (режим
-    /// «рядом»), pt.
+    /// The width the title gives to the badge at the end-of-line side ("beside"
+    /// mode), in pt.
     var titleTrailingReserve: CGFloat = 0
 
-    /// Высота нижнего ряда, которую подпись отдаёт бэйджу (режим «над»), pt.
+    /// The height of the bottom row the title gives to the badge ("above" mode), in pt.
     var titleBottomReserve: CGFloat = 0
 
-    /// Высота нижнего ряда бэйджа с зазором, которую иконка малой плитки
-    /// оставляет бэйджу (D47), pt. Считается всегда, когда бэйдж есть: решение
-    /// «показывать ли иконку вместо подписи» принимает вызывающий (у живой
-    /// плитки оно зависит от иконки конкретной стороны).
+    /// The height of the badge's bottom row with a gap that the icon of a small tile
+    /// leaves to the badge (D47), in pt. Always computed when there is a badge: the decision
+    /// whether to show the icon instead of the title is made by the caller (for a live
+    /// tile it depends on the icon of the particular face).
     var iconBottomReserve: CGFloat = 0
 
-    /// Считает раскладку.
+    /// Computes the layout.
     ///
     /// - Parameters:
-    ///   - tileSize: Размер плитки.
-    ///   - badgeSize: Собственный размер бэйджа (`.zero` — бэйджа нет).
-    ///   - inset: Поле плитки: отступ бэйджа от нижнего и бокового краёв и
-    ///     поле подписи.
-    ///   - isRightToLeft: Направление чтения.
-    ///   - editClearance: Сколько нижнего угла у конца строки занимает стрелка
-    ///     размера внутри плитки; `0` — вне правки либо стрелки нет.
-    ///   - hidesTitle: `true` — малая плитка с иконкой: подписи нет, подписи
-    ///     ничего не резервируется (``Arrangement/iconAndBadge``, D47). Без
-    ///     бэйджа флаг ничего не меняет.
-    /// - Returns: Рамка бэйджа и резерв для подписи.
+    ///   - tileSize: The tile size.
+    ///   - badgeSize: The intrinsic badge size (`.zero` means no badge).
+    ///   - inset: The tile inset: the badge offset from the bottom and side edges and
+    ///     the title margin.
+    ///   - isRightToLeft: The reading direction.
+    ///   - editClearance: How much of the bottom corner at the end of the line is taken by the size arrow
+    ///     inside the tile; `0` outside edit mode or when there is no arrow.
+    ///   - hidesTitle: `true` for a small tile with an icon: there is no title, and nothing
+    ///     is reserved for it (``Arrangement/iconAndBadge``, D47). Without a
+    ///     badge the flag changes nothing.
+    /// - Returns: The badge frame and the title reserve.
     static func make(
         tileSize: CGSize,
         badgeSize: CGSize,
@@ -155,8 +155,8 @@ struct TesseraTileBadgeLayout: Equatable {
         let contentWidth = max(0, width - inset * 2)
         let normalY = tileSize.height - inset - badgeSize.height
 
-        // Позиция вне правки: у края с отступом `inset`; слишком широкий бэйдж
-        // прижимается к полю, а не вылезает за плитку.
+        // The position outside edit mode: at the edge with the inset `inset`; a badge that is too wide
+        // is pressed to the margin instead of sticking out of the tile.
         func originX(margin: CGFloat) -> CGFloat {
             isRightToLeft ? margin : width - margin - badgeSize.width
         }
@@ -176,21 +176,21 @@ struct TesseraTileBadgeLayout: Equatable {
                 x = shiftedX
                 trailingMargin = margin
             } else {
-                // Не помещается правее стрелки: на время правки бэйдж скрыт, а
-                // подпись резервирует место как вне правки.
+                // Does not fit to the right of the arrow: while in edit mode the badge is hidden, and
+                // the title reserves space as outside edit mode.
                 layout.isHiddenByEditControls = true
             }
         }
         layout.frame = CGRect(x: x, y: normalY, width: badgeSize.width, height: badgeSize.height)
         layout.iconBottomReserve = badgeSize.height + titleGap
 
-        // D47: малая плитка с иконкой — подписи нет, резерва тоже.
+        // D47: a small tile with an icon has no title and no reserve either.
         if hidesTitle {
             layout.arrangement = .iconAndBadge
             return layout
         }
 
-        // Способ решается по геометрии вне правки (подпись не прыгает).
+        // The way is decided by the geometry outside edit mode (the title does not jump).
         let normalReserve = badgeSize.width + titleGap
         let besideWidth = contentWidth - normalReserve
         let threshold = max(minimumTitleWidth, contentWidth * minimumTitleFraction)
@@ -204,23 +204,23 @@ struct TesseraTileBadgeLayout: Equatable {
         return layout
     }
 
-    /// Рамка иконки малой плитки с бэйджем (D47).
+    /// The icon frame of a small tile with a badge (D47).
     ///
-    /// Иконка стоит по центру **верхней зоны**: от верхнего поля до зазора над
-    /// рядом бэйджа. Зона не зависит от стороны бэйджа и от правки, поэтому в RTL
-    /// и при сдвиге бэйджа от стрелки размера иконка остаётся на месте, а кнопка
-    /// открепления (верхний угол у конца строки) на неё не заходит. Сторона —
-    /// высота зоны, но не больше ``smallIconSideFraction`` меньшей стороны плитки,
-    /// ``maximumSmallIconSide``, ширины контента и ширины между кнопками правки
-    /// (иконка не заходит под кнопку открепления даже в правке); не меньше
-    /// ``minimumSmallIconSide``: при раздутом Dynamic Type бэйдж уходит поверх
-    /// иконки, но иконка остаётся.
+    /// The icon is centered in the **upper zone**: from the top margin to the gap above the
+    /// badge row. The zone does not depend on the badge side or on edit mode, so in RTL
+    /// and when the badge shifts away from the size arrow the icon stays in place, and the unpin
+    /// button (the top corner at the end of the line) does not reach it. The side is
+    /// the zone height, but no more than ``smallIconSideFraction`` of the tile's shorter side,
+    /// ``maximumSmallIconSide``, the content width, and the width between the edit buttons
+    /// (the icon does not go under the unpin button even in edit mode); and no less than
+    /// ``minimumSmallIconSide``: with a large Dynamic Type the badge goes over the
+    /// icon, but the icon stays.
     ///
     /// - Parameters:
-    ///   - tileSize: Размер плитки.
-    ///   - inset: Поле плитки.
-    ///   - bottomReserve: ``iconBottomReserve`` раскладки бэйджа.
-    /// - Returns: Рамка иконки в координатах плитки.
+    ///   - tileSize: The tile size.
+    ///   - inset: The tile inset.
+    ///   - bottomReserve: The ``iconBottomReserve`` of the badge layout.
+    /// - Returns: The icon frame in tile coordinates.
     static func smallTileIconFrame(
         tileSize: CGSize,
         inset: CGFloat,
@@ -228,10 +228,10 @@ struct TesseraTileBadgeLayout: Equatable {
     ) -> CGRect {
         let zoneHeight = max(0, tileSize.height - inset * 2 - bottomReserve)
         let contentWidth = max(0, tileSize.width - inset * 2)
-        // Иконка стоит по центру и в правке не должна наезжать на кнопку
-        // открепления в верхнем углу: та заходит в плитку на `диаметр − выступ`
-        // (у малой плитки диаметр — минимальный). Резерв берётся всегда, а не
-        // только в правке, чтобы иконка не прыгала при входе в правку.
+        // The icon is centered and in edit mode must not run onto the unpin button
+        // in the top corner: it reaches into the tile by `diameter − overhang`
+        // (for a small tile the diameter is the minimum). The reserve is always taken, not
+        // only in edit mode, so that the icon does not jump when entering edit mode.
         let buttonReserve = TesseraTileEditControlView.minimumDiameter
             - TesseraTileEditControlView.cornerOverhang
         let limit = min(

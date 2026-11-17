@@ -1,66 +1,63 @@
-// Хранилище состояния «Рабочего стола»: порядок, размеры, папки и закрепления.
+// The start screen state store: order, sizes, folders and pins.
 //
-// Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md
-//  - §3 «Плиточная сетка»: раскладку в юнитах считает TesseraTileLayoutEngine
-//    (чистые функции, файл TesseraTileLayoutEngine.swift); порядок элементов, размеры,
-//    закрепления и папки — задача TesseraTileStore;
-//  - §5 «Режим редактирования»: «TesseraTileStore сохраняет порядок/размеры/закрепления
-//    (JSON/файл), выживает между запусками»;
-//  - §6 «Страница справа»: TesseraTileStore — единственный источник истины и для сетки,
-//    и для списка приложений (двусторонний pin/unpin, правило «один писатель»);
-//  - §14 «Уточнения MVP» и D12–D15 в docs/STATE.md: ярлык — просто действие
-//    (без поля type), папки создаются/меняются только через функцию одобрения
-//    хоста, у ярлыков четыре размера.
+// Design document: docs/STARTSCREEN-IOS-DESIGN.md
+//  - §3 (the tile grid): the unit layout is computed by TesseraTileLayoutEngine (pure functions, the
+//    file TesseraTileLayoutEngine.swift); item order, sizes, pins and folders are the job of
+//    TesseraTileStore;
+//  - §5 (edit mode): "TesseraTileStore keeps order/sizes/pins (JSON/file) and survives between
+//    launches";
+//  - §6 (the right page): TesseraTileStore is the single source of truth for both the grid and the
+//    app list (two-way pin/unpin, the "single writer" rule);
+//  - §14 (MVP clarifications) and D12–D15 in docs/STATE.md: a shortcut is just an action (no type
+//    field), folders are created/changed only through the host approval function, shortcuts have
+//    four sizes.
 //
-// Модель ярлыка и папки — `TesseraTileDescriptor.swift` / `TesseraTileFolder.swift` (E4.2):
-// хранилище не дублирует их, а надстраивает состояние поверх каталога ярлыков.
+// The shortcut and folder models are `TesseraTileDescriptor.swift` / `TesseraTileFolder.swift`: the
+// store does not duplicate them but builds state on top of the shortcut catalog.
 //
-// Поток: все методы рассчитаны на главный поток — состояние рабочего стола не
-// размазывается по модулям (docs/CORE-IOS-DESIGN.md §3). Запись на диск
-// синхронная, JSON небольшой: это дешевле, чем очередь и гонки за файл.
+// Threading: all methods are meant for the main thread, so that the start screen state is not
+// smeared across modules (docs/CORE-IOS-DESIGN.md §3). Disk writes are synchronous and the JSON is
+// small: that is cheaper than a queue and file races.
 
 #if canImport(UIKit)
 import Combine
 import Foundation
 import UIKit
 
-// MARK: - Снимок сетки
+// MARK: - Grid snapshot
 
-/// Элемент сетки рабочего стола: ярлык, папка или панель раскрытой папки.
+/// A start screen grid item: a shortcut, a folder or an expanded folder panel.
 ///
-/// Снимок отдаёт элементы в порядке отображения. Ярлык приходит с текущим
-/// размером и подписью, папка — со своими ярлыками, чтобы сетка и экран папки
-/// рисовались по одному снимку и не дёргали хранилище на каждый элемент.
+/// A snapshot returns items in display order. A shortcut comes with its current size and caption,
+/// and a folder with its shortcuts, so that the grid and the folder screen are drawn from one
+/// snapshot and do not hit the store for every item.
 ///
-/// ``folderContent(_:)`` — не элемент данных, а UI-состояние раскрытия (D17):
-/// `TesseraTileStore` и файл состояния её не содержат, а вью-слой **вставляет** её
-/// отдельным элементом сразу после плитки папки. Плитка папки при этом остаётся
-/// в наборе и на экране: панель — полноширинная строка под ней. Она живёт в этом
-/// же перечислении, чтобы раскладка (`TesseraTileLayoutEngine`/
-/// `TesseraTileCollectionViewLayout`) видела раскрытую панель в общем порядке
-/// элементов.
+/// ``folderContent(_:)`` is not a data item but the expansion UI state (D17): `TesseraTileStore` and
+/// the state file do not contain it, and the view layer **inserts** it as a separate item right
+/// after the folder tile. The folder tile stays in the set and on screen: the panel is a full-width
+/// row under it. It lives in this same enumeration so that the layout
+/// (`TesseraTileLayoutEngine`/`TesseraTileCollectionViewLayout`) sees the expanded panel in the
+/// common item order.
 public enum TesseraTileGridItem {
 
-    /// Ярлык с текущим размером из хранилища.
+    /// A shortcut with its current size from the store.
     case tile(TesseraTileDescriptor)
 
-    /// Папка вместе с её ярлыками (в порядке папки).
+    /// A folder together with its shortcuts (in folder order).
     case folder(TesseraTileFolder)
 
-    /// Полноширинная панель раскрытой папки (D17, E7.1).
+    /// The full-width panel of an expanded folder (D17).
     ///
-    /// Панель показывает заголовок папки и сетку её содержимого. В наборе
-    /// элементов вью-слой **вставляет** её сразу после плитки-папки: плитка
-    /// остаётся видимой, число элементов растёт на один, а панель занимает
-    /// полноширинную строку сразу после строки, в которой заканчивается папка
-    /// (``folderContent(_:)`` растягивается на всю ширину). В данных панели нет:
-    /// это представление состояния «папка раскрыта», поэтому в снимке
-    /// `TesseraTileStore` панель не появляется и между запусками не сохраняется.
-    /// Идентификатор панели совпадает с идентификатором папки — по нему
-    /// раскладка находит строку папки, после которой встаёт панель.
+    /// The panel shows the folder title and a grid of its content. In the item set the view layer
+    /// **inserts** it right after the folder tile: the tile stays visible, the item count grows by
+    /// one, and the panel takes a full-width row right after the row in which the folder ends
+    /// (``folderContent(_:)`` stretches over the full width). The panel is not data: it is the
+    /// representation of the "folder is expanded" state, so it does not appear in a
+    /// `TesseraTileStore` snapshot and is not persisted between launches. The panel identifier equals
+    /// the folder identifier; the layout uses it to find the folder row after which the panel stands.
     case folderContent(TesseraTileFolder)
 
-    /// Идентификатор элемента (ярлыка, папки или панели папки).
+    /// The item identifier (of a shortcut, a folder or a folder panel).
     public var id: AnyHashable {
         switch self {
         case .tile(let descriptor): return descriptor.id
@@ -69,14 +66,13 @@ public enum TesseraTileGridItem {
         }
     }
 
-    /// Текущий размер элемента в юнитах (D15).
+    /// The current item size in units (D15).
     ///
-    /// У панели раскрытой папки собственного размера в юнитах нет: она всегда
-    /// занимает всю ширину сетки, а её высоту считает
-    /// ``TesseraTileLayoutEngine/panelHeight(for:width:columns:)``. Для единообразия
-    /// возвращается ``TesseraTileSize/wide`` — ближайший «полноширинный» размер D15.
-    /// Раскладка не упаковывает панель по этой метке: панель — отдельная строка
-    /// под папкой (``panelFolder``), а не плитка.
+    /// An expanded folder panel has no size of its own in units: it always takes the full grid width,
+    /// and its height is computed by ``TesseraTileLayoutEngine/panelHeight(for:width:columns:)``. For
+    /// uniformity it returns ``TesseraTileSize/wide``, the nearest "full-width" D15 size. The layout
+    /// does not pack the panel by this mark: the panel is a separate row under the folder
+    /// (``panelFolder``), not a tile.
     public var size: TesseraTileSize {
         switch self {
         case .tile(let descriptor): return descriptor.size
@@ -85,78 +81,77 @@ public enum TesseraTileGridItem {
         }
     }
 
-    /// Ярлык, если элемент — ярлык.
+    /// The shortcut, if the item is a shortcut.
     public var tile: TesseraTileDescriptor? {
         guard case .tile(let descriptor) = self else { return nil }
         return descriptor
     }
 
-    /// Папка, если элемент — плитка-папка.
+    /// The folder, if the item is a folder tile.
     ///
-    /// Панель раскрытой папки (``folderContent(_:)``) сюда не попадает: это не
-    /// элемент данных, и её папка доступна через ``panelFolder``. Так
-    /// ``TesseraTileGridSnapshot/folders`` и обходы снимка не считают одну папку
-    /// дважды, когда панель добавлена к набору элементов вью-слоем.
+    /// The expanded folder panel (``folderContent(_:)``) is not included here: it is not a data
+    /// item, and its folder is available through ``panelFolder``. This way
+    /// ``TesseraTileGridSnapshot/folders`` and snapshot traversals do not count one folder twice when
+    /// the view layer adds a panel to the item set.
     public var folder: TesseraTileFolder? {
         guard case .folder(let folder) = self else { return nil }
         return folder
     }
 
-    /// Папка, если элемент — панель раскрытой папки.
+    /// The folder, if the item is an expanded folder panel.
     public var panelFolder: TesseraTileFolder? {
         guard case .folderContent(let folder) = self else { return nil }
         return folder
     }
 
-    /// Является ли элемент полноширинной панелью раскрытой папки (D17).
+    /// Whether the item is the full-width panel of an expanded folder (D17).
     public var isFolderPanel: Bool {
         if case .folderContent = self { return true }
         return false
     }
 
-    /// Ярлыки папки, если элемент — плитка-папка.
+    /// The folder's shortcuts, if the item is a folder tile.
     ///
-    /// У панели раскрытой папки содержимое берётся из ``panelFolder``: панель —
-    /// представление, а не второй экземпляр папки.
+    /// For an expanded folder panel the content comes from ``panelFolder``: the panel is a
+    /// representation, not a second instance of the folder.
     public var folderTiles: [TesseraTileDescriptor] {
         guard case .folder(let folder) = self else { return [] }
         return folder.tiles
     }
 }
 
-/// Снимок сетки рабочего стола — то, что читают UI и раскладка.
+/// A start screen grid snapshot: what the UI and the layout read.
 ///
-/// Снимок — значение: он не связан с хранилищем и не меняется задним числом.
-/// Пиксельной геометрии в нём нет: раскладку считает `TesseraTileLayoutEngine` (§3),
-/// а снимок даёт порядок, размеры и папки. ``layoutItems`` — готовый вход для
+/// A snapshot is a value: it is not tied to the store and does not change retroactively. It has no
+/// pixel geometry: the layout is computed by `TesseraTileLayoutEngine` (§3), and the snapshot gives
+/// order, sizes and folders. ``layoutItems`` is a ready input for
 /// `TesseraTileLayoutEngine.pack(items:columns:unit:)`.
 public struct TesseraTileGridSnapshot {
 
-    /// Элементы сетки в порядке отображения: слева направо, сверху вниз.
+    /// The grid items in display order: left to right, top to bottom.
     public let items: [TesseraTileGridItem]
 
-    /// Ярлыки вне сетки: их можно прикрепить; из них же строится список
-    /// приложений (§6, двусторонний pin/unpin).
+    /// Shortcuts off the grid: they can be pinned; the app list is built from them too (§6, two-way
+    /// pin/unpin).
     public let unpinned: [TesseraTileDescriptor]
 
-    /// Необязательная таблица явных ячеек (E14.3, D30).
+    /// An optional table of explicit cells (D30).
     ///
-    /// «Боковой» вход раскладки: пока таблицы нет, сетка раскладывает элементы
-    /// упаковкой по порядку ``items`` (строго компактно, как раньше). Если она
-    /// есть, полна и корректна для текущего числа колонок сетки, плитки встают
-    /// на свои ячейки, а дыры остаются. Неполная, некорректная или рассчитанная
-    /// на другую ширину таблица игнорируется целиком — см.
-    /// ``TesseraTileGridPlacementTable``. `TesseraTileStore.snapshot()` таблицу не прикладывает
-    /// (ширина сетки ему неизвестна); снимок с таблицей для конкретной ширины
-    /// строит ``TesseraTileStore/snapshot(columns:)``.
+    /// The "side" input of the layout: while there is no table, the grid lays items out by packing
+    /// in ``items`` order (strictly compactly, as before). If it is present, complete and valid for
+    /// the grid's current column count, tiles stand on their cells and holes remain. An incomplete,
+    /// invalid table, or one computed for another width, is ignored entirely; see
+    /// ``TesseraTileGridPlacementTable``. `TesseraTileStore.snapshot()` does not attach a table (it
+    /// does not know the grid width); a snapshot with a table for a specific width is built by
+    /// ``TesseraTileStore/snapshot(columns:)``.
     public let placementTable: TesseraTileGridPlacementTable?
 
-    /// Создаёт снимок.
+    /// Creates a snapshot.
     ///
     /// - Parameters:
-    ///   - items: Элементы сетки в порядке отображения.
-    ///   - unpinned: Ярлыки вне сетки.
-    ///   - placementTable: Таблица явных ячеек; `nil` — раскладка по порядку.
+    ///   - items: The grid items in display order.
+    ///   - unpinned: Shortcuts off the grid.
+    ///   - placementTable: The explicit cell table; `nil` means order-based layout.
     init(
         items: [TesseraTileGridItem],
         unpinned: [TesseraTileDescriptor],
@@ -167,16 +162,15 @@ public struct TesseraTileGridSnapshot {
         self.placementTable = placementTable
     }
 
-    /// Пары «идентификатор — размер» в порядке сетки для `TesseraTileLayoutEngine`.
+    /// "Identifier - size" pairs in grid order for `TesseraTileLayoutEngine`.
     ///
-    /// Хранилище не считает раскладку само (§3): оно отдаёт данные, а движок
-    /// упаковывает их в юнитные координаты.
+    /// The store does not compute the layout itself (§3): it hands out data, and the engine packs it
+    /// into unit coordinates.
     ///
-    /// Панель раскрытой папки (``TesseraTileGridItem/folderContent(_:)``) в пары не
-    /// входит: у неё нет юнитного размера, а её строку и высоту считает
-    /// раскладка по идентификатору папки. В снимке `TesseraTileStore` панели нет, но
-    /// вью-слой может добавить её к набору элементов — фильтр делает
-    /// `layoutItems` безопасным и для такого набора.
+    /// The expanded folder panel (``TesseraTileGridItem/folderContent(_:)``) is not included in the
+    /// pairs: it has no unit size, and its row and height are computed by the layout by the folder
+    /// identifier. A `TesseraTileStore` snapshot has no panel, but the view layer may add it to the
+    /// item set; the filter makes `layoutItems` safe for such a set too.
     public var layoutItems: [(id: AnyHashable, size: TesseraTileSize)] {
         items.compactMap { item in
             guard !item.isFolderPanel else { return nil }
@@ -184,283 +178,273 @@ public struct TesseraTileGridSnapshot {
         }
     }
 
-    /// Все папки в порядке сетки.
+    /// All folders in grid order.
     ///
-    /// Панель раскрытой папки не учитывается: папка уже есть в снимке как
-    /// плитка-папка, а панель — её представление (D17).
+    /// The expanded folder panel is not counted: the folder is already in the snapshot as a folder
+    /// tile, and the panel is its representation (D17).
     public var folders: [TesseraTileFolder] {
         items.compactMap { $0.folder }
     }
 
-    /// Пустая ли сетка.
+    /// Whether the grid is empty.
     public var isEmpty: Bool {
         items.isEmpty
     }
 
-    /// Элемент по идентификатору.
+    /// An item by identifier.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Элемент сетки или `nil`, если его нет на сетке.
+    /// - Parameter id: The shortcut or folder identifier.
+    /// - Returns: The grid item, or `nil` if it is not on the grid.
     public func item(withID id: AnyHashable) -> TesseraTileGridItem? {
         items.first { $0.id == id }
     }
 }
 
-// MARK: - Одобрение операций с папками (D14)
+// MARK: - Folder operation approval (D14)
 
-/// Операция группировки, которую TesseraTileStore спрашивает у хоста (D14).
+/// A grouping operation that TesseraTileStore asks the host about (D14).
 ///
-/// Порядок важен для UI-подсказок: `createFolder` — «собрать папку», `addToFolder`
-/// — «положить ярлык в существующую папку», `moveBetweenFolders` — «перенести
-/// ярлык в другую папку или обратно на рабочий стол».
+/// The order matters for UI hints: `createFolder` is "make a folder", `addToFolder` is "put a
+/// shortcut into an existing folder", `moveBetweenFolders` is "move a shortcut to another folder or
+/// back to the start screen".
 public enum TesseraTileGroupingAction: Equatable {
 
-    /// Создание папки из ярлыка.
+    /// Creating a folder from a shortcut.
     case createFolder
 
-    /// Добавление ярлыка с сетки в папку.
+    /// Adding a shortcut from the grid to a folder.
     case addToFolder
 
-    /// Перемещение ярлыка между папками (или из папки на рабочий стол).
+    /// Moving a shortcut between folders (or from a folder to the start screen).
     case moveBetweenFolders
 }
 
-/// Функция одобрения операций с папками (D14).
+/// The folder operation approval function (D14).
 ///
-/// Хост решает, разрешена ли операция; по умолчанию разрешено всё
-/// (`TesseraTileStore.approval` = allow-all). Вызывается синхронно на главном потоке
-/// до изменения состояния, поэтому функция обязана быть быстрой и не должна
-/// трогать сам `TesseraTileStore` (иначе получится рекурсия по уведомлениям).
+/// The host decides whether an operation is allowed; everything is allowed by default
+/// (`TesseraTileStore.approval` is allow-all). It is called synchronously on the main thread before
+/// the state changes, so the function must be fast and must not touch `TesseraTileStore` itself
+/// (otherwise notifications would recurse).
 ///
 /// - Parameters:
-///   - folder: Папка-цель; `nil` для `createFolder` и для переноса на рабочий стол.
-///   - tile: Ярлык, с которым выполняется операция.
-///   - action: Тип операции.
-/// - Returns: `true` — операцию выполнять, `false` — отказать без изменения состояния.
+///   - folder: The target folder; `nil` for `createFolder` and for moving to the start screen.
+///   - tile: The shortcut the operation is performed with.
+///   - action: The operation type.
+/// - Returns: `true` to perform the operation, `false` to deny it without changing state.
 public typealias TesseraTileGroupingApproval = (_ folder: TesseraTileFolder?, _ tile: TesseraTileDescriptor, _ action: TesseraTileGroupingAction) -> Bool
 
-// MARK: - Ошибки персистентности
+// MARK: - Persistence errors
 
-/// Ошибки работы с сохранённым состоянием.
+/// Errors of working with the saved state.
 public enum TesseraTileStoreError: Error, CustomStringConvertible {
 
-    /// Файл записан более новой версией схемы: читать его нельзя.
+    /// The file was written by a newer schema version: it cannot be read.
     case unsupportedSchemaVersion(Int)
 
     public var description: String {
         switch self {
         case .unsupportedSchemaVersion(let version):
-            return "TesseraTileStore: неподдерживаемая версия схемы \(version)"
+            return "TesseraTileStore: unsupported schema version \(version)"
         }
     }
 }
 
-// MARK: - Хранилище
+// MARK: - Store
 
-/// Единственный источник истины для порядка, размеров, папок и закреплений
-/// (§5, §6; D12–D15).
+/// The single source of truth for order, sizes, folders and pins (§5, §6; D12–D15).
 ///
-/// Хранилище держит каталог известных ярлыков (действия — замыкания, они не
-/// сериализуются) и отдельно — раскладку: порядок элементов сетки, размеры и
-/// папки. Сетка и список приложений только читают снимок и вызывают операции
-/// редактирования, поэтому правило «один писатель» (§6) выполняется: пишет
-/// только TesseraTileStore.
+/// The store keeps a catalog of known shortcuts (actions are closures and are not serialized) and,
+/// separately, the layout: grid item order, sizes and folders. The grid and the app list only read
+/// the snapshot and call edit operations, so the "single writer" rule (§6) holds: only
+/// TesseraTileStore writes.
 ///
-/// Использование:
+/// Usage:
 ///
 /// ```swift
 /// let store = TesseraTileStore()                        // Application Support/TesseraStartScreen
-/// store.approval = { folder, tile, action in true }   // дефолт — разрешено (D14)
-/// store.setCatalog(descriptors)                  // ярлыки приложения с действиями
-/// try? store.load()                              // восстановить раскладку
-/// store.pinTile("weather", columns: 6)           // закрепить: ярлык встанет в новую строку
+/// store.approval = { folder, tile, action in true }   // the default is allow (D14)
+/// store.setCatalog(descriptors)                  // the app's shortcuts with actions
+/// try? store.load()                              // restore the layout
+/// store.pinTile("weather", columns: 6)           // pin: the shortcut goes into a new row
 /// store.resize("weather", to: .wide, columns: 6) // D15: 1×1 / 2×2 / 4×2 / 4×4
 /// ```
 ///
-/// Размеры. `TesseraTileDescriptor` несёт размер-по-умолчанию (D15, §3), но
-/// авторитетный размер хранит TesseraTileStore: в снимке ярлыки приходят уже с текущим
-/// размером, а смена размера — операция хранилища (§5, resize в edit-режиме).
+/// Sizes. `TesseraTileDescriptor` carries a default size (D15, §3), but the authoritative size is
+/// kept by TesseraTileStore: in a snapshot, shortcuts arrive with their current size, and a size
+/// change is a store operation (§5, resize in edit mode).
 ///
-/// Идентификаторы. `TesseraTileDescriptor.id` и `TesseraTileFolder.id` — `AnyHashable`.
-/// В файл они попадают в каноническом виде (`s:` — String, `i:` — Int,
-/// `u:` — UUID, `o:` — прочее через `String(describing:)`), поэтому
-/// раскладка не зависит от типа идентификатора. Хэшируемые типы без
-/// стабильного `description` в персистентности не поддерживаются.
+/// Identifiers. `TesseraTileDescriptor.id` and `TesseraTileFolder.id` are `AnyHashable`. They go
+/// into the file in a canonical form (`s:` for String, `i:` for Int, `u:` for UUID, `o:` for
+/// anything else through `String(describing:)`), so the layout does not depend on the identifier
+/// type. Hashable types without a stable `description` are not supported in persistence.
 ///
-/// - Note: Все методы и коллбэки вызываются на главном потоке.
+/// - Note: All methods and callbacks are called on the main thread.
 public final class TesseraTileStore: ObservableObject {
 
-    // MARK: - Публичные настройки
+    // MARK: - Public settings
 
-    /// Публикация изменений для SwiftUI-фасада (iOS 15: только `ObservableObject`).
+    /// Change publication for the SwiftUI facade (iOS 15: `ObservableObject` only).
     ///
-    /// Дополнительно к ней есть ``onChange`` — он удобнее UIKit-координатору,
-    /// которому нужен готовый снимок, а не факт изменения.
+    /// In addition to it there is ``onChange``, which is more convenient for a UIKit coordinator that
+    /// needs a ready snapshot rather than the fact of a change.
     public let objectWillChange = ObservableObjectPublisher()
 
-    /// Колбэк после каждого изменения состояния: приходит готовый снимок.
+    /// A callback after every state change: it receives a ready snapshot.
     ///
-    /// Вызывается на главном потоке, после сохранения (если включено
-    /// ``autosaves``). Хранилище в колбэке не модифицируется — только читается.
+    /// Called on the main thread, after saving (if ``autosaves`` is on). The store is not modified in
+    /// the callback, only read.
     public var onChange: ((TesseraTileGridSnapshot) -> Void)?
 
-    /// Функция одобрения операций с папками (D14).
+    /// The folder operation approval function (D14).
     ///
-    /// По умолчанию разрешено всё; хост может запретить отдельные операции.
-    /// Проверяется до изменения состояния в операциях с папками:
+    /// Everything is allowed by default; the host may forbid individual operations. It is checked
+    /// before the state changes in folder operations:
     /// `createFolder(from:onto:title:columns:)`, ``addToFolder(_:folderID:columns:)``,
-    /// ``moveBetweenFolders(_:to:columns:)`` и ``extractFromFolder(_:toCell:columns:)``.
+    /// ``moveBetweenFolders(_:to:columns:)`` and ``extractFromFolder(_:toCell:columns:)``.
     public var approval: TesseraTileGroupingApproval = { _, _, _ in true }
 
-    /// Автосохранение после каждой операции редактирования (по умолчанию включено).
+    /// Autosave after every edit operation (on by default).
     ///
-    /// Ошибки записи не прерывают операцию: они попадают в
-    /// ``lastPersistenceError``, потому что потеря персистентности не должна
-    /// ломать UI. Для явной обработки используйте ``save()``.
+    /// Write errors do not interrupt the operation: they go to ``lastPersistenceError``, because
+    /// losing persistence must not break the UI. Use ``save()`` for explicit handling.
     public var autosaves: Bool = true
 
-    /// Последняя ошибка сохранения/загрузки — для диагностики.
+    /// The last save/load error, for diagnostics.
     public private(set) var lastPersistenceError: Error?
 
-    /// Резервная копия нечитаемого файла состояния, отложенная последним
-    /// ``load()`` (E10.3d), — для диагностики и ручного восстановления.
+    /// A backup of an unreadable state file set aside by the last ``load()``, for diagnostics and
+    /// manual recovery.
     ///
-    /// Если файл не декодируется или записан более новой схемой, `load()`
-    /// переименовывает его в `<имя>.unreadable-<ISO-дата>.json` рядом с
-    /// оригиналом, чтобы первое автосохранение не затёрло данные схемой текущей
-    /// версии. `nil` — нечитаемых файлов не встречалось.
+    /// If the file does not decode or was written by a newer schema, `load()` renames it to
+    /// `<name>.unreadable-<ISO date>.json` next to the original, so that the first autosave does not
+    /// overwrite the data with the current version's schema. `nil` means no unreadable files were
+    /// encountered.
     public private(set) var lastUnreadableFileBackupURL: URL?
 
-    /// Ширина холста, на которую рассчитаны сохранённые ячейки (E14.1, D32).
+    /// The canvas width the saved cells were computed for (D32).
     ///
-    /// `nil` — ячеек ещё нет: файл версии 1 или первый запуск, ширина сетки
-    /// хоста пока не известна. Как только хост сообщает ширину
-    /// (``placeItems(columns:)`` или любая операция с `columns`), ячейки
-    /// назначаются однократным прогоном `TesseraTileLayoutEngine.packCompact` по
-    /// текущему порядку и сразу сохраняются. Если ширина хоста отличается от
-    /// `canvasColumns`, файл не перезаписывается: для хоста действует проекция
-    /// ``placements(forColumns:)``.
+    /// `nil` means there are no cells yet: a version 1 file or the first launch, the host grid width
+    /// is not known yet. As soon as the host reports a width (``placeItems(columns:)`` or any
+    /// operation with `columns`), cells are assigned by a one-time `TesseraTileLayoutEngine.packCompact`
+    /// pass over the current order and saved right away. If the host width differs from
+    /// `canvasColumns`, the file is not overwritten: the host gets the ``placements(forColumns:)``
+    /// projection.
     public private(set) var canvasColumns: Int?
 
-    /// Каталог, в котором лежит JSON-файл состояния.
+    /// The directory that holds the JSON state file.
     public let directoryURL: URL
 
-    /// Путь к JSON-файлу состояния.
+    /// The path of the JSON state file.
     public let fileURL: URL
 
-    // MARK: - Внутреннее состояние
+    // MARK: - Internal state
 
-    /// Каталог ярлыков в порядке регистрации (действия, иконки, бейджи).
+    /// The shortcut catalog in registration order (actions, icons, badges).
     private var catalog: [TesseraTileDescriptor] = []
 
-    /// Индекс каталога по каноническому ключу идентификатора.
+    /// The catalog index by the canonical identifier key.
     private var catalogIndex: [String: Int] = [:]
 
-    /// Порядок элементов сетки: канонические ключи ярлыков и папок.
+    /// The grid item order: canonical keys of shortcuts and folders.
     ///
-    /// Ярлык, лежащий в папке, в этом массиве не встречается (инвариант
-    /// «один ярлык — одно место»).
+    /// A shortcut that lives in a folder does not occur in this array (the "one shortcut, one place"
+    /// invariant).
     private var gridOrder: [String] = []
 
-    /// Авторитетные размеры ярлыков по каноническому ключу.
+    /// The authoritative shortcut sizes by canonical key.
     ///
-    /// Папка хранит свой размер в ``FolderRecord/size``.
+    /// A folder keeps its size in ``FolderRecord/size``.
     private var sizes: [String: TesseraTileSize] = [:]
 
-    /// Папки в порядке сетки (в `gridOrder` они стоят по своим ключам).
+    /// Folders in grid order (in `gridOrder` they stand under their keys).
     private var folderRecords: [FolderRecord] = []
 
-    /// Прочитан ли файл состояния: после этого новые ярлыки каталога не
-    /// закрепляются автоматически (иначе «откреплённые» пользователем ярлыки
-    /// возвращались бы при каждом запуске).
+    /// Whether the state file has been read: after that, new catalog shortcuts are not pinned
+    /// automatically (otherwise shortcuts "unpinned" by the user would return on every launch).
     private var restoredFromDisk = false
 
-    /// Регистрировал ли хост каталог (``setCatalog(_:)``): только тогда
-    /// ``load()`` чистит папки по каталогу (E10.3c). До регистрации каталога
-    /// любой ярлык «неизвестен», и чистка удалила бы всё содержимое папок.
+    /// Whether the host registered a catalog (``setCatalog(_:)``): only then does ``load()`` prune
+    /// folders against the catalog. Before a catalog is registered every shortcut is "unknown", and
+    /// pruning would delete all folder contents.
     private var catalogRegistered = false
 
-    /// Нечитаемый файл состояния не удалось отложить в резервную копию:
-    /// ``save()`` повторит попытку перед записью и не затрёт файл (E10.3d).
+    /// An unreadable state file could not be set aside as a backup: ``save()`` retries before
+    /// writing and does not overwrite the file.
     private var unreadableFilePending = false
 
-    /// Источник текущей даты для имени резервной копии (подменяется в тестах).
+    /// The source of the current date for the backup name (replaced in tests).
     var currentDate: () -> Date = { Date() }
 
-    /// Версия схемы JSON-файла.
+    /// The JSON file schema version.
     ///
-    /// Версия 2 (E14.1, D33): у каждого верхнеуровневого элемента есть ячейка
-    /// `row`/`column`, а в документе — ширина холста `columns`. Версия 1
-    /// читается и мигрирует лениво (``placeItems(columns:)``).
+    /// Version 2 (D33): every top-level item has a `row`/`column` cell, and the document has the
+    /// canvas width `columns`. Version 1 is read and migrated lazily (``placeItems(columns:)``).
     private static let schemaVersion = 2
 
-    /// Явные ячейки верхнеуровневых элементов по каноническому ключу (E14.1).
+    /// The explicit cells of top-level items by canonical key.
     ///
-    /// Есть записи и для невидимых ключей (ярлыков вне текущего каталога): они
-    /// хранят свою ячейку, но не участвуют в раскладке и коллизиях (D30).
-    /// Пока ``canvasColumns`` равно `nil` («нераскладочное» состояние: файл
-    /// версии 1 или первый запуск до того, как стала известна ширина), словарь пуст.
+    /// There are records for invisible keys too (shortcuts outside the current catalog): they keep
+    /// their cell but do not take part in layout and collisions (D30). While ``canvasColumns`` is
+    /// `nil` (a "not laid out" state: a version 1 file or the first launch before the width is
+    /// known), the dictionary is empty.
     private var placementsByKey: [String: TesseraTileGridPlacement] = [:]
 
-    /// Последняя ширина сетки хоста, которую хранилище узнало из вызова с
-    /// `columns` (``placeItems(columns:)``, ``resize(_:to:columns:)`` и т. п.).
+    /// The last host grid width the store learned from a call with `columns`
+    /// (``placeItems(columns:)``, ``resize(_:to:columns:)`` and so on).
     private var hostColumns: Int?
 
-    /// Наименьшее число ярлыков в папке (D45): папка из 0 или 1 ярлыка не
-    /// существует.
+    /// The minimum number of shortcuts in a folder (D45): a folder of 0 or 1 shortcuts does not
+    /// exist.
     ///
-    /// Правило действует там, где ярлыки **убирают** из папки (вынос, открепление,
-    /// перенос в другую папку, чистка по каталогу) и при загрузке файла; когда папка
-    /// теряет ярлык и в ней остаётся один, она **распускается**: последний
-    /// ярлык встаёт на ячейку папки со своим размером. Единственное исключение —
-    /// переходное состояние публичного ``createFolder(withTile:title:columns:)``
-    /// (папка из одного ярлыка до последующего ``addToFolder(_:folderID:columns:)``).
+    /// The rule applies where shortcuts are **removed** from a folder (taking out, unpinning, moving
+    /// to another folder, pruning against the catalog) and when a file is loaded; when a folder loses
+    /// a shortcut and one remains, it is **dissolved**: the last shortcut takes the folder's cell
+    /// with its own size. The only exception is the transitional state of the public
+    /// ``createFolder(withTile:title:columns:)`` (a folder of one shortcut before the following
+    /// ``addToFolder(_:folderID:columns:)``).
     static let minimumFolderTileCount = 2
 
-    /// Папки, которые файл принёс с одним ярлыком и которые ещё не распущены
-    /// (D45).
+    /// Folders that the file brought with one shortcut and that are not dissolved yet (D45).
     ///
-    /// Каталог в момент ``load()`` может быть не зарегистрирован: какие из
-    /// ярлыков папки на самом деле существуют, пока неизвестно, и распускать
-    /// папку рано (удалённое приложение не должно превращаться в «невидимый»
-    /// ярлык на сетке). Такие папки запоминаются здесь, а чистка по каталогу
-    /// (``pruneFoldersAgainstCatalog()``) распускает их после того, как
-    /// каталог зарегистрирован.
+    /// At the time of ``load()`` the catalog may not be registered: which of the folder's shortcuts
+    /// really exist is unknown yet, and dissolving the folder is premature (an uninstalled app must
+    /// not turn into an "invisible" shortcut on the grid). Such folders are remembered here, and
+    /// pruning against the catalog (``pruneFoldersAgainstCatalog()``) dissolves them after the
+    /// catalog is registered.
     private var underfilledFolderKeys: Set<String> = []
 
-    /// Ярлыки, занявшие место распущенной папки в чистке по каталогу и при
-    /// загрузке, вместе с ячейкой папки (D45).
+    /// Shortcuts that took the place of a dissolved folder during pruning against the catalog and on
+    /// load, together with the folder's cell (D45).
     ///
-    /// Их окончательные ячейки считает `resolveDissolvedTiles()` движком
-    /// (`inserting` на ячейке папки: бо́льший ярлык выталкивает соседей вниз).
+    /// Their final cells are computed by the engine in `resolveDissolvedTiles()` (`inserting` on the
+    /// folder cell: a larger shortcut pushes neighbors down).
     private var pendingDissolvedTiles: [(key: String, cell: TesseraTileGridPlacement)] = []
 
-    /// Каноническое число колонок сетки по умолчанию (6, D26).
+    /// The canonical default grid column count (6, D26).
     ///
-    /// Нужно, когда ширина сетки хоста ещё не известна (``effectiveColumns``):
-    /// у `TesseraTileStore` нет ширины экрана.
-    /// экрана. Значение — ``TesseraTileLayoutEngine/defaultColumns``. Если хост задал
-    /// своё число колонок, вызывающий передаёт его в ``resize(_:to:columns:)``.
+    /// Needed when the host grid width is not known yet (``effectiveColumns``): `TesseraTileStore`
+    /// has no screen width. The value is ``TesseraTileLayoutEngine/defaultColumns``. If the host set
+    /// its own column count, the caller passes it to ``resize(_:to:columns:)``.
     static let defaultGridColumns = TesseraTileLayoutEngine.defaultColumns
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт хранилище.
+    /// Creates a store.
     ///
-    /// - Parameter directoryURL: Каталог для JSON-файла; `nil` — каталог по
-    ///   умолчанию (Application Support/TesseraStartScreen). Каталог
-    ///   инжектируется для тестов и для изоляции нескольких рабочих столов.
+    /// - Parameter directoryURL: The directory for the JSON file; `nil` means the default directory
+    ///   (Application Support/TesseraStartScreen). The directory is injected for tests and to
+    ///   isolate several start screens.
     public init(directoryURL: URL? = nil) {
         let directory = directoryURL ?? TesseraTileStore.defaultDirectoryURL()
         self.directoryURL = directory
         self.fileURL = directory.appendingPathComponent("tiles.json", isDirectory: false)
     }
 
-    /// Каталог по умолчанию: Application Support/TesseraStartScreen.
+    /// The default directory: Application Support/TesseraStartScreen.
     ///
-    /// Application Support — правильное место для состояния, которое
-    /// пользователь не создаёт вручную: оно не бэкапится как документы и не
-    /// чистится как Caches. Фолбэки — на случай песочниц без Application Support.
+    /// Application Support is the right place for state the user does not create by hand: it is not
+    /// backed up like documents and not purged like Caches. The fallbacks are for sandboxes without
+    /// Application Support.
     public static func defaultDirectoryURL() -> URL {
         let fileManager = FileManager.default
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -469,44 +453,40 @@ public final class TesseraTileStore: ObservableObject {
         return base.appendingPathComponent("TesseraStartScreen", isDirectory: true)
     }
 
-    // MARK: - Каталог ярлыков
+    // MARK: - Shortcut catalog
 
-    /// Регистрирует каталог ярлыков приложения (D12).
+    /// Registers the app's shortcut catalog (D12).
     ///
-    /// Действия ярлыков не сериализуются, поэтому после перезапуска хост
-    /// передаёт каталог заново, а ``load()`` накладывает на него сохранённую
-    /// раскладку. Вызывайте каталог **до** `load()`: ярлыки, неизвестные на
-    /// момент загрузки, останутся в файле, но не попадут в снимок, пока не
-    /// появятся в каталоге.
+    /// Shortcut actions are not serialized, so after a restart the host passes the catalog again, and
+    /// ``load()`` applies the saved layout on top of it. Call this **before** `load()`: shortcuts
+    /// unknown at load time stay in the file but do not reach the snapshot until they appear in the
+    /// catalog.
     ///
-    /// Размер новых ярлыков берётся из `TesseraTileDescriptor.size` (по умолчанию
-    /// `.medium` — D12). Передавайте каталог целиком одним вызовом: ярлыки, не
-    /// попавшие в текущий вызов, считаются удалёнными и вычищаются из папок.
+    /// The size of new shortcuts comes from `TesseraTileDescriptor.size` (`.medium` by default,
+    /// D12). Pass the whole catalog in one call: shortcuts missing from the current call are treated
+    /// as removed and are pruned from folders.
     ///
-    /// Повторные идентификаторы отбрасываются (побеждает первый). На первом
-    /// запуске (файла состояния ещё нет) новые ярлыки сразу закрепляются в конце
-    /// сетки; после восстановления файла — нет, чтобы не воскрешать откреплённые.
-    /// Ярлыки, пропавшие из каталога, убираются из папок (каталог авторитетен
-    /// для их содержимого), а папка, в которой осталось меньше двух ярлыков,
-    /// распускается (D45): при одном оставшемся ярлыке он встаёт на ячейку папки со
-    /// своим размером (бо́льший выталкивает соседей вниз, D31), пустая папка
-    /// исчезает — удалённое приложение не оставляет «мёртвых» плиток. Та же
-    /// чистка выполняется после ``load()``, если каталог уже зарегистрирован
-    /// (E10.3c), поэтому порядок вызовов `setCatalog`/`load` на папки не влияет.
-    /// Папки из 0–1 ярлыков, прочитанные из файла, распускаются здесь же.
-    /// Ярлыки вне каталога, стоящие прямо на сетке, не удаляются: они остаются
-    /// невидимыми ключами и держат своё место до возвращения в каталог.
+    /// Repeated identifiers are dropped (the first wins). On the first launch (there is no state file
+    /// yet) new shortcuts are pinned at the end of the grid right away; after a file is restored,
+    /// they are not, so as not to resurrect unpinned ones. Shortcuts that disappeared from the
+    /// catalog are removed from folders (the catalog is authoritative for their content), and a
+    /// folder left with fewer than two shortcuts is dissolved (D45): if one shortcut remains, it
+    /// takes the folder's cell with its own size (a larger one pushes neighbors down, D31), and an
+    /// empty folder disappears, so an uninstalled app leaves no "dead" tiles. The same pruning runs
+    /// after ``load()`` if the catalog is already registered, so the order of `setCatalog`/`load`
+    /// calls does not affect folders. Folders of 0-1 shortcuts read from a file are dissolved here
+    /// too. Shortcuts outside the catalog that stand directly on the grid are not deleted: they stay
+    /// invisible keys and hold their place until they return to the catalog.
     ///
-    /// Ячейки (E14.1): если они уже есть (``canvasColumns``), новые ярлыки
-    /// получают строку в конце холста, а вернувшиеся невидимые — свою прежнюю
-    /// ячейку, если она свободна от видимых элементов, иначе тоже новую строку
-    /// в конце. Без ячеек (первый запуск) раскладка первого запуска назначается
-    /// при первом ``placeItems(columns:)``. Метод файл не пишет.
+    /// Cells: if they already exist (``canvasColumns``), new shortcuts get a row at the end of the
+    /// canvas, and returned invisible ones get their previous cell if it is free of visible items,
+    /// otherwise also a new row at the end. Without cells (the first launch), the first-launch layout
+    /// is assigned on the first ``placeItems(columns:)``. The method does not write the file.
     ///
-    /// - Parameter descriptors: Каталог ярлыков в начальном порядке.
+    /// - Parameter descriptors: The shortcut catalog in initial order.
     public func setCatalog(_ descriptors: [TesseraTileDescriptor]) {
-        // Видимые до смены каталога ключи: при конфликте ячеек они сильнее тех,
-        // что только что вернулись в каталог (E14.1, D30).
+        // The keys visible before the catalog change: in a cell conflict they win over those that
+        // have just returned to the catalog (D30).
         let settledBefore = Set(visibleGridKeys())
 
         var seen = Set<String>()
@@ -525,9 +505,9 @@ public final class TesseraTileStore: ObservableObject {
             catalogIndex[TesseraTileStore.storageKey(for: descriptor.id)] = index
         }
 
-        // Ярлыки, которых хранилище ещё не знало (нет сохранённого размера):
-        // только их можно закрепить автоматически на первом запуске. Так
-        // повторная регистрация каталога не воскрешает откреплённые ярлыки.
+        // Shortcuts the store did not know yet (no saved size): only these can be pinned
+        // automatically on the first launch. This way re-registering the catalog does not resurrect
+        // unpinned shortcuts.
         var introduced = Set<String>()
         for descriptor in unique {
             let key = TesseraTileStore.storageKey(for: descriptor.id)
@@ -548,56 +528,53 @@ public final class TesseraTileStore: ObservableObject {
             }
         }
 
-        // E14.1: ячейки появившихся ключей — новая строка в конце холста (если
-        // ячейки уже есть), вернувшиеся невидимые встают на своё место, если оно
-        // свободно. Без ячеек (нераскладочное состояние) ничего не делается:
-        // первый запуск раскладывается прогоном `packCompact`, когда известна
-        // ширина (``placeItems(columns:)``).
+        // The cells of newly appeared keys are a new row at the end of the canvas (if cells already
+        // exist), and returned invisible ones go to their place if it is free. Without cells (the
+        // "not laid out" state) nothing is done: the first launch is laid out by a `packCompact`
+        // pass when the width is known (``placeItems(columns:)``).
         reconcilePlacements(settled: settledBefore)
 
         notifyChange()
     }
 
-    /// Ярлык по идентификатору.
+    /// A shortcut by identifier.
     ///
-    /// - Parameter id: Идентификатор ярлыка.
-    /// - Returns: Ярлык из каталога с текущим размером или `nil`.
+    /// - Parameter id: The shortcut identifier.
+    /// - Returns: The catalog shortcut with its current size, or `nil`.
     public func descriptor(withID id: AnyHashable) -> TesseraTileDescriptor? {
         guard let index = catalogIndex[TesseraTileStore.storageKey(for: id)] else { return nil }
         return resolved(catalog[index])
     }
 
-    // MARK: - Снимок
+    // MARK: - Snapshot
 
-    /// Текущий снимок сетки: порядок, размеры, папки и откреплённые ярлыки.
+    /// The current grid snapshot: order, sizes, folders and unpinned shortcuts.
     ///
-    /// Снимок собирается по запросу и не кешируется: сетка читает его после
-    /// каждого изменения, а хранилище остаётся единственным источником истины.
+    /// The snapshot is built on request and not cached: the grid reads it after every change, and
+    /// the store stays the single source of truth.
     ///
-    /// Раскрытая панель папки (D17) в снимок не попадает: хранилище хранит
-    /// данные, а состояние «папка раскрыта» — представление. Хост добавляет
-    /// ``TesseraTileGridItem/folderContent(_:)`` к копии элементов сам, поэтому
-    /// персистентность не меняется.
+    /// The expanded folder panel (D17) does not enter the snapshot: the store keeps data, and the
+    /// "folder is expanded" state is a representation. The host adds
+    /// ``TesseraTileGridItem/folderContent(_:)`` to a copy of the items itself, so persistence does
+    /// not change.
     ///
-    /// - Returns: Согласованный снимок сетки.
+    /// - Returns: A consistent grid snapshot.
     public func snapshot() -> TesseraTileGridSnapshot {
         makeSnapshot(orderedBy: nil)
     }
 
-    /// Собирает снимок: элементы в порядке чтения ячеек (E14.7).
+    /// Builds a snapshot: items in the reading order of the cells.
     ///
-    /// Порядок `items` — порядок VoiceOver (``TesseraTileGridView`` отдаёт его
-    /// коллекции как порядок индексов), поэтому он обязан совпадать с тем, как
-    /// элементы читаются на экране: строка по возрастанию, затем логическая
-    /// колонка. `gridOrder` этого не гарантирует после ``load()``, миграции
-    /// v1 → v2, ``setCatalog(_:)`` и проекции под другую ширину, поэтому снимок
-    /// всегда сортируется по ячейкам, а не берёт `gridOrder` как есть.
+    /// The `items` order is the VoiceOver order (``TesseraTileGridView`` hands it to the collection
+    /// as the index order), so it must match how items are read on screen: row ascending, then
+    /// logical column. `gridOrder` does not guarantee that after ``load()``, the v1 to v2 migration,
+    /// ``setCatalog(_:)`` and a projection for another width, so the snapshot is always sorted by
+    /// cells and does not take `gridOrder` as is.
     ///
-    /// - Parameter columns: Ширина, по ячейкам которой читать порядок:
-    ///   ``canvasColumns`` — сохранённые ячейки, иная — проекция (D32);
-    ///   `nil` — сохранённые ячейки, а без них (нераскладочное состояние) —
-    ///   порядок модели.
-    /// - Returns: Снимок без таблицы ячеек.
+    /// - Parameter columns: The width whose cells define the reading order: ``canvasColumns`` means
+    ///   the saved cells, another width means a projection (D32); `nil` means the saved cells, and
+    ///   without them (the "not laid out" state) the model order.
+    /// - Returns: A snapshot without a cell table.
     private func makeSnapshot(orderedBy columns: Int?) -> TesseraTileGridSnapshot {
         var items: [TesseraTileGridItem] = []
         var placedKeys = Set<String>()
@@ -619,27 +596,25 @@ public final class TesseraTileStore: ObservableObject {
         return TesseraTileGridSnapshot(items: items, unpinned: unpinned)
     }
 
-    /// Снимок сетки с таблицей явных ячеек для ширины `columns` (E14.3, D30).
+    /// A grid snapshot with an explicit cell table for width `columns` (D30).
     ///
-    /// Те же элементы и ярлыки вне сетки, что у ``snapshot()``, плюс
-    /// ``TesseraTileGridSnapshot/placementTable``: ячейки из ``placements(forColumns:)``
-    /// (сохранённая раскладка с дырами, если `columns` совпадает с
-    /// ``canvasColumns``, иначе проекция без дыр, D32) и заявленная ширина
-    /// `columns`. Сетка той же ширины раскладывает плитки на эти ячейки; сетка
-    /// другой ширины таблицу игнорирует и упаковывает по порядку.
+    /// The same items and off-grid shortcuts as ``snapshot()``, plus
+    /// ``TesseraTileGridSnapshot/placementTable``: the cells from ``placements(forColumns:)`` (the
+    /// saved layout with holes if `columns` matches ``canvasColumns``, otherwise a projection
+    /// without holes, D32) and the declared width `columns`. A grid of the same width lays tiles out
+    /// on these cells; a grid of another width ignores the table and packs by order.
     ///
-    /// С E14.5 это штатный путь хоста и координатора редактирования: сетка
-    /// показывает сохранённые ячейки (дыры), а ``onChange`` отдаёт такой же
-    /// снимок, когда ширина хоста известна. Хост без хранилища и без таблицы
-    /// по-прежнему получает упаковку по порядку.
+    /// This is the standard path for the host and the edit coordinator: the grid shows the saved
+    /// cells (holes), and ``onChange`` hands out the same snapshot when the host width is known. A
+    /// host without a store and without a table still gets order-based packing.
     ///
-    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: Снимок; при `columns <= 0` таблица не прикладывается.
+    /// - Parameter columns: The host grid column count, greater than zero.
+    /// - Returns: A snapshot; for `columns <= 0` no table is attached.
     public func snapshot(columns: Int) -> TesseraTileGridSnapshot {
         guard columns > 0 else { return snapshot() }
-        // E14.7: порядок элементов — порядок чтения именно тех ячеек, что идут в
-        // таблице (для другой ширины — проекции), чтобы VoiceOver читал плитки
-        // так, как они лежат на экране.
+        // The item order is the reading order of exactly the cells that go into the table (for
+        // another width, of the projection), so that VoiceOver reads tiles the way they lie on
+        // screen.
         let base = makeSnapshot(orderedBy: columns)
         return TesseraTileGridSnapshot(
             items: base.items,
@@ -651,43 +626,43 @@ public final class TesseraTileStore: ObservableObject {
         )
     }
 
-    // MARK: - Закрепление
+    // MARK: - Pinning
 
-    /// Закреплён ли ярлык (на сетке или в папке).
+    /// Whether a shortcut is pinned (on the grid or in a folder).
     ///
-    /// - Parameter tileID: Идентификатор ярлыка.
-    /// - Returns: `true`, если ярлык есть на сетке или в папке.
+    /// - Parameter tileID: The shortcut identifier.
+    /// - Returns: `true` if the shortcut is on the grid or in a folder.
     public func isPinned(_ tileID: AnyHashable) -> Bool {
         let key = TesseraTileStore.storageKey(for: tileID)
         return gridOrder.contains(key) || folderRecords.contains { $0.tileKeys.contains(key) }
     }
 
-    // MARK: - Папки (D14: только через одобрение хоста)
+    // MARK: - Folders (D14: only through host approval)
 
-    /// Размер только что созданной папки: всегда medium (E12.2).
+    /// The size of a newly created folder: always medium.
     ///
-    /// По памяти о Windows 10 Mobile папка — всегда плитка 2×2, и от размера
-    /// ярлыка-цели он не зависит; wide/large цель замещается средней папкой.
+    /// As in Windows 10 Mobile, a folder is always a 2×2 tile and does not depend on the size of the
+    /// target shortcut; a wide/large target is replaced by a medium folder.
     static let newFolderSize: TesseraTileSize = .medium
 
-    /// Итог атомарного создания папки из двух ярлыков (E11.6, E14.4).
+    /// The outcome of atomically creating a folder from two shortcuts.
     enum AtomicFolderResult {
 
-        /// Оба шага одобрены: папка создана, второй ярлык лежит в ней.
+        /// Both steps approved: the folder is created and the second shortcut is in it.
         case created(TesseraTileFolder)
 
-        /// Хост отклонил создание папки (первый шаг) либо ярлыков нет на сетке.
+        /// The host denied folder creation (the first step), or the shortcuts are not on the grid.
         case createDenied
 
-        /// Хост отклонил добавление второго ярлыка (второй шаг); состояние не
-        /// менялось.
+        /// The host denied adding the second shortcut (the second step); the state did not
+        /// change.
         case addDenied
     }
 
-    /// Папка, в которой лежит ярлык.
+    /// The folder that holds a shortcut.
     ///
-    /// - Parameter tileID: Идентификатор ярлыка.
-    /// - Returns: Папка или `nil`, если ярлык не в папке.
+    /// - Parameter tileID: The shortcut identifier.
+    /// - Returns: The folder, or `nil` if the shortcut is not in a folder.
     public func folderContaining(_ tileID: AnyHashable) -> TesseraTileFolder? {
         let key = TesseraTileStore.storageKey(for: tileID)
         guard let record = folderRecords.first(where: { $0.tileKeys.contains(key) }) else {
@@ -696,24 +671,24 @@ public final class TesseraTileStore: ObservableObject {
         return materialize(record)
     }
 
-    // MARK: - Ячейки на холсте (E14.1, D30–D33)
+    // MARK: - Cells on the canvas (D30–D33)
 
-    /// Сохранённые ячейки видимых верхнеуровневых элементов на холсте шириной
-    /// ``canvasColumns`` (логические координаты, 0 — начало чтения).
+    /// The saved cells of visible top-level items on a canvas of width ``canvasColumns`` (logical
+    /// coordinates, 0 is the reading start).
     ///
-    /// Пусто, пока ячеек нет (``canvasColumns`` равно `nil`). Это именно
-    /// сохранённая раскладка: для хоста с другой шириной используйте
-    /// ``placements(forColumns:)``. Содержимое папок ячеек не имеет.
+    /// Empty while there are no cells (``canvasColumns`` is `nil`). This is exactly the saved
+    /// layout: for a host with another width use ``placements(forColumns:)``. Folder contents have no
+    /// cells.
     public var placements: [AnyHashable: TesseraTileGridPlacement] {
         guard canvasColumns != nil else { return [:] }
         return storedVisiblePlacements()
     }
 
-    /// Ячейка элемента на сохранённом холсте.
+    /// The cell of an item on the saved canvas.
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки на сетке.
-    /// - Returns: Ячейка или `nil`, если ячеек ещё нет либо элемента нет на
-    ///   видимой сетке.
+    /// - Parameter id: The shortcut or folder identifier on the grid.
+    /// - Returns: The cell, or `nil` if there are no cells yet or the item is not on the visible
+    ///   grid.
     public func placement(of id: AnyHashable) -> TesseraTileGridPlacement? {
         guard canvasColumns != nil else { return nil }
         let key = TesseraTileStore.storageKey(for: id)
@@ -721,24 +696,22 @@ public final class TesseraTileStore: ObservableObject {
         return placementsByKey[key]
     }
 
-    /// Ячейки видимых элементов для хоста с шириной `columns` (D32).
+    /// The cells of visible items for a host of width `columns` (D32).
     ///
-    /// Если `columns` совпадает с ``canvasColumns``, возвращается сохранённая
-    /// раскладка с дырами. Иначе — **проекция**: плитки в порядке чтения
-    /// сохранённых ячеек (строка, затем колонка) упаковываются
-    /// `TesseraTileLayoutEngine.packCompact` под ширину хоста, без дыр. Проекция
-    /// считается на лету и **файл не перезаписывает**: возврат к прежней
-    /// ширине без правок возвращает дыры. Без ячеек (``canvasColumns`` равно
-    /// `nil`) это упаковка текущего порядка модели. Ярлык шире `columns`
-    /// занимает ужатый след (``TesseraTileLayoutEngine/fittingSize(_:columns:)``).
+    /// If `columns` matches ``canvasColumns``, the saved layout with holes is returned. Otherwise a
+    /// **projection**: tiles in the reading order of the saved cells (row, then column) are packed
+    /// by `TesseraTileLayoutEngine.packCompact` for the host width, without holes. The projection is
+    /// computed on the fly and the file is **not overwritten**: going back to the previous width
+    /// without edits returns the holes. Without cells (``canvasColumns`` is `nil`) it is packing of
+    /// the current model order. A shortcut wider than `columns` takes a shrunk footprint
+    /// (``TesseraTileLayoutEngine/fittingSize(_:columns:)``).
     ///
-    /// Первая операция редактирования при несовпадении ширины принимает
-    /// раскладку под ширину хоста как новый холст (обновляется
-    /// ``canvasColumns``): операции по ячейкам считают координаты движком и
-    /// принимают проекцию как холст сами (D31).
+    /// With a width mismatch, the first edit operation accepts the layout for the host width as a
+    /// new canvas (``canvasColumns`` is updated): cell-based operations compute coordinates with the
+    /// engine and accept the projection as the canvas themselves (D31).
     ///
-    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: Ячейки по идентификаторам; пусто при `columns <= 0`.
+    /// - Parameter columns: The host grid column count, greater than zero.
+    /// - Returns: Cells by identifier; empty for `columns <= 0`.
     public func placements(forColumns columns: Int) -> [AnyHashable: TesseraTileGridPlacement] {
         guard columns > 0 else { return [:] }
         if canvasColumns == columns {
@@ -753,30 +726,29 @@ public final class TesseraTileStore: ObservableObject {
         return result
     }
 
-    /// Идентификаторы видимых элементов в порядке чтения ячеек для ширины
-    /// `columns` (строка, затем колонка; при равных ячейках — порядок модели).
+    /// The identifiers of visible items in the cell reading order for width `columns` (row, then
+    /// column; for equal cells, the model order).
     ///
-    /// Для ширины, совпадающей с ``canvasColumns``, порядок берётся из
-    /// сохранённых ячеек; иначе — из проекции (``placements(forColumns:)``).
+    /// For a width equal to ``canvasColumns``, the order comes from the saved cells; otherwise from
+    /// the projection (``placements(forColumns:)``).
     ///
-    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: Идентификаторы в порядке чтения; пусто при `columns <= 0`.
+    /// - Parameter columns: The host grid column count, greater than zero.
+    /// - Returns: Identifiers in reading order; empty for `columns <= 0`.
     public func placementReadingOrder(forColumns columns: Int) -> [AnyHashable] {
         guard columns > 0 else { return [] }
         return readingOrderedKeys(forColumns: columns).compactMap { visibleItemID(forKey: $0) }
     }
 
-    /// Ключи видимых элементов в порядке чтения ячеек (E14.7).
+    /// The keys of visible items in the cell reading order.
     ///
-    /// Один источник порядка для ``snapshot()``, ``snapshot(columns:)`` и
-    /// ``placementReadingOrder(forColumns:)``. Порядок чтения — строка по
-    /// возрастанию, затем логическая колонка (0 — начало чтения, поэтому в RTL
-    /// порядок тот же); пересечений ячеек нет, равные ячейки (повреждённый файл)
-    /// остаются в порядке модели.
+    /// A single source of order for ``snapshot()``, ``snapshot(columns:)`` and
+    /// ``placementReadingOrder(forColumns:)``. The reading order is row ascending, then logical
+    /// column (0 is the reading start, so in RTL the order is the same); cells do not overlap, and
+    /// equal cells (a corrupted file) stay in model order.
     ///
-    /// - Parameter columns: Ширина хоста; `nil` — без ширины: сохранённые ячейки,
-    ///   а если их ещё нет, порядок модели.
-    /// - Returns: Канонические ключи видимых элементов.
+    /// - Parameter columns: The host width; `nil` means no width: the saved cells, and if there are
+    ///   none yet, the model order.
+    /// - Returns: The canonical keys of visible items.
     private func readingOrderedKeys(forColumns columns: Int?) -> [String] {
         let visible = visibleGridKeys()
         if let columns, columns > 0 {
@@ -789,27 +761,25 @@ public final class TesseraTileStore: ObservableObject {
         return TesseraTileStore.readingSorted(visible, by: placementsByKey)
     }
 
-    /// Сообщает хранилищу ширину сетки хоста и, если ячеек ещё нет, назначает их
-    /// (ленивая миграция v1 → v2 и раскладка первого запуска, E14.1, D33).
+    /// Reports the host grid width to the store and, if there are no cells yet, assigns them (lazy
+    /// v1 to v2 migration and the first-launch layout, D33).
     ///
-    /// Однократно: если ячеек нет (файл версии 1 или первый запуск), текущий
-    /// порядок видимых элементов упаковывается прежним
-    /// `TesseraTileLayoutEngine.packCompact` для `columns` — внешне ничего не
-    /// меняется, — ячейки невидимых ключей ставятся в новые строки в конце, и
-    /// результат сразу сохраняется (при ``autosaves``). Если ячейки уже есть,
-    /// метод только запоминает ширину; файл не трогается, даже если ширина
-    /// отличается от ``canvasColumns`` (D32). Миграция ждёт, пока
-    /// зарегистрирован каталог и есть что раскладывать; тогда её выполнят
-    /// ``load()`` или следующий вызов. Миграция не сохраняет файл, который
-    /// ещё не прочитан ``load()`` (иначе затёрла бы его).
+    /// One-time: if there are no cells (a version 1 file or the first launch), the current order of
+    /// visible items is packed by the previous `TesseraTileLayoutEngine.packCompact` for `columns`,
+    /// so nothing changes visibly; the cells of invisible keys go into new rows at the end, and the
+    /// result is saved right away (with ``autosaves``). If cells already exist, the method only
+    /// remembers the width; the file is not touched even if the width differs from
+    /// ``canvasColumns`` (D32). The migration waits until a catalog is registered and there is
+    /// something to lay out; then ``load()`` or the next call performs it. The migration does not
+    /// save a file that ``load()`` has not read yet (otherwise it would overwrite it).
     ///
-    /// Ширина запоминается и операциями с `columns` (``resize(_:to:columns:)``,
-    /// ``moveItem(_:toCell:columns:)``, ``pinTile(_:columns:)`` и др.).
+    /// The width is also remembered by operations with `columns` (``resize(_:to:columns:)``,
+    /// ``moveItem(_:toCell:columns:)``, ``pinTile(_:columns:)`` and others).
     ///
-    /// Уведомление ``onChange`` не отправляется: снимок сетки не меняется.
+    /// The ``onChange`` notification is not sent: the grid snapshot does not change.
     ///
-    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если ячейки назначены этим вызовом.
+    /// - Parameter columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if this call assigned the cells.
     @discardableResult
     public func placeItems(columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -819,22 +789,20 @@ public final class TesseraTileStore: ObservableObject {
         return wasUnplaced && canvasColumns != nil
     }
 
-    // MARK: - Персистентность
+    // MARK: - Persistence
 
-    /// Сохраняет состояние в JSON атомарной записью (§5).
+    /// Saves the state to JSON with an atomic write (§5).
     ///
-    /// Каталог создаётся при необходимости. Запись атомарная: файл либо старый,
-    /// либо новый целиком — оборванный запуск не оставит половину раскладки.
-    /// Пишется схема версии 2 (E14.1): у каждого элемента `row`/`column`, в
-    /// документе — ширина холста `columns`; пока ячеек нет
-    /// (``canvasColumns`` равно `nil`), поля опускаются, и следующий `load()`
-    /// считает файл нераскладочным.
+    /// The directory is created if needed. The write is atomic: the file is either the old one or
+    /// the new one in full, so an interrupted launch leaves no half of a layout. The version 2
+    /// schema is written: every item has `row`/`column`, and the document has the canvas width
+    /// `columns`; while there are no cells (``canvasColumns`` is `nil`), the fields are omitted, and
+    /// the next `load()` treats the file as not laid out.
     ///
-    /// Если ``load()`` нашёл нечитаемый файл и не смог отложить его в
-    /// резервную копию, запись сначала повторяет эту попытку и при неудаче
-    /// бросает ошибку: нечитаемый файл не затирается (E10.3d).
+    /// If ``load()`` found an unreadable file and could not set it aside as a backup, the write first
+    /// retries that attempt and throws an error on failure: an unreadable file is not overwritten.
     ///
-    /// - Throws: Ошибку файловой системы или кодирования JSON.
+    /// - Throws: A file system or JSON encoding error.
     public func save() throws {
         if unreadableFilePending {
             try backUpUnreadableFile()
@@ -858,40 +826,35 @@ public final class TesseraTileStore: ObservableObject {
         lastPersistenceError = nil
     }
 
-    /// Читает сохранённое состояние и накладывает его на текущий каталог.
+    /// Reads the saved state and applies it on top of the current catalog.
     ///
-    /// Восстанавливаются порядок сетки, размеры, папки и закрепления; каталог
-    /// ярлыков (действия) остаётся тем, что зарегистрировал хост. Ярлыки из
-    /// файла, которых нет в каталоге, стоящие прямо на сетке, сохраняются в
-    /// модели невидимыми ключами: в снимок они не попадают, но держат место до
-    /// регистрации. Если каталог уже зарегистрирован, папки чистятся по нему,
-    /// как в ``setCatalog(_:)``: неизвестные ярлыки из папок убираются, папка
-    /// без единого ярлыка каталога распускается (E10.3c). Папка, которая есть
-    /// в файле, но отсутствует в порядке сетки, не теряется — она встаёт в
-    /// конец сетки.
+    /// The grid order, sizes, folders and pins are restored; the shortcut catalog (actions) stays
+    /// what the host registered. Shortcuts from the file that are not in the catalog and stand
+    /// directly on the grid are kept in the model as invisible keys: they do not reach the snapshot
+    /// but hold their place until registered. If a catalog is already registered, folders are pruned
+    /// against it, as in ``setCatalog(_:)``: unknown shortcuts are removed from folders, and a folder
+    /// without a single catalog shortcut is dissolved. A folder that is in the file but absent from
+    /// the grid order is not lost: it goes to the end of the grid.
     ///
-    /// Файл версии 1 (ячеек нет) мигрирует лениво (E14.1, D33): `load()` идёт до
-    /// того, как известна ширина сетки, поэтому ячейки назначает
-    /// ``placeItems(columns:)`` — однократным прогоном `packCompact` по
-    /// сохранённому порядку, с немедленной записью версии 2. Если ширина уже
-    /// известна, миграция выполняется в конце `load()`. Версия новее
-    /// поддерживаемой обрабатывается как и раньше (резервная копия, состояние
-    /// не меняется).
+    /// A version 1 file (no cells) migrates lazily (D33): `load()` runs before the grid width is
+    /// known, so the cells are assigned by ``placeItems(columns:)``, a one-time `packCompact` pass
+    /// over the saved order, with an immediate version 2 write. If the width is already known, the
+    /// migration runs at the end of `load()`. A version newer than supported is handled as before (a
+    /// backup, the state does not change).
     ///
-    /// Если файла нет — ничего не происходит (первый запуск). Ошибка чтения не
-    /// меняет текущее состояние и пробрасывается вызывающему. Если файл
-    /// прочитан, но не декодируется или записан более новой схемой, он до
-    /// любой записи переименовывается в резервную копию
-    /// `<имя>.unreadable-<ISO-дата>.json` рядом (``lastUnreadableFileBackupURL``):
-    /// хранилище продолжает работу с текущим состоянием, а автосохранение
-    /// пишет новый файл, не затирая нечитаемый (E10.3d).
+    /// If there is no file, nothing happens (the first launch). A read error does not change the
+    /// current state and is rethrown to the caller. If the file is read but does not decode or was
+    /// written by a newer schema, it is renamed before any write to a backup
+    /// `<name>.unreadable-<ISO date>.json` next to it (``lastUnreadableFileBackupURL``): the store
+    /// keeps working with the current state, and autosave writes a new file without overwriting the
+    /// unreadable one.
     ///
-    /// - Throws: Ошибку чтения/декодирования или ``TesseraTileStoreError``.
+    /// - Throws: A read/decoding error or ``TesseraTileStoreError``.
     public func load() throws {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
 
-        // Ошибка ввода-вывода (нет доступа и т. п.) может быть временной:
-        // файл не трогаем, просто пробрасываем.
+        // An I/O error (no access and so on) may be temporary: the file is not touched, the error is
+        // just rethrown.
         let data = try Data(contentsOf: fileURL)
 
         let document: TileStoreDocument
@@ -901,9 +864,8 @@ public final class TesseraTileStore: ObservableObject {
                 throw TesseraTileStoreError.unsupportedSchemaVersion(document.version)
             }
         } catch {
-            // Содержимое прочитано, но понять его нельзя: откладываем файл в
-            // резервную копию до того, как первое автосохранение запишет схему
-            // текущей версии поверх.
+            // The content was read but cannot be understood: the file is set aside as a backup
+            // before the first autosave writes the current version's schema over it.
             lastPersistenceError = error
             unreadableFilePending = true
             try? backUpUnreadableFile()
@@ -915,21 +877,21 @@ public final class TesseraTileStore: ObservableObject {
             pruneFoldersAgainstCatalog()
         }
         restoredFromDisk = true
-        // E14.1: ячейки из файла приводятся к инвариантам (границы, коллизии
-        // видимых); файл версии 1 мигрирует, если хост уже сообщил ширину.
+        // The cells from the file are brought to the invariants (bounds, collisions of visible
+        // items); a version 1 file migrates if the host has already reported the width.
         reconcilePlacements()
         migrateIfPossible()
         notifyChange()
     }
 
-    /// Переименовывает нечитаемый файл состояния в резервную копию (E10.3d).
+    /// Renames an unreadable state file to a backup.
     ///
-    /// Имя — `<имя>.unreadable-<ISO-дата>.json` в том же каталоге (двоеточия
-    /// времени заменены дефисами). Переименование в пределах каталога атомарно;
-    /// существующая копия не перезаписывается — к имени добавляется `-2`, `-3`…
-    /// Если файла уже нет, откладывать нечего.
+    /// The name is `<name>.unreadable-<ISO date>.json` in the same directory (time colons replaced
+    /// with hyphens). Renaming within a directory is atomic; an existing copy is not overwritten:
+    /// `-2`, `-3`… is appended to the name. If the file is already gone, there is nothing to set
+    /// aside.
     ///
-    /// - Throws: Ошибку файловой системы, если файл не удалось переименовать.
+    /// - Throws: A file system error if the file could not be renamed.
     private func backUpUnreadableFile() throws {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: fileURL.path) else {
@@ -952,9 +914,8 @@ public final class TesseraTileStore: ObservableObject {
             )
             guard !fileManager.fileExists(atPath: backupURL.path) else { continue }
             do {
-                // `moveItem` не перезаписывает существующий файл: если копию
-                // успели создать между проверкой и переименованием, пробуем
-                // следующее имя.
+                // `moveItem` does not overwrite an existing file: if a copy was created between the
+                // check and the rename, the next name is tried.
                 try fileManager.moveItem(at: fileURL, to: backupURL)
                 lastUnreadableFileBackupURL = backupURL
                 unreadableFilePending = false
@@ -970,13 +931,13 @@ public final class TesseraTileStore: ObservableObject {
         throw lastError ?? CocoaError(.fileWriteFileExists)
     }
 
-    /// Применяет прочитанный документ к модели.
+    /// Applies the read document to the model.
     ///
-    /// Метод терпим к мусору в файле: дубликаты отбрасываются, ярлык не может
-    /// оказаться и на сетке, и в папке, папки без содержимого распускаются.
-    /// Это дешевле, чем падать на слегка испорченном файле состояния.
+    /// The method tolerates garbage in the file: duplicates are dropped, a shortcut cannot be both
+    /// on the grid and in a folder, and folders without content are dissolved. That is cheaper than
+    /// failing on a slightly corrupted state file.
     ///
-    /// - Parameter document: Прочитанный документ.
+    /// - Parameter document: The read document.
     private func apply(_ document: TileStoreDocument) {
         sizes = document.sizes
 
@@ -993,8 +954,8 @@ public final class TesseraTileStore: ObservableObject {
                 )
             }
 
-        // Ярлык принадлежит максимум одной папке: первый по порядку файла
-        // побеждает. Папка не может лежать в папке — ключи папок отбрасываются.
+        // A shortcut belongs to at most one folder: the first in file order wins. A folder cannot
+        // lie in a folder, so folder keys are dropped.
         let recordKeys = Set(folderRecords.map { $0.key })
         var claimed = Set<String>()
         for index in folderRecords.indices {
@@ -1003,7 +964,7 @@ public final class TesseraTileStore: ObservableObject {
             }
         }
 
-        // Пустые папки не имеют смысла на сетке — распускаем.
+        // Empty folders make no sense on the grid: dissolve them.
         var dissolved = Set<String>()
         folderRecords.removeAll { record in
             if record.tileKeys.isEmpty {
@@ -1013,10 +974,10 @@ public final class TesseraTileStore: ObservableObject {
             return false
         }
 
-        // D45: папка из одного ярлыка (файл старой версии, ручная правка) тоже
-        // не существует, но распустить её можно только когда известен каталог:
-        // ярлык мог исчезнуть из приложения. Запоминаем такие папки — чистка по
-        // каталогу доведёт дело (``pruneFoldersAgainstCatalog()``).
+        // D45: a folder of one shortcut (an old-version file, a manual edit) does not exist either,
+        // but it can be dissolved only when the catalog is known: the shortcut may have disappeared
+        // from the app. Such folders are remembered, and pruning against the catalog finishes the job
+        // (``pruneFoldersAgainstCatalog()``).
         underfilledFolderKeys = Set(
             folderRecords
                 .filter { $0.tileKeys.count < TesseraTileStore.minimumFolderTileCount }
@@ -1034,19 +995,19 @@ public final class TesseraTileStore: ObservableObject {
             case .folder:
                 guard folderKeys.contains(item.key) else { continue }
             case .tile:
-                // Ярлык может ещё не быть в каталоге — место запоминаем.
+                // The shortcut may not be in the catalog yet: the place is remembered.
                 break
             }
             order.append(item.key)
         }
 
-        // Инвариант: ярлык из папки не дублируется на сетке.
+        // Invariant: a shortcut from a folder is not duplicated on the grid.
         let tilesInFolders = Set(folderRecords.flatMap { $0.tileKeys })
         order.removeAll { tilesInFolders.contains($0) }
 
-        // «Сиротские» папки: есть в `folders`, но не в порядке сетки. Без места
-        // на сетке их ярлыки пропали бы из снимка и из списка откреплённых —
-        // ставим такие папки в конец сетки в порядке файла (E10.3c).
+        // "Orphan" folders: present in `folders` but not in the grid order. Without a place on the
+        // grid their shortcuts would vanish from the snapshot and from the unpinned list, so such
+        // folders are put at the end of the grid in file order.
         let placed = Set(order)
         for record in folderRecords where !placed.contains(record.key) {
             order.append(record.key)
@@ -1056,19 +1017,17 @@ public final class TesseraTileStore: ObservableObject {
         applyStoredPlacements(from: document)
     }
 
-    /// Накладывает на модель ячейки из документа (E14.1).
+    /// Applies the cells from the document to the model.
     ///
-    /// Нераскладочное состояние (``canvasColumns`` равно `nil`, ячеек нет):
-    /// файл версии 1; в документе нет ширины холста; **частичный** набор —
-    /// хотя бы у одного уцелевшего элемента нет `row`/`column`. Ячейки тогда
-    /// назначит ленивая миграция.
+    /// The "not laid out" state (``canvasColumns`` is `nil`, no cells): a version 1 file; the
+    /// document has no canvas width; a **partial** set, where at least one surviving item has no
+    /// `row`/`column`. The lazy migration then assigns the cells.
     ///
-    /// Отдельные плохие значения (отрицательные, чрезмерные, не помещающиеся в
-    /// холст) — «нарушители»: запись о них отбрасывается, и ``reconcilePlacements(settled:)``
-    /// переносит их в новые строки в конце. Коллизии видимых элементов также
-    /// разрешает он — когда известно, кто видим.
+    /// Individual bad values (negative, excessive, not fitting the canvas) are "offenders": their
+    /// record is dropped, and ``reconcilePlacements(settled:)`` moves them to new rows at the end.
+    /// It also resolves collisions of visible items, once it is known who is visible.
     ///
-    /// - Parameter document: Прочитанный документ.
+    /// - Parameter document: The read document.
     private func applyStoredPlacements(from document: TileStoreDocument) {
         placementsByKey = [:]
         canvasColumns = nil
@@ -1093,9 +1052,9 @@ public final class TesseraTileStore: ObservableObject {
         canvasColumns = columns
     }
 
-    /// Раскладка в виде элементов JSON-документа, с признаком «ярлык/папка».
+    /// The layout as JSON document items, with a "shortcut/folder" flag.
     ///
-    /// - Returns: Элементы в порядке сетки (с ячейками, если они есть).
+    /// - Returns: The items in grid order (with cells, if there are any).
     private func makeDocumentItems() -> [TileStoreDocument.Item] {
         let folderKeys = Set(folderRecords.map { $0.key })
         let hasCanvas = canvasColumns != nil
@@ -1110,13 +1069,13 @@ public final class TesseraTileStore: ObservableObject {
         }
     }
 
-    // MARK: - Уведомления и служебные операции
+    // MARK: - Notifications and helper operations
 
-    /// Сообщает об изменении после операции: сохранение (если включено
-    /// ``autosaves``), затем снимок подписчикам.
+    /// Reports a change after an operation: saving (if ``autosaves`` is on), then the snapshot to
+    /// subscribers.
     ///
-    /// Координаты операции уже посчитаны движком и сохраняются как есть
-    /// (``commitCells(_:columns:)``): пересчёта упаковкой нет.
+    /// The operation coordinates are already computed by the engine and are saved as is
+    /// (``commitCells(_:columns:)``): there is no repacking.
     private func didChange() {
         if autosaves {
             saveIfPossible()
@@ -1124,20 +1083,20 @@ public final class TesseraTileStore: ObservableObject {
         notifyChange()
     }
 
-    /// Отправляет снимок подписчикам: `objectWillChange` и ``onChange``.
+    /// Sends the snapshot to subscribers: `objectWillChange` and ``onChange``.
     ///
-    /// E14.5: если хранилище знает ширину сетки хоста (её сообщает координатор
-    /// редактирования, ``placeItems(columns:)``), снимок идёт с таблицей явных
-    /// ячеек (``snapshot(columns:)``) — хост, применяющий `onChange` к сетке,
-    /// получает дыры, а не упаковку по порядку. Без известной ширины снимок
-    /// прежний: сетка раскладывает его упаковкой.
+    /// If the store knows the host grid width (the edit coordinator reports it,
+    /// ``placeItems(columns:)``), the snapshot goes with an explicit cell table
+    /// (``snapshot(columns:)``): a host that applies `onChange` to the grid gets holes rather than
+    /// order-based packing. Without a known width the snapshot is the previous kind: the grid lays it
+    /// out by packing.
     private func notifyChange() {
         let snapshot = hostColumns.map { snapshot(columns: $0) } ?? snapshot()
         objectWillChange.send()
         onChange?(snapshot)
     }
 
-    /// Сохраняет состояние, запоминая ошибку вместо проброса.
+    /// Saves the state, remembering the error instead of rethrowing it.
     private func saveIfPossible() {
         do {
             try save()
@@ -1146,44 +1105,43 @@ public final class TesseraTileStore: ObservableObject {
         }
     }
 
-    /// Виден ли ключ сетки в снимке: папка или ярлык из текущего каталога.
+    /// Whether a grid key is visible in the snapshot: a folder or a shortcut from the current
+    /// catalog.
     ///
-    /// Остальные ключи `gridOrder` — невидимые: ярлыки, которых нет в
-    /// каталоге (``load()`` запоминает их место до регистрации).
+    /// The other `gridOrder` keys are invisible: shortcuts that are not in the catalog (``load()``
+    /// remembers their place until registration).
     ///
-    /// - Parameter key: Канонический ключ из `gridOrder`.
-    /// - Returns: `true`, если элемент попадает в ``snapshot()``.
+    /// - Parameter key: A canonical key from `gridOrder`.
+    /// - Returns: `true` if the item reaches ``snapshot()``.
     private func isVisibleGridKey(_ key: String) -> Bool {
         catalogIndex[key] != nil || folderRecords.contains { $0.key == key }
     }
 
-    /// Ключи видимых элементов сетки в порядке снимка (E10.3a).
+    /// The keys of visible grid items in snapshot order.
     ///
-    /// Порядок совпадает с `snapshot().items` и `layoutItems`: это порядок чтения
-    /// ячеек (``gridOrder``).
+    /// The order matches `snapshot().items` and `layoutItems`: it is the cell reading order
+    /// (``gridOrder``).
     ///
-    /// - Returns: Канонические ключи видимых элементов.
+    /// - Returns: The canonical keys of visible items.
     private func visibleGridKeys() -> [String] {
         let folderKeys = Set(folderRecords.map { $0.key })
         return gridOrder.filter { catalogIndex[$0] != nil || folderKeys.contains($0) }
     }
 
-    /// Применяет новый порядок видимых элементов, не двигая невидимые
-    /// (E8.7, E10.3a).
+    /// Applies a new order of visible items without moving the invisible ones.
     ///
-    /// `visibleKeys` — ключи элементов снимка в новом порядке (порядок чтения
-    /// ячеек, ``commitCells(_:columns:)``). В `gridOrder` бывают ключи,
-    /// которых в снимке нет: ярлыки, ещё не зарегистрированные в каталоге
-    /// (``load()`` их запоминает). Их место не должно меняться от операции с
-    /// другим элементом, поэтому они остаются на прежних индексах `gridOrder`,
-    /// а видимые элементы занимают остальные позиции в новом порядке.
+    /// `visibleKeys` are the keys of snapshot items in the new order (the cell reading order,
+    /// ``commitCells(_:columns:)``). `gridOrder` can contain keys that are not in the snapshot:
+    /// shortcuts not yet registered in the catalog (``load()`` remembers them). Their place must not
+    /// change because of an operation on another item, so they stay at their previous `gridOrder`
+    /// indices, and visible items take the remaining positions in the new order.
     ///
-    /// Если в `visibleKeys` есть дубликаты или невидимый ключ, порядок не
-    /// меняется: лучше оставить прежнюю раскладку, чем потерять или задвоить
-    /// ключ в `gridOrder`. Проверка полноты набора — на вызывающем.
+    /// If `visibleKeys` has duplicates or an invisible key, the order does not change: it is better
+    /// to keep the previous layout than to lose or duplicate a key in `gridOrder`. Checking that the
+    /// set is complete is up to the caller.
     ///
-    /// - Parameter visibleKeys: Канонические ключи видимых элементов в новом порядке.
-    /// - Returns: `true`, если `gridOrder` изменился.
+    /// - Parameter visibleKeys: The canonical keys of visible items in the new order.
+    /// - Returns: `true` if `gridOrder` changed.
     @discardableResult
     private func applyVisibleOrder(_ visibleKeys: [String]) -> Bool {
         let visibleSet = Set(visibleKeys)
@@ -1202,24 +1160,24 @@ public final class TesseraTileStore: ObservableObject {
         return true
     }
 
-    // MARK: - Ячейки: внутренние операции (E14.1)
+    // MARK: - Cells: internal operations
 
-    /// Запоминает ширину хоста из вызова с `columns`.
+    /// Remembers the host width from a call with `columns`.
     ///
-    /// - Parameter columns: Число колонок; `nil` и неположительные игнорируются.
+    /// - Parameter columns: The column count; `nil` and non-positive values are ignored.
     private func noteHostColumns(_ columns: Int?) {
         guard let columns = columns, columns > 0 else { return }
         hostColumns = columns
     }
 
-    /// Ширина, для которой пересчитываются ячейки после операции: последняя
-    /// ширина хоста, иначе ширина холста, иначе умолчание (D26). Внутренняя:
-    /// страница списка приложений берёт её, когда хост не передал колонки (E14.5).
+    /// The width the cells are recomputed for after an operation: the last host width, otherwise the
+    /// canvas width, otherwise the default (D26). Internal: the app list page takes it when the host
+    /// did not pass columns.
     var effectiveColumns: Int {
         hostColumns ?? canvasColumns ?? TesseraTileStore.defaultGridColumns
     }
 
-    /// Размер элемента по ключу: папка, затем сохранённый размер, затем каталог.
+    /// The item size by key: a folder, then the saved size, then the catalog.
     private func storedSize(ofKey key: String) -> TesseraTileSize {
         if let record = folderRecords.first(where: { $0.key == key }) { return record.size }
         if let size = sizes[key] { return size }
@@ -1227,19 +1185,19 @@ public final class TesseraTileStore: ObservableObject {
         return .medium
     }
 
-    /// Размер элемента, ужатый под ширину холста (D15, E14.1).
+    /// The item size shrunk to the canvas width (D15).
     private func footprint(ofKey key: String, columns: Int) -> TesseraTileSize {
         TesseraTileLayoutEngine.fittingSize(storedSize(ofKey: key), columns: columns)
     }
 
-    /// Идентификатор видимого элемента по ключу.
+    /// The identifier of a visible item by key.
     private func visibleItemID(forKey key: String) -> AnyHashable? {
         if let record = folderRecords.first(where: { $0.key == key }) { return record.id }
         if let index = catalogIndex[key] { return catalog[index].id }
         return nil
     }
 
-    /// Сохранённые ячейки видимых элементов по идентификаторам.
+    /// The saved cells of visible items by identifier.
     private func storedVisiblePlacements() -> [AnyHashable: TesseraTileGridPlacement] {
         var result: [AnyHashable: TesseraTileGridPlacement] = [:]
         for key in visibleGridKeys() {
@@ -1249,12 +1207,12 @@ public final class TesseraTileStore: ObservableObject {
         return result
     }
 
-    /// Прежняя компактная упаковка (`packCompact`) ключей в заданном порядке.
+    /// The previous compact packing (`packCompact`) of keys in the given order.
     ///
     /// - Parameters:
-    ///   - keys: Ключи в порядке упаковки.
-    ///   - columns: Ширина холста, больше нуля.
-    /// - Returns: Ячейки по ключам (элемент, который не поместился, пропускается).
+    ///   - keys: The keys in packing order.
+    ///   - columns: The canvas width, greater than zero.
+    /// - Returns: Cells by key (an item that did not fit is skipped).
     private func packedPlacements(of keys: [String], columns: Int) -> [String: TesseraTileGridPlacement] {
         guard columns > 0 else { return [:] }
         let slots = TesseraTileLayoutEngine.packCompact(
@@ -1270,9 +1228,9 @@ public final class TesseraTileStore: ObservableObject {
         return result
     }
 
-    /// Проекция раскладки на ширину `columns` без дыр (D32): видимые элементы
-    /// в порядке чтения сохранённых ячеек (без ячеек — в порядке модели)
-    /// упаковываются `packCompact`.
+    /// A projection of the layout onto width `columns` without holes (D32): visible items in the
+    /// reading order of the saved cells (in model order if there are no cells) are packed by
+    /// `packCompact`.
     private func projectedPlacements(columns: Int) -> [String: TesseraTileGridPlacement] {
         var keys = visibleGridKeys()
         if canvasColumns != nil {
@@ -1281,8 +1239,8 @@ public final class TesseraTileStore: ObservableObject {
         return packedPlacements(of: keys, columns: columns)
     }
 
-    /// Ключи в порядке чтения ячеек (строка, колонка); при равных ячейках и без
-    /// ячеек — исходный порядок (сортировка устойчива за счёт индекса).
+    /// Keys in cell reading order (row, column); for equal cells and without cells, the original order
+    /// (the sort is stable thanks to the index).
     private static func readingSorted(_ keys: [String], by cells: [String: TesseraTileGridPlacement]) -> [String] {
         keys.enumerated().sorted { lhs, rhs in
             switch (cells[lhs.element], cells[rhs.element]) {
@@ -1296,7 +1254,7 @@ public final class TesseraTileStore: ObservableObject {
         }.map { $0.element }
     }
 
-    /// Допустима ли ячейка: неотрицательна, не чрезмерна и целиком в холсте.
+    /// Whether a cell is valid: non-negative, not excessive and entirely within the canvas.
     private func isPlacementValid(_ placement: TesseraTileGridPlacement, forKey key: String, columns: Int) -> Bool {
         guard placement.row >= 0, placement.column >= 0,
               placement.row <= TesseraTileStore.maxPlacementRow,
@@ -1305,14 +1263,14 @@ public final class TesseraTileStore: ObservableObject {
         return placement.column + size.unitColumns <= columns
     }
 
-    /// Разумный предел строки в файле: больше — мусор, а не раскладка.
+    /// A reasonable row limit in a file: more is garbage, not a layout.
     private static let maxPlacementRow = 100_000
 
-    /// Однократная ленивая миграция: назначает ячейки прогоном `packCompact`.
+    /// A one-time lazy migration: assigns cells with a `packCompact` pass.
     ///
-    /// Нужны ширина хоста, зарегистрированный каталог и непустой порядок.
-    /// После миграции файл сразу сохраняется, но только если он не
-    /// затёрт непрочитанное состояние (``restoredFromDisk`` либо файла нет).
+    /// It needs the host width, a registered catalog and a non-empty order. After the migration the
+    /// file is saved right away, but only if that does not overwrite an unread state
+    /// (``restoredFromDisk``, or there is no file).
     private func migrateIfPossible() {
         guard canvasColumns == nil, let columns = hostColumns, columns > 0,
               catalogRegistered, !gridOrder.isEmpty else { return }
@@ -1324,20 +1282,19 @@ public final class TesseraTileStore: ObservableObject {
         saveIfPossible()
     }
 
-    /// Приводит ячейки к инвариантам холста (E14.1, D30).
+    /// Brings the cells to the canvas invariants (D30).
     ///
-    /// Ничего не делает, пока ячеек нет. Иначе:
-    /// - записи для ключей, которых нет в порядке сетки, удаляются;
-    /// - видимые элементы (в порядке сетки, «устоявшиеся» — `settled` — вперёд)
-    ///   сохраняют свою ячейку, если она целиком в холсте и не пересекается с
-    ///   уже принятыми; остальные — нарушители и новички — упаковываются
-    ///   `packCompact` в **новые строки в конце холста** (первая строка после
-    ///   последней занятой видимыми элементами; один новичок встаёт в колонку 0);
-    /// - невидимые ключи сохраняют ячейку, если она в границах холста, и **не
-    ///   участвуют в коллизиях**; без допустимой ячейки они получают её в
-    ///   строках после видимых.
+    /// Does nothing while there are no cells. Otherwise:
+    /// - records for keys that are not in the grid order are removed;
+    /// - visible items (in grid order, "settled" ones, `settled`, first) keep their cell if it is
+    ///   entirely within the canvas and does not intersect those already accepted; the others,
+    ///   offenders and newcomers, are packed by `packCompact` into **new rows at the end of the
+    ///   canvas** (the first row after the last one occupied by visible items; a single newcomer
+    ///   goes into column 0);
+    /// - invisible keys keep their cell if it is within the canvas bounds and **do not take part in
+    ///   collisions**; without a valid cell they get one in the rows after the visible ones.
     ///
-    /// - Parameter settled: Ключи, видимые до изменения каталога.
+    /// - Parameter settled: The keys visible before the catalog change.
     private func reconcilePlacements(settled: Set<String> = []) {
         guard let columns = canvasColumns, columns > 0 else { return }
 
@@ -1348,7 +1305,7 @@ public final class TesseraTileStore: ObservableObject {
             uniquingKeysWith: { first, _ in first }
         )
 
-        // Прямоугольник элемента: (строка, колонка, ширина, высота) в юнитах.
+        // The item rectangle: (row, column, width, height) in units.
         typealias Rect = (row: Int, column: Int, width: Int, height: Int)
         func overlaps(_ a: Rect, _ b: Rect) -> Bool {
             a.column < b.column + b.width && b.column < a.column + a.width
@@ -1384,7 +1341,7 @@ public final class TesseraTileStore: ObservableObject {
             }
         }
 
-        // Новые строки в конце: ниже последней занятой видимыми строки.
+        // New rows at the end: below the last row occupied by visible items.
         var baseRow = accepted.map { $0.row + $0.height }.max() ?? 0
         for group in [pendingVisible, pendingHidden] where !group.isEmpty {
             let packed = packedPlacements(of: group, columns: columns)
@@ -1401,24 +1358,22 @@ public final class TesseraTileStore: ObservableObject {
         placementsByKey = next
     }
 
-    /// Убирает из папок ярлыки, которых больше нет в каталоге, и распускает
-    /// папки, в которых осталось меньше двух ярлыков (D45).
+    /// Removes from folders the shortcuts that are no longer in the catalog and dissolves folders
+    /// with fewer than two shortcuts left (D45).
     ///
-    /// Вызывается при перерегистрации каталога и после ``load()`` при
-    /// зарегистрированном каталоге (E10.3c): удалённое приложение не должно
-    /// оставлять «мёртвые» идентификаторы в папках, а папка без единого ярлыка
-    /// каталога — пустую плитку на сетке. Политика: каталог авторитетен для
-    /// содержимого папок (неизвестные ярлыки из них удаляются, **невидимых**
-    /// членов папки после чистки не бывает), а ярлыки вне каталога прямо на
-    /// сетке остаются невидимыми ключами.
+    /// Called on catalog re-registration and after ``load()`` when a catalog is registered: an
+    /// uninstalled app must not leave "dead" identifiers in folders, and a folder without a single
+    /// catalog shortcut must not leave an empty tile on the grid. The policy: the catalog is
+    /// authoritative for folder content (unknown shortcuts are deleted from them, and there are no
+    /// **invisible** folder members after pruning), while shortcuts outside the catalog directly on
+    /// the grid stay invisible keys.
     ///
-    /// D45: папка, потерявшая в чистке ярлыки (или пришедшая из файла с одним
-    /// ярлыком, ``underfilledFolderKeys``), при двух и более видимых ярлыках
-    /// остаётся; при одном — **распускается**: ярлык встаёт на ячейку папки со
-    /// своим размером (``dissolveFolder(withKey:)``); при нуле — исчезает.
-    /// Папка, которой чистка не коснулась, правилом не затрагивается (переходная
-    /// папка ``createFolder(withTile:title:columns:)`` переживает
-    /// повторную регистрацию каталога).
+    /// D45: a folder that lost shortcuts in pruning (or came from a file with one shortcut,
+    /// ``underfilledFolderKeys``) stays if two or more shortcuts are visible; with one it is
+    /// **dissolved**: the shortcut takes the folder's cell with its own size
+    /// (``dissolveFolder(withKey:)``); with none it disappears. A folder that pruning did not touch
+    /// is not affected by the rule (the transitional folder of
+    /// ``createFolder(withTile:title:columns:)`` survives a catalog re-registration).
     private func pruneFoldersAgainstCatalog() {
         var affected = underfilledFolderKeys
         underfilledFolderKeys = []
@@ -1430,8 +1385,7 @@ public final class TesseraTileStore: ObservableObject {
             }
         }
 
-        // Порядок — по папкам сетки, а не по множеству: каскад выталкивания
-        // детерминирован.
+        // The order follows the grid folders, not a set: the push-down cascade is deterministic.
         var removedAny = false
         for key in folderRecords.map({ $0.key }) where affected.contains(key) {
             guard let record = folderRecords.first(where: { $0.key == key }),
@@ -1442,18 +1396,17 @@ public final class TesseraTileStore: ObservableObject {
         if removedAny { resolveDissolvedTiles() }
     }
 
-    /// Распускает папку структурно: убирает её из модели, а единственный
-    /// оставшийся ярлык ставит на её место (D45).
+    /// Dissolves a folder structurally: removes it from the model and puts the single remaining
+    /// shortcut in its place (D45).
     ///
-    /// Для чистки по каталогу и загрузки (операции пользователя считают то же
-    /// самое по набору размещений, ``dissolveFolderIfNeeded(withKey:in:columns:)``).
-    /// Пустая папка просто исчезает. Ярлык с одним оставшимся ключом
-    /// занимает в `gridOrder` индекс папки, а его ячейка — ячейка папки, ужатая
-    /// под холст (``TesseraTileLayoutEngine/clamped(cell:size:columns:)``); окончательно
-    /// решает ``resolveDissolvedTiles()`` (выталкивание соседей), если ячейки
-    /// уже есть.
+    /// For pruning against the catalog and loading (user operations compute the same on a set of
+    /// placements, ``dissolveFolderIfNeeded(withKey:in:columns:)``). An empty folder simply
+    /// disappears. A shortcut with one remaining key takes the folder's index in `gridOrder`, and its
+    /// cell is the folder's cell shrunk to the canvas
+    /// (``TesseraTileLayoutEngine/clamped(cell:size:columns:)``); if cells already exist, the final
+    /// decision is made by ``resolveDissolvedTiles()`` (pushing neighbors).
     ///
-    /// - Parameter folderKey: Ключ папки, в которой меньше двух ярлыков.
+    /// - Parameter folderKey: The key of a folder with fewer than two shortcuts.
     private func dissolveFolder(withKey folderKey: String) {
         guard let recordIndex = folderRecords.firstIndex(where: { $0.key == folderKey }) else { return }
         let record = folderRecords.remove(at: recordIndex)
@@ -1464,8 +1417,8 @@ public final class TesseraTileStore: ObservableObject {
             return
         }
 
-        // Ярлык не может остаться и на сетке (инвариант «одно место»), но файл
-        // бывает испорчен: прежнюю запись убираем, место — папки.
+        // A shortcut cannot also stay on the grid (the "one place" invariant), but a file may be
+        // corrupted: the previous record is removed, and the place is the folder's.
         gridOrder.removeAll { $0 == remaining }
         if let position = gridOrder.firstIndex(of: folderKey) {
             gridOrder[position] = remaining
@@ -1484,15 +1437,14 @@ public final class TesseraTileStore: ObservableObject {
         }
     }
 
-    /// Доводит ячейки ярлыков, занявших место распущенных папок (D45):
-    /// ставит каждый на ячейку папки через `TesseraTileLayoutEngine.inserting`.
+    /// Finalizes the cells of shortcuts that took the place of dissolved folders (D45): puts each on
+    /// the folder cell through `TesseraTileLayoutEngine.inserting`.
     ///
-    /// Бо́льший ярлык (wide, large) выталкивает соседей вниз каскадом (D31),
-    /// слишком правая колонка сдвигается влево, меньший оставляет дыру. Если
-    /// видимый набор ещё не корректен (файл с перекрытиями, нет ячеек у
-    /// части ярлыков), расчёт пропускается: коллизии разрешит
-    /// ``reconcilePlacements(settled:)``. Порядок модели после расчёта —
-    /// порядок чтения ячеек.
+    /// A larger shortcut (wide, large) pushes neighbors down in a cascade (D31), a column that is
+    /// too far right shifts left, and a smaller one leaves a hole. If the visible set is not valid
+    /// yet (a file with overlaps, or some shortcuts have no cells), the computation is skipped:
+    /// ``reconcilePlacements(settled:)`` resolves the collisions. After the computation the model
+    /// order is the cell reading order.
     private func resolveDissolvedTiles() {
         let pending = pendingDissolvedTiles
         pendingDissolvedTiles = []
@@ -1521,20 +1473,20 @@ public final class TesseraTileStore: ObservableObject {
         applyVisibleOrder(TesseraTileStore.readingSorted(visibleGridKeys(), by: placementsByKey))
     }
 
-    /// Ярлык с авторитетным размером из хранилища.
+    /// A shortcut with the authoritative size from the store.
     ///
-    /// - Parameter descriptor: Запись каталога.
-    /// - Returns: Копия ярлыка с текущим размером.
+    /// - Parameter descriptor: A catalog record.
+    /// - Returns: A copy of the shortcut with its current size.
     private func resolved(_ descriptor: TesseraTileDescriptor) -> TesseraTileDescriptor {
         var copy = descriptor
         copy.size = sizes[TesseraTileStore.storageKey(for: descriptor.id)] ?? descriptor.size
         return copy
     }
 
-    /// Собирает публичную модель папки по внутренней записи.
+    /// Builds the public folder model from an internal record.
     ///
-    /// - Parameter record: Внутренняя запись папки.
-    /// - Returns: Папка с разрешёнными ярлыками и их размерами.
+    /// - Parameter record: The internal folder record.
+    /// - Returns: The folder with resolved shortcuts and their sizes.
     private func materialize(_ record: FolderRecord) -> TesseraTileFolder {
         TesseraTileFolder(
             id: record.id,
@@ -1548,17 +1500,16 @@ public final class TesseraTileStore: ObservableObject {
         )
     }
 
-    // MARK: - Канонические ключи идентификаторов
+    // MARK: - Canonical identifier keys
 
-    /// Канонический вид `AnyHashable`-идентификатора для хранения и сравнения.
+    /// The canonical form of an `AnyHashable` identifier for storage and comparison.
     ///
-    /// Тип попадает в префикс, чтобы `String("1")` и `Int(1)` не считались
-    /// одним ярлыком. Прочие хэшируемые типы кодируются через `description`:
-    /// для персистентности это работает, только если `description` стабилен
-    /// между запусками (для `URL`, например, стабилен).
+    /// The type goes into the prefix so that `String("1")` and `Int(1)` are not treated as one
+    /// shortcut. Other hashable types are encoded through `description`: for persistence this works
+    /// only if `description` is stable between launches (it is, for `URL`, for example).
     ///
-    /// - Parameter id: Идентификатор ярлыка или папки.
-    /// - Returns: Строковый ключ.
+    /// - Parameter id: The shortcut or folder identifier.
+    /// - Returns: A string key.
     private static func storageKey(for id: AnyHashable) -> String {
         switch id.base {
         case let string as String: return "s:" + string
@@ -1568,13 +1519,13 @@ public final class TesseraTileStore: ObservableObject {
         }
     }
 
-    /// Восстанавливает идентификатор папки из канонического ключа.
+    /// Restores a folder identifier from a canonical key.
     ///
-    /// Папки создаёт только TesseraTileStore, поэтому на практике это всегда `String`
-    /// (`folder-UUID`); остальные ветки — для чтения старых/ручных файлов.
+    /// Folders are created only by TesseraTileStore, so in practice this is always a `String`
+    /// (`folder-UUID`); the other branches are for reading old/manual files.
     ///
-    /// - Parameter key: Строковый ключ из файла состояния.
-    /// - Returns: Идентификатор для публичной модели.
+    /// - Parameter key: A string key from the state file.
+    /// - Returns: The identifier for the public model.
     private static func identifier(fromStorageKey key: String) -> AnyHashable {
         if key.hasPrefix("s:") {
             return AnyHashable(String(key.dropFirst(2)))
@@ -1592,56 +1543,53 @@ public final class TesseraTileStore: ObservableObject {
     }
 }
 
-// MARK: - Операции по ячейкам (E14.4, D30–D33)
+// MARK: - Cell-based operations (D30–D33)
 
-/// Операции над верхнеуровневыми элементами **по координатам**: движок
-/// (`TesseraTileLayoutEngine+Placement`) считает новые ячейки, хранилище применяет их
-/// как есть (E14.4).
+/// Operations on top-level items **by coordinates**: the engine
+/// (`TesseraTileLayoutEngine+Placement`) computes the new cells, and the store applies them as is.
 ///
-/// Индексного API нет (E14.6, D33): позиция элемента — ячейка, порядок чтения
-/// производный. Свойства операций:
+/// There is no index-based API (D33): an item's position is its cell, and the reading order is
+/// derived. Properties of the operations:
 ///
-/// - дыры не схлопываются: уход элемента оставляет свободную ячейку, рост и
-///   вставка выталкивают мешающие плитки вниз каскадом (D31);
-/// - операция заканчивается ``didChange()`` и пишет координаты, которые посчитал
-///   движок, без пересчёта упаковкой;
-/// - ширина хоста `columns` передаётся явно, она же становится шириной холста
-///   (``canvasColumns``). Если сохранённая раскладка рассчитана на другую
-///   ширину, первая же успешная операция принимает репак по порядку чтения
-///   (проекцию D32) как новый холст и применяет к нему свою правку;
-/// - порядок модели (`gridOrder`, он же порядок `snapshot().items`) после операции —
-///   порядок чтения ячеек (строка, колонка), файл пишет элементы в нём;
-/// - ярлыки вне каталога (невидимые ключи) хранят свои ячейки, но в коллизиях
-///   не участвуют (E14.1);
-/// - схлопывание пустых строк — отдельная операция ``collapseEmptyRows(columns:)``:
-///   её зовёт слой правки только на drop, остальные операции строк не схлопывают;
-/// - папка не бывает из 0–1 ярлыков (D45): когда операция убирает ярлык из
-///   папки и там остаётся один, папка распускается, а оставшийся ярлык встаёт на
-///   её ячейку со своим размером (бо́льший выталкивает соседей вниз). Исключение —
-///   переходная папка ``createFolder(withTile:title:columns:)``.
+/// - holes do not collapse: an item leaving leaves a free cell, and growth and insertion push
+///   obstructing tiles down in a cascade (D31);
+/// - an operation ends with ``didChange()`` and writes the coordinates the engine computed, without
+///   repacking;
+/// - the host width `columns` is passed explicitly and also becomes the canvas width
+///   (``canvasColumns``). If the saved layout was computed for another width, the first successful
+///   operation accepts a repack in reading order (the D32 projection) as the new canvas and applies
+///   its edit to it;
+/// - the model order (`gridOrder`, which is also the `snapshot().items` order) after an operation is
+///   the cell reading order (row, column), and the file writes items in it;
+/// - shortcuts outside the catalog (invisible keys) keep their cells but do not take part in
+///   collisions;
+/// - collapsing empty rows is a separate operation, ``collapseEmptyRows(columns:)``: the edit layer
+///   calls it only on drop, and the other operations do not collapse rows;
+/// - a folder is never made of 0-1 shortcuts (D45): when an operation removes a shortcut from a
+///   folder and one remains, the folder is dissolved, and the remaining shortcut takes its cell with
+///   its own size (a larger one pushes neighbors down). The exception is the transitional folder of
+///   ``createFolder(withTile:title:columns:)``.
 ///
-/// Операция с неверным вводом (нет элемента, нет в каталоге, `columns <= 0`,
-/// отказ хоста) ничего не меняет и возвращает `false`; уведомление и запись —
-/// ровно одна на успешную операцию. Операции с группировкой спрашивают у хоста
-/// одобрение (D14).
+/// An operation with invalid input (no item, not in the catalog, `columns <= 0`, host denial)
+/// changes nothing and returns `false`; there is exactly one notification and one write per
+/// successful operation. Grouping operations ask the host for approval (D14).
 extension TesseraTileStore {
 
-    // MARK: Перенос
+    // MARK: Move
 
-    /// Переносит ярлык или папку на ячейку (E14.4, D31).
+    /// Moves a shortcut or folder to a cell (D31).
     ///
-    /// Элемент встаёт на `cell`, ограниченную холстом (слишком правая колонка
-    /// сдвигается влево); плитки, которые мешают, выталкиваются вниз каскадом
-    /// (`TesseraTileLayoutEngine.inserting`). Место, которое элемент освободил, остаётся
-    /// дырой — репака нет. Одобрение хоста не спрашивается: это операция
-    /// раскладки, а не группировки (D14).
+    /// The item stands on `cell`, limited by the canvas (a column that is too far right shifts left);
+    /// obstructing tiles are pushed down in a cascade (`TesseraTileLayoutEngine.inserting`). The
+    /// place the item vacated stays a hole: there is no repack. Host approval is not asked: this is a
+    /// layout operation, not grouping (D14).
     ///
     /// - Parameters:
-    ///   - itemID: Идентификатор ярлыка или папки на сетке.
-    ///   - cell: Желаемая ячейка левого верхнего угла (логические координаты).
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если раскладка изменилась; `false` — элемента нет на
-    ///   сетке, элемент уже на этой ячейке и ничего не двигается либо `columns <= 0`.
+    ///   - itemID: The shortcut or folder identifier on the grid.
+    ///   - cell: The desired top left cell (logical coordinates).
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the layout changed; `false` if the item is not on the grid, is already on
+    ///   this cell and nothing moves, or `columns <= 0`.
     @discardableResult
     public func moveItem(_ itemID: AnyHashable, toCell cell: TesseraTileGridPlacement, columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -1663,16 +1611,16 @@ extension TesseraTileStore {
         return true
     }
 
-    /// Переносит ярлык или папку в новую строку в конце холста (E14.4, D33).
+    /// Moves a shortcut or folder to a new row at the end of the canvas (D33).
     ///
-    /// Цель — `TesseraTileLayoutEngine.newRowCell`: первая строка после последней
-    /// занятой (без учёта самого переносимого элемента), колонка 0. Остальное —
-    /// как в ``moveItem(_:toCell:columns:)``.
+    /// The target is `TesseraTileLayoutEngine.newRowCell`: the first row after the last occupied one
+    /// (not counting the moved item itself), column 0. The rest is as in
+    /// ``moveItem(_:toCell:columns:)``.
     ///
     /// - Parameters:
-    ///   - itemID: Идентификатор ярлыка или папки на сетке.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если раскладка изменилась.
+    ///   - itemID: The shortcut or folder identifier on the grid.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the layout changed.
     @discardableResult
     public func moveItemToNewRow(_ itemID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -1700,21 +1648,21 @@ extension TesseraTileStore {
         return true
     }
 
-    // MARK: Размер
+    // MARK: Size
 
-    /// Меняет размер ярлыка или папки на месте (E14.4, D15, D31).
+    /// Changes the size of a shortcut or folder in place (D15, D31).
     ///
-    /// Якорная ячейка остаётся (если новая ширина не помещается, колонка
-    /// сдвигается влево); рост выталкивает мешающие плитки вниз каскадом
-    /// (`TesseraTileLayoutEngine.resizing`), уменьшение оставляет дыру. Ярлык в папке
-    /// или вне сетки просто меняет авторитетный размер, ячейки не меняются.
+    /// The anchor cell stays (if the new width does not fit, the column shifts left); growth pushes
+    /// obstructing tiles down in a cascade (`TesseraTileLayoutEngine.resizing`), shrinking leaves a
+    /// hole. A shortcut in a folder or off the grid just changes its authoritative size; the cells
+    /// do not change.
     ///
     /// - Parameters:
-    ///   - itemID: Идентификатор ярлыка или папки.
-    ///   - size: Новый размер (D15).
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если размер изменился; `false` — элемента нет, размер
-    ///   тот же либо `columns <= 0`.
+    ///   - itemID: The shortcut or folder identifier.
+    ///   - size: The new size (D15).
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the size changed; `false` if there is no item, the size is the same, or
+    ///   `columns <= 0`.
     @discardableResult
     public func resize(_ itemID: AnyHashable, to size: TesseraTileSize, columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -1726,7 +1674,7 @@ extension TesseraTileStore {
         let currentSize: TesseraTileSize? = folderIndex.map { folderRecords[$0].size } ?? sizes[key]
         guard currentSize != size else { return false }
 
-        // Раскладка считается до записи размера: базис несёт прежние размеры.
+        // The layout is computed before the size is written: the basis carries the previous sizes.
         let basis = cellBasis(columns: columns)
         let resized = TesseraTileLayoutEngine.resizing(
             id: AnyHashable(key),
@@ -1745,26 +1693,26 @@ extension TesseraTileStore {
         return true
     }
 
-    // MARK: Папки
+    // MARK: Folders
 
-    /// Создаёт папку из двух ярлыков на месте цели (E14.4, D20, D31).
+    /// Creates a folder from two shortcuts in place of the target (D20, D31).
     ///
-    /// Папка всегда средняя (2×2, E12.2). Она встаёт на ячейку ярлыка-цели
-    /// через `TesseraTileLayoutEngine.inserting`: малая цель растёт до 2×2 и выталкивает
-    /// соседей вниз каскадом, слишком правая колонка сдвигается влево. Ярлыки
-    /// цели и источника уходят с верхнего уровня, их ячейки остаются дырами,
-    /// кроме тех, что накрыла папка. Внутри папки порядок: цель, затем источник.
+    /// The folder is always medium (2×2). It stands on the target shortcut's cell through
+    /// `TesseraTileLayoutEngine.inserting`: a small target grows to 2×2 and pushes neighbors down in
+    /// a cascade, and a column that is too far right shifts left. The target and source shortcuts
+    /// leave the top level, and their cells stay holes except those covered by the folder. Inside
+    /// the folder the order is: the target, then the source.
     ///
-    /// Хост одобряет оба шага по очереди (`.createFolder`, затем `.addToFolder`,
-    /// как у двух раздельных вызовов); состояние до обоих
-    /// одобрений не меняется, при отказе откатывать нечего.
+    /// The host approves both steps in turn (`.createFolder`, then `.addToFolder`, as with two
+    /// separate calls); the state does not change before both approvals, so on a denial there is
+    /// nothing to roll back.
     ///
     /// - Parameters:
-    ///   - sourceID: Перетаскиваемый ярлык на сетке.
-    ///   - targetID: Ярлык на сетке, на месте которого встанет папка.
-    ///   - title: Название папки.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: Итог операции (`.createDenied` также при неверном вводе).
+    ///   - sourceID: The dragged shortcut on the grid.
+    ///   - targetID: The shortcut on the grid in whose place the folder will stand.
+    ///   - title: The folder title.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: The operation outcome (`.createDenied` also for invalid input).
     func createFolder(
         from sourceID: AnyHashable,
         onto targetID: AnyHashable,
@@ -1818,25 +1766,24 @@ extension TesseraTileStore {
         return .created(materialize(record))
     }
 
-    /// Создаёт папку из одного ярлыка на его месте (E14.5, D20, D31).
+    /// Creates a folder from one shortcut in its place (D20, D31).
     ///
-    /// Папка всегда 2×2 и встаёт на ячейку
-    /// ярлыка через `TesseraTileLayoutEngine.inserting`: соседи выталкиваются вниз
-    /// каскадом. Хост одобряет создание (`.createFolder`).
+    /// The folder is always 2×2 and stands on the shortcut's cell through
+    /// `TesseraTileLayoutEngine.inserting`: neighbors are pushed down in a cascade. The host approves
+    /// creation (`.createFolder`).
     ///
-    /// D45: папка из одного ярлыка — **переходное** состояние: хост обязан
-    /// следом добавить в неё второй ярлык (``addToFolder(_:folderID:columns:)``).
-    /// Правило «папка не бывает из 0–1 ярлыков» хранилище
-    /// проводит, когда ярлыки **убирают** из папки и при загрузке файла; сама
-    /// по себе одноярлычная папка до этого момента не распускается (и
-    /// переживает ``setCatalog(_:)``).
+    /// D45: a folder of one shortcut is a **transitional** state: the host must add a second shortcut
+    /// to it right after (``addToFolder(_:folderID:columns:)``). The store enforces the "a folder is
+    /// never made of 0-1 shortcuts" rule when shortcuts are **removed** from a folder and when a file
+    /// is loaded; a one-shortcut folder is not dissolved on its own before that (and survives
+    /// ``setCatalog(_:)``).
     ///
     /// - Parameters:
-    ///   - tileID: Ярлык на сетке, который станет первым содержимым папки.
-    ///   - title: Название папки.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: Созданная папка или `nil` (нет ярлыка на сетке, `columns <= 0`
-    ///   либо отказ хоста).
+    ///   - tileID: The shortcut on the grid that becomes the first content of the folder.
+    ///   - title: The folder title.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: The created folder, or `nil` (no shortcut on the grid, `columns <= 0`, or a host
+    ///   denial).
     @discardableResult
     public func createFolder(withTile tileID: AnyHashable, title: String = "", columns: Int) -> TesseraTileFolder? {
         guard columns > 0 else { return nil }
@@ -1875,17 +1822,17 @@ extension TesseraTileStore {
         return materialize(record)
     }
 
-    /// Добавляет ярлык с сетки в существующую папку (E14.4).
+    /// Adds a shortcut from the grid to an existing folder.
     ///
-    /// Ярлык уходит с верхнего уровня, его ячейка остаётся дырой (репака нет);
-    /// папка сохраняет свою ячейку и размер.
+    /// The shortcut leaves the top level, and its cell stays a hole (there is no repack); the folder
+    /// keeps its cell and size.
     ///
     /// - Parameters:
-    ///   - tileID: Ярлык на сетке.
-    ///   - folderID: Идентификатор папки.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если состояние изменилось; `false` — ярлык уже в этой
-    ///   папке или в другой, ярлыка/папки нет, хост запретил либо `columns <= 0`.
+    ///   - tileID: The shortcut on the grid.
+    ///   - folderID: The folder identifier.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the state changed; `false` if the shortcut is already in this or another
+    ///   folder, the shortcut/folder does not exist, the host denied it, or `columns <= 0`.
     @discardableResult
     public func addToFolder(_ tileID: AnyHashable, folderID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -1911,63 +1858,59 @@ extension TesseraTileStore {
         return true
     }
 
-    /// Выносит ярлык из папки на сетку, на ячейку (E14.4, D31).
+    /// Takes a shortcut out of a folder onto the grid, onto a cell (D31).
     ///
-    /// Ярлык становится верхнеуровневым элементом со своим размером на `cell`,
-    /// ограниченной холстом; мешающие плитки выталкиваются вниз каскадом.
-    /// Папка не бывает из 0–1 ярлыков (D45): если в ней остался один ярлык,
-    /// папка **распускается**, и этот ярлык встаёт на её ячейку со своим
-    /// размером (``dissolveFolderIfNeeded(withKey:in:columns:)``) — до того, как
-    /// встанет вынесенный. Если папка опустела (в ней был один ярлык — переходная
-    /// папка ``createFolder(withTile:title:columns:)``), она исчезает, а её
-    /// ячейка остаётся дырой. Хост одобряет перенос как `.moveBetweenFolders`
-    /// с папкой-целью `nil` (D14). Операция — одно изменение модели (один `onChange`).
+    /// The shortcut becomes a top-level item with its own size on `cell`, limited by the canvas;
+    /// obstructing tiles are pushed down in a cascade. A folder is never made of 0-1 shortcuts (D45):
+    /// if one shortcut remains in it, the folder is **dissolved**, and that shortcut takes its cell
+    /// with its own size (``dissolveFolderIfNeeded(withKey:in:columns:)``) before the taken-out one
+    /// is placed. If the folder became empty (it held one shortcut, the transitional folder of
+    /// ``createFolder(withTile:title:columns:)``), it disappears, and its cell stays a hole. The host
+    /// approves the move as `.moveBetweenFolders` with a `nil` target folder (D14). The operation is
+    /// one model change (one `onChange`).
     ///
     /// - Parameters:
-    ///   - tileID: Ярлык, лежащий в папке.
-    ///   - cell: Желаемая ячейка левого верхнего угла.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если состояние изменилось; `false` — ярлыка нет в папке,
-    ///   хост запретил либо `columns <= 0`.
+    ///   - tileID: A shortcut that lies in a folder.
+    ///   - cell: The desired top left cell.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the state changed; `false` if the shortcut is not in a folder, the host
+    ///   denied it, or `columns <= 0`.
     @discardableResult
     public func extractFromFolder(_ tileID: AnyHashable, toCell cell: TesseraTileGridPlacement, columns: Int) -> Bool {
         performExtract(tileID, cell: cell, columns: columns)
     }
 
-    /// Выносит ярлык из папки в новую строку в конце холста (E14.4, D33).
+    /// Takes a shortcut out of a folder into a new row at the end of the canvas (D33).
     ///
-    /// Как ``extractFromFolder(_:toCell:columns:)``, но ячейка — первая строка
-    /// после последней занятой, колонка 0. Папка, которая распалась (D45) или
-    /// исчезла, в расчёт строки не входит: оставшийся ярлык стоит на её
-    /// ячейке со своим размером, и строка считается уже с ним.
+    /// Like ``extractFromFolder(_:toCell:columns:)``, but the cell is the first row after the last
+    /// occupied one, column 0. A folder that dissolved (D45) or disappeared does not count in the
+    /// row computation: the remaining shortcut stands on its cell with its own size, and the row is
+    /// computed with it already.
     ///
     /// - Parameters:
-    ///   - tileID: Ярлык, лежащий в папке.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если состояние изменилось.
+    ///   - tileID: A shortcut that lies in a folder.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the state changed.
     @discardableResult
     public func extractFromFolderToNewRow(_ tileID: AnyHashable, columns: Int) -> Bool {
         performExtract(tileID, cell: nil, columns: columns)
     }
 
-    /// Перемещает ярлык из одной папки в другую, не трогая остальную раскладку
-    /// (E14.4).
+    /// Moves a shortcut from one folder to another without touching the rest of the layout.
     ///
-    /// Папка-источник, в которой остался один ярлык, **распускается** (D45):
-    /// оставшийся ярлык встаёт на её ячейку со своим размером; бо́льший ярлык
-    /// выталкивает соседей вниз (D31), меньший оставляет дыру. Папка, которая
-    /// опустела (переходная папка из одного ярлыка), исчезает, а её ячейка
-    /// остаётся дырой (схлопывание — ``collapseEmptyRows(columns:)``). Хост
-    /// одобряет перенос как `.moveBetweenFolders` (D14). Возврат на рабочий стол —
+    /// A source folder left with one shortcut is **dissolved** (D45): the remaining shortcut takes
+    /// its cell with its own size; a larger shortcut pushes neighbors down (D31), a smaller one
+    /// leaves a hole. A folder that became empty (a transitional one-shortcut folder) disappears,
+    /// and its cell stays a hole (collapsing is ``collapseEmptyRows(columns:)``). The host approves
+    /// the move as `.moveBetweenFolders` (D14). Returning to the start screen is
     /// ``extractFromFolder(_:toCell:columns:)``.
     ///
     /// - Parameters:
-    ///   - tileID: Ярлык, лежащий в папке.
-    ///   - folderID: Папка-цель.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если состояние изменилось; `false` — ярлыка нет ни в
-    ///   одной папке, цель совпадает с текущей папкой или не существует, хост
-    ///   запретил либо `columns <= 0`.
+    ///   - tileID: A shortcut that lies in a folder.
+    ///   - folderID: The target folder.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the state changed; `false` if the shortcut is in no folder, the target
+    ///   equals the current folder or does not exist, the host denied it, or `columns <= 0`.
     @discardableResult
     public func moveBetweenFolders(_ tileID: AnyHashable, to folderID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -1989,33 +1932,31 @@ extension TesseraTileStore {
         let sourceKey = folderRecords[sourceIndex].key
         folderRecords[sourceIndex].tileKeys.removeAll { $0 == tileKey }
         folderRecords[targetIndex].tileKeys.append(tileKey)
-        // D45: в папке-источнике осталось меньше двух — она распускается.
+        // D45: fewer than two remain in the source folder, so it is dissolved.
         dissolveFolderIfNeeded(withKey: sourceKey, in: &items, columns: columns)
         commitCells(items, columns: columns)
         didChange()
         return true
     }
 
-    /// Переименовывает папку (E15.5, D35; W10M §6.7).
+    /// Renames a folder (D35; as in Windows 10 Mobile).
     ///
-    /// Название нормализуется (``TesseraTileFolder/normalizedTitle(_:)``: пробелы и
-    /// переводы строк по краям отбрасываются, переводы строк внутри становятся
-    /// пробелами, длина — не больше ``TesseraTileFolder/maximumTitleLength``). Пустое
-    /// название возвращает **название по умолчанию** — то же, что получает новая
-    /// папка (`folderScreen.defaultTitle`, en/ru; редактор подставляет его же,
-    /// а `TesseraTileEditConfiguration.folderTitle` лишь перекрывает). Размер,
-    /// ячейка и состав папки не меняются; раскладку операция не трогает, поэтому
-    /// ширины сетки не требует. Одобрения хоста (D14) не нужно: название не
-    /// меняет состав папок.
+    /// The title is normalized (``TesseraTileFolder/normalizedTitle(_:)``: whitespace and newlines at
+    /// the edges are dropped, newlines inside become spaces, the length is at most
+    /// ``TesseraTileFolder/maximumTitleLength``). An empty title returns the **default title**, the
+    /// same one a new folder gets (`folderScreen.defaultTitle`, en/ru; the editor substitutes the
+    /// same, and `TesseraTileEditConfiguration.folderTitle` only overrides it). The size, cell and
+    /// content of the folder do not change; the operation does not touch the layout, so it does not
+    /// need the grid width. Host approval (D14) is not needed: the title does not change folder
+    /// composition.
     ///
-    /// Состояние сохраняется (``autosaves``) и сообщается подписчикам одним
-    /// ``onChange``.
+    /// The state is saved (``autosaves``) and reported to subscribers with a single ``onChange``.
     ///
     /// - Parameters:
-    ///   - folderID: Идентификатор папки на рабочем столе.
-    ///   - newTitle: Новое название (как набрано пользователем).
-    /// - Returns: `true`, если название изменилось; `false` — папки нет или
-    ///   нормализованное название совпало с текущим (ни сохранения, ни `onChange`).
+    ///   - folderID: The folder identifier on the start screen.
+    ///   - newTitle: The new title (as typed by the user).
+    /// - Returns: `true` if the title changed; `false` if there is no folder or the normalized title
+    ///   equals the current one (no save and no `onChange`).
     @discardableResult
     public func renameFolder(_ folderID: AnyHashable, to newTitle: String) -> Bool {
         let folderKey = TesseraTileStore.storageKey(for: folderID)
@@ -2033,32 +1974,29 @@ extension TesseraTileStore {
         return true
     }
 
-    /// Переставляет ярлык внутри папки (E16.1, D40; W10M §6.5).
+    /// Reorders a shortcut inside a folder (D40; as in Windows 10 Mobile).
     ///
-    /// Порядок ярлыков в папке — порядок `FolderRecord.tileKeys`: он же
-    /// попадает в файл, в ``TesseraTileFolder/tiles`` снимка и в превью/панель.
-    /// Операция меняет только его: размеры, ячейки и состав папок не меняются,
-    /// ширины сетки не нужно. Одобрение хоста (D14) не спрашивается — состав
-    /// папки не меняется (в отличие от переноса между папками).
+    /// The order of shortcuts in a folder is the order of `FolderRecord.tileKeys`: it also goes into
+    /// the file, into the snapshot's ``TesseraTileFolder/tiles`` and into the preview/panel. The
+    /// operation changes only that: sizes, cells and folder composition do not change, and the grid
+    /// width is not needed. Host approval (D14) is not asked, because the folder composition does not
+    /// change (unlike a move between folders).
     ///
-    /// `toIndex` — индекс **среди видимых ярлыков папки** (тех, что есть в
-    /// каталоге и попадают в ``TesseraTileFolder/tiles``); значение вне
-    /// `0...count - 1` ужимается к границе. Невидимые члены (ключи, которых нет
-    /// в каталоге: до первого ``setCatalog(_:)`` после ``load()``) в расчёте
-    /// не участвуют и остаются на своих местах в записи — после регистрации
-    /// каталога чистка всё равно их убирает (D45), поэтому на практике папка
-    /// без видимых членов просто отказывает.
+    /// `toIndex` is an index **among the folder's visible shortcuts** (those that are in the catalog
+    /// and reach ``TesseraTileFolder/tiles``); a value outside `0...count - 1` is clamped to the
+    /// bound. Invisible members (keys that are not in the catalog: before the first
+    /// ``setCatalog(_:)`` after ``load()``) do not take part in the computation and stay in their
+    /// places in the record. After the catalog is registered, pruning removes them anyway (D45), so
+    /// in practice a folder without visible members simply refuses.
     ///
-    /// Состояние сохраняется (``autosaves``) и сообщается подписчикам одним
-    /// ``onChange``.
+    /// The state is saved (``autosaves``) and reported to subscribers with a single ``onChange``.
     ///
     /// - Parameters:
-    ///   - tileID: Идентификатор ярлыка, лежащего в этой папке.
-    ///   - folderID: Идентификатор папки на рабочем столе.
-    ///   - toIndex: Новый индекс среди ярлыков папки.
-    /// - Returns: `true`, если порядок изменился; `false` — папки/ярлыка нет,
-    ///   ярлык не в этой папке или позиция не меняется (ни сохранения, ни
-    ///   `onChange`).
+    ///   - tileID: The identifier of a shortcut lying in this folder.
+    ///   - folderID: The folder identifier on the start screen.
+    ///   - toIndex: The new index among the folder's shortcuts.
+    /// - Returns: `true` if the order changed; `false` if there is no folder/shortcut, the shortcut
+    ///   is not in this folder, or the position does not change (no save and no `onChange`).
     @discardableResult
     public func moveWithinFolder(_ tileID: AnyHashable, folderID: AnyHashable, toIndex: Int) -> Bool {
         let folderKey = TesseraTileStore.storageKey(for: folderID)
@@ -2074,29 +2012,28 @@ extension TesseraTileStore {
 
         visible.remove(at: from)
         visible.insert(tileKey, at: destination)
-        // Невидимые ключи остаются на своих местах: видимые слоты заполняются
-        // новым порядком по очереди.
+        // Invisible keys stay in their places: the visible slots are filled with the new order in
+        // turn.
         var next = visible.makeIterator()
         folderRecords[folderIndex].tileKeys = keys.map { catalogIndex[$0] != nil ? (next.next() ?? $0) : $0 }
         didChange()
         return true
     }
 
-    // MARK: Закрепление
+    // MARK: Pinning
 
-    /// Открепляет ярлык: уход с сетки оставляет дыру (E14.4, D30).
+    /// Unpins a shortcut: leaving the grid leaves a hole (D30).
     ///
-    /// Ярлык на сетке просто уходит, его ячейка остаётся свободной. Ярлык из
-    /// папки выходит из неё; если в папке остался один ярлык, она
-    /// **распускается** (D45): оставшийся ярлык встаёт на ячейку папки со своим
-    /// размером (``dissolveFolderIfNeeded(withKey:in:columns:)``). Опустевшая
-    /// папка (переходная, из одного ярлыка) исчезает, и её ячейка остаётся дырой.
-    /// Одобрение хоста не спрашивается (D14: открепление не группировка).
+    /// A shortcut on the grid just leaves, and its cell stays free. A shortcut from a folder leaves
+    /// it; if one shortcut remains in the folder, it is **dissolved** (D45): the remaining shortcut
+    /// takes the folder's cell with its own size (``dissolveFolderIfNeeded(withKey:in:columns:)``).
+    /// An emptied folder (a transitional one-shortcut one) disappears, and its cell stays a hole.
+    /// Host approval is not asked (D14: unpinning is not grouping).
     ///
     /// - Parameters:
-    ///   - tileID: Идентификатор ярлыка.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если состояние изменилось.
+    ///   - tileID: The shortcut identifier.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the state changed.
     @discardableResult
     public func unpin(_ tileID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -2107,7 +2044,7 @@ extension TesseraTileStore {
             var items = cellBasis(columns: columns)
             let folderKey = folderRecords[index].key
             folderRecords[index].tileKeys.removeAll { $0 == key }
-            // D45: в папке осталось меньше двух — она распускается.
+            // D45: fewer than two remain in the folder, so it is dissolved.
             dissolveFolderIfNeeded(withKey: folderKey, in: &items, columns: columns)
             commitCells(items, columns: columns)
             didChange()
@@ -2122,16 +2059,16 @@ extension TesseraTileStore {
         return true
     }
 
-    /// Закрепляет ярлык на сетке в новой строке в конце холста (E14.4, D33).
+    /// Pins a shortcut on the grid in a new row at the end of the canvas (D33).
     ///
-    /// Размер берётся из сохранённых размеров или умолчания дескриптора (D15);
-    /// на узкой сетке плитка ужимается движком (`fittingSize`), колонка — 0.
+    /// The size comes from the saved sizes or the descriptor default (D15); on a narrow grid the
+    /// engine shrinks the tile (`fittingSize`), and the column is 0.
     ///
     /// - Parameters:
-    ///   - tileID: Идентификатор ярлыка из каталога.
-    ///   - columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если ярлык закреплён; `false` — его нет в каталоге, он
-    ///   уже на сетке или в папке либо `columns <= 0`.
+    ///   - tileID: The identifier of a shortcut from the catalog.
+    ///   - columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the shortcut is pinned; `false` if it is not in the catalog, is already
+    ///   on the grid or in a folder, or `columns <= 0`.
     @discardableResult
     public func pinTile(_ tileID: AnyHashable, columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -2159,17 +2096,16 @@ extension TesseraTileStore {
         return true
     }
 
-    // MARK: Схлопывание
+    // MARK: Collapse
 
-    /// Схлопывает пустые строки холста (E14.4, D31).
+    /// Collapses the empty rows of the canvas (D31).
     ///
-    /// Строка удаляется, только если её не покрывает ни один элемент (высокие
-    /// плитки покрывают все свои строки). Зовёт слой правки **только на drop**,
-    /// никогда во время drag. Идемпотентна: на раскладке без пустых строк ничего
-    /// не меняет, не пишет файл и не уведомляет.
+    /// A row is removed only if no item covers it (tall tiles cover all their rows). The edit layer
+    /// calls it **only on drop**, never during a drag. Idempotent: on a layout without empty rows it
+    /// changes nothing, does not write the file and does not notify.
     ///
-    /// - Parameter columns: Число колонок сетки хоста, больше нуля.
-    /// - Returns: `true`, если раскладка изменилась.
+    /// - Parameter columns: The host grid column count, greater than zero.
+    /// - Returns: `true` if the layout changed.
     @discardableResult
     public func collapseEmptyRows(columns: Int) -> Bool {
         guard columns > 0 else { return false }
@@ -2183,14 +2119,14 @@ extension TesseraTileStore {
         return true
     }
 
-    // MARK: Внутреннее
+    // MARK: Internals
 
-    /// Общая часть выноса из папки (E14.4): ячейка либо новая строка.
+    /// The common part of taking a shortcut out of a folder: a cell or a new row.
     ///
     /// - Parameters:
-    ///   - tileID: Ярлык, лежащий в папке.
-    ///   - cell: Ячейка; `nil` — новая строка в конце холста.
-    ///   - columns: Число колонок сетки хоста.
+    ///   - tileID: A shortcut that lies in a folder.
+    ///   - cell: The cell; `nil` means a new row at the end of the canvas.
+    ///   - columns: The host grid column count.
     private func performExtract(_ tileID: AnyHashable, cell: TesseraTileGridPlacement?, columns: Int) -> Bool {
         guard columns > 0 else { return false }
         noteHostColumns(columns)
@@ -2205,10 +2141,9 @@ extension TesseraTileStore {
         var items = cellBasis(columns: columns)
         let folderKey = folderRecords[sourceIndex].key
         folderRecords[sourceIndex].tileKeys.removeAll { $0 == key }
-        // D45: папка с одним ярлыком распускается раньше, чем встанет вынесенный:
-        // оставшийся ярлык занимает ячейку папки, а вынесенный встаёт на `cell` по
-        // обычным правилам (на ячейку папки он тоже может попасть — тогда
-        // оставшийся уходит вниз).
+        // D45: a folder with one shortcut is dissolved before the taken-out one is placed: the
+        // remaining shortcut takes the folder's cell, and the taken-out one goes to `cell` by the
+        // usual rules (it may also land on the folder's cell, and then the remaining one moves down).
         dissolveFolderIfNeeded(withKey: folderKey, in: &items, columns: columns)
 
         let size = storedSize(ofKey: key)
@@ -2226,27 +2161,26 @@ extension TesseraTileStore {
         return true
     }
 
-    /// Распускает папку, в которой после ухода ярлыка осталось меньше двух (D45).
+    /// Dissolves a folder that has fewer than two shortcuts left after one was removed (D45).
     ///
-    /// Ничего не делает, если ярлыков в папке достаточно. Иначе папка исчезает
-    /// из модели и из набора `items`; единственный оставшийся видимый ярлык
-    /// встаёт на **ячейку папки со своим размером** через
-    /// `TesseraTileLayoutEngine.inserting`: бо́льший (wide, large) выталкивает соседей
-    /// вниз каскадом (D31), слишком правая колонка сдвигается влево, меньший
-    /// оставляет дыру. Размер ярлыка — авторитетный размер хранилища
-    /// (``storedSize(ofKey:)``), его выбор пользователя не теряется. Пустая
-    /// папка просто исчезает.
+    /// Does nothing if the folder has enough shortcuts. Otherwise the folder disappears from the
+    /// model and from the `items` set; the single remaining visible shortcut stands on the **folder's
+    /// cell with its own size** through `TesseraTileLayoutEngine.inserting`: a larger one (wide,
+    /// large) pushes neighbors down in a cascade (D31), a column that is too far right shifts left,
+    /// and a smaller one leaves a hole. The shortcut size is the store's authoritative size
+    /// (``storedSize(ofKey:)``), so the user's choice is not lost. An empty folder simply
+    /// disappears.
     ///
-    /// Запись `gridOrder` и порядок чтения приводит ``commitCells(_:columns:)``;
-    /// вызывающий обязан вызвать его (и ``didChange()``) после. Невидимых членов
-    /// у папки в операциях не бывает: каталог авторитетен (``pruneFoldersAgainstCatalog()``).
+    /// The `gridOrder` record and the reading order are set by ``commitCells(_:columns:)``; the
+    /// caller must call it (and ``didChange()``) afterwards. In operations a folder has no invisible
+    /// members: the catalog is authoritative (``pruneFoldersAgainstCatalog()``).
     ///
     /// - Parameters:
-    ///   - folderKey: Ключ папки, из которой только что убрали ярлык.
-    ///   - items: Рабочий набор размещений; обновляется на месте.
-    ///   - columns: Ширина холста.
-    /// - Returns: Ключ ярлыка, занявшего место папки, либо `nil` (папка осталась
-    ///   или исчезла пустой).
+    ///   - folderKey: The key of the folder from which a shortcut was just removed.
+    ///   - items: The working set of placements; updated in place.
+    ///   - columns: The canvas width.
+    /// - Returns: The key of the shortcut that took the folder's place, or `nil` (the folder stayed
+    ///   or disappeared empty).
     @discardableResult
     private func dissolveFolderIfNeeded(
         withKey folderKey: String,
@@ -2277,19 +2211,18 @@ extension TesseraTileStore {
         return remaining
     }
 
-    /// Рабочий набор размещений видимых элементов для ширины `columns`
-    /// (E14.4): отправная точка каждой операции по ячейкам.
+    /// The working set of placements of visible items for width `columns`: the starting point of
+    /// every cell-based operation.
     ///
-    /// Если холст той же ширины, берутся сохранённые ячейки (с дырами); иначе
-    /// (D32) — проекция ``placements(forColumns:)``: репак по порядку чтения без
-    /// дыр, и операция применяется к нему. Сам метод **ничего не меняет**:
-    /// холст принимает ``commitCells(_:columns:)`` только после успешной
-    /// операции, поэтому отказ не перезаписывает файл. Размеры — запрошенные
-    /// (след ужимает движок). Набор, не прошедший `validate`, заменяется
-    /// проекцией.
+    /// If the canvas has the same width, the saved cells (with holes) are used; otherwise (D32) the
+    /// ``placements(forColumns:)`` projection: a repack in reading order without holes, and the
+    /// operation is applied to it. The method itself **changes nothing**: the canvas is accepted by
+    /// ``commitCells(_:columns:)`` only after a successful operation, so a denial does not overwrite
+    /// the file. Sizes are the requested ones (the engine shrinks the footprint). A set that fails
+    /// `validate` is replaced by the projection.
     ///
-    /// - Parameter columns: Число колонок, больше нуля.
-    /// - Returns: Элементы в порядке сетки; идентификатор — канонический ключ.
+    /// - Parameter columns: The column count, greater than zero.
+    /// - Returns: Items in grid order; the identifier is the canonical key.
     private func cellBasis(columns: Int) -> [TesseraTilePlacedItem] {
         let keys = visibleGridKeys()
 
@@ -2304,7 +2237,7 @@ extension TesseraTileStore {
                     missing.append(key)
                 }
             }
-            // Защита: у видимого ключа нет ячейки — новая строка в конце.
+            // Safety net: a visible key has no cell, so it goes to a new row at the end.
             for key in missing {
                 let size = storedSize(ofKey: key)
                 let cell = TesseraTileLayoutEngine.newRowCell(size: size, columns: columns, placements: items)
@@ -2323,19 +2256,18 @@ extension TesseraTileStore {
         return build(from: projectedPlacements(columns: columns))
     }
 
-    /// Принимает посчитанную раскладку как модель (E14.4): ячейки видимых
-    /// элементов, ширина холста и порядок чтения.
+    /// Accepts the computed layout as the model: the cells of visible items, the canvas width and the
+    /// reading order.
     ///
-    /// Ячейки невидимых ключей сохраняются (в коллизиях не участвуют), а те, что
-    /// не помещаются в новую ширину, получают место в конце
-    /// (``reconcilePlacements(settled:)``). `gridOrder` для видимых элементов
-    /// становится порядком чтения ячеек; структурные правки `gridOrder` (уход
-    /// ярлыка, новая папка) вызывающий делает до вызова. Уведомление и запись —
-    /// на вызывающем (``didChange()``).
+    /// The cells of invisible keys are kept (they do not take part in collisions), and those that do
+    /// not fit the new width get a place at the end (``reconcilePlacements(settled:)``). `gridOrder`
+    /// for visible items becomes the cell reading order; structural `gridOrder` edits (a shortcut
+    /// leaving, a new folder) are made by the caller before the call. The notification and the write
+    /// are up to the caller (``didChange()``).
     ///
     /// - Parameters:
-    ///   - items: Размещения всех видимых элементов после операции.
-    ///   - columns: Ширина холста (ширина хоста).
+    ///   - items: The placements of all visible items after the operation.
+    ///   - columns: The canvas width (the host width).
     private func commitCells(_ items: [TesseraTilePlacedItem], columns: Int) {
         var next: [String: TesseraTileGridPlacement] = [:]
         for item in items {
@@ -2354,66 +2286,64 @@ extension TesseraTileStore {
     }
 }
 
-// MARK: - Внутренние записи
+// MARK: - Internal records
 
-/// Внутренняя запись папки: ярлыки хранятся ключами, а не копиями.
+/// The internal folder record: shortcuts are stored by keys, not as copies.
 ///
-/// Копии `TesseraTileDescriptor` внутри папки устаревали бы при перерегистрации
-/// каталога (новые подписи/иконки), поэтому публичная ``TesseraTileFolder``
-/// собирается по запросу.
+/// Copies of `TesseraTileDescriptor` inside a folder would go stale on catalog re-registration (new
+/// captions/icons), so the public ``TesseraTileFolder`` is built on request.
 private struct FolderRecord {
 
-    /// Канонический ключ папки (по нему папка стоит в порядке сетки).
+    /// The canonical folder key (the folder stands in the grid order under it).
     var key: String
 
-    /// Идентификатор папки для публичной модели.
+    /// The folder identifier for the public model.
     var id: AnyHashable
 
-    /// Подпись папки.
+    /// The folder caption.
     var title: String
 
-    /// Иконка-превью; в файл не пишется (runtime-состояние).
+    /// The preview icon; not written to the file (runtime state).
     var icon: UIImage?
 
-    /// Размер плитки-папки.
+    /// The size of the folder tile.
     var size: TesseraTileSize
 
-    /// Канонические ключи ярлыков в порядке отображения.
+    /// The canonical shortcut keys in display order.
     var tileKeys: [String]
 }
 
-// MARK: - JSON-схема состояния
+// MARK: - State JSON schema
 
-/// Версионированный документ состояния (читается только TesseraTileStore).
+/// The versioned state document (read only by TesseraTileStore).
 ///
-/// Каталог ярлыков в файл не попадает: `action` — замыкание, его нельзя
-/// сериализовать. Хранится только раскладка: порядок, ячейки и ширина холста
-/// (версия 2, E14.1), размеры, папки.
-/// Ключи элементов — канонические строки (см. `TesseraTileStore.storageKey(for:)`),
-/// поэтому схема не зависит от типа `AnyHashable`-идентификатора.
+/// The shortcut catalog does not go into the file: `action` is a closure and cannot be serialized.
+/// Only the layout is stored: order, cells and canvas width (version 2), sizes, folders. Item keys
+/// are canonical strings (see `TesseraTileStore.storageKey(for:)`), so the schema does not depend on
+/// the type of the `AnyHashable` identifier.
 private struct TileStoreDocument: Codable {
 
-    /// Версия схемы; запись читается, только если она не новее текущей.
+    /// The schema version; a record is read only if it is not newer than the current one.
     var version: Int
 
-    /// Ширина холста в юнитах, на которую рассчитаны `row`/`column` (версия 2).
+    /// The canvas width in units that `row`/`column` were computed for (version 2).
     ///
-    /// В файле версии 1 и в нераскладочном состоянии поля нет.
+    /// The field is absent in a version 1 file and in the "not laid out" state.
     var columns: Int?
 
-    /// Порядок элементов сетки.
+    /// The grid item order.
     var items: [Item]
 
-    /// Размеры ярлыков по каноническим ключам.
+    /// The shortcut sizes by canonical keys.
     var sizes: [String: TesseraTileSize]
 
-    /// Папки с составом и размерами.
+    /// Folders with their content and sizes.
     var folders: [Folder]
 
-    /// Элемент порядка сетки.
+    /// A grid order item.
     struct Item: Codable {
 
-        /// Что за элемент: ярлык или папка.
+        /// What the item is: a shortcut or a folder.
         enum Kind: String, Codable {
             case tile
             case folder
@@ -2422,14 +2352,14 @@ private struct TileStoreDocument: Codable {
         var kind: Kind
         var key: String
 
-        /// Строка левого верхнего угла элемента (версия 2).
+        /// The row of the item's top left corner (version 2).
         var row: Int?
 
-        /// Колонка левого верхнего угла элемента (версия 2).
+        /// The column of the item's top left corner (version 2).
         var column: Int?
     }
 
-    /// Папка в файле состояния.
+    /// A folder in the state file.
     struct Folder: Codable {
         var key: String
         var title: String

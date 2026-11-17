@@ -2,117 +2,115 @@
 //  TesseraPivotViewController.swift
 //  TesseraPivot
 //
-//  Оркестратор пивота: крупный заголовок приложения, лента заголовков и
-//  полноэкранный пейджер из TesseraCore.
-//  Контракт: docs/PIVOT-IOS-DESIGN.md §3 «Архитектура» (компоновка сверху вниз:
-//  PivotTitleView → TesseraPivotHeaderStripView → пейджер), §4 «Математика ядра»
-//  (автоцентрирование ленты по завершении перехода), §5 «Синхронизация ленты и
-//  пейджера» (один источник истины и один писатель `contentOffset`), §6
-//  «Вертикальный скролл внутри страницы» (вариант B: пейджер — только
-//  горизонталь, вертикаль — детям), §8 «Accessibility» (VoiceOver, Reduce Motion,
-//  Dynamic Type, RTL), §9 «Адаптивность» (одна секция — лента скрывается).
-//  Задачи плана: E2.1 (VC + пейджер), E2.3 (синхронизация), E2.4 (вертикальный
-//  скролл).
+//  The pivot orchestrator: the large app title, the header strip, and
+//  a full-screen pager from TesseraCore.
+//  Contract: docs/PIVOT-IOS-DESIGN.md (architecture: the layout from top to bottom:
+//  PivotTitleView → TesseraPivotHeaderStripView → the pager; core math:
+//  auto-centering of the strip when a transition completes; synchronizing the strip and
+//  the pager: a single source of truth and a single writer of `contentOffset`;
+//  vertical scrolling inside a page: option B, where the pager only scrolls
+//  horizontally and the children scroll vertically; accessibility: VoiceOver, Reduce Motion,
+//  Dynamic Type, RTL; adaptivity: a single section hides the strip).
 //
-//  Инварианты (§5):
-//  - источник истины — `contentOffset` пейджера; пишут его только жест пейджера
-//    и программный переход (``selectSection(at:animated:)`` →
+//  Invariants:
+//  - the source of truth is the pager's `contentOffset`; it is written only by the pager's gesture
+//    and the programmatic transition (``selectSection(at:animated:)`` →
 //    `TesseraPagerViewController.go(toPage:animated:)`);
-//  - лента — только читатель: `didChangeProgress` → `headerStripView.apply(progress:)`,
-//    обратной записи в пейджер нет;
-//  - в горячем пути прогресса нет layout: `apply(progress:)` ленты двигает только
-//    `transform` индикатора и перекрашивает видимые ячейки (§4, §7).
+//  - the strip is only a reader: `didChangeProgress` → `headerStripView.apply(progress:)`,
+//    there is no write-back to the pager;
+//  - there is no layout on the progress hot path: the strip's `apply(progress:)` moves only
+//    the indicator's `transform` and recolors the visible cells.
 //
 
 #if canImport(UIKit)
 import UIKit
 import TesseraCore
 
-/// Контроллер пивота: лента заголовков с непрерывной синхронизацией и
-/// полноэкранные страницы-секции (docs/PIVOT-IOS-DESIGN.md §3).
+/// The pivot controller: a header strip with continuous synchronization and
+/// full-screen section pages (see docs/PIVOT-IOS-DESIGN.md).
 ///
-/// Компоновка сверху вниз (§3):
+/// The layout from top to bottom:
 ///
 /// ```
 /// TesseraPivotViewController
-///     ├─ крупный заголовок приложения (UILabel, опционально — ``TesseraPivotStyle/appTitle``)
-///     ├─ TesseraPivotHeaderStripView   ← лента заголовков + индикатор, вне пейджера,
-///     │                            поэтому закреплена по вертикали (§6)
-///     └─ TesseraPagerViewController (режим .paged) ← страницы из ``TesseraPivotSection``
+///     ├─ the large app title (UILabel, optional: ``TesseraPivotStyle/appTitle``)
+///     ├─ TesseraPivotHeaderStripView   ← the header strip + indicator, outside the pager,
+///     │                            so it stays pinned vertically
+///     └─ TesseraPagerViewController (.paged mode) ← the pages from ``TesseraPivotSection``
 /// ```
 ///
-/// ## Синхронизация (§5)
+/// ## Synchronization
 ///
-/// - свайп → лента: `didChangeProgress` пейджера передаётся в
-///   ``TesseraPivotHeaderStripView/apply(progress:)``; никакой обратной записи нет;
-/// - тап по заголовку → пейджер: ``selectSection(at:animated:)`` вызывает
-///   `go(toPage:animated:)`; при Reduce Motion переход без анимации (§8);
-/// - завершение перехода (`didShowPageAt`) → автоцентрирование ленты,
-///   озвучивание названия секции и колбэк делегата
+/// - swipe → strip: the pager's `didChangeProgress` is passed to
+///   ``TesseraPivotHeaderStripView/apply(progress:)``; there is no write-back;
+/// - header tap → pager: ``selectSection(at:animated:)`` calls
+///   `go(toPage:animated:)`; with Reduce Motion the transition has no animation;
+/// - transition completion (`didShowPageAt`) → auto-centering of the strip,
+///   announcing the section name, and the delegate callback
 ///   ``TesseraPivotDelegate/pivot(_:didShowSectionAt:)``.
 ///
-/// ## Вертикальный скролл (§6, вариант B)
+/// ## Vertical scrolling (option B)
 ///
-/// Пейджер скроллит только горизонтально, вертикалью владеют страницы.
-/// Контроллеры контента регистрируют свои вертикальные скролл-вью через
-/// ``registerVerticalOwner(_:)``; арбитраж выполняет
-/// ``TesseraGestureArbiter`` из Core: на время горизонтального жеста прокрутка
-/// детей блокируется и затем восстанавливается. Подробности и вынужденное
-/// отклонение от §6 — в документации методов регистрации.
+/// The pager scrolls only horizontally, and the pages own vertical scrolling.
+/// Content controllers register their vertical scroll views through
+/// ``registerVerticalOwner(_:)``; arbitration is performed by
+/// ``TesseraGestureArbiter`` from Core: during a horizontal gesture the children's scrolling
+/// is blocked and then restored. The details and the forced
+/// deviation from the intended design are in the documentation of the registration methods.
 ///
-/// ## RTL (§8)
+/// ## RTL
 ///
-/// Прогресс и индексы приходят из Core уже нормализованными по направлению
-/// чтения (`TesseraRTL`): `0` — первая секция для пользователя. Лента получает
-/// тот же прогресс в порядке чтения и сама переводит геометрию в координаты
-/// контента. Поэтому здесь нет отдельной ветки зеркалирования — иначе
-/// зеркалирование применилось бы дважды.
+/// The progress and indices arrive from Core already normalized by the reading
+/// direction (`TesseraRTL`): `0` is the first section for the user. The strip receives
+/// the same progress in reading order and converts the geometry into content
+/// coordinates itself. There is therefore no separate mirroring branch here; otherwise
+/// mirroring would be applied twice.
 ///
-/// - Important: Работает только на главном потоке: UI-состояние не
-///   размазывается по модулям (docs/CORE-IOS-DESIGN.md §3). Делегат не
-///   удерживается.
+/// - Important: Main thread only: UI state is not
+///   spread across modules (docs/CORE-IOS-DESIGN.md). The delegate is not
+///   retained.
 public final class TesseraPivotViewController: UIViewController {
 
-    // MARK: - Константы компоновки
+    // MARK: - Layout constants
 
-    /// Геометрия компоновки, не зависящая от стиля.
+    /// The layout geometry, independent of the style.
     ///
-    /// Высота ленты не входит сюда: она зависит от Dynamic Type (§8) и
-    /// считается по фактическому шрифту заголовков.
+    /// The strip's height is not included here: it depends on Dynamic Type and
+    /// is computed from the actual header font.
     private enum Metrics {
-        /// Боковой отступ крупного заголовка приложения (§1).
+        /// The side inset of the large app title.
         static let appTitleInset: CGFloat = 20
 
-        /// Отступ сверху до крупного заголовка.
+        /// The inset from the top to the large title.
         static let appTitleTopPadding: CGFloat = 8
 
-        /// Отступ между крупным заголовком и лентой заголовков.
+        /// The inset between the large title and the header strip.
         static let appTitleBottomPadding: CGFloat = 4
 
-        /// Минимальная высота ленты заголовков.
+        /// The minimum height of the header strip.
         static let minimumStripHeight: CGFloat = 48
 
-        /// Суммарный вертикальный запас вокруг текста заголовка в ленте:
-        /// половина сверху и половина снизу, поверх него рисуется индикатор.
+        /// The total vertical margin around the header text in the strip:
+        /// half above and half below, with the indicator drawn on top of it.
         static let stripVerticalPadding: CGFloat = 16
     }
 
-    // MARK: - Публичная конфигурация
+    // MARK: - Public configuration
 
-    /// Текущий набор секций в порядке чтения.
+    /// The current set of sections in reading order.
     ///
-    /// Меняется только через ``reload(sections:)`` (и инициализатор). Секции —
-    /// источник истины и для ленты (заголовки), и для пейджера (страницы,
-    /// docs/PIVOT-IOS-DESIGN.md §3).
+    /// Changes only through ``reload(sections:)`` (and the initializer). The sections are
+    /// the source of truth for both the strip (headers) and the pager (pages,
+    /// docs/PIVOT-IOS-DESIGN.md).
     public private(set) var sections: [TesseraPivotSection] = []
 
-    /// Внешний вид пивота (docs/PIVOT-IOS-DESIGN.md §3).
+    /// The appearance of the pivot (see docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// Любое присваивание применяется к ленте и крупному заголовку: у сеттеров
-    /// ``TesseraPivotHeaderStripView`` есть сравнение с прежним значением, поэтому
-    /// повторная установка того же стиля не перезагружает ячейки. Шрифты
-    /// заголовков лента масштабирует сама по Dynamic Type (§8); крупный заголовок
-    /// приложения пересчитывается контроллером.
+    /// Any assignment is applied to the strip and the large title: the setters of
+    /// ``TesseraPivotHeaderStripView`` compare with the previous value, so
+    /// setting the same style again does not reload the cells. The strip scales the
+    /// header fonts itself for Dynamic Type; the large app title
+    /// is recomputed by the controller.
     public var style: TesseraPivotStyle {
         didSet {
             guard isViewLoaded else { return }
@@ -120,98 +118,97 @@ public final class TesseraPivotViewController: UIViewController {
         }
     }
 
-    /// Наблюдатель выбора, прогресса и показа секции.
+    /// The observer of selection, progress, and section changes.
     ///
-    /// Не удерживается (docs/PIVOT-IOS-DESIGN.md §5: делегат только читает
-    /// состояние). Публичные колбэки — из ``TesseraPivotDelegate``.
+    /// Not retained (the delegate only reads state; see docs/PIVOT-IOS-DESIGN.md).
+    /// The public callbacks come from ``TesseraPivotDelegate``.
     public weak var delegate: TesseraPivotDelegate?
 
-    // MARK: - Внутренние представления
+    // MARK: - Internal views
 
-    /// Лента заголовков с индикатором (§3). Вне пейджера — закреплена по
-    /// вертикали автоматически (§6).
+    /// The header strip with the indicator. Outside the pager, it is pinned
+    /// vertically automatically.
     ///
-    /// Доступна на уровне модуля (`@testable`), чтобы контрактные тесты E2.7
-    /// могли проверить синхронизацию тапа/свайпа; в публичную поверхность не
-    /// входит — геометрией и содержимым ленты владеет контроллер.
+    /// Available at module level (`@testable`) so that contract tests
+    /// can verify tap/swipe synchronization; it is not part of the public surface:
+    /// the controller owns the strip's geometry and content.
     let headerStripView = TesseraPivotHeaderStripView()
 
-    /// Пейджер Core в режиме `.paged` (§2: снап даёт `isPagingEnabled`).
+    /// The Core pager in `.paged` mode (snapping comes from `isPagingEnabled`).
     ///
-    /// Доступен на уровне модуля для контрактных тестов E2.7; публичного
-    /// доступа нет — переходы выполняются через ``selectSection(at:animated:)``.
+    /// Available at module level for contract tests; there is no public
+    /// access: transitions are performed through ``selectSection(at:animated:)``.
     let pagerViewController: TesseraPagerViewController
 
-    /// Крупный заголовок приложения (WP-поведение, §1, §9).
+    /// The large app title (Windows Phone behavior).
     ///
-    /// Показывается только при непустом ``TesseraPivotStyle/appTitle``; при `nil`
-    /// заголовок интегрируется снаружи через `navigationItem.largeTitle` (§9).
+    /// Shown only when ``TesseraPivotStyle/appTitle`` is non-empty; with `nil`
+    /// the title is integrated from outside through `navigationItem.largeTitle`.
     private let appTitleLabel = UILabel()
 
-    // MARK: - Состояние синхронизации
+    // MARK: - Synchronization state
 
-    /// Текущая секция в порядке чтения.
+    /// The current section in reading order.
     ///
-    /// Обновляется из непрерывного прогресса (ближайшая секция) и по завершении
-    /// перехода; используется VoiceOver-пагинацией (§8) и восстановлением
-    /// выбора после ``reload(sections:)``.
+    /// Updated from the continuous progress (the nearest section) and when a
+    /// transition completes; used by VoiceOver paging and for restoring
+    /// the selection after ``reload(sections:)``.
     private(set) var currentSectionIndex: Int = 0
 
-    /// Нужно ли доцентровать ленту при ближайшем layout-проходе.
+    /// Whether the strip must be re-centered on the next layout pass.
     ///
-    /// Первый показ и `reload` выполняются до того, как у ленты появилась
-    /// ширина, поэтому автоцентрирование (§4) откладывается до layout'а.
+    /// The first display and `reload` happen before the strip has a
+    /// width, so auto-centering is deferred until layout.
     private var needsInitialCentering = true
 
-    /// Поколение программных переходов (E9.6).
+    /// The generation of programmatic transitions.
     ///
-    /// Растёт на каждом ``selectSection(at:animated:)``. Нужен, чтобы отличать
-    /// события текущего перехода от «хвостов» перехваченного: UIKit при
-    /// перехвате анимированного `setContentOffset` новым переходом синхронно
-    /// присылает `scrollViewDidEndScrollingAnimation` для старой анимации, и
-    /// пейджер Core сообщает `didShowPageAt` для промежуточной страницы, на
-    /// которой анимацию прервали.
+    /// It grows on every ``selectSection(at:animated:)``. It is needed to tell
+    /// the events of the current transition from the "tails" of an interrupted one: when a new
+    /// transition interrupts an animated `setContentOffset`, UIKit synchronously
+    /// sends `scrollViewDidEndScrollingAnimation` for the old animation, and
+    /// the Core pager reports `didShowPageAt` for the intermediate page on
+    /// which the animation was interrupted.
     private var transitionGeneration = 0
 
-    /// Текущий программный переход; `nil`, когда переход завершён или
-    /// перехвачен жестом/`reload`.
+    /// The current programmatic transition; `nil` when the transition is finished or
+    /// interrupted by a gesture/`reload`.
     private var activeTransition: ProgrammaticTransition?
 
-    /// Программный переход контроллера (E9.6, E10.12а).
+    /// A programmatic transition of the controller.
     private struct ProgrammaticTransition {
-        /// Поколение, выданное переходу (``transitionGeneration``).
+        /// The generation issued to the transition (``transitionGeneration``).
         let generation: Int
-        /// Целевая секция в порядке чтения.
+        /// The target section in reading order.
         let target: Int
-        /// Анимирован ли переход (с учётом Reduce Motion).
+        /// Whether the transition is animated (taking Reduce Motion into account).
         let animated: Bool
-        /// Идёт синхронный вызов `go(toPage:animated:)`: события, пришедшие
-        /// в этот момент для другой страницы, — хвосты прежнего перехода.
+        /// A synchronous `go(toPage:animated:)` call is in progress: events that arrive
+        /// at this moment for another page are tails of the previous transition.
         var isIssuing: Bool
-        /// Перенос прогресса для ленты при дальнем анимированном прыжке.
+        /// Carrying the strip's progress over for a far animated jump.
         let stripRemap: StripProgressRemap?
     }
 
-    /// Перенос прогресса пейджера на ленту при дальнем анимированном прыжке
-    /// (E10.12а).
+    /// Carrying the pager's progress over to the strip for a far animated jump.
     ///
-    /// После W1 пейджер прыгает дальше ±1 так: offset без анимации
-    /// переставляется на соседа цели, затем анимируется один шаг. Сырой
-    /// прогресс поэтому скачком приходит на соседа — индикатор телепортировался
-    /// бы через промежуточные заголовки и подсветил бы соседа. Лента вместо
-    /// этого получает прогресс, линейно перенесённый с отрезка
-    /// `[neighbour, target]` на `[from, target]`: индикатор непрерывно едет от
-    /// исходного заголовка к целевому за время единственного анимированного
-    /// шага. Внешний делегат по-прежнему получает сырой прогресс пейджера.
+    /// The pager jumps farther than ±1 as follows: the offset is moved
+    /// without animation to the target's neighbor, then one step is animated. The raw
+    /// progress therefore arrives at the neighbor as a jump, and the indicator would teleport
+    /// across the intermediate headers and highlight the neighbor. The strip instead
+    /// receives progress carried linearly from the segment
+    /// `[neighbour, target]` onto `[from, target]`: the indicator moves continuously from
+    /// the source header to the target during the single animated
+    /// step. The external delegate still receives the pager's raw progress.
     struct StripProgressRemap: Equatable {
-        /// Прогресс, который лента показывала в момент тапа.
+        /// The progress the strip was showing at the moment of the tap.
         let from: CGFloat
-        /// Сосед цели со стороны исходной секции — старт анимированного шага.
+        /// The target's neighbor on the side of the source section: the start of the animated step.
         let neighbour: CGFloat
-        /// Целевая секция.
+        /// The target section.
         let target: CGFloat
 
-        /// Прогресс ленты для сырого прогресса пейджера.
+        /// The strip's progress for a raw pager progress.
         func stripProgress(forPagerProgress progress: CGFloat) -> CGFloat {
             let span = target - neighbour
             guard span != 0 else { return progress }
@@ -220,73 +217,73 @@ public final class TesseraPivotViewController: UIViewController {
         }
     }
 
-    /// Идёт ``reload(sections:)``: прогресс, который пейджер сообщает при
-    /// перестройке, не уходит делегату синхронно (E10.12а).
+    /// A ``reload(sections:)`` is in progress: the progress the pager reports during
+    /// the rebuild is not forwarded to the delegate synchronously.
     private var isReloading = false
 
-    /// Прогресс, отложенный на время `reload`; доставляется асинхронно и только
-    /// если отличается от последнего доставленного.
+    /// The progress deferred for the duration of `reload`; delivered asynchronously and only
+    /// if it differs from the last one delivered.
     private var deferredProgress: CGFloat?
 
-    /// Последний прогресс, доставленный внешнему делегату.
+    /// The last progress delivered to the external delegate.
     private var lastDeliveredProgress: CGFloat?
 
-    /// Последний сырой прогресс пейджера (в порядке чтения).
+    /// The last raw progress of the pager (in reading order).
     private var lastPagerProgress: CGFloat?
 
-    /// Секции, обновление контента которых отложено до конца перехода
-    /// (E10.12а, см. ``refreshSectionContent(_:)``).
+    /// The sections whose content update is deferred until the end of a transition
+    /// (see ``refreshSectionContent(_:)``).
     private var deferredContentSections: [TesseraPivotSection]?
 
-    /// Запланирована ли повторная попытка применить отложенный контент.
+    /// Whether a retry to apply the deferred content is scheduled.
     private var isContentRefreshRetryScheduled = false
 
-    /// Кеш высоты ленты: зависит от Dynamic Type (§8), пересчитывается только
-    /// при смене категории размера текста, а не на каждом кадре свайпа.
+    /// The strip height cache: it depends on Dynamic Type, and is recomputed only
+    /// when the text size category changes, not on every swipe frame.
     private var cachedStripHeight: CGFloat = 0
     private var cachedStripHeightCategory: UIContentSizeCategory?
 
-    // MARK: - Состояние арбитража жестов (§6, вариант B)
+    // MARK: - Gesture arbitration state (option B)
 
-    /// Скролл-вью пейджера, найденный в иерархии Core.
+    /// The pager's scroll view, found in the Core hierarchy.
     ///
-    /// Core не публикует его (см. документацию ``registerVerticalOwner(_:)``).
-    /// `private(set)` — только для контрактных тестов модуля.
+    /// Core does not publish it (see the documentation of ``registerVerticalOwner(_:)``).
+    /// `private(set)`: for the module's contract tests only.
     private(set) var pagerScrollView: UIScrollView?
 
-    /// Вертикальные владельцы-дети: слабые ссылки, чтобы исчезнувшие страницы
-    /// (ленивая загрузка ±1, §7) не утекали и не блокировались зря.
+    /// The vertical child owners: weak references, so that pages that went away
+    /// (lazy ±1 loading) do not leak and are not blocked needlessly.
     private var verticalOwners: [VerticalOwner] = []
 
-    /// Арбитр Core на время горизонтального жеста.
+    /// The Core arbiter for the duration of a horizontal gesture.
     ///
-    /// Живёт только между `panGestureRecognizer` `.began` и `.ended`: арбитр
-    /// удерживает вертикальные скролл-вью сильными ссылками, а страницы
-    /// загружаются лениво и пересоздаются (§7), поэтому постоянное удержание
-    /// продлевало бы жизнь выгруженному контенту.
+    /// It lives only between the `panGestureRecognizer`'s `.began` and `.ended`: the arbiter
+    /// holds the vertical scroll views by strong references, and pages are
+    /// loaded lazily and recreated, so keeping it permanently
+    /// would extend the life of unloaded content.
     private var gestureArbiter: TesseraGestureArbiter?
 
-    /// Пан пейджера, на который подписан контроллер (слабо: владелец — Core).
+    /// The pager's pan that the controller subscribes to (weak: the owner is Core).
     private weak var observedPagerPan: UIPanGestureRecognizer?
 
-    /// Слабая ссылка на вертикальный скролл-вью ребёнка.
+    /// A weak reference to a child's vertical scroll view.
     private struct VerticalOwner {
         weak var scrollView: UIScrollView?
     }
 
-    // MARK: - Инициализация
+    // MARK: - Initialization
 
-    /// Создаёт пивот с готовым набором секций.
+    /// Creates a pivot with a ready set of sections.
     ///
-    /// Пейджер создаётся сразу в режиме `.paged` (docs/PIVOT-IOS-DESIGN.md §2):
-    /// снап и инерцию даёт `UIScrollView.isPagingEnabled`, кастомный снап не
-    /// нужен. Страницы из секций строятся через ``TesseraPageDescriptor``.
+    /// The pager is created immediately in `.paged` mode (see docs/PIVOT-IOS-DESIGN.md):
+    /// snapping and inertia come from `UIScrollView.isPagingEnabled`, and custom snapping is not
+    /// needed. The pages are built from the sections through ``TesseraPageDescriptor``.
     ///
     /// - Parameters:
-    ///   - sections: Секции в порядке чтения; пустой массив — допустимое
-    ///     начальное состояние (страницы можно передать позже через
+    ///   - sections: The sections in reading order; an empty array is a valid
+    ///     initial state (pages can be passed later through
     ///     ``reload(sections:)``).
-    ///   - style: Внешний вид; по умолчанию системный.
+    ///   - style: The appearance; the system default if omitted.
     public init(sections: [TesseraPivotSection] = [], style: TesseraPivotStyle = TesseraPivotStyle()) {
         self.sections = sections
         self.style = style
@@ -297,35 +294,35 @@ public final class TesseraPivotViewController: UIViewController {
         super.init(nibName: nil, bundle: nil)
     }
 
-    /// Инициализация из архива/сториборда не поддерживается: компоновка
-    /// строится кодом (§3).
+    /// Initialization from an archive/storyboard is not supported: the layout
+    /// is built in code.
     @available(*, unavailable)
     public required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: - Жизненный цикл
+    // MARK: - Lifecycle
 
-    /// Собирает иерархию: заголовок, лента, пейджер-child (§3).
+    /// Builds the hierarchy: the title, the strip, and the pager child.
     public override func viewDidLoad() {
         super.viewDidLoad()
 
         view.backgroundColor = .systemBackground
         configureSubviews()
 
-        // Набор секций мог измениться до загрузки вида (`reload` до показа):
-        // пейджер пересобирается из актуального состояния.
+        // The set of sections may have changed before the view loaded (`reload` before display):
+        // the pager is rebuilt from the current state.
         pagerViewController.reload(pages: Self.makePageDescriptors(for: sections))
 
         applyStyle()
         synchronizeStripSelection()
     }
 
-    /// Раскладывает заголовок, ленту и пейджер и подхватывает скролл-вью
-    /// пейджера для арбитража (§6).
+    /// Lays out the title, the strip, and the pager, and picks up the pager's
+    /// scroll view for arbitration.
     ///
-    /// Единственный layout-проход контроллера: в горячем пути прогресса layout'а
-    /// нет (§4, §7).
+    /// The controller's only layout pass: there is no layout on the progress
+    /// hot path.
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
@@ -342,33 +339,33 @@ public final class TesseraPivotViewController: UIViewController {
         )
     }
 
-    // MARK: - Публичный API
+    // MARK: - Public API
 
-    /// Пересобирает пивот под новый набор секций.
+    /// Rebuilds the pivot for a new set of sections.
     ///
-    /// Пересобираются и лента (заголовки), и пейджер (страницы) из одного
-    /// источника — массива секций (§3). Текущая секция сохраняется по `id`,
-    /// если он есть в новом наборе; иначе сохраняется прежний индекс с зажимом
-    /// в новые границы — так перестройка не «перебрасывает» пользователя на
-    /// первую секцию.
+    /// Both the strip (headers) and the pager (pages) are rebuilt from a single
+    /// source, the sections array. The current section is preserved by `id`
+    /// if it is present in the new set; otherwise the previous index is kept, clamped
+    /// to the new bounds, so a rebuild does not "throw" the user back to the
+    /// first section.
     ///
-    /// Обратной записи в `contentOffset` нет: пейджер сам восстанавливает
-    /// страницу по `id` (§5, «один писатель»). Контроллеры секций с
-    /// сохранившимся `id` переиспользуются пейджером (W1): скролл и состояние
-    /// страниц не теряются, SwiftUI-контент обновляется на месте.
+    /// There is no write-back into `contentOffset`: the pager restores
+    /// the page by `id` itself (the single-writer contract). Section controllers with a
+    /// surviving `id` are reused by the pager: the scroll position and state of
+    /// the pages are not lost, and SwiftUI content is updated in place.
     ///
-    /// Прогресс, который пейджер сообщает во время перестройки, делегату
-    /// синхронно не передаётся (E10.12а): `reload` часто вызывается из
-    /// обновления представления (SwiftUI `updateUIViewController`), и запись
-    /// состояния в колбэке на этом шаге — «изменение состояния во время
-    /// обновления». Итоговый прогресс доставляется следующим проходом главной
-    /// очереди и только если он изменился. Лента получает прогресс сразу.
+    /// The progress the pager reports during a rebuild is not passed to the delegate
+    /// synchronously: `reload` is often called from a
+    /// view update (SwiftUI `updateUIViewController`), and writing
+    /// state in a callback at that step is a "state change during
+    /// a view update". The final progress is delivered on the next pass of the main
+    /// queue and only if it changed. The strip receives the progress immediately.
     ///
-    /// Незавершённый программный переход перестройкой прерывается (пейджер
-    /// останавливает анимацию).
+    /// An unfinished programmatic transition is interrupted by a rebuild (the pager
+    /// stops the animation).
     ///
-    /// - Parameter sections: Новые секции в порядке чтения. Пустой массив
-    ///   допустим: лента скрывается (§9).
+    /// - Parameter sections: The new sections in reading order. An empty array
+    ///   is allowed: the strip is hidden.
     public func reload(sections newSections: [TesseraPivotSection]) {
         let previousID: AnyHashable? = sections.indices.contains(currentSectionIndex)
             ? sections[currentSectionIndex].id
@@ -397,9 +394,9 @@ public final class TesseraPivotViewController: UIViewController {
         synchronizeStripSelection()
 
         view.setNeedsLayout()
-        // Раскладываем сразу: лента могла быть скрыта (одна секция, §9) и её
-        // геометрия до этого layout-прохода нулевая — автоцентрирование (§4)
-        // без ширины и высоты ошиблось бы. Это layout-путь, не горячий (§7).
+        // Lay out right away: the strip may have been hidden (a single section) and its
+        // geometry before this layout pass is zero, so auto-centering
+        // would go wrong without a width and height. This is a layout path, not the hot one.
         view.layoutIfNeeded()
         centerStrip(index: currentSectionIndex, animated: false)
         isReloading = false
@@ -407,27 +404,27 @@ public final class TesseraPivotViewController: UIViewController {
         scheduleDeferredProgressDelivery()
     }
 
-    /// Доносит новый контент секций при неизменных `id` и заголовках (E10.12а).
+    /// Delivers new section content when the `id`s and titles are unchanged.
     ///
-    /// Путь SwiftUI-фасада: ``TesseraPivotView`` не может сравнить поставщиков
-    /// контента, поэтому на каждом обновлении с тем же набором `id`/заголовков
-    /// передаёт секции сюда. Контент обновляется через ``reload(sections:)``:
-    /// после W1 пейджер переиспользует контроллеры с сохранившимся `id` и
-    /// обновляет `rootView` SwiftUI-хостингов на месте (путь
-    /// `TesseraContentUpdating` в `TesseraContentHosting`), страница, скролл и
-    /// `@State` сохраняются.
+    /// The SwiftUI facade path: ``TesseraPivotView`` cannot compare content
+    /// providers, so on every update with the same set of `id`s/titles
+    /// it passes the sections here. Content is updated through ``reload(sections:)``:
+    /// the pager reuses controllers with a surviving `id` and
+    /// updates the `rootView` of SwiftUI hostings in place (the
+    /// `TesseraContentUpdating` path in `TesseraContentHosting`), and the page, scroll position, and
+    /// `@State` are preserved.
     ///
-    /// Во время жеста, инерции или программного перехода перестройка отложена:
-    /// `reload` пейджера останавливает движение и возвращает offset на
-    /// ближайшую страницу (рывок под пальцем, оборванная анимация тапа).
-    /// Отложенные секции применяются по завершении перехода (последние
-    /// пришедшие побеждают).
+    /// During a gesture, inertia, or a programmatic transition, the rebuild is deferred:
+    /// the pager's `reload` stops the motion and returns the offset to the
+    /// nearest page (a jerk under the finger, an interrupted tap animation).
+    /// The deferred sections are applied when the transition completes (the latest
+    /// to arrive win).
     ///
-    /// - Parameter newSections: Секции с теми же `id` и заголовками, что и
-    ///   текущие, но, возможно, с новым контентом.
+    /// - Parameter newSections: Sections with the same `id`s and titles as
+    ///   the current ones, but possibly with new content.
     func refreshSectionContent(_ newSections: [TesseraPivotSection]) {
         guard isViewLoaded else {
-            // До загрузки вида `viewDidLoad` сам пересоберёт пейджер из `sections`.
+            // Before the view loads, `viewDidLoad` will rebuild the pager from `sections` itself.
             sections = newSections
             return
         }
@@ -441,24 +438,24 @@ public final class TesseraPivotViewController: UIViewController {
         reload(sections: newSections)
     }
 
-    /// Идёт ли движение страниц: жест, инерция или программный переход.
+    /// Whether the pages are moving: a gesture, inertia, or a programmatic transition.
     var isTransitionInFlight: Bool {
         if activeTransition?.animated == true { return true }
         guard let pagerScrollView else { return false }
         return pagerScrollView.isTracking || pagerScrollView.isDragging || pagerScrollView.isDecelerating
     }
 
-    /// Применяет отложенный контент, если движение закончилось.
+    /// Applies the deferred content if the motion has ended.
     private func applyDeferredContentIfIdle() {
         guard let pending = deferredContentSections, !isTransitionInFlight else { return }
         deferredContentSections = nil
         reload(sections: pending)
     }
 
-    /// Страховка для отложенного контента: не каждый конец движения виден
-    /// контроллеру (инерция, вернувшая ту же страницу, не даёт
-    /// `didShowPageAt`), поэтому попытка повторяется, пока движение не
-    /// закончится. Работает только при наличии отложенных секций.
+    /// A safeguard for deferred content: not every end of motion is visible
+    /// to the controller (inertia that returned the same page does not give
+    /// `didShowPageAt`), so the attempt is repeated until the motion
+    /// ends. It works only when there are deferred sections.
     private func scheduleContentRefreshRetry() {
         guard !isContentRefreshRetryScheduled else { return }
         isContentRefreshRetryScheduled = true
@@ -476,15 +473,15 @@ public final class TesseraPivotViewController: UIViewController {
         }
     }
 
-    /// Интервал повторной попытки применить отложенный контент.
+    /// The interval for retrying to apply deferred content.
     private static let contentRefreshRetryInterval: TimeInterval = 0.1
 
-    /// Доставляет отложенный на время `reload` прогресс следующим проходом
-    /// главной очереди (E10.12а).
+    /// Delivers the progress deferred during `reload` on the next pass of the
+    /// main queue.
     ///
-    /// Значение, совпадающее с последним доставленным, не доставляется вовсе:
-    /// перестройка с тем же набором секций не порождает колбэков — и цикла
-    /// «колбэк → состояние SwiftUI → обновление → reload» не возникает.
+    /// A value equal to the last delivered one is not delivered at all:
+    /// a rebuild with the same set of sections produces no callbacks, and the
+    /// "callback → SwiftUI state → update → reload" cycle does not arise.
     private func scheduleDeferredProgressDelivery() {
         guard let progress = deferredProgress else { return }
         guard progress != lastDeliveredProgress else {
@@ -497,8 +494,8 @@ public final class TesseraPivotViewController: UIViewController {
         }
     }
 
-    /// Доставка отложенного прогресса; более свежий синхронный прогресс её
-    /// отменяет (обнуляет ``deferredProgress``).
+    /// Delivery of the deferred progress; a fresher synchronous progress
+    /// cancels it (resets ``deferredProgress``).
     private func deliverDeferredProgress() {
         guard let progress = deferredProgress else { return }
         deferredProgress = nil
@@ -508,29 +505,29 @@ public final class TesseraPivotViewController: UIViewController {
         delegate?.pivot(self, didChangeProgress: progress)
     }
 
-    /// Программно переходит к секции.
+    /// Navigates to a section programmatically.
     ///
-    /// Единственный программный писатель `contentOffset` (§5): переход
-    /// выполняет ``TesseraPagerViewController/go(toPage:animated:)``. При
-    /// анимированном переходе делегат пейджера продолжает присылать прогресс на
-    /// кадрах, поэтому лента и индикатор анимируются сами — отдельной анимации
-    /// индикатора нет (§5).
+    /// The only programmatic writer of `contentOffset`: the transition
+    /// is performed by ``TesseraPagerViewController/go(toPage:animated:)``. During an
+    /// animated transition the pager's delegate keeps sending progress on
+    /// frames, so the strip and the indicator animate on their own; there is no separate
+    /// indicator animation.
     ///
-    /// При Reduce Motion анимация отключается принудительно (§8: «прыжок по
-    /// тапу — без анимации»). Индекс зажимается в границы набора секций.
+    /// With Reduce Motion, animation is forcibly disabled (a jump on
+    /// tap has no animation). The index is clamped to the bounds of the section set.
     ///
-    /// Анимированный переход не ставит индикатор на цель заранее (E10.12а):
-    /// иначе индикатор на кадр прыгал бы к цели и первым же кадром анимации
-    /// возвращался назад. Ленту ведёт прогресс пейджера; при прыжке дальше
-    /// соседней секции — перенесённый прогресс (см. `StripProgressRemap`):
-    /// индикатор непрерывно едет от исходного заголовка к целевому.
+    /// An animated transition does not put the indicator on the target in advance:
+    /// otherwise the indicator would jump to the target for a frame and go back with the first
+    /// animation frame. The strip is driven by the pager's progress; for a jump farther than
+    /// the adjacent section, by the carried-over progress (see `StripProgressRemap`):
+    /// the indicator moves continuously from the source header to the target.
     ///
-    /// Без анимации лента не анимируется вовсе — ни индикатор, ни
-    /// автоцентрирование (E9.6).
+    /// Without animation the strip is not animated at all, neither the indicator nor
+    /// the auto-centering.
     ///
     /// - Parameters:
-    ///   - index: Индекс секции в порядке чтения (в RTL — не физический слот).
-    ///   - animated: Намерение анимировать переход; Reduce Motion имеет приоритет.
+    ///   - index: The section index in reading order (in RTL, not the physical slot).
+    ///   - animated: The intent to animate the transition; Reduce Motion takes priority.
     public func selectSection(at index: Int, animated: Bool) {
         guard !sections.isEmpty else { return }
 
@@ -565,9 +562,9 @@ public final class TesseraPivotViewController: UIViewController {
         }
         pagerViewController.go(toPage: targetIndex, animated: shouldAnimate)
 
-        // Переход мог завершиться синхронно (без анимации или «анимировать
-        // нечего»), а мог быть перехвачен вложенным вызовом — тогда поколение
-        // уже другое и трогать чужой переход нельзя.
+        // The transition may have completed synchronously (without animation or "nothing
+        // to animate"), or may have been interrupted by a nested call, in which case the generation
+        // is already different and another transition must not be touched.
         guard activeTransition?.generation == generation else { return }
 
         if shouldAnimate,
@@ -577,58 +574,58 @@ public final class TesseraPivotViewController: UIViewController {
             return
         }
 
-        // Переход завершён синхронно; `didShowPageAt` мог и не прийти (секция
-        // уже была показана) — доцентровываем ленту сами, без анимации (§4).
+        // The transition completed synchronously; `didShowPageAt` may not have arrived (the section
+        // was already shown), so re-center the strip ourselves, without animation.
         activeTransition = nil
         headerStripView.select(index: targetIndex)
         centerStrip(index: targetIndex, animated: false)
         applyDeferredContentIfIdle()
     }
 
-    /// Допуск «прогресс стоит на целой секции».
+    /// The tolerance for "the progress sits on a whole section".
     private static let progressTolerance: CGFloat = 0.001
 
-    /// Регистрирует вертикальный скролл-вью страницы (docs/PIVOT-IOS-DESIGN.md §6,
-    /// вариант B).
+    /// Registers a page's vertical scroll view (see docs/PIVOT-IOS-DESIGN.md:
+    /// option B).
     ///
-    /// Пейджер скроллит только горизонтально, вертикалью владеют страницы.
-    /// Контроллер контента секции вызывает этот метод из `viewDidLoad` (или
-    /// сразу после создания скролл-вью) и передаёт свой вертикальный
-    /// `UIScrollView`. Не из `viewDidAppear`: после W1 пейджер пересылает
-    /// appearance только текущей странице, соседи ±1 загружаются без него, и
-    /// сосед, на который пользователь ткнул во время инерции, ещё не был бы
-    /// зарегистрирован. Повторная регистрация безопасна (дубликаты
-    /// отбрасываются), ссылки слабые. На время
-    /// горизонтального жеста пейджера контроллер собирает из зарегистрированных
-    /// детей ``TesseraGestureArbiter``: прокрутка детей блокируется и
-    /// восстанавливается в исходное состояние по завершении жеста
+    /// The pager scrolls only horizontally, and the pages own vertical scrolling.
+    /// A section's content controller calls this method from `viewDidLoad` (or
+    /// right after creating the scroll view) and passes its vertical
+    /// `UIScrollView`. Not from `viewDidAppear`: the pager forwards
+    /// appearance only to the current page, the ±1 neighbors are loaded without it, and
+    /// a neighbor the user taps during inertia would not yet have been
+    /// registered. Repeated registration is safe (duplicates
+    /// are dropped), and the references are weak. For the duration of the pager's
+    /// horizontal gesture, the controller builds a ``TesseraGestureArbiter`` from the registered
+    /// children: the children's scrolling is blocked and restored to its original state
+    /// when the gesture ends
     /// (`prepareForHorizontalScroll()` / `endHorizontalScroll()`).
     ///
-    /// Ссылка на скролл-вью слабая: страницы загружаются лениво и пересоздаются
-    /// (§7), поэтому освобождённые владельцы выпадают из реестра автоматически.
-    /// Арбитр создаётся только на время жеста, поэтому сильных ссылок на скролл-вью
-    /// между жестами контроллер не держит.
+    /// The reference to the scroll view is weak: pages are loaded lazily and recreated,
+    /// so released owners drop out of the registry automatically.
+    /// The arbiter is created only for the duration of a gesture, so the controller holds no strong
+    /// references to the scroll views between gestures.
     ///
-    /// - Parameter scrollView: Вертикальный скролл-вью контента страницы.
+    /// - Parameter scrollView: The vertical scroll view of the page's content.
     ///
-    /// - Note: **Отклонение от §6.** `TesseraPagerViewController` не отдаёт свой
-    ///   `UIScrollView` публично, а его пан-жест принадлежит самому
-    ///   `UIScrollView`. Поэтому:
-    ///   1. скролл-вью пейджера находится обходом иерархии Core (единственный
-    ///      прямой потомок корневого вида пейджера — тот же приём используют
-    ///      контрактные тесты Core), а не через публичный хук;
-    ///   2. `gestureRecognizerShouldBegin` арбитра на пан пейджера не
-    ///      назначается: подмена `panGestureRecognizer.delegate` у `UIScrollView`
-    ///      отключила бы его собственную обработку одновременных жестов
-    ///      (вложенные скроллы, системный edge-swipe). Решение по доминирующей
-    ///      оси принимается на первом же колбэке пана через
-    ///      ``TesseraGestureArbiter/axisDecision(forVelocity:)``, после чего
-    ///      арбитр блокирует детей на время горизонтального жеста — обе
-    ///      половины контракта арбитража задействованы, но точка принятия
-    ///      решения сдвинута с `gestureRecognizerShouldBegin` на `.began`.
-    ///   Для полноценного §6 нужен публичный хук Core, например аксессор
-    ///   `TesseraPagerViewController.horizontalScrollView` (открытый вопрос в
-    ///   отчёте, Core не менялся).
+    /// - Note: **A deviation from the intended design.** `TesseraPagerViewController` does not expose its
+    ///   `UIScrollView` publicly, and its pan gesture belongs to the
+    ///   `UIScrollView` itself. Therefore:
+    ///   1. the pager's scroll view is found by walking the Core hierarchy (the only
+    ///      direct descendant of the pager's root view; Core's contract tests use
+    ///      the same approach) rather than through a public hook;
+    ///   2. the arbiter's `gestureRecognizerShouldBegin` is not assigned to the pager's
+    ///      pan: replacing `panGestureRecognizer.delegate` on a `UIScrollView`
+    ///      would disable its own handling of simultaneous gestures
+    ///      (nested scrolls, the system edge swipe). The decision by the dominant
+    ///      axis is made on the pan's very first callback through
+    ///      ``TesseraGestureArbiter/axisDecision(forVelocity:)``, after which the
+    ///      arbiter blocks the children for the duration of the horizontal gesture; both
+    ///      halves of the arbitration contract are used, but the point where the
+    ///      decision is made is moved from `gestureRecognizerShouldBegin` to `.began`.
+    ///   A full solution needs a public Core hook, for example an accessor
+    ///   `TesseraPagerViewController.horizontalScrollView` (this is an
+    ///   open API question).
     public func registerVerticalOwner(_ scrollView: UIScrollView) {
         guard scrollView !== pagerScrollView else { return }
 
@@ -638,13 +635,13 @@ public final class TesseraPivotViewController: UIViewController {
         }
     }
 
-    /// Снимает регистрацию вертикального скролл-вью страницы (§6).
+    /// Unregisters a page's vertical scroll view.
     ///
-    /// Вызывать не обязательно: ссылки слабые, и освобождённые страницы выпадают
-    /// из арбитража сами. Метод нужен, когда контроллер контента перестаёт
-    /// использовать скролл-вью, но живёт дальше (например, заменил его).
+    /// Calling this is optional: references are weak, and released pages drop out of
+    /// arbitration on their own. The method is needed when a content controller stops
+    /// using a scroll view but stays alive (for example, replaced it).
     ///
-    /// - Parameter scrollView: Ранее зарегистрированный вертикальный скролл-вью.
+    /// - Parameter scrollView: A previously registered vertical scroll view.
     public func unregisterVerticalOwner(_ scrollView: UIScrollView) {
         verticalOwners.removeAll { owner in
             guard let registered = owner.scrollView else { return true }
@@ -652,21 +649,21 @@ public final class TesseraPivotViewController: UIViewController {
         }
     }
 
-    // MARK: - Accessibility (§8)
+    // MARK: - Accessibility
 
-    /// Пагинация секций жестом VoiceOver «три пальца» (§8).
+    /// Section paging with the VoiceOver three-finger gesture.
     ///
-    /// Направление превращается в шаг по секциям через
-    /// ``TesseraAccessibility/pageStep(for:layoutDirection:)`` с учётом
-    /// направления чтения; сам переход выполняет ``selectSection(at:animated:)``,
-    /// поэтому `contentOffset` по-прежнему пишет только пейджер (§5).
+    /// The direction is converted into a step through the sections via
+    /// ``TesseraAccessibility/pageStep(for:layoutDirection:)`` taking the
+    /// reading direction into account; the transition itself is performed by ``selectSection(at:animated:)``,
+    /// so `contentOffset` is still written only by the pager.
     ///
-    /// Пейджер Core умеет то же самое для своего скролл-вью; обе реализации
-    /// ведут в один `go(toPage:)` и дают одинаковый результат — здесь жест
-    /// обрабатывается на уровне пивота, чтобы работал и на ленте заголовков.
+    /// The Core pager can do the same for its own scroll view; both implementations
+    /// lead to the same `go(toPage:)` and give the same result. Here the gesture is
+    /// handled at the pivot level so that it also works on the header strip.
     ///
-    /// - Parameter direction: Направление жеста VoiceOver.
-    /// - Returns: `true`, если жест обработан.
+    /// - Parameter direction: The VoiceOver gesture direction.
+    /// - Returns: `true` if the gesture was handled.
     public override func accessibilityScroll(
         _ direction: UIAccessibilityScrollDirection
     ) -> Bool {
@@ -685,9 +682,9 @@ public final class TesseraPivotViewController: UIViewController {
         return true
     }
 
-    // MARK: - Сборка представлений
+    // MARK: - Assembling the views
 
-    /// Создаёт иерархию: заголовок, лента, пейджер как child-VC (§3).
+    /// Creates the hierarchy: the title, the strip, and the pager as a child view controller.
     private func configureSubviews() {
         appTitleLabel.numberOfLines = 0
         appTitleLabel.lineBreakMode = .byTruncatingTail
@@ -707,7 +704,7 @@ public final class TesseraPivotViewController: UIViewController {
         pagerViewController.didMove(toParent: self)
         pagerViewController.delegate = self
 
-        // §8, Dynamic Type: крупный заголовок пересчитывается при смене категории.
+        // Dynamic Type: the large title is recomputed when the category changes.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(contentSizeCategoryDidChange),
@@ -716,18 +713,18 @@ public final class TesseraPivotViewController: UIViewController {
         )
     }
 
-    /// Применяет стиль к ленте и крупному заголовку (§3, §8).
+    /// Applies the style to the strip and the large title.
     ///
-    /// Сеттеры ленты сравнивают значения с прежними, поэтому повторное
-    /// применение того же стиля не перезагружает ячейки. Вызывается из
-    /// `viewDidLoad`, из сеттера ``style`` и при смене Dynamic Type.
+    /// The strip's setters compare values with the previous ones, so applying
+    /// the same style again does not reload the cells. Called from
+    /// `viewDidLoad`, from the ``style`` setter, and when Dynamic Type changes.
     private func applyStyle() {
         headerStripView.mode = style.stripMode
         headerStripView.titleFont = style.titleFont
         headerStripView.titleTextStyle = style.titleTextStyle
         headerStripView.activeColor = style.activeColor
         headerStripView.inactiveColor = style.inactiveColor
-        // §3: вид индикатора — подчёркивание и/или акцентный цвет текста.
+        // The indicator style is an underline and/or an accent text color.
         headerStripView.showsIndicator = style.indicatorStyle != .accentText
 
         appTitleLabel.text = style.appTitle
@@ -738,18 +735,18 @@ public final class TesseraPivotViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// Пересчитывает шрифт крупного заголовка под Dynamic Type (§8).
+    /// Recomputes the large title font for Dynamic Type.
     ///
-    /// В `TesseraPivotStyle` нет отдельного шрифта заголовка приложения (§3: стиль
-    /// описывает ленту), поэтому используется системный bold-шрифт метрик
-    /// `.largeTitle` — семантически это крупный заголовок экрана.
+    /// `TesseraPivotStyle` has no separate font for the app title (the style
+    /// describes the strip), so the system bold font with the
+    /// `.largeTitle` metrics is used: semantically this is a screen's large title.
     private func updateAppTitleFont() {
         let metrics = UIFontMetrics(forTextStyle: .largeTitle)
         let baseFont = UIFont.systemFont(ofSize: 34, weight: .bold)
         appTitleLabel.font = metrics.scaledFont(for: baseFont, compatibleWith: traitCollection)
     }
 
-    /// Показывать ли крупный заголовок приложения (§1, §9).
+    /// Whether to show the large app title.
     private var isAppTitleVisible: Bool {
         guard let appTitle = style.appTitle else { return false }
         return !appTitle.isEmpty
@@ -757,17 +754,17 @@ public final class TesseraPivotViewController: UIViewController {
 
     // MARK: - Layout
 
-    /// Раскладывает заголовок, ленту и пейджер сверху вниз (§3).
+    /// Lays out the title, the strip, and the pager from top to bottom.
     ///
-    /// Пейджер занимает всю оставшуюся высоту, включая нижнюю safe area: страницы
-    /// — обычные child-VC и получают корректные `safeAreaInsets` от пейджера,
-    /// поэтому вертикальный скролл контента может уходить под home-индикатор
-    /// (§6: лента закреплена, скроллится только содержимое страницы).
+    /// The pager takes all the remaining height, including the bottom safe area: pages
+    /// are ordinary child view controllers and receive correct `safeAreaInsets` from the pager,
+    /// so a vertical content scroll can pass under the home indicator
+    /// (the strip is pinned, and only the page's content scrolls).
     private func layoutPivot() {
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
 
-        // §9: одна секция или пусто — ленту скрываем, она не несёт информации.
+        // A single section or none: hide the strip, since it carries no information.
         let isStripVisible = sections.count > 1
         headerStripView.isHidden = !isStripVisible
 
@@ -806,16 +803,16 @@ public final class TesseraPivotViewController: UIViewController {
 
         if pagerViewController.view.frame != pagerFrame {
             pagerViewController.view.frame = pagerFrame
-            // Даём пейджеру разложить страницы в этом же проходе: иначе первый
-            // показ и восстановление offset'а отставали бы на кадр (§5).
+            // Let the pager lay out the pages in this same pass: otherwise the first
+            // display and offset restoration would lag by a frame.
             pagerViewController.view.layoutIfNeeded()
         }
     }
 
-    /// Высота ленты под текущий Dynamic Type (§8).
+    /// The strip height for the current Dynamic Type.
     ///
-    /// Кешируется по категории размера текста: в горячем пути свайпа шрифты не
-    /// создаются (§7).
+    /// Cached by text size category: on the swipe hot path, fonts are not
+    /// created.
     private var stripHeightForCurrentTextSize: CGFloat {
         let category = traitCollection.preferredContentSizeCategory
         if cachedStripHeight > 0, cachedStripHeightCategory == category {
@@ -834,29 +831,29 @@ public final class TesseraPivotViewController: UIViewController {
         return height
     }
 
-    /// Сбрасывает кеш высоты ленты при смене Dynamic Type (§8).
+    /// Resets the strip height cache when Dynamic Type changes.
     private func invalidateStripHeightCache() {
         cachedStripHeight = 0
         cachedStripHeightCategory = nil
     }
 
-    /// Доцентровывает ленту на текущей секции после первого layout'а (§4).
+    /// Re-centers the strip on the current section after the first layout.
     ///
-    /// До появления ширины у ленты автоцентрирование невозможно: `reload` и
-    /// установка начальных секций выполняются раньше раскладки.
+    /// Before the strip has a width, auto-centering is impossible: `reload` and
+    /// setting the initial sections happen before layout.
     private func performInitialCenteringIfNeeded() {
         guard needsInitialCentering, sections.count > 1 else { return }
         centerStrip(index: currentSectionIndex, animated: false)
     }
 
-    /// Доцентровывает ленту, если она уже имеет ширину (§4).
+    /// Re-centers the strip if it already has a width.
     ///
-    /// Перед `scrollToCenter` лента принудительно раскладывается: её геометрия
-    /// (центры заголовков и `contentSize` коллекции) считается в
-    /// `layoutSubviews`, а `reload` и первый показ могут происходить до него.
-    /// Это layout-проход, а не горячий путь свайпа (§4, §7).
+    /// Before `scrollToCenter`, the strip is laid out forcibly: its geometry
+    /// (the header centers and the collection's `contentSize`) is computed in
+    /// `layoutSubviews`, while `reload` and the first display may happen before it.
+    /// This is a layout pass, not the swipe hot path.
     ///
-    /// Если ширины ещё нет, автоцентрирование откладывается до layout'а.
+    /// If there is no width yet, auto-centering is deferred until layout.
     private func centerStrip(index: Int, animated: Bool) {
         guard isViewLoaded, headerStripView.bounds.width > 0 else {
             needsInitialCentering = true
@@ -868,13 +865,13 @@ public final class TesseraPivotViewController: UIViewController {
         headerStripView.scrollToCenter(index: index, animated: animated)
     }
 
-    // MARK: - Синхронизация (§5)
+    // MARK: - Synchronization
 
-    /// Тап по заголовку ленты: сообщает намерение и запускает переход.
+    /// A tap on a strip header: reports the intent and starts a transition.
     ///
-    /// Лента не двигает пейджер сама (§5): она лишь сообщает индекс, а
-    /// `contentOffset` пишет контроллер через ``selectSection(at:animated:)``.
-    /// Делегат получает выбор до перехода, как описано в ``TesseraPivotDelegate``.
+    /// The strip does not move the pager itself: it only reports the index, and
+    /// the controller writes `contentOffset` through ``selectSection(at:animated:)``.
+    /// The delegate receives the selection before the transition, as described in ``TesseraPivotDelegate``.
     private func handleHeaderTap(at index: Int) {
         guard sections.indices.contains(index) else { return }
 
@@ -885,16 +882,16 @@ public final class TesseraPivotViewController: UIViewController {
         )
     }
 
-    /// Обновляет выделение ленты без прокрутки пейджера.
+    /// Updates the strip's selection without scrolling the pager.
     ///
-    /// Используется после `reload`: лента должна показывать сохранённую секцию
-    /// ещё до первого события прогресса.
+    /// Used after `reload`: the strip must show the preserved section
+    /// before the first progress event.
     private func synchronizeStripSelection() {
         guard !sections.isEmpty else { return }
         headerStripView.select(index: currentSectionIndex)
     }
 
-    /// Ближайшая к прогрессу секция; прогресс уже в порядке чтения (§4, §8).
+    /// The section nearest to the progress; the progress is already in reading order.
     private func updateCurrentIndex(fromProgress progress: CGFloat) {
         guard !sections.isEmpty, progress.isFinite else { return }
 
@@ -903,11 +900,11 @@ public final class TesseraPivotViewController: UIViewController {
         currentSectionIndex = Int(clampedProgress.rounded())
     }
 
-    /// Озвучивает название секции при смене (§8, «VoiceOver»).
+    /// Announces the section name on a change.
     ///
-    /// Вызывается по завершении перехода: во время анимации анонс перебивается
-    /// сменой accessibility-фокуса (см. ``TesseraAccessibility/announcePageChange(_:)``).
-    /// Пустой заголовок не озвучивается.
+    /// Called when a transition completes: during the animation, an announcement is interrupted
+    /// by the accessibility focus change (see ``TesseraAccessibility/announcePageChange(_:)``).
+    /// An empty title is not announced.
     private func announceSection(at index: Int) {
         guard sections.indices.contains(index) else { return }
 
@@ -917,15 +914,15 @@ public final class TesseraPivotViewController: UIViewController {
         TesseraAccessibility.announcePageChange(title)
     }
 
-    // MARK: - Арбитраж вертикального скролла (§6, вариант B)
+    // MARK: - Vertical scroll arbitration (option B)
 
-    /// Ищет скролл-вью пейджера и подписывается на его пан.
+    /// Finds the pager's scroll view and subscribes to its pan.
     ///
-    /// Отклонение от §6 задокументировано в ``registerVerticalOwner(_:)``: Core
-    /// не публикует скролл-вью, поэтому используется контракт его `loadView` —
-    /// единственный прямой потомок корневого вида. Если иерархия Core изменится,
-    /// поиск вернёт `nil`, и вертикальный скролл продолжит работать штатными
-    /// средствами UIKit (без явной блокировки детей); падения нет.
+    /// The deviation from the intended design is documented in ``registerVerticalOwner(_:)``: Core
+    /// does not publish the scroll view, so the contract of its `loadView` is used:
+    /// the only direct descendant of the root view. If the Core hierarchy changes,
+    /// the lookup returns `nil`, and vertical scrolling keeps working through the standard
+    /// UIKit mechanisms (without explicitly blocking the children); there is no crash.
     private func resolvePagerScrollViewIfNeeded() {
         guard pagerScrollView == nil else { return }
 
@@ -938,11 +935,11 @@ public final class TesseraPivotViewController: UIViewController {
         observePagerPan(scrollView.panGestureRecognizer)
     }
 
-    /// Подписывается на состояния пана пейджера, не заменяя его делегата.
+    /// Subscribes to the pager pan's states without replacing its delegate.
     ///
-    /// `addTarget` аддитивен и не ломает внутренние обработчики `UIScrollView`,
-    /// в отличие от подмены `panGestureRecognizer.delegate` (почему она опасна —
-    /// см. ``registerVerticalOwner(_:)``).
+    /// `addTarget` is additive and does not break `UIScrollView`'s internal handlers,
+    /// unlike replacing `panGestureRecognizer.delegate` (why that is dangerous:
+    /// see ``registerVerticalOwner(_:)``).
     private func observePagerPan(_ pan: UIPanGestureRecognizer) {
         guard observedPagerPan !== pan else { return }
 
@@ -954,34 +951,34 @@ public final class TesseraPivotViewController: UIViewController {
         observedPagerPan = pan
     }
 
-    /// Начинает горизонтальный жест: создаёт арбитр и блокирует вертикальных детей.
+    /// Begins a horizontal gesture: creates the arbiter and blocks the vertical children.
     ///
-    /// Арбитр живёт только на время жеста: он удерживает переданные скролл-вью
-    /// сильными ссылками, а страницы загружаются лениво окном ±1 и пересоздаются
-    /// (§7). Снимок исходных `isScrollEnabled` детей держит сам арбитр, поэтому
-    /// начало и завершение жеста обязаны идти парой (``pagerPanDidChange(_:)``).
+    /// The arbiter lives only for the duration of the gesture: it holds the passed scroll views
+    /// by strong references, and pages are loaded lazily in a ±1 window and recreated.
+    /// The snapshot of the children's original `isScrollEnabled` is held by the arbiter itself, so
+    /// the start and end of a gesture must come as a pair (``pagerPanDidChange(_:)``).
     ///
-    /// Доминирующая ось проверяется по первому доступному вектору пана через
-    /// ``TesseraGestureArbiter/axisDecision(forVelocity:)``: если жест
-    /// вертикальный, пейджер его не ведёт и прокрутка детей не блокируется —
-    /// иначе выключение скролл-вью остановило бы начавшуюся вертикальную
-    /// прокрутку страницы (§6, docs/CORE-IOS-DESIGN.md §2 «Арбитраж»).
+    /// The dominant axis is checked from the pan's first available vector through
+    /// ``TesseraGestureArbiter/axisDecision(forVelocity:)``: if the gesture is
+    /// vertical, the pager does not lead it and the children's scrolling is not blocked;
+    /// otherwise disabling the scroll view would stop a vertical scroll of the page
+    /// that has already begun (see the arbitration contract in docs/CORE-IOS-DESIGN.md).
     ///
-    /// Layout здесь не выполняется — только флаг прокрутки (§4, §7).
+    /// No layout is performed here, only the scrolling flag.
     ///
-    /// - Parameter pan: Пан пейджера, перешедший в состояние `.began`.
+    /// - Parameter pan: The pager's pan that entered the `.began` state.
     private func beginHorizontalScroll(with pan: UIPanGestureRecognizer) {
         guard let pagerScrollView else { return }
 
         guard isHorizontalPan(pan) else {
-            // Вертикаль принадлежит ребёнку: снимаем возможную прошлую
-            // блокировку и не трогаем `isScrollEnabled` детей.
+            // Vertical belongs to the child: clear any earlier
+            // blocking and do not touch the children's `isScrollEnabled`.
             endHorizontalScroll()
             return
         }
 
-        // Защита от наложения жестов: незавершённый арбитр сначала возвращает
-        // детям их исходное состояние, иначе снимок `isScrollEnabled` потеряется.
+        // Guard against overlapping gestures: an unfinished arbiter first returns
+        // the children to their original state; otherwise the `isScrollEnabled` snapshot would be lost.
         if gestureArbiter != nil {
             endHorizontalScroll()
         }
@@ -995,11 +992,11 @@ public final class TesseraPivotViewController: UIViewController {
         gestureArbiter = arbiter
     }
 
-    /// Доминирующая горизонталь ли у только начавшегося пана пейджера.
+    /// Whether the just-started pager pan is predominantly horizontal.
     ///
-    /// Повторяет запасной путь Core: при нулевой скорости ось определяется по
-    /// смещению (масштаб для сравнения модулей не важен). При равенстве модулей
-    /// побеждает горизонталь — дефолт
+    /// Repeats Core's fallback path: at zero velocity the axis is determined from the
+    /// translation (the scale does not matter for comparing magnitudes). When the magnitudes are equal,
+    /// horizontal wins, which is the default of
     /// ``TesseraGestureArbiter/axisDecision(forVelocity:)``.
     private func isHorizontalPan(_ pan: UIPanGestureRecognizer) -> Bool {
         let velocity = pan.velocity(in: pan.view)
@@ -1007,49 +1004,49 @@ public final class TesseraPivotViewController: UIViewController {
         return TesseraGestureArbiter.axisDecision(forVelocity: vector) == .horizontal
     }
 
-    /// Завершает горизонтальный жест: возвращает детям исходную прокрутку.
+    /// Ends the horizontal gesture: returns the children's original scrolling.
     ///
-    /// После этого арбитр освобождается: сильных ссылок на скролл-вью страниц
-    /// между жестами контроллер не держит, выгруженные страницы (§7) не живут
-    /// в арбитре.
+    /// After that the arbiter is released: the controller holds no strong references to the pages' scroll views
+    /// between gestures, and unloaded pages do not live
+    /// on in the arbiter.
     private func endHorizontalScroll() {
         gestureArbiter?.endHorizontalScroll()
         gestureArbiter = nil
         pruneVerticalOwners()
     }
 
-    /// Живые зарегистрированные владельцы (без самого пейджера).
+    /// The live registered owners (excluding the pager itself).
     private var liveVerticalOwners: [UIScrollView] {
         verticalOwners
             .compactMap(\.scrollView)
             .filter { $0 !== pagerScrollView }
     }
 
-    /// Убирает из реестра освобождённые скролл-вью (§7: страницы живут ±1).
+    /// Removes released scroll views from the registry (pages live in a ±1 window).
     private func pruneVerticalOwners() {
         verticalOwners.removeAll { $0.scrollView == nil }
     }
 
-    /// Состояния пана пейджера: блокировка и разблокировка вертикальных детей.
+    /// The pager pan's states: blocking and unblocking the vertical children.
     ///
-    /// `UIScrollView` начинает пан при горизонтальном протягивании; на это время
-    /// дочерние вертикальные скроллы выключаются, чтобы жест не «разрывался»
-    /// между осями (docs/CORE-IOS-DESIGN.md §2, «Арбитраж»). По завершении
-    /// жеста каждому ребёнку возвращается его исходное `isScrollEnabled`.
+    /// `UIScrollView` begins a pan on a horizontal drag; for that time
+    /// the child vertical scrolls are disabled so that the gesture is not "torn"
+    /// between axes (see the arbitration contract in docs/CORE-IOS-DESIGN.md). When the
+    /// gesture ends, each child gets its original `isScrollEnabled` back.
     ///
-    /// Layout здесь не выполняется — только чтение состояния и флаг прокрутки
-    /// (§4, §7).
+    /// No layout is performed here, only reading state and the scrolling flag
+    /// (see the performance rule in the design document).
     @objc private func pagerPanDidChange(_ pan: UIPanGestureRecognizer) {
         switch pan.state {
         case .began:
-            // Жест перехватил программный переход: дальше ленту ведёт сырой
-            // прогресс, а завершение — то, где остановит палец (E9.6).
+            // The gesture interrupted a programmatic transition: from now on the strip is driven by the raw
+            // progress, and the end is wherever the finger stops it.
             activeTransition = nil
             beginHorizontalScroll(with: pan)
         case .ended, .cancelled, .failed:
             endHorizontalScroll()
-            // Жест без инерции закончился — можно применить отложенный контент
-            // (E10.12а); с инерцией его применит `didShowPageAt` или повтор.
+            // A gesture without inertia ended: the deferred content can be applied
+            // now; with inertia it is applied by `didShowPageAt` or the retry.
             applyDeferredContentIfIdle()
         case .possible, .changed:
             break
@@ -1058,10 +1055,10 @@ public final class TesseraPivotViewController: UIViewController {
         }
     }
 
-    // MARK: - Уведомления
+    // MARK: - Notifications
 
-    /// Смена категории Dynamic Type: пересчитываются крупный заголовок и
-    /// высота ленты (§8). Вызывается вне горячего пути свайпа (§7).
+    /// A Dynamic Type category change: the large title and the
+    /// strip height are recomputed. Called off the swipe hot path.
     @objc private func contentSizeCategoryDidChange() {
         guard isViewLoaded else { return }
 
@@ -1070,13 +1067,13 @@ public final class TesseraPivotViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    // MARK: - Фабрика страниц
+    // MARK: - Page factory
 
-    /// Превращает секции в страницы пейджера Core (docs/PIVOT-IOS-DESIGN.md §3).
+    /// Turns sections into Core pager pages (see docs/PIVOT-IOS-DESIGN.md).
     ///
-    /// Идентификатор и заголовок секции переходят в ``TesseraPageDescriptor``
-    /// без изменений: по `id` пейджер переиспользует контроллер контента и
-    /// сохраняет текущую страницу при `reload` (§5, §7).
+    /// The section's identifier and title pass into ``TesseraPageDescriptor``
+    /// unchanged: the pager reuses the content controller by `id` and
+    /// preserves the current page on `reload`.
     private static func makePageDescriptors(
         for sections: [TesseraPivotSection]
     ) -> [TesseraPageDescriptor] {
@@ -1090,34 +1087,34 @@ public final class TesseraPivotViewController: UIViewController {
     }
 }
 
-// MARK: - TesseraPagerDelegate (§5)
+// MARK: - TesseraPagerDelegate
 
 extension TesseraPivotViewController: TesseraPagerDelegate {
 
-    /// Свайп → лента: единственная точка непрерывной синхронизации (§5).
+    /// Swipe → strip: the single point of continuous synchronization.
     ///
-    /// Здесь только чтение прогресса: лента двигает индикатор и перекрашивает
-    /// видимые заголовки (`transform`/цвет), layout не запускается (§4, §7).
-    /// Обратной записи в пейджер нет — циклов не возникает (§5).
+    /// Only the progress is read here: the strip moves the indicator and recolors the
+    /// visible headers (`transform`/color), and no layout is triggered.
+    /// There is no write-back into the pager, so no cycles arise.
     ///
     /// - Parameters:
-    ///   - pager: Пейджер-источник события.
-    ///   - progress: Нормализованный по направлению чтения прогресс
-    ///     (§4, ``TesseraRTL``). При bounce может выходить за диапазон.
+    ///   - pager: The pager that emitted the event.
+    ///   - progress: The progress normalized by the reading direction
+    ///     (``TesseraRTL``). During bounce it may go outside the range.
     public func pager(
         _ pager: TesseraPagerViewController,
         didChangeProgress progress: CGFloat
     ) {
         lastPagerProgress = progress
 
-        // Дальний анимированный прыжок: лента едет от исходного заголовка к
-        // целевому, а не телепортируется на соседа цели (E10.12а).
+        // A far animated jump: the strip travels from the source header to the
+        // target one instead of teleporting to the target's neighbor.
         let stripProgress = activeTransition?.stripRemap?
             .stripProgress(forPagerProgress: progress) ?? progress
         headerStripView.apply(progress: stripProgress)
         updateCurrentIndex(fromProgress: progress)
 
-        // Во время `reload` — без синхронного колбэка (E10.12а): доставит
+        // During `reload`, without a synchronous callback: it is delivered
         // `scheduleDeferredProgressDelivery()`.
         guard !isReloading else {
             deferredProgress = progress
@@ -1128,22 +1125,22 @@ extension TesseraPivotViewController: TesseraPagerDelegate {
         delegate?.pivot(self, didChangeProgress: progress)
     }
 
-    /// Завершение перехода: автоцентрирование ленты, анонс, колбэк делегата (§4, §8).
+    /// Transition completion: strip auto-centering, the announcement, and the delegate callback.
     ///
-    /// Отбрасываются ложные завершения (E9.6):
-    /// - пришедшие синхронно внутри `go(toPage:animated:)` для страницы, не
-    ///   являющейся целью: это `scrollViewDidEndScrollingAnimation` прежней,
-    ///   перехваченной анимации — пейджер сообщает страницу, на которой её
-    ///   прервали;
-    /// - пришедшие во время ``reload(sections:)``: перестройка останавливает
-    ///   анимацию, и её «завершение» — тоже хвост прерванного перехода.
+    /// False completions are discarded:
+    /// - those that arrive synchronously inside `go(toPage:animated:)` for a page that is not
+    ///   the target: this is the `scrollViewDidEndScrollingAnimation` of the previous,
+    ///   interrupted animation, where the pager reports the page on which it
+    ///   was interrupted;
+    /// - those that arrive during ``reload(sections:)``: the rebuild stops the
+    ///   animation, and its "completion" is also a tail of an interrupted transition.
     ///
-    /// Автоцентрирование ленты анимируется только у анимированных переходов:
-    /// `selectSection(animated: false)` ленту не анимирует (E9.6).
+    /// The strip's auto-centering is animated only for animated transitions:
+    /// `selectSection(animated: false)` does not animate the strip.
     ///
     /// - Parameters:
-    ///   - pager: Пейджер-источник события.
-    ///   - index: Показанная секция в порядке чтения.
+    ///   - pager: The pager that emitted the event.
+    ///   - index: The shown section in reading order.
     public func pager(
         _ pager: TesseraPagerViewController,
         didShowPageAt index: Int
@@ -1161,13 +1158,13 @@ extension TesseraPivotViewController: TesseraPagerDelegate {
         needsInitialCentering = false
 
         headerStripView.select(index: index)
-        // §4: доцентровываем ленту по завершении перехода и только если
-        // заголовок за краем; Reduce Motion отключает анимацию внутри
+        // Re-center the strip when the transition completes, and only if
+        // the header is off the edge; Reduce Motion disables the animation inside
         // `scrollToCenter`.
         headerStripView.scrollToCenter(index: index, animated: animatesStrip)
 
-        // §7: Core пересобрал окно страниц ±1 — чистим реестр от скролл-вью
-        // выгруженных страниц, чтобы они не участвовали в следующих жестах.
+        // Core rebuilt the ±1 page window: clean the registry of the scroll views
+        // of unloaded pages so they do not take part in the next gestures.
         pruneVerticalOwners()
 
         announceSection(at: index)

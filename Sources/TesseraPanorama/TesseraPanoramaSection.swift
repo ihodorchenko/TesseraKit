@@ -1,72 +1,72 @@
-// Модель секции панорамы.
-// Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная архитектура»
-// (модель данных: TesseraPanoramaSection — идентификатор, заголовок, фабрика контента)
-// и §5 «Вертикальный скролл внутри секции» (секция — child VC со своим скроллом).
+// The Panorama section model.
+// Design document: docs/PANORAMA-IOS-DESIGN.md (conceptual architecture:
+// the data model, where TesseraPanoramaSection is an identifier, a title, and a content factory;
+// vertical scrolling inside a section: a section is a child view controller with its own scroll).
 
 #if canImport(UIKit)
 import UIKit
 import TesseraCore
 
-/// Описание одной секции панорамы — «холста», который листается горизонтально.
+/// Describes a single panorama section: a "canvas" that is paged horizontally.
 ///
-/// Секции передаются в порядке чтения: первый элемент массива — первая секция
-/// для пользователя. В RTL порядок и направление снапа зеркалятся компонентом,
-/// а не моделью (docs/PANORAMA-IOS-DESIGN.md §7, «RTL»).
+/// Sections are passed in reading order: the first element of the array is the first section
+/// for the user. In RTL the order and the snapping direction are mirrored by the component,
+/// not by the model (see the RTL notes in docs/PANORAMA-IOS-DESIGN.md).
 ///
-/// Контент задаётся через ``TesseraContentProviding`` из TesseraCore, поэтому
-/// секция не знает, UIKit это или SwiftUI-фасад. По §5 контроллер контента
-/// становится child-VC и сохраняет собственную вертикальную позицию; по §6
-/// компонент держит в памяти текущую секцию и соседей ±1, создавая остальные
-/// лениво.
+/// Content is provided through ``TesseraContentProviding`` from TesseraCore, so the
+/// section does not know whether it is UIKit or a SwiftUI facade. The content controller
+/// becomes a child view controller and keeps its own vertical position; the component
+/// keeps the current section and its ±1 neighbors in memory and creates the others
+/// lazily.
 ///
-/// - Important: `id` должен быть уникален в пределах одной панорамы: по нему
-///   хостинг переиспользует контроллер контента. Поведение при повторяющихся
-///   идентификаторах не определено.
-/// - Note: Все методы и свойства рассчитаны на главный поток: UI-состояние
-///   компонента не размазывается по модулям (docs/CORE-IOS-DESIGN.md §3).
+/// - Important: `id` must be unique within a single panorama: hosting uses it
+///   to reuse the content controller. Behavior with duplicate
+///   identifiers is undefined.
+/// - Note: All methods and properties are intended for the main thread: the component does not
+///   spread UI state across modules (docs/CORE-IOS-DESIGN.md).
 public struct TesseraPanoramaSection {
-    /// Стабильный идентификатор секции.
+    /// A stable section identifier.
     ///
-    /// Используется для переиспользования контроллера через
-    /// ``TesseraContentHosting``: пока идентификатор встречается в панораме,
-    /// хостинг может вернуть тот же экземпляр контроллера
-    /// (docs/PANORAMA-IOS-DESIGN.md §6, «Ленивая загрузка»).
+    /// Used to reuse the controller through
+    /// ``TesseraContentHosting``: as long as the identifier is present in the panorama,
+    /// hosting may return the same controller instance
+    /// (see lazy loading in docs/PANORAMA-IOS-DESIGN.md).
     public let id: AnyHashable
 
-    /// Заголовок секции.
+    /// The section title.
     ///
-    /// Заголовок рисуется над секцией с анимацией по прогрессу `t`
-    /// (документ §4, «Заголовки») и используется для accessibility при смене
-    /// секции (документ §7, «VoiceOver»).
+    /// The title is drawn above the section and animated by the progress `t`
+    /// (see the headers notes in the design document) and is used for accessibility when the
+    /// section changes (see the VoiceOver notes in the design document).
     public let title: String
 
-    /// Поставщик контроллера контента секции.
+    /// The provider of the section's content controller.
     public let content: TesseraContentProviding
 
-    /// Создаёт секцию с готовым поставщиком контента.
+    /// Creates a section with a ready content provider.
     ///
     /// - Parameters:
-    ///   - id: Уникальный в пределах панорамы идентификатор секции.
-    ///   - title: Заголовок секции.
-    ///   - content: Поставщик `UIViewController` (UIKit или SwiftUI-фасад).
+    ///   - id: A section identifier unique within the panorama.
+    ///   - title: The section title.
+    ///   - content: A `UIViewController` provider (UIKit or a SwiftUI facade).
     public init(id: AnyHashable, title: String, content: TesseraContentProviding) {
         self.id = id
         self.title = title
         self.content = content
     }
 
-    /// Создаёт секцию поверх фабрики UIKit-контроллера.
+    /// Creates a section on top of a UIKit controller factory.
     ///
-    /// Аналог convenience-инициализатора: структура не поддерживает
-    /// `convenience init`, поэтому это обычный дополнительный инициализатор.
-    /// Замыкание оборачивается в ``TesseraViewControllerProvider`` и вызывается
-    /// лениво — при первом запросе секции панорамой
-    /// (docs/PANORAMA-IOS-DESIGN.md §6, «Ленивая загрузка»).
+    /// The counterpart of a convenience initializer: a struct does not support
+    /// `convenience init`, so this is an ordinary additional initializer.
+    /// The closure is wrapped in ``TesseraViewControllerProvider`` and called
+    /// lazily, when the panorama first requests the section
+    /// (see lazy loading in docs/PANORAMA-IOS-DESIGN.md).
     ///
     /// - Parameters:
-    ///   - id: Уникальный в пределах панорамы идентификатор секции.
-    ///   - title: Заголовок секции.
-    ///   - makeContent: Фабрика контроллера контента; вызывается на главном потоке.
+    ///   - id: A section identifier unique within the panorama.
+    ///   - title: The section title.
+    ///   - makeContent: The content controller factory; called on the main thread.
     public init(
         id: AnyHashable,
         title: String,

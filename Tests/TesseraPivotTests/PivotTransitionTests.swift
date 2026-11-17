@@ -2,20 +2,20 @@
 //  PivotTransitionTests.swift
 //  TesseraPivotTests
 //
-//  Контрактные тесты переходов пивота и геометрии ленты по ревью E9/E10
-//  (задачи E9.6, E10.12а).
-//  Проектный документ: docs/PIVOT-IOS-DESIGN.md §4 «Математика ядра»
-//  (автоцентрирование — только если заголовок за краем), §5 «Синхронизация
-//  ленты и пейджера» (лента анимируется прогрессом пейджера, отдельной
-//  анимации индикатора нет), §8 (RTL), §9 «Адаптивность» (поворот).
+//  Contract tests for pivot transitions and strip geometry from the review follow-up.
+//  Scenarios: a false didShow on interception, an animated far tap, strip centering.
+//  Design document: docs/PIVOT-IOS-DESIGN.md §4 (core math:
+//  auto-centering only if the header is beyond the edge), §5 (strip and pager
+//  synchronization: the strip is animated by the pager's progress, with no separate
+//  indicator animation), §8 (RTL), §9 (adaptivity: rotation).
 //
-//  Окружение: тестовый процесс без `UIWindowScene`, поэтому анимации
-//  `UIScrollView` (`setContentOffset(_:animated: true)`) не продвигаются —
-//  анимированный переход «застревает» в начале. Это используется намеренно:
-//  кадры анимации и её завершение подаются тестом вручную через колбэки
-//  `TesseraPagerDelegate`, а перехват застрявшей анимации новым переходом
-//  воспроизводит реальный UIKit-сценарий (синхронный
-//  `scrollViewDidEndScrollingAnimation` для прерванной анимации).
+//  Environment: the test process has no `UIWindowScene`, so `UIScrollView`
+//  animations (`setContentOffset(_:animated: true)`) do not advance:
+//  an animated transition "gets stuck" at the start. This is used deliberately:
+//  the animation frames and its completion are fed by the test manually through the
+//  `TesseraPagerDelegate` callbacks, and interrupting a stuck animation with a new transition
+//  reproduces the real UIKit scenario (a synchronous
+//  `scrollViewDidEndScrollingAnimation` for an interrupted animation).
 //
 
 #if canImport(UIKit)
@@ -25,7 +25,7 @@ import UIKit
 import TesseraCore
 @testable import TesseraPivot
 
-/// Шпион делегата пивота для тестов переходов.
+/// A pivot delegate spy for the transition tests.
 final class PivotTransitionSpy: TesseraPivotDelegate {
     var selectedIndexes: [Int] = []
     var progressValues: [CGFloat] = []
@@ -55,7 +55,7 @@ final class PivotTransitionTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
     private func spinRunLoop(_ seconds: TimeInterval = 0.05) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
@@ -65,14 +65,14 @@ final class PivotTransitionTests: XCTestCase {
         (0..<count).map { index in
             TesseraPivotSection(
                 id: index,
-                title: longTitles ? "Длинный заголовок \(index)" : "S\(index)"
+                title: longTitles ? "Long section title \(index)" : "S\(index)"
             ) {
                 UIViewController()
             }
         }
     }
 
-    /// Пивот в окне: appearance и пан пейджера — как в приложении.
+    /// A pivot in a window: appearance and the pager's pan as in an app.
     private func makeWindowedPivot(
         sectionCount: Int = 6,
         longTitles: Bool = false,
@@ -113,16 +113,16 @@ final class PivotTransitionTests: XCTestCase {
     private func skipIfReduceMotion() throws {
         try XCTSkipIf(
             TesseraAccessibility.isReduceMotionEnabled,
-            "При Reduce Motion переходы не анимируются (§8)"
+            "Under Reduce Motion transitions are not animated (§8)"
         )
     }
 
-    // MARK: - E9.6: ложный didShow при перехвате анимированного перехода
+    // MARK: - A false didShow when an animated transition is intercepted
 
-    /// Анимированный переход, перехваченный другим анимированным переходом,
-    /// не даёт `didShowSectionAt` для промежуточной секции: UIKit синхронно
-    /// завершает прерванную анимацию, и пейджер сообщает страницу, на которой
-    /// её прервали (до E9.6 — `[3]` при целях 4 → 1).
+    /// An animated transition intercepted by another animated transition
+    /// does not produce `didShowSectionAt` for the intermediate section: UIKit synchronously
+    /// completes the interrupted animation, and the pager reports the page where
+    /// it was interrupted (previously `[3]` for targets 4 → 1).
     func testSupersededAnimatedTransitionDoesNotReportIntermediateSection() throws {
         try skipIfReduceMotion()
         let (pivot, scrollView, spy) = try makeWindowedPivot()
@@ -131,12 +131,12 @@ final class PivotTransitionTests: XCTestCase {
         pivot.selectSection(at: 4, animated: true)
         pivot.selectSection(at: 1, animated: true)
 
-        XCTAssertEqual(spy.shownIndexes, [], "Хвост перехваченного перехода не должен доходить до делегата")
+        XCTAssertEqual(spy.shownIndexes, [], "The tail of an intercepted transition must not reach the delegate")
         XCTAssertTrue(pivot.isTransitionInFlight)
 
-        // Завершение анимации к цели — так, как его сообщает пейджер. (Запись
-        // offset'а из теста сама прервала бы застрявшую анимацию и породила бы
-        // ещё один хвост, которого в приложении нет.)
+        // The animation's completion at the target, as the pager reports it. (Writing the
+        // offset from the test would itself interrupt the stuck animation and produce
+        // one more tail that does not exist in an app.)
         _ = pageWidth
         pivot.pager(pivot.pagerViewController, didChangeProgress: 1)
         pivot.pager(pivot.pagerViewController, didShowPageAt: 1)
@@ -146,8 +146,8 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertFalse(pivot.isTransitionInFlight)
     }
 
-    /// Анимированный переход, перехваченный переходом без анимации: делегат
-    /// видит только итоговую секцию (до E9.6 — `[…, 3, 0]`).
+    /// An animated transition intercepted by a non-animated transition: the delegate
+    /// sees only the final section (previously `[…, 3, 0]`).
     func testAnimatedTransitionInterruptedByJumpReportsOnlyFinalSection() throws {
         try skipIfReduceMotion()
         let (pivot, scrollView, spy) = try makeWindowedPivot()
@@ -161,15 +161,15 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertFalse(pivot.isTransitionInFlight)
     }
 
-    /// Жест перехватывает анимированный переход: завершение там, где
-    /// остановил палец, — настоящее, а не ложное, и доходит до делегата.
+    /// A gesture intercepts an animated transition: the completion where
+    /// the finger stopped is real, not false, and reaches the delegate.
     func testUserDragAfterAnimatedTransitionReportsActualSection() throws {
         try skipIfReduceMotion()
         let (pivot, scrollView, spy) = try makeWindowedPivot()
         let pageWidth = scrollView.bounds.width
 
         pivot.selectSection(at: 1, animated: true)
-        // Пейджер перехвачен жестом и после инерции встал на секцию 2.
+        // The pager was intercepted by the gesture and settled on section 2 after inertia.
         pivot.pagerViewController.scrollViewWillBeginDragging(scrollView)
         scrollView.setContentOffset(CGPoint(x: pageWidth * 2, y: 0), animated: false)
         pivot.pagerViewController.scrollViewDidEndDecelerating(scrollView)
@@ -178,10 +178,10 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertEqual(pivot.currentSectionIndex, 2)
     }
 
-    // MARK: - E9.6: лента не анимируется при selectSection(animated: false)
+    // MARK: - The strip is not animated on selectSection(animated: false)
 
-    /// Переход без анимации не запускает анимированную доцентровку ленты:
-    /// до E9.6 `didShowPageAt` всегда звал `scrollToCenter(animated: true)`.
+    /// A transition without animation does not start an animated re-centering of the strip:
+    /// previously `didShowPageAt` always called `scrollToCenter(animated: true)`.
     func testNonAnimatedSelectionDoesNotAnimateStrip() throws {
         let (pivot, _, _) = try makeWindowedPivot(sectionCount: 8, longTitles: true)
         let strip = pivot.headerStripView
@@ -190,27 +190,27 @@ final class PivotTransitionTests: XCTestCase {
 
         pivot.selectSection(at: 6, animated: false)
 
-        XCTAssertEqual(strip.animatedCenteringCount, before, "Лента не должна анимироваться")
+        XCTAssertEqual(strip.animatedCenteringCount, before, "The strip must not be animated")
         XCTAssertTrue(isFullyVisible(try itemFrame(6, in: collectionView), in: collectionView))
     }
 
-    // MARK: - E9.6: scrollToCenter — только если заголовок за краем (§4)
+    // MARK: - scrollToCenter only if the header is beyond the edge (§4)
 
-    /// Видимый заголовок не двигает переполненную ленту; заголовок за краем
-    /// доцентровывается.
+    /// A visible header does not move an overflowing strip; a header beyond the edge
+    /// is re-centered.
     func testScrollToCenterMovesStripOnlyForHeaderBeyondEdge() throws {
         let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
-        strip.titles = (0..<8).map { "Заголовок \($0)" }
+        strip.titles = (0..<8).map { "Section title \($0)" }
         strip.layoutIfNeeded()
         let collectionView = try collectionView(of: strip)
 
-        XCTAssertGreaterThan(collectionView.contentSize.width, 320, "Лента должна быть переполнена")
+        XCTAssertGreaterThan(collectionView.contentSize.width, 320, "The strip must be overflowing")
         let visibleFrame = try itemFrame(1, in: collectionView)
-        XCTAssertTrue(isFullyVisible(visibleFrame, in: collectionView), "Предусловие: заголовок 1 виден")
-        XCTAssertGreaterThan(visibleFrame.midX, 160, "Предусловие: центрирование сдвинуло бы ленту")
+        XCTAssertTrue(isFullyVisible(visibleFrame, in: collectionView), "Precondition: header 1 is visible")
+        XCTAssertGreaterThan(visibleFrame.midX, 160, "Precondition: centering would shift the strip")
 
         strip.scrollToCenter(index: 1, animated: false)
-        XCTAssertEqual(collectionView.contentOffset.x, 0, accuracy: 0.5, "Видимый заголовок не двигает ленту")
+        XCTAssertEqual(collectionView.contentOffset.x, 0, accuracy: 0.5, "A visible header does not move the strip")
 
         strip.scrollToCenter(index: 6, animated: false)
         let farFrame = try itemFrame(6, in: collectionView)
@@ -220,16 +220,16 @@ final class PivotTransitionTests: XCTestCase {
             farFrame.midX - collectionView.contentOffset.x,
             160,
             accuracy: 1,
-            "Заголовок за краем доцентровывается"
+            "A header beyond the edge is re-centered"
         )
     }
 
-    // MARK: - E9.6: доцентровка при повороте (§9)
+    // MARK: - Re-centering on rotation (§9)
 
-    /// После сужения ленты (поворот) выделенный заголовок снова виден.
+    /// After the strip narrows (rotation) the selected header is visible again.
     func testStripKeepsSelectedHeaderVisibleAfterWidthChange() throws {
         let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 800, height: 48))
-        strip.titles = (0..<8).map { "Длинный заголовок \($0)" }
+        strip.titles = (0..<8).map { "Long section title \($0)" }
         strip.layoutIfNeeded()
         let collectionView = try collectionView(of: strip)
 
@@ -242,21 +242,21 @@ final class PivotTransitionTests: XCTestCase {
 
         XCTAssertTrue(
             isFullyVisible(try itemFrame(6, in: collectionView), in: collectionView),
-            "После поворота выделенный заголовок должен остаться в видимой области"
+            "After rotation the selected header must stay in the visible area"
         )
     }
 
-    /// Лента перестала быть переполненной (поворот в ширину) — остаточный
-    /// offset сбрасывается, все заголовки на месте.
+    /// The strip is no longer overflowing (rotation to a wider width): the residual
+    /// offset is reset, and all headers are in place.
     func testStripResetsOffsetWhenNoLongerOverflowing() throws {
         let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
-        strip.titles = (0..<4).map { "Заголовок \($0)" }
+        strip.titles = (0..<4).map { "Section title \($0)" }
         strip.layoutIfNeeded()
         let collectionView = try collectionView(of: strip)
 
         strip.select(index: 3)
         strip.scrollToCenter(index: 3, animated: false)
-        XCTAssertGreaterThan(collectionView.contentOffset.x, 0, "Предусловие: лента прокручена")
+        XCTAssertGreaterThan(collectionView.contentOffset.x, 0, "Precondition: the strip is scrolled")
 
         strip.frame = CGRect(x: 0, y: 0, width: 1000, height: 48)
         strip.layoutIfNeeded()
@@ -264,14 +264,14 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertEqual(collectionView.contentOffset.x, 0, accuracy: 0.5)
     }
 
-    // MARK: - E9.6: смена направления раскладки (§8)
+    // MARK: - Layout direction change (§8)
 
-    /// Смена `semanticContentAttribute` ленты на лету: коллекция зеркалится, а
-    /// индикатор пересчитывается под фактический заголовок (до E9.6 центры
-    /// оставались от прежнего направления — размер-то не менялся).
+    /// A `semanticContentAttribute` change on the strip on the fly: the collection is mirrored, and
+    /// the indicator is recomputed for the actual header (previously the centers
+    /// stayed from the old direction, since the size did not change).
     func testStripRebuildsGeometryWhenSemanticDirectionChanges() throws {
         let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
-        strip.titles = ["Один", "Два", "Три"]
+        strip.titles = ["One", "Two", "Three"]
         strip.layoutIfNeeded()
         strip.apply(progress: 0)
         let collectionView = try collectionView(of: strip)
@@ -286,21 +286,21 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertEqual(collectionView.effectiveUserInterfaceLayoutDirection, .rightToLeft)
         XCTAssertTrue(
             collectionView.collectionViewLayout.flipsHorizontallyInOppositeLayoutDirection,
-            "Раскладка ленты обязана зеркалиться в RTL (у UICollectionViewFlowLayout по умолчанию false)"
+            "The strip layout must be mirrored in RTL (UICollectionViewFlowLayout defaults to false)"
         )
         let rtlFrame = try itemFrame(0, in: collectionView)
         let rtlCenter = collectionView.convert(CGPoint(x: rtlFrame.midX, y: 0), to: strip).x
-        XCTAssertGreaterThan(rtlCenter, 160, "В RTL первая секция чтения — справа")
+        XCTAssertGreaterThan(rtlCenter, 160, "In RTL the first reading section is on the right")
         XCTAssertEqual(
             strip.indicator.frame.midX,
             rtlCenter,
             accuracy: 1,
-            "Индикатор должен стоять под заголовком 0 в новом направлении"
+            "The indicator must sit under header 0 in the new direction"
         )
     }
 
-    /// Смена направления из окружения (trait `layoutDirection` через
-    /// переопределение родителем) пересобирает геометрию ленты.
+    /// A direction change from the environment (the `layoutDirection` trait via
+    /// a parent's override) rebuilds the strip geometry.
     func testStripRebuildsGeometryWhenTraitDirectionChanges() throws {
         let parent = UIViewController()
         let child = UIViewController()
@@ -315,7 +315,7 @@ final class PivotTransitionTests: XCTestCase {
 
         child.view.frame = parent.view.bounds
         let strip = TesseraPivotHeaderStripView(frame: CGRect(x: 0, y: 0, width: 320, height: 48))
-        strip.titles = ["Один", "Два", "Три"]
+        strip.titles = ["One", "Two", "Three"]
         child.view.addSubview(strip)
         strip.layoutIfNeeded()
         strip.apply(progress: 0)
@@ -331,7 +331,7 @@ final class PivotTransitionTests: XCTestCase {
 
         try XCTSkipUnless(
             collectionView.effectiveUserInterfaceLayoutDirection == .rightToLeft,
-            "Окружение не распространило trait-направление до коллекции"
+            "The environment did not propagate the trait direction to the collection"
         )
         let rtlFrame = try itemFrame(0, in: collectionView)
         let rtlCenter = collectionView.convert(CGPoint(x: rtlFrame.midX, y: 0), to: strip).x
@@ -339,11 +339,11 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertEqual(strip.indicator.frame.midX, rtlCenter, accuracy: 1)
     }
 
-    // MARK: - E10.12а: индикатор при анимированном тапе
+    // MARK: - The indicator on an animated tap
 
-    /// Анимированный тап на соседнюю секцию не ставит индикатор на цель
-    /// заранее: до E10.12а лента на кадр прыгала к цели, а первый кадр
-    /// анимации возвращал её назад. Теперь ленту ведёт прогресс пейджера.
+    /// An animated tap to an adjacent section does not put the indicator on the target
+    /// ahead of time: previously the strip jumped to the target for a frame, and the animation's first frame
+    /// pulled it back. Now the strip is driven by the pager's progress.
     func testAnimatedTapDoesNotPreselectIndicator() throws {
         try skipIfReduceMotion()
         let (pivot, _, _) = try makeWindowedPivot()
@@ -353,7 +353,7 @@ final class PivotTransitionTests: XCTestCase {
         let onSelect = try XCTUnwrap(strip.onSelect)
         onSelect(1)
 
-        XCTAssertEqual(strip.lastProgress, 0, accuracy: 0.001, "Индикатор не прыгает к цели до анимации")
+        XCTAssertEqual(strip.lastProgress, 0, accuracy: 0.001, "The indicator does not jump to the target before the animation")
 
         pivot.pager(pager, didChangeProgress: 0.4)
         XCTAssertEqual(strip.lastProgress, 0.4, accuracy: 0.001)
@@ -364,10 +364,10 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertEqual(strip.selectedIndex, 1)
     }
 
-    /// Дальний анимированный тап: пейджер (W1) переставляет offset на соседа
-    /// цели и анимирует один шаг. Лента не телепортируется на соседа, а
-    /// непрерывно едет от исходного заголовка к целевому; делегат получает
-    /// сырой прогресс пейджера.
+    /// A far animated tap: the pager sets the offset to the target's neighbor
+    /// and animates one step. The strip does not teleport to the neighbor but
+    /// moves continuously from the source header to the target one; the delegate receives
+    /// the pager's raw progress.
     func testFarAnimatedTapMovesIndicatorContinuouslyFromOrigin() throws {
         try skipIfReduceMotion()
         let (pivot, _, spy) = try makeWindowedPivot()
@@ -377,22 +377,22 @@ final class PivotTransitionTests: XCTestCase {
         let onSelect = try XCTUnwrap(strip.onSelect)
         onSelect(4)
 
-        XCTAssertEqual(spy.progressValues.last ?? -1, 3, accuracy: 0.001, "Делегат видит сырой скачок на соседа")
-        XCTAssertEqual(strip.lastProgress, 0, accuracy: 0.001, "Лента остаётся на исходном заголовке")
+        XCTAssertEqual(spy.progressValues.last ?? -1, 3, accuracy: 0.001, "The delegate sees the raw jump to the neighbor")
+        XCTAssertEqual(strip.lastProgress, 0, accuracy: 0.001, "The strip stays on the source header")
 
         pivot.pager(pager, didChangeProgress: 3.5)
-        XCTAssertEqual(strip.lastProgress, 2, accuracy: 0.001, "Середина шага — середина пути ленты")
+        XCTAssertEqual(strip.lastProgress, 2, accuracy: 0.001, "The middle of the step is the middle of the strip's path")
 
         pivot.pager(pager, didChangeProgress: 4)
         XCTAssertEqual(strip.lastProgress, 4, accuracy: 0.001)
 
         pivot.pager(pager, didShowPageAt: 4)
-        // Перенос снят: следующий свайп ведёт ленту сырым прогрессом.
+        // The remap is cleared: the next swipe drives the strip by the raw progress.
         pivot.pager(pager, didChangeProgress: 3.5)
         XCTAssertEqual(strip.lastProgress, 3.5, accuracy: 0.001)
     }
 
-    /// Дальний анимированный тап назад — тот же перенос в обратную сторону.
+    /// A far animated tap backward: the same remap in the reverse direction.
     func testFarAnimatedTapBackwardsMovesIndicatorContinuously() throws {
         try skipIfReduceMotion()
         let (pivot, _, _) = try makeWindowedPivot()
@@ -407,9 +407,9 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertEqual(strip.lastProgress, 2, accuracy: 0.001)
     }
 
-    // MARK: - §6: appearance страниц после W1
+    // MARK: - Page appearance
 
-    /// Страница-счётчик appearance-коллбэков.
+    /// A page that counts appearance callbacks.
     private final class AppearanceCountingPage: UIViewController {
         var didAppearCount = 0
         var didDisappearCount = 0
@@ -425,10 +425,10 @@ final class PivotTransitionTests: XCTestCase {
         }
     }
 
-    /// Контракт W1, на который опирается §6: `viewDidAppear` получает только
-    /// текущая секция, соседи ±1 загружены без appearance. Поэтому
-    /// регистрировать вертикальный скролл в `viewDidAppear` поздно для соседа —
-    /// документация `registerVerticalOwner(_:)` рекомендует `viewDidLoad`.
+    /// The pager's contract that the above relies on: `viewDidAppear` is received only by
+    /// the current section, and ±1 neighbors are loaded without appearance. So
+    /// registering a vertical scroll view in `viewDidAppear` is too late for a neighbor:
+    /// the `registerVerticalOwner(_:)` documentation recommends `viewDidLoad`.
     func testOnlyCurrentSectionReceivesAppearanceCallbacks() throws {
         var pages: [Int: AppearanceCountingPage] = [:]
         let sections = (0..<3).map { (index: Int) -> TesseraPivotSection in
@@ -447,10 +447,10 @@ final class PivotTransitionTests: XCTestCase {
         spinRunLoop()
 
         let first = try XCTUnwrap(pages[0])
-        let neighbour = try XCTUnwrap(pages[1], "Сосед ±1 загружен заранее")
+        let neighbour = try XCTUnwrap(pages[1], "The ±1 neighbor is loaded in advance")
         XCTAssertEqual(first.didAppearCount, 1)
-        XCTAssertEqual(neighbour.didAppearCount, 0, "Сосед не получает viewDidAppear при загрузке")
-        XCTAssertTrue(neighbour.isViewLoaded, "viewDidLoad соседа уже выполнен — точка регистрации")
+        XCTAssertEqual(neighbour.didAppearCount, 0, "The neighbor does not receive viewDidAppear on load")
+        XCTAssertTrue(neighbour.isViewLoaded, "The neighbor's viewDidLoad has already run: the registration point")
 
         pivot.selectSection(at: 1, animated: false)
 
@@ -458,7 +458,7 @@ final class PivotTransitionTests: XCTestCase {
         XCTAssertEqual(first.didDisappearCount, 1)
     }
 
-    /// Перенос прогресса ленты: края отрезка и зажим за его пределами.
+    /// Strip progress remap: the segment's edges and clamping beyond it.
     func testStripProgressRemapMath() {
         let remap = TesseraPivotViewController.StripProgressRemap(from: 0, neighbour: 3, target: 4)
 

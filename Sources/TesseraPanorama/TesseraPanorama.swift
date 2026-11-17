@@ -1,4 +1,4 @@
-// TesseraPanorama — компонент «Панорама» (Windows Phone):
-// секции-холсты, peek, параллакс фона, кастомный снап.
-// Проектный документ: docs/Panorama-iOS-Design.md
+// TesseraPanorama: the Panorama component (Windows Phone style):
+// canvas sections, peek, background parallax, custom snapping.
+// Design document: docs/PANORAMA-IOS-DESIGN.md
 public enum TesseraPanorama {}

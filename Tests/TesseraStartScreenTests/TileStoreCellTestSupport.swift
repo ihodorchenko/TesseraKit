@@ -2,13 +2,13 @@
 //  TileStoreCellTestSupport.swift
 //  TesseraStartScreenTests
 //
-//  Общие помощники тестов операций по ячейкам `TesseraTileStore` (E14.4).
-//  Проектный документ: docs/STARTSCREEN-IOS-DESIGN.md §3 «Плиточная сетка» и
-//  «Отступления реализации (E14)»; решения D30–D33 в docs/STATE.md.
+//  Shared helpers for `TesseraTileStore` cell-operation tests.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid" and
+//  "Implementation deviations"; decisions D30–D33 in docs/STATE.md.
 //
-//  Фикстура записывает файл схемы версии 2 с явными ячейками (в том числе с
-//  дырами) и грузит его в `TesseraTileStore`, так что стартовая раскладка точная и не
-//  зависит от упаковки. Проверка инвариантов — одна на все тесты.
+//  The fixture writes a version 2 schema file with explicit cells (including
+//  holes) and loads it into `TesseraTileStore`, so the starting layout is exact and does not
+//  depend on packing. The invariant check is shared by all tests.
 //
 
 #if canImport(UIKit)
@@ -16,12 +16,12 @@
 import XCTest
 @testable import TesseraStartScreen
 
-/// Короткая запись ячейки в тестах.
+/// A short way to write a cell in tests.
 func tesseraCell(_ row: Int, _ column: Int) -> TesseraTileGridPlacement {
     TesseraTileGridPlacement(row: row, column: column)
 }
 
-/// Ярлык верхнего уровня в фикстуре.
+/// A top-level tile in the fixture.
 struct CellFixtureTile {
     var id: String
     var size: TesseraTileSize
@@ -36,7 +36,7 @@ struct CellFixtureTile {
     }
 }
 
-/// Папка верхнего уровня в фикстуре: содержимое задаётся парами «id — размер».
+/// A top-level folder in the fixture: contents are given as "id — size" pairs.
 struct CellFixtureFolder {
     var id: String
     var size: TesseraTileSize
@@ -55,17 +55,17 @@ struct CellFixtureFolder {
 
 enum TileStoreCellFixture {
 
-    /// Создаёт хранилище с точной стартовой раскладкой версии 2.
+    /// Creates a store with an exact version 2 starting layout.
     ///
     /// - Parameters:
-    ///   - columns: Ширина холста в файле; ширина хоста для операций передаётся
-    ///     отдельно в каждом вызове.
-    ///   - tiles: Ярлыки верхнего уровня.
-    ///   - folders: Папки верхнего уровня (их содержимое входит в каталог).
-    ///   - unpinned: Ярлыки каталога вне сетки.
-    ///   - ghosts: Ярлыки на сетке, которых нет в каталоге (невидимые ключи).
-    ///   - directory: Каталог файла состояния.
-    ///   - autosaves: Автосохранение после операций.
+    ///   - columns: The canvas width in the file; the host width for operations is passed
+    ///     separately in each call.
+    ///   - tiles: Top-level tiles.
+    ///   - folders: Top-level folders (their contents are part of the catalog).
+    ///   - unpinned: Catalog tiles outside the grid.
+    ///   - ghosts: Tiles on the grid that are not in the catalog (invisible keys).
+    ///   - directory: The state file directory.
+    ///   - autosaves: Autosave after operations.
     static func makeStore(
         columns: Int,
         tiles: [CellFixtureTile],
@@ -102,8 +102,8 @@ enum TileStoreCellFixture {
         }
         for (id, size) in unpinned { sizes["s:" + id] = size.rawValue }
 
-        // Порядок файла — порядок чтения ячеек (как после любой операции хранилища):
-        // `gridOrder` держит операции, а не загрузка (E14.6).
+        // File order is the reading order of the cells (as after any store operation):
+        // `gridOrder` is maintained by operations, not by loading.
         func isBefore(_ lhs: [String: Any], _ rhs: [String: Any]) -> Bool {
             let left = tesseraCell(lhs["row"] as? Int ?? 0, lhs["column"] as? Int ?? 0)
             let right = tesseraCell(rhs["row"] as? Int ?? 0, rhs["column"] as? Int ?? 0)
@@ -138,16 +138,16 @@ enum TileStoreCellFixture {
 
 extension XCTestCase {
 
-    /// Проверяет инварианты модели после операции по ячейкам (E14.4).
+    /// Checks the model invariants after a cell operation.
     ///
-    /// - Без пересечений и в границах `[0, columns)` (`TesseraTileLayoutEngine.validate`).
-    /// - У каждого видимого верхнеуровневого элемента ровно одна ячейка, чужих нет.
-    /// - Каждый ярлык каталога встречается ровно один раз: на сетке, в папке или
-    ///   среди откреплённых; в каждой папке не меньше двух ярлыков (D45, кроме
-    ///   переходной папки `createFolder(withTile:)` при `allowSingleTileFolders`),
-    ///   идентификаторы не повторяются.
-    /// - При `checkOrder` холст равен `columns`, а порядок снимка — порядок
-    ///   чтения ячеек (строка, колонка).
+    /// - No overlaps and within the `[0, columns)` bounds (`TesseraTileLayoutEngine.validate`).
+    /// - Every visible top-level item has exactly one cell, and there are no foreign ones.
+    /// - Every catalog tile appears exactly once: on the grid, in a folder or
+    ///   among the unpinned; every folder holds at least two tiles (D45, except for the
+    ///   transitional `createFolder(withTile:)` folder under `allowSingleTileFolders`),
+    ///   and identifiers are not repeated.
+    /// - With `checkOrder` the canvas equals `columns`, and the snapshot order is the
+    ///   reading order of the cells (row, column).
     func tesseraAssertCellInvariants(
         _ store: TesseraTileStore,
         columns: Int,
@@ -162,7 +162,7 @@ extension XCTestCase {
 
         XCTAssertEqual(
             Set(snapshot.items.map { $0.id }), Set(cells.keys),
-            "у каждого видимого элемента ровно одна ячейка", file: file, line: line
+            "every visible item has exactly one cell", file: file, line: line
         )
         XCTAssertEqual(snapshot.items.count, cells.count, file: file, line: line)
 
@@ -172,7 +172,7 @@ extension XCTestCase {
         }
         XCTAssertEqual(
             TesseraTileLayoutEngine.validate(placed, columns: columns), [],
-            "пересечения или выход за холст", file: file, line: line
+            "overlaps or out of canvas", file: file, line: line
         )
 
         var seen: [String] = []
@@ -182,14 +182,14 @@ extension XCTestCase {
             case .folder(let folder):
                 XCTAssertGreaterThanOrEqual(
                     folder.tiles.count, allowSingleTileFolders ? 1 : TesseraTileStore.minimumFolderTileCount,
-                    "папка из 0–1 ярлыка на сетке (D45)", file: file, line: line
+                    "folder with 0–1 tiles on the grid (D45)", file: file, line: line
                 )
                 seen += folder.tiles.map { $0.id.base as? String ?? "?" }
-            case .folderContent: XCTFail("панели в снимке хранилища нет", file: file, line: line)
+            case .folderContent: XCTFail("there is no panel in the store snapshot", file: file, line: line)
             }
         }
         seen += snapshot.unpinned.map { $0.id.base as? String ?? "?" }
-        XCTAssertEqual(seen.sorted(), catalogIDs.sorted(), "ярлык потерян или задвоен", file: file, line: line)
+        XCTAssertEqual(seen.sorted(), catalogIDs.sorted(), "tile lost or duplicated", file: file, line: line)
         let folderIDs = snapshot.folders.map { $0.id }
         XCTAssertEqual(Set(folderIDs).count, folderIDs.count, file: file, line: line)
 
@@ -197,7 +197,7 @@ extension XCTestCase {
             XCTAssertEqual(store.canvasColumns, columns, file: file, line: line)
             XCTAssertEqual(
                 snapshot.items.map { $0.id }, store.placementReadingOrder(forColumns: columns),
-                "порядок модели — порядок чтения ячеек", file: file, line: line
+                "model order is the reading order of the cells", file: file, line: line
             )
             let sorted = snapshot.items.compactMap { cells[$0.id] }
             XCTAssertEqual(

@@ -2,27 +2,27 @@
 //  TileFolderRenameTests.swift
 //  TesseraStartScreenTests
 //
-//  Переименование папки (D35, E15.5; W10M §6.7). Проектный документ:
-//  docs/STARTSCREEN-IOS-DESIGN.md «Отступления реализации (E15)», п. 62;
-//  решение D35 в docs/STATE.md.
+//  Folder rename (D35; docs/W10M-STARTSCREEN.md §6.7). Design document:
+//  docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
+//  decision D35 in docs/STATE.md.
 //
-//  Проверяется:
-//  - модель: `TesseraTileStore.renameFolder(_:to:)` (обрезка пробелов, пустое имя —
-//    имя по умолчанию, предел 64 символа, неизвестная папка, то же имя без
-//    уведомления, круг записи, одно `onChange`, ячейка/размер/состав целы);
-//  - сетка: правка имени в открытой панели (поле, return, тап мимо, пустое имя,
-//    итоговое имя в обработчике, высота шапки, закрытие панели, смена
-//    обработчика, предел при вводе), клавиатура (поле над ней, возврат полей и
-//    смещения, Reduce Motion), RTL и Dynamic Type;
-//  - координатор: обработчик, `TesseraTileStore`, делегат, имя по умолчанию из
-//    конфигурации, вход/выход из режима редактирования, выключенный координатор;
-//  - VoiceOver: действие «Переименовать» на заголовке панели и плитке папки,
-//    подпись поля, фокус до и после правки;
-//  - жесты: долгое нажатие по имени не стартует ни drag, ни вход в правку (зона
-//    имени), долгое нажатие по ярлыку панели по-прежнему выносит его;
-//  - строки en/ru.
+//  What is tested:
+//  - the model: `TesseraTileStore.renameFolder(_:to:)` (whitespace trimming, an empty name is
+//    the default name, the 64-character limit, an unknown folder, the same name without a
+//    notification, the write round trip, a single `onChange`, cell/size/contents intact);
+//  - the grid: editing the name in an open panel (field, return, tap outside, empty name,
+//    the final name in the handler, header height, closing the panel, replacing
+//    the handler, the limit while typing), the keyboard (the field above it, restoring insets and
+//    offset, Reduce Motion), RTL and Dynamic Type;
+//  - the coordinator: the handler, `TesseraTileStore`, the delegate, the default name from
+//    the configuration, entering/leaving edit mode, a disabled coordinator;
+//  - VoiceOver: the "Rename" action on the panel title and the folder tile,
+//    the field label, focus before and after editing;
+//  - gestures: a long press on the name starts neither a drag nor entering edit mode (the name
+//    zone), a long press on a panel tile still takes it out;
+//  - en/ru strings.
 //
-//  Раскладки точные (`TileStoreCellFixture`, 4 колонки), без `sleep`.
+//  Exact layouts (`TileStoreCellFixture`, 4 columns), no `sleep`.
 //
 
 #if canImport(UIKit)
@@ -33,7 +33,7 @@ import XCTest
 
 final class TileFolderRenameTests: XCTestCase {
 
-    // MARK: - Помощники модели
+    // MARK: - Model helpers
 
     private let columns = 4
 
@@ -62,31 +62,31 @@ final class TileFolderRenameTests: XCTestCase {
 
     // MARK: - TesseraTileStore.renameFolder
 
-    /// Пробелы и переводы строк по краям отбрасываются; результат записан в модель.
+    /// Whitespace and newlines at the edges are dropped; the result is written to the model.
     func testRenameTrimsSurroundingWhitespaceAndNewlines() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
-        XCTAssertTrue(store.renameFolder("F", to: "  \n Работа \t\n"))
-        XCTAssertEqual(folderTitle(store), "Работа")
+        XCTAssertTrue(store.renameFolder("F", to: "  \n Work \t\n"))
+        XCTAssertEqual(folderTitle(store), "Work")
     }
 
-    /// Пустое и состоящее из пробелов имя возвращает имя по умолчанию — то же
-    /// локализованное «Папка»/«Folder», что получает новая папка.
+    /// An empty or whitespace-only name returns the default name: the same
+    /// localized "Folder" that a new folder gets.
     func testRenameEmptyReturnsDefaultTitle() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
         let fallback = TesseraStartScreenStrings.string(.folderScreenDefaultTitle)
 
-        XCTAssertTrue(store.renameFolder("F", to: "Работа"))
+        XCTAssertTrue(store.renameFolder("F", to: "Work"))
         XCTAssertTrue(store.renameFolder("F", to: ""))
         XCTAssertEqual(folderTitle(store), fallback)
 
-        XCTAssertTrue(store.renameFolder("F", to: "Игры"))
+        XCTAssertTrue(store.renameFolder("F", to: "Games"))
         XCTAssertTrue(store.renameFolder("F", to: "  \n\t "))
-        XCTAssertEqual(folderTitle(store), fallback, "Только пробелы — тоже пустое имя")
+        XCTAssertEqual(folderTitle(store), fallback, "Whitespace only is an empty name too")
     }
 
-    /// Предел 64 символа: длинное имя обрезается, пробелы на краю среза чистятся.
+    /// The 64-character limit: a long name is truncated, whitespace at the cut edge is trimmed.
     func testRenameCapsLengthAndTrimsAfterCut() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
@@ -95,65 +95,65 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(store.renameFolder("F", to: String(repeating: "я", count: 100)))
         XCTAssertEqual(folderTitle(store), String(repeating: "я", count: 64))
 
-        // Срез попадает на пробел: хвост после обрезки не остаётся пробелом.
+        // The cut falls on a space: the tail after truncation does not stay a space.
         let spaced = String(repeating: "a", count: 63) + " " + String(repeating: "b", count: 10)
         XCTAssertTrue(store.renameFolder("F", to: spaced))
         XCTAssertEqual(folderTitle(store), String(repeating: "a", count: 63))
 
-        // Ровно предел проходит целиком; считаются символы, а не байты.
+        // Exactly the limit passes whole; characters are counted, not bytes.
         let emoji = String(repeating: "😀", count: 64)
         XCTAssertTrue(store.renameFolder("F", to: emoji))
         XCTAssertEqual(folderTitle(store)?.count, 64)
     }
 
-    /// Имя — одна строка: переводы строк внутри становятся пробелами.
+    /// The name is a single line: newlines inside become spaces.
     func testRenameKeepsSingleLine() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
-        XCTAssertTrue(store.renameFolder("F", to: "Рабочие\nпроекты"))
-        XCTAssertEqual(folderTitle(store), "Рабочие проекты")
+        XCTAssertTrue(store.renameFolder("F", to: "Work\nprojects"))
+        XCTAssertEqual(folderTitle(store), "Work projects")
     }
 
-    /// Неизвестная папка и ярлык вместо папки — `false`, без уведомлений.
+    /// An unknown folder and a tile instead of a folder give `false`, without notifications.
     func testRenameUnknownFolderIsNoOp() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
         let notifications = countNotifications(store)
 
         XCTAssertFalse(store.renameFolder("nope", to: "X"))
-        XCTAssertFalse(store.renameFolder("a0", to: "X"), "Ярлык — не папка")
+        XCTAssertFalse(store.renameFolder("a0", to: "X"), "A tile is not a folder")
         XCTAssertEqual(notifications(), 0)
         XCTAssertEqual(folderTitle(store), "F")
     }
 
-    /// То же имя (в том числе после нормализации) — `false`, без `onChange` и записи.
+    /// The same name (including after normalization) gives `false`, without `onChange` or a write.
     func testRenameToSameTitleIsNoOpWithoutNotificationOrSave() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory, autosaves: true)
-        XCTAssertTrue(store.renameFolder("F", to: "Работа"))
+        XCTAssertTrue(store.renameFolder("F", to: "Work"))
         try FileManager.default.removeItem(at: store.fileURL)
         let notifications = countNotifications(store)
 
-        XCTAssertFalse(store.renameFolder("F", to: "Работа"))
-        XCTAssertFalse(store.renameFolder("F", to: "  Работа  "))
+        XCTAssertFalse(store.renameFolder("F", to: "Work"))
+        XCTAssertFalse(store.renameFolder("F", to: "  Work  "))
         XCTAssertEqual(notifications(), 0)
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: store.fileURL.path),
-            "Неизменённое имя не пишет файл"
+            "An unchanged name does not write the file"
         )
     }
 
-    /// Круг записи: имя переживает перезапуск; пустое имя — имя по умолчанию.
+    /// Write round trip: the name survives a restart; an empty name is the default name.
     func testRenamePersistsThroughRoundTrip() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory, autosaves: true)
-        XCTAssertTrue(store.renameFolder("F", to: "Работа"))
+        XCTAssertTrue(store.renameFolder("F", to: "Work"))
 
         let catalog = ["a0", "x", "y", "z"].map { tesseraTestTile($0, size: .small) }
         let fresh = TesseraTileStore(directoryURL: directory.url)
         fresh.setCatalog(catalog)
         try fresh.load()
-        XCTAssertEqual(folderTitle(fresh), "Работа")
+        XCTAssertEqual(folderTitle(fresh), "Work")
 
         XCTAssertTrue(store.renameFolder("F", to: ""))
         let again = TesseraTileStore(directoryURL: directory.url)
@@ -162,19 +162,19 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertEqual(folderTitle(again), TesseraStartScreenStrings.string(.folderScreenDefaultTitle))
     }
 
-    /// Ровно одно уведомление на успешную операцию; снимок несёт новое имя.
+    /// Exactly one notification per successful operation; the snapshot carries the new name.
     func testRenameNotifiesOnChangeOnce() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
         var snapshots: [TesseraTileGridSnapshot] = []
         store.onChange = { snapshots.append($0) }
 
-        XCTAssertTrue(store.renameFolder("F", to: "Работа"))
+        XCTAssertTrue(store.renameFolder("F", to: "Work"))
         XCTAssertEqual(snapshots.count, 1)
-        XCTAssertEqual(snapshots.first?.folders.first?.title, "Работа")
+        XCTAssertEqual(snapshots.first?.folders.first?.title, "Work")
     }
 
-    /// Переименование не трогает ни ячейку, ни размер, ни состав папки.
+    /// Renaming touches neither the cell, nor the size, nor the folder contents.
     func testRenameKeepsCellSizeAndContent() throws {
         let directory = TesseraTestDirectory()
         let store = try makeStore(in: directory)
@@ -182,7 +182,7 @@ final class TileFolderRenameTests: XCTestCase {
         let cellsBefore = before.placementTable?.cells
         let folderBefore = try XCTUnwrap(before.folders.first)
 
-        XCTAssertTrue(store.renameFolder("F", to: "Работа"))
+        XCTAssertTrue(store.renameFolder("F", to: "Work"))
         let after = store.snapshot(columns: columns)
         let folderAfter = try XCTUnwrap(after.folders.first)
         XCTAssertEqual(after.placementTable?.cells, cellsBefore)
@@ -191,7 +191,7 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertEqual(after.items.map { $0.id }, before.items.map { $0.id })
     }
 
-    // MARK: - Помощники сетки
+    // MARK: - Grid helpers
 
     private final class Recorder {
         var renames: [(AnyHashable, String)] = []
@@ -205,11 +205,11 @@ final class TileFolderRenameTests: XCTestCase {
         var grid: TesseraTileGridView { host.grid }
     }
 
-    /// Сетка в окне с одной папкой «Работа» из четырёх ярлыков; обработчик
-    /// переименования записывает вызовы (`installsHandler == false` — без него).
+    /// A grid in a window with a single folder "Work" of four tiles; the rename
+    /// handler records calls (`installsHandler == false` means without it).
     private func makeGridFixture(
         installsHandler: Bool = true,
-        title: String = "Работа",
+        title: String = "Work",
         extraItems: [TesseraTileGridItem] = [],
         size: CGSize = TesseraTestWindowedGrid.defaultSize
     ) -> GridFixture {
@@ -245,7 +245,7 @@ final class TileFolderRenameTests: XCTestCase {
         _ = field.delegate?.textFieldShouldReturn?(field)
     }
 
-    /// Тап по свободному месту сетки (под панелью) — как касание пальцем.
+    /// A tap on free space of the grid (under the panel), like a finger touch.
     private func tapGridBackground(_ grid: TesseraTileGridView) {
         final class FakeTap: UITapGestureRecognizer {
             var point = CGPoint.zero
@@ -260,11 +260,11 @@ final class TileFolderRenameTests: XCTestCase {
         panel.titleHeaderLabel.gestureRecognizers?.compactMap { $0 as? UILongPressGestureRecognizer }.first
     }
 
-    // MARK: - Сетка: вход в правку
+    // MARK: - Grid: entering edit
 
-    /// Долгое нажатие по имени (≈0,5 с) включено только когда у сетки есть
-    /// обработчик; без него заголовок статичен, правка не начинается, действия
-    /// VoiceOver нет.
+    /// A long press on the name (about 0.5 s) is enabled only when the grid has
+    /// a handler; without it the title is static, editing does not start, and there is no
+    /// VoiceOver action.
     func testNameLongPressIsEnabledOnlyWithHandler() throws {
         let without = makeGridFixture(installsHandler: false)
         let bare = try openPanel(without)
@@ -283,8 +283,8 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(with.grid.isEditingFolderName)
     }
 
-    /// Поле: имя в поле как в заголовке и выделено целиком, одна строка, return —
-    /// «Готово», без автокоррекции; подпись для VoiceOver; шрифт и рамка как у заголовка.
+    /// The field: the name in the field is the same as in the title and fully selected, a single line, return is
+    /// "Done", no autocorrection; a VoiceOver label; the font and frame are those of the title.
     func testFieldIsPrefilledSelectedSingleLineAndAccessible() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
@@ -292,7 +292,7 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(panel.beginTitleEditing())
 
         let field = panel.titleTextField
-        XCTAssertEqual(field.text, "Работа")
+        XCTAssertEqual(field.text, "Work")
         XCTAssertFalse(field.isHidden)
         XCTAssertTrue(label.isHidden)
         XCTAssertTrue(field.isFirstResponder)
@@ -301,13 +301,13 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertEqual(field.spellCheckingType, .no)
         XCTAssertEqual(field.accessibilityLabel, TesseraStartScreenStrings.string(.folderNameFieldLabel))
         XCTAssertEqual(field.font, label.font)
-        XCTAssertEqual(field.frame, label.frame, "Поле занимает рамку заголовка")
+        XCTAssertEqual(field.frame, label.frame, "The field takes the title frame")
 
         let range = try XCTUnwrap(field.selectedTextRange)
-        XCTAssertEqual(field.text(in: range), "Работа", "Имя выделено целиком")
+        XCTAssertEqual(field.text(in: range), "Work", "The name is fully selected")
     }
 
-    /// Правка не меняет высоту шапки: панель и ярлыки под заголовком остаются на месте.
+    /// Editing does not change the header height: the panel and the tiles under the title stay in place.
     func testHeaderHeightAndLayoutAreStableDuringEditing() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
@@ -330,22 +330,22 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertEqual(panel.titleHeaderLabel.frame, labelFrame)
     }
 
-    // MARK: - Сетка: фиксация
+    // MARK: - Grid: committing
 
-    /// Return фиксирует имя: обработчик получает итоговое (нормализованное) имя,
-    /// заголовок показывает его, правка закончена.
+    /// Return commits the name: the handler receives the final (normalized) name,
+    /// the title shows it, editing is finished.
     func testReturnCommitsFinalNameAndUpdatesLabel() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
         XCTAssertTrue(panel.beginTitleEditing())
-        type("  Игры  ", in: panel)
+        type("  Games  ", in: panel)
         pressReturn(in: panel)
 
         XCTAssertEqual(fixture.recorder.renames.count, 1)
         XCTAssertEqual(fixture.recorder.renames.first?.0, "F")
-        XCTAssertEqual(fixture.recorder.renames.first?.1, "Игры")
-        XCTAssertEqual(panel.titleHeaderLabel.text, "Игры")
-        XCTAssertEqual(panel.titleHeaderLabel.accessibilityLabel, "Игры")
+        XCTAssertEqual(fixture.recorder.renames.first?.1, "Games")
+        XCTAssertEqual(panel.titleHeaderLabel.text, "Games")
+        XCTAssertEqual(panel.titleHeaderLabel.accessibilityLabel, "Games")
         XCTAssertFalse(panel.isEditingTitle)
         XCTAssertFalse(fixture.grid.isEditingFolderName)
         XCTAssertTrue(panel.titleTextField.isHidden)
@@ -353,27 +353,27 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertFalse(panel.titleTextField.isFirstResponder)
     }
 
-    /// Тап по фону сетки фиксирует имя и папку не закрывает.
+    /// A tap on the grid background commits the name and does not close the folder.
     func testBackgroundTapCommitsAndKeepsFolderOpen() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
         XCTAssertTrue(panel.beginTitleEditing())
-        type("Игры", in: panel)
+        type("Games", in: panel)
 
         tapGridBackground(fixture.grid)
-        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Игры"])
+        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Games"])
         XCTAssertFalse(panel.isEditingTitle)
-        XCTAssertEqual(fixture.grid.expandedFolderID, "F", "Тап мимо поля только фиксирует имя")
-        XCTAssertEqual(panel.titleHeaderLabel.text, "Игры")
+        XCTAssertEqual(fixture.grid.expandedFolderID, "F", "A tap outside the field only commits the name")
+        XCTAssertEqual(panel.titleHeaderLabel.text, "Games")
 
-        // Вне правки тот же тап по-прежнему закрывает папку.
+        // Outside editing the same tap still closes the folder.
         fixture.grid.isReduceMotionEnabled = { true }
         tapGridBackground(fixture.grid)
         XCTAssertNil(fixture.grid.expandedFolderID)
     }
 
-    /// Пустое имя (и из одних пробелов) — «имя по умолчанию»: обработчик получает
-    /// пустую строку, заголовок показывает локализованное имя по умолчанию.
+    /// An empty name (or whitespace only) is the "default name": the handler receives
+    /// an empty string, the title shows the localized default name.
     func testEmptyNameBecomesDefaultTitle() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
@@ -388,17 +388,17 @@ final class TileFolderRenameTests: XCTestCase {
         )
     }
 
-    /// Имя не изменилось (в том числе после обрезки пробелов) — обработчик не зовётся.
+    /// The name did not change (including after trimming whitespace): the handler is not called.
     func testUnchangedNameDoesNotCallHandler() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
         XCTAssertTrue(panel.beginTitleEditing())
-        type(" Работа ", in: panel)
+        type(" Work ", in: panel)
         pressReturn(in: panel)
         XCTAssertTrue(fixture.recorder.renames.isEmpty)
-        XCTAssertEqual(panel.titleHeaderLabel.text, "Работа")
+        XCTAssertEqual(panel.titleHeaderLabel.text, "Work")
 
-        // Пустая папка-имя по умолчанию и пустой ввод — тоже «без изменений».
+        // An empty folder with the default name and empty input are "no change" too.
         let untitled = makeGridFixture(title: "")
         let blank = try openPanel(untitled)
         XCTAssertTrue(blank.beginTitleEditing())
@@ -407,19 +407,19 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(untitled.recorder.renames.isEmpty)
     }
 
-    /// Обработчик получает имя не длиннее предела, одной строкой.
+    /// The handler receives a name no longer than the limit, as a single line.
     func testHandlerReceivesCappedSingleLineName() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
         XCTAssertTrue(panel.beginTitleEditing())
-        type(String(repeating: "ы", count: 90) + "\nхвост", in: panel)
+        type(String(repeating: "ы", count: 90) + "\ntail", in: panel)
         pressReturn(in: panel)
         XCTAssertEqual(fixture.recorder.renames.first?.1.count, TesseraTileFolder.maximumTitleLength)
         XCTAssertFalse(fixture.recorder.renames.first?.1.contains("\n") ?? true)
     }
 
-    /// Ввод ограничен пределом: правка, после которой строка длиннее 64, не
-    /// применяется; удаление и замена в пределах — проходят.
+    /// Input is limited by the cap: an edit after which the string is longer than 64 is not
+    /// applied; deletion and replacement within the cap go through.
     func testTypingIsCappedAtMaximumLength() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
@@ -433,75 +433,75 @@ final class TileFolderRenameTests: XCTestCase {
         )
         XCTAssertTrue(
             delegate.textField?(field, shouldChangeCharactersIn: NSRange(location: 0, length: 1), replacementString: "b") ?? false,
-            "Замена символа в пределе проходит"
+            "Replacing a character within the cap goes through"
         )
         XCTAssertTrue(
             delegate.textField?(field, shouldChangeCharactersIn: NSRange(location: 60, length: 4), replacementString: "") ?? false,
-            "Удаление проходит"
+            "Deletion goes through"
         )
         XCTAssertFalse(
             delegate.textField?(field, shouldChangeCharactersIn: NSRange(location: 64, length: 0), replacementString: "😀") ?? true
         )
     }
 
-    /// Закрытие панели во время правки фиксирует имя (D35), фокус VoiceOver на
-    /// заголовок панели не возвращается.
+    /// Closing the panel during editing commits the name (D35), VoiceOver focus does not
+    /// return to the panel title.
     func testClosingPanelWhileEditingCommits() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
         XCTAssertTrue(panel.beginTitleEditing())
-        type("Игры", in: panel)
+        type("Games", in: panel)
         fixture.recorder.posts.removeAll()
 
         fixture.grid.closeFolder(animated: false)
-        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Игры"])
+        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Games"])
         XCTAssertFalse(fixture.grid.isEditingFolderName)
         XCTAssertNil(fixture.grid.expandedFolderID)
         XCTAssertFalse(
             fixture.recorder.posts.contains { ($0.1 as? UILabel) === panel.titleHeaderLabel },
-            "Панель закрыта: фокус идёт на плитку папки"
+            "The panel is closed: focus goes to the folder tile"
         )
     }
 
-    /// Смена обработчика посреди правки фиксирует набранное старым обработчиком;
-    /// при `nil` заголовок снова статичен.
+    /// Replacing the handler in the middle of editing commits what was typed with the old handler;
+    /// with `nil` the title is static again.
     func testReplacingHandlerCommitsWithOldHandlerAndDisablesEditing() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
         XCTAssertTrue(panel.beginTitleEditing())
-        type("Игры", in: panel)
+        type("Games", in: panel)
 
         fixture.grid.folderRenameHandler = nil
-        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Игры"])
+        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Games"])
         XCTAssertFalse(panel.isEditingTitle)
         XCTAssertFalse(panel.isTitleEditable)
         XCTAssertEqual(longPressRecognizer(of: panel)?.isEnabled, false)
         XCTAssertNil(panel.titleHeaderLabel.accessibilityCustomActions)
     }
 
-    /// Панель ушла в переиспользование посреди правки: имя фиксируется, а
-    /// обработчик зовётся на следующем проходе runloop.
+    /// The panel went into reuse in the middle of editing: the name is committed, and
+    /// the handler is called on the next run loop pass.
     func testReusingPanelWhileEditingCommitsDeferred() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
         XCTAssertTrue(panel.beginTitleEditing())
-        type("Игры", in: panel)
+        type("Games", in: panel)
 
         panel.prepareForReuse()
         XCTAssertFalse(panel.isEditingTitle)
-        XCTAssertTrue(fixture.recorder.renames.isEmpty, "Обработчик не зовётся внутри переиспользования")
+        XCTAssertTrue(fixture.recorder.renames.isEmpty, "The handler is not called inside reuse")
         XCTAssertTrue(fixture.host.waitUntil { !fixture.recorder.renames.isEmpty })
-        XCTAssertEqual(fixture.recorder.renames.first?.1, "Игры")
+        XCTAssertEqual(fixture.recorder.renames.first?.1, "Games")
     }
 
-    // MARK: - Клавиатура
+    // MARK: - Keyboard
 
-    /// Окно 390×500 и папка ниже первого экрана; панель раскрыта, сетка
-    /// прокручена так, что шапка панели у нижнего края экрана (клавиатура её
-    /// перекроет). Reduce Motion включён: прокрутка без анимации.
+    /// A 390×500 window and a folder below the first screen; the panel is expanded, the grid
+    /// is scrolled so that the panel header is at the bottom edge of the screen (the keyboard will
+    /// cover it). Reduce Motion is on: scrolling without animation.
     private func makeScrollingFixture() throws -> (GridFixture, TesseraFolderPanelCell, CGFloat) {
         let tiles: [TesseraTileGridItem] = (0..<4).map { .tile(tesseraTestTile("t\($0)", size: .medium)) }
-        let folder = tesseraTestFolder("F", tileCount: 4, title: "Работа")
+        let folder = tesseraTestFolder("F", tileCount: 4, title: "Work")
         let host = TesseraTestWindowedGrid(
             items: tiles + [.folder(folder)] + (0..<6).map { .tile(tesseraTestTile("u\($0)", size: .wide)) },
             columns: 4,
@@ -518,7 +518,7 @@ final class TileFolderRenameTests: XCTestCase {
         host.grid.openFolder(folder, animated: false)
         host.layout()
         let offset = folderFrame.maxY - 380
-        XCTAssertGreaterThan(offset, 0, "Папка ниже первого экрана")
+        XCTAssertGreaterThan(offset, 0, "The folder is below the first screen")
         host.grid.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
         host.layout()
         let panel = try XCTUnwrap(host.panelCell(folderID: "F"))
@@ -529,14 +529,14 @@ final class TileFolderRenameTests: XCTestCase {
         panel.titleTextField.convert(panel.titleTextField.bounds, to: grid)
     }
 
-    /// Клавиатура перекрывает поле — сетка прокручивается так, чтобы поле стало
-    /// видно над ней (Reduce Motion — без анимации, смещение сразу), нижнее поле
-    /// коллекции равно перекрытию; по завершении поля и смещение возвращаются.
+    /// The keyboard covers the field: the grid scrolls so that the field becomes
+    /// visible above it (Reduce Motion: without animation, the offset is immediate), the bottom inset
+    /// of the collection equals the overlap; when finished, the insets and the offset are restored.
     func testKeyboardScrollsFieldAboveKeyboardAndRestoresOnEnd() throws {
         let (fixture, panel, originalOffset) = try makeScrollingFixture()
         let grid = fixture.grid
         let collection = try XCTUnwrap(fixture.host.collectionView)
-        XCTAssertGreaterThan(fieldFrameInGrid(panel, grid: grid).maxY, 200, "Без клавиатуры поле ниже её будущей кромки")
+        XCTAssertGreaterThan(fieldFrameInGrid(panel, grid: grid).maxY, 200, "Without the keyboard the field is below its future edge")
 
         XCTAssertTrue(panel.beginTitleEditing())
         let keyboardHeight: CGFloat = 300
@@ -545,16 +545,16 @@ final class TileFolderRenameTests: XCTestCase {
         )
         XCTAssertEqual(collection.contentInset.bottom, keyboardHeight, accuracy: 0.5)
         let field = fieldFrameInGrid(panel, grid: grid)
-        XCTAssertGreaterThanOrEqual(field.minY, 0, "Заголовок виден сверху")
-        XCTAssertLessThanOrEqual(field.maxY, 500 - keyboardHeight, "Поле над клавиатурой")
+        XCTAssertGreaterThanOrEqual(field.minY, 0, "The title is visible at the top")
+        XCTAssertLessThanOrEqual(field.maxY, 500 - keyboardHeight, "The field is above the keyboard")
 
         pressReturn(in: panel)
-        XCTAssertEqual(collection.contentInset.bottom, 0, accuracy: 0.001, "Поля возвращены")
-        XCTAssertEqual(collection.contentOffset.y, originalOffset, accuracy: 1, "Смещение возвращено")
+        XCTAssertEqual(collection.contentInset.bottom, 0, accuracy: 0.001, "Insets restored")
+        XCTAssertEqual(collection.contentOffset.y, originalOffset, accuracy: 1, "Offset restored")
     }
 
-    /// Клавиатура скрылась посреди правки: поля возвращаются, правка продолжается;
-    /// скролл пользователя во время правки не откатывается по завершении.
+    /// The keyboard hid in the middle of editing: the insets are restored, editing continues;
+    /// the user's scroll during editing is not rolled back on completion.
     func testKeyboardHideRestoresInsetsAndUserScrollIsKept() throws {
         let (fixture, panel, _) = try makeScrollingFixture()
         let grid = fixture.grid
@@ -565,17 +565,17 @@ final class TileFolderRenameTests: XCTestCase {
 
         NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
         XCTAssertEqual(collection.contentInset.bottom, 0, accuracy: 0.001)
-        XCTAssertTrue(panel.isEditingTitle, "Скрытие клавиатуры правку не завершает")
+        XCTAssertTrue(panel.isEditingTitle, "Hiding the keyboard does not end editing")
 
-        // Пользователь прокрутил сам: по завершении смещение не откатывается.
+        // The user scrolled on their own: the offset is not rolled back on completion.
         grid.setContentOffset(CGPoint(x: 0, y: collection.contentOffset.y + 120), animated: false)
         let userOffset = collection.contentOffset.y
         pressReturn(in: panel)
         XCTAssertEqual(collection.contentOffset.y, userOffset, accuracy: 1)
     }
 
-    /// Уведомление о клавиатуре, пришедшее до регистрации правки (во время
-    /// `becomeFirstResponder`), учитывается: последняя рамка запоминается.
+    /// A keyboard notification that arrived before editing was registered (during
+    /// `becomeFirstResponder`) is taken into account: the last frame is remembered.
     func testKeyboardFrameNotificationBeforeEditingIsRemembered() throws {
         let (fixture, panel, _) = try makeScrollingFixture()
         let collection = try XCTUnwrap(fixture.host.collectionView)
@@ -585,17 +585,17 @@ final class TileFolderRenameTests: XCTestCase {
             object: nil,
             userInfo: [UIResponder.keyboardFrameEndUserInfoKey: CGRect(x: 0, y: 200, width: 390, height: 300)]
         )
-        XCTAssertEqual(collection.contentInset.bottom, 0, accuracy: 0.001, "Вне правки поля не трогаются")
+        XCTAssertEqual(collection.contentInset.bottom, 0, accuracy: 0.001, "Outside editing the insets are not touched")
         XCTAssertTrue(panel.beginTitleEditing())
         XCTAssertEqual(collection.contentInset.bottom, 300, accuracy: 0.5)
         pressReturn(in: panel)
         NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
-    // MARK: - RTL и Dynamic Type
+    // MARK: - RTL and Dynamic Type
 
-    /// RTL: поле и заголовок в одной рамке (полная ширина шапки), выравнивание
-    /// естественное; поле в RTL зеркалится вместе с заголовком.
+    /// RTL: the field and the title are in the same frame (the full header width), the alignment is
+    /// natural; in RTL the field is mirrored together with the title.
     func testRightToLeftHeaderKeepsFieldAndLabelAligned() throws {
         let fixture = makeGridFixture()
         fixture.grid.semanticContentAttribute = .forceRightToLeft
@@ -609,13 +609,13 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertEqual(panel.titleTextField.frame, panel.titleHeaderLabel.frame)
         XCTAssertEqual(panel.titleTextField.textAlignment, .natural)
         XCTAssertEqual(panel.titleHeaderLabel.textAlignment, .natural)
-        type("Игры", in: panel)
+        type("Games", in: panel)
         pressReturn(in: panel)
-        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Игры"])
+        XCTAssertEqual(fixture.recorder.renames.map { $0.1 }, ["Games"])
     }
 
-    /// Dynamic Type: поле берёт шрифт заголовка (с потолком по высоте шапки) и
-    /// следует за ним при смене категории.
+    /// Dynamic Type: the field takes the title font (capped by the header height) and
+    /// follows it when the category changes.
     func testFieldFontFollowsHeaderFontAndFitsHeader() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
@@ -624,7 +624,7 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertLessThanOrEqual(
             expected.lineHeight,
             TesseraTileLayoutEngine.panelHeaderHeight,
-            "Строка заголовка помещается в шапку на AX5"
+            "The title row fits into the header at AX5"
         )
         panel.refreshTypography()
         XCTAssertEqual(panel.titleTextField.font, panel.titleHeaderLabel.font)
@@ -632,8 +632,8 @@ final class TileFolderRenameTests: XCTestCase {
 
     // MARK: - VoiceOver
 
-    /// Действие «Переименовать» на заголовке панели начинает ту же правку;
-    /// фокус уходит на поле, а после фиксации возвращается на заголовок.
+    /// The "Rename" action on the panel title starts the same editing;
+    /// focus moves to the field and returns to the title after committing.
     func testHeaderRenameActionStartsEditingAndReturnsFocus() throws {
         let fixture = makeGridFixture()
         let panel = try openPanel(fixture)
@@ -646,25 +646,25 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(panel.isEditingTitle)
         XCTAssertTrue(
             fixture.recorder.posts.contains { $0.0 == .layoutChanged && ($0.1 as? UITextField) === panel.titleTextField },
-            "Фокус на поле"
+            "Focus on the field"
         )
 
-        type("Игры", in: panel)
+        type("Games", in: panel)
         fixture.recorder.posts.removeAll()
         pressReturn(in: panel)
         XCTAssertTrue(
             fixture.recorder.posts.contains { $0.0 == .layoutChanged && ($0.1 as? UILabel) === panel.titleHeaderLabel },
-            "Фокус вернулся на заголовок"
+            "Focus returned to the title"
         )
-        XCTAssertEqual(panel.titleHeaderLabel.accessibilityLabel, "Игры", "Подпись отражает новое имя")
+        XCTAssertEqual(panel.titleHeaderLabel.accessibilityLabel, "Games", "The label reflects the new name")
         XCTAssertFalse(
             fixture.recorder.posts.contains { $0.0 == .announcement },
-            "Дополнительных объявлений нет"
+            "There are no additional announcements"
         )
     }
 
-    /// Плитка папки получает действие «Переименовать» вместе с обработчиком;
-    /// активация раскрывает папку и начинает правку; без обработчика действия нет.
+    /// The folder tile gets the "Rename" action together with the handler;
+    /// activation expands the folder and starts editing; without a handler there is no action.
     func testFolderTileRenameActionOpensPanelAndStartsEditing() throws {
         let fixture = makeGridFixture()
         let tile = try XCTUnwrap(fixture.host.cell("F"))
@@ -682,7 +682,7 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertNil(try XCTUnwrap(fixture.host.cell("F")).accessibilityCustomActions)
     }
 
-    /// Обычная плитка-ярлык действия «Переименовать» не получает.
+    /// A regular tile does not get the "Rename" action.
     func testTilesHaveNoRenameAction() throws {
         let tile = tesseraTestTile("t", size: .small)
         let host = TesseraTestWindowedGrid(items: [.tile(tile), .folder(tesseraTestFolder("F"))])
@@ -691,9 +691,9 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertNotNil(host.cell("F")?.accessibilityCustomActions)
     }
 
-    // MARK: - Строки
+    // MARK: - Strings
 
-    /// Новые строки есть в en и ru и различаются.
+    /// The new strings exist in en and ru and differ.
     func testStringsExistInBothLanguages() {
         for key in [TesseraStartScreenStrings.Key.a11yActionRenameFolder, .folderNameFieldLabel] {
             let en = TesseraStartScreenStrings.string(key, language: "en")
@@ -708,7 +708,7 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertEqual(TesseraStartScreenStrings.string(.folderNameFieldLabel, language: "ru"), "Имя папки")
     }
 
-    // MARK: - Координатор
+    // MARK: - Coordinator
 
     private final class DelegateRecorder: TesseraTileEditCoordinatorDelegate {
         var renames: [(AnyHashable, String)] = []
@@ -753,9 +753,9 @@ final class TileFolderRenameTests: XCTestCase {
         return try XCTUnwrap(host.host.panelCell(folderID: "F"))
     }
 
-    /// Координатор ставит обработчик; правка имени в панели меняет `TesseraTileStore`,
-    /// сетку и вызывает делегат один раз с итоговым именем; размер, ячейка и
-    /// состав не меняются.
+    /// The coordinator installs the handler; renaming in the panel changes `TesseraTileStore`,
+    /// the grid and calls the delegate once with the final name; the size, cell and
+    /// contents do not change.
     func testCoordinatorHandlerRenamesStoreGridAndNotifiesDelegate() throws {
         let host = try makeCoordinatorHost()
         let delegate = DelegateRecorder()
@@ -765,37 +765,37 @@ final class TileFolderRenameTests: XCTestCase {
         let panel = try openPanel(host)
 
         XCTAssertTrue(panel.beginTitleEditing())
-        type("  Игры ", in: panel)
+        type("  Games ", in: panel)
         pressReturn(in: panel)
 
-        XCTAssertEqual(host.folders.first?.title, "Игры")
-        XCTAssertEqual(host.host.grid.items.compactMap { $0.folder }.first?.title, "Игры")
+        XCTAssertEqual(host.folders.first?.title, "Games")
+        XCTAssertEqual(host.host.grid.items.compactMap { $0.folder }.first?.title, "Games")
         XCTAssertEqual(delegate.renames.count, 1)
         XCTAssertEqual(delegate.renames.first?.0, "F")
-        XCTAssertEqual(delegate.renames.first?.1, "Игры")
+        XCTAssertEqual(delegate.renames.first?.1, "Games")
         XCTAssertEqual(host.store.snapshot(columns: 4).placementTable?.cells, cellsBefore)
         XCTAssertEqual(host.folders.first?.size, .medium)
         XCTAssertEqual(host.folders.first?.tiles.count, 3)
-        XCTAssertFalse(host.coordinator.isEditing, "Переименование не входит в режим редактирования")
+        XCTAssertFalse(host.coordinator.isEditing, "Renaming does not enter edit mode")
     }
 
-    /// Пустое имя возвращает имя по умолчанию: локализованное либо
-    /// `folderTitle` конфигурации — как при создании папки.
+    /// An empty name returns the default name: the localized one or
+    /// the configuration's `folderTitle`, as when creating a folder.
     func testCoordinatorEmptyNameUsesDefaultOrConfiguredTitle() throws {
         let plain = try makeCoordinatorHost()
-        XCTAssertTrue(plain.coordinator.renameFolder("F", to: "Работа"))
+        XCTAssertTrue(plain.coordinator.renameFolder("F", to: "Work"))
         XCTAssertTrue(plain.coordinator.renameFolder("F", to: "  "))
         XCTAssertEqual(plain.folders.first?.title, TesseraStartScreenStrings.string(.folderScreenDefaultTitle))
 
         let custom = try makeCoordinatorHost(
-            configuration: TesseraTileEditConfiguration(folderTitle: "Мои")
+            configuration: TesseraTileEditConfiguration(folderTitle: "Mine")
         )
-        XCTAssertTrue(custom.coordinator.renameFolder("F", to: "Работа"))
+        XCTAssertTrue(custom.coordinator.renameFolder("F", to: "Work"))
         XCTAssertTrue(custom.coordinator.renameFolder("F", to: ""))
-        XCTAssertEqual(custom.folders.first?.title, "Мои")
+        XCTAssertEqual(custom.folders.first?.title, "Mine")
     }
 
-    /// Неизменённое и неизвестное имя — `false`, делегат не зовётся.
+    /// An unchanged and an unknown name give `false`, the delegate is not called.
     func testCoordinatorRenameNoOpDoesNotNotifyDelegate() throws {
         let host = try makeCoordinatorHost()
         let delegate = DelegateRecorder()
@@ -806,8 +806,8 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertTrue(delegate.renames.isEmpty)
     }
 
-    /// Переименование работает и в режиме редактирования; вход в режим
-    /// редактирования и выход из него фиксируют набираемое имя.
+    /// Renaming also works in edit mode; entering and leaving edit mode
+    /// commit the name being typed.
     func testEditModeTransitionsCommitName() throws {
         let host = try makeCoordinatorHost()
         let delegate = DelegateRecorder()
@@ -815,48 +815,48 @@ final class TileFolderRenameTests: XCTestCase {
         host.coordinator.beginEditing()
         let panel = try openPanel(host)
 
-        XCTAssertTrue(panel.beginTitleEditing(), "В правке переименование доступно")
-        type("Игры", in: panel)
+        XCTAssertTrue(panel.beginTitleEditing(), "Renaming is available in edit mode")
+        type("Games", in: panel)
         host.coordinator.endEditing()
-        XCTAssertEqual(host.folders.first?.title, "Игры", "Выход из правки фиксирует имя")
+        XCTAssertEqual(host.folders.first?.title, "Games", "Leaving edit mode commits the name")
         XCTAssertFalse(host.host.grid.isEditingFolderName)
 
         let reopened = try XCTUnwrap(host.host.panelCell(folderID: "F"))
         XCTAssertTrue(reopened.beginTitleEditing())
-        type("Работа", in: reopened)
+        type("Work", in: reopened)
         host.coordinator.beginEditing()
-        XCTAssertEqual(host.folders.first?.title, "Работа", "Вход в правку фиксирует имя")
-        XCTAssertEqual(delegate.renames.map { $0.1 }, ["Игры", "Работа"])
+        XCTAssertEqual(host.folders.first?.title, "Work", "Entering edit mode commits the name")
+        XCTAssertEqual(delegate.renames.map { $0.1 }, ["Games", "Work"])
     }
 
-    /// Тап по фону сетки во время правки имени в режиме редактирования фиксирует
-    /// имя; режим редактирования при этом остаётся (выход — отдельным тапом).
+    /// A tap on the grid background while the name is being edited in edit mode commits
+    /// the name; edit mode stays on (leaving is a separate tap).
     func testBackgroundTapDuringRenameCommitsAndKeepsEditMode() throws {
         let host = try makeCoordinatorHost()
         host.coordinator.beginEditing()
         let panel = try openPanel(host)
         XCTAssertTrue(panel.beginTitleEditing())
-        type("Игры", in: panel)
+        type("Games", in: panel)
 
         tapGridBackground(host.host.grid)
-        XCTAssertEqual(host.folders.first?.title, "Игры")
+        XCTAssertEqual(host.folders.first?.title, "Games")
         XCTAssertFalse(host.host.grid.isEditingFolderName)
-        XCTAssertTrue(host.coordinator.isEditing, "Фиксация имени режим правки не завершает")
+        XCTAssertTrue(host.coordinator.isEditing, "Committing the name does not end edit mode")
         XCTAssertEqual(host.host.grid.expandedFolderID, "F")
         host.coordinator.endEditing()
     }
 
-    /// Выключенный координатор снимает обработчик (заголовок статичен) и
-    /// фиксирует набираемое имя; включённый — возвращает.
+    /// A disabled coordinator removes the handler (the title is static) and
+    /// commits the name being typed; an enabled one restores it.
     func testDisablingCoordinatorRemovesRenameHandler() throws {
         let host = try makeCoordinatorHost()
         let panel = try openPanel(host)
         XCTAssertTrue(panel.beginTitleEditing())
-        type("Игры", in: panel)
+        type("Games", in: panel)
 
         host.coordinator.isEnabled = false
         XCTAssertNil(host.host.grid.folderRenameHandler)
-        XCTAssertEqual(host.folders.first?.title, "Игры", "Набранное зафиксировано до выключения")
+        XCTAssertEqual(host.folders.first?.title, "Games", "What was typed is committed before disabling")
         XCTAssertFalse(panel.isEditingTitle)
         XCTAssertFalse(panel.beginTitleEditing())
 
@@ -866,9 +866,9 @@ final class TileFolderRenameTests: XCTestCase {
         panel.endTitleEditing()
     }
 
-    /// Действие «Переименовать» на плитке папки сосуществует с действиями
-    /// редактора: редактор назначает и снимает свои (`= nil`), «Переименовать»
-    /// остаётся и в правке, и после выхода из неё.
+    /// The "Rename" action on a folder tile coexists with the actions of
+    /// the editor: the editor assigns and clears its own (`= nil`), "Rename"
+    /// stays both in edit mode and after leaving it.
     func testRenameActionSurvivesEditorActionReconciliation() throws {
         let host = try makeCoordinatorHost()
         let renameName = TesseraStartScreenStrings.string(.a11yActionRenameFolder)
@@ -877,8 +877,8 @@ final class TileFolderRenameTests: XCTestCase {
         host.coordinator.beginEditing()
         host.spin(0.1)
         let editing = actionNames(host, "F")
-        XCTAssertTrue(editing.contains(TesseraStartScreenStrings.string(.a11yActionResize)), "Действия редактора на месте")
-        XCTAssertEqual(editing.filter { $0 == renameName }.count, 1, "«Переименовать» — одно, без дублей")
+        XCTAssertTrue(editing.contains(TesseraStartScreenStrings.string(.a11yActionResize)), "The editor's actions are in place")
+        XCTAssertEqual(editing.filter { $0 == renameName }.count, 1, "\"Rename\" appears once, no duplicates")
         host.coordinator.endEditing()
         XCTAssertEqual(actionNames(host, "F"), [renameName])
     }
@@ -887,10 +887,10 @@ final class TileFolderRenameTests: XCTestCase {
         host.host.cell(id)?.accessibilityCustomActions?.map { $0.name } ?? []
     }
 
-    // MARK: - Жесты
+    // MARK: - Gestures
 
-    /// Зона имени: вся строка заголовка открытой панели; ярлыки панели, фон и
-    /// закрытая панель — не имя. Жесты сетки и координатора такие касания не принимают.
+    /// The name zone: the whole title row of an open panel; panel tiles, the background and
+    /// a closed panel are not the name. Grid and coordinator gestures do not accept such touches.
     func testNameHitZoneIsHeaderOnly() throws {
         let host = try makeCoordinatorHost()
         let panel = try openPanel(host)
@@ -905,12 +905,12 @@ final class TileFolderRenameTests: XCTestCase {
         XCTAssertFalse(grid.isFolderNameHit(at: CGPoint(x: header.midX, y: grid.bounds.height - 5)))
 
         grid.closeFolder(animated: false)
-        XCTAssertFalse(grid.isFolderNameHit(at: CGPoint(x: header.midX, y: header.midY)), "Панель закрыта")
+        XCTAssertFalse(grid.isFolderNameHit(at: CGPoint(x: header.midX, y: header.midY)), "The panel is closed")
     }
 
-    /// Долгое нажатие по имени не входит в правку и не начинает drag: касание
-    /// в зоне имени жест координатора не принимает, а само нажатие запускает
-    /// правку имени. Долгое нажатие по ярлыку панели по-прежнему выносит его.
+    /// A long press on the name neither enters edit mode nor starts a drag: the touch
+    /// in the name zone is not accepted by the coordinator gesture, and the press itself starts
+    /// name editing. A long press on a panel tile still takes it out.
     func testNameLongPressDoesNotDragAndTileLongPressStillDragsOut() throws {
         let host = try makeCoordinatorHost()
         host.coordinator.beginEditing()
@@ -918,13 +918,13 @@ final class TileFolderRenameTests: XCTestCase {
         let grid = host.host.grid
         let panelItem = try XCTUnwrap(grid.displayItems.first { $0.isFolderPanel })
 
-        // Долгое нажатие по имени: правка имени, drag нет.
+        // A long press on the name: name editing, no drag.
         XCTAssertTrue(panel.beginTitleEditing())
         XCTAssertFalse(host.coordinator.isDragging)
         XCTAssertTrue(host.coordinator.isEditing)
         panel.endTitleEditing()
 
-        // Долгое нажатие по ярлыку панели в правке — drag из папки.
+        // A long press on a panel tile in edit mode: a drag out of the folder.
         let geometry = try XCTUnwrap(grid.panelShortcutGeometry())
         let frame = geometry.frames[1]
         host.coordinator.handleLongPress(on: panelItem, at: CGPoint(x: frame.midX, y: frame.midY))

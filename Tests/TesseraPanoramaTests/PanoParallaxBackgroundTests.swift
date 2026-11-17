@@ -2,16 +2,16 @@
 //  PanoParallaxBackgroundTests.swift
 //  TesseraPanoramaTests
 //
-//  Тесты фона панорамы под параллакс (задача E10.7в).
-//  Проектные документы: docs/PANORAMA-IOS-DESIGN.md §3 «Параллакс фона»,
-//  docs/CORE-IOS-DESIGN.md §2 («Параллакс: backgroundOffset = offset × factor;
-//  слой заведомо больше contentSize»).
+//  Tests for the panorama background under parallax.
+//  Design documents: docs/PANORAMA-IOS-DESIGN.md §3 (background parallax),
+//  docs/CORE-IOS-DESIGN.md §2 ("Parallax: backgroundOffset = offset × factor;
+//  the layer is deliberately larger than contentSize").
 //
-//  Слой фона — сосед скролла (лежит в `view`, а не в `TesseraPanoScrollView`), и Core
-//  проецирует смещение фона на экран со знаком минус: `transform = −offset ×
-//  factor`. Проверяются направление (фон уезжает туда же, куда секции, но
-//  медленнее) и покрытие: картинка закрывает весь экран в начале и в конце
-//  ленты, а также на «резине» за обоими краями.
+//  The background layer is a sibling of the scroll view (it lives in `view`, not in `TesseraPanoScrollView`), and Core
+//  projects the background shift onto the screen with a minus sign: `transform = −offset ×
+//  factor`. Checked: the direction (the background moves the same way as the sections, but
+//  slower) and the coverage: the image covers the whole screen at the start and at the end
+//  of the strip, and also on the rubber band past both edges.
 //
 
 #if canImport(UIKit)
@@ -23,15 +23,15 @@ import TesseraCore
 
 final class PanoParallaxBackgroundTests: XCTestCase {
 
-    // MARK: - Вспомогательные средства
+    // MARK: - Helpers
 
-    /// Размер экрана панорамы.
+    /// The panorama screen size.
     private let screenSize = CGSize(width: 390, height: 700)
 
-    /// Множитель параллакса: верхняя граница типичного диапазона §4 (0.4–0.6).
+    /// The parallax multiplier: the upper bound of the typical §4 range (0.4–0.6).
     private let factor: CGFloat = 0.6
 
-    /// Загруженная и разложенная панорама из четырёх секций с картинкой фона.
+    /// A loaded and laid-out panorama of four sections with a background image.
     private func makePanorama(factor: CGFloat? = nil) -> TesseraPanoramaViewController {
         let factor = factor ?? self.factor
         let sections = (0..<4).map { index in
@@ -45,23 +45,23 @@ final class PanoParallaxBackgroundTests: XCTestCase {
         panorama.loadViewIfNeeded()
         panorama.view.frame = CGRect(origin: .zero, size: screenSize)
         panorama.view.layoutIfNeeded()
-        // Системный Reduce Motion симулятора не должен влиять на геометрию теста.
+        // The simulator's system Reduce Motion must not affect the test geometry.
         panorama.parallaxLayer.respectsReduceMotion = false
         return panorama
     }
 
-    /// Картинка фона внутри слоя.
+    /// The background image inside the layer.
     private func backgroundImageView(
         of panorama: TesseraPanoramaViewController
     ) throws -> UIImageView {
         try XCTUnwrap(
             panorama.parallaxLayer.subviews.compactMap { $0 as? UIImageView }.first,
-            "Фон панорамы — картинка внутри слоя параллакса"
+            "The panorama background is an image inside the parallax layer"
         )
     }
 
-    /// Экранный (в координатах `view`) прямоугольник картинки фона с учётом
-    /// `transform` слоя.
+    /// The on-screen (in `view` coordinates) rectangle of the background image, accounting for
+    /// the layer's `transform`.
     private func screenRectOfBackground(
         in panorama: TesseraPanoramaViewController
     ) throws -> CGRect {
@@ -69,13 +69,13 @@ final class PanoParallaxBackgroundTests: XCTestCase {
         return imageView.convert(imageView.bounds, to: panorama.view)
     }
 
-    /// Пишет offset в скролл панорамы; трансляцию в слой делает сама панорама
-    /// из `scrollViewDidScroll`.
+    /// Writes the offset to the panorama's scroll view; the panorama itself forwards it to the layer
+    /// from `scrollViewDidScroll`.
     private func scroll(_ panorama: TesseraPanoramaViewController, toX x: CGFloat) {
         panorama.scrollView.contentOffset = CGPoint(x: x, y: 0)
     }
 
-    /// Проверяет, что картинка фона закрывает весь экран.
+    /// Checks that the background image covers the whole screen.
     private func assertBackgroundCoversScreen(
         _ panorama: TesseraPanoramaViewController,
         _ message: String,
@@ -85,20 +85,20 @@ final class PanoParallaxBackgroundTests: XCTestCase {
         let rect = try screenRectOfBackground(in: panorama)
         let screen = panorama.view.bounds
         let tolerance: CGFloat = 0.001
-        XCTAssertLessThanOrEqual(rect.minX, screen.minX + tolerance, "\(message): полоса слева", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(rect.maxX, screen.maxX - tolerance, "\(message): полоса справа", file: file, line: line)
-        XCTAssertLessThanOrEqual(rect.minY, screen.minY + tolerance, "\(message): полоса сверху", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(rect.maxY, screen.maxY - tolerance, "\(message): полоса снизу", file: file, line: line)
+        XCTAssertLessThanOrEqual(rect.minX, screen.minX + tolerance, "\(message): gap on the left", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(rect.maxX, screen.maxX - tolerance, "\(message): gap on the right", file: file, line: line)
+        XCTAssertLessThanOrEqual(rect.minY, screen.minY + tolerance, "\(message): gap at the top", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(rect.maxY, screen.maxY - tolerance, "\(message): gap at the bottom", file: file, line: line)
     }
 
-    // MARK: - Направление (E10.7)
+    // MARK: - Direction
 
-    /// Рост offset'а на Δ уводит фон на экране на −Δ × factor: в ту же сторону,
-    /// что и секции, но медленнее. До E10.7 фон ехал вправо — против контента.
+    /// An offset increase of Δ moves the background on screen by −Δ × factor: the same way
+    /// as the sections, but slower. Previously the background moved right, against the content.
     func testBackgroundMovesWithSectionsButSlower() throws {
         let panorama = makePanorama()
         let maximum = panorama.scrollView.maximumOffsetX
-        XCTAssertGreaterThan(maximum, 0, "Четыре секции обязаны давать ход ленты")
+        XCTAssertGreaterThan(maximum, 0, "Four sections must give the strip some travel")
 
         scroll(panorama, toX: 0)
         let before = try screenRectOfBackground(in: panorama)
@@ -108,42 +108,42 @@ final class PanoParallaxBackgroundTests: XCTestCase {
         let after = try screenRectOfBackground(in: panorama)
 
         XCTAssertEqual(after.minX - before.minX, -delta * factor, accuracy: 0.001)
-        XCTAssertEqual(after.minY, before.minY, accuracy: 0.001, "Вертикали у панорамы нет")
+        XCTAssertEqual(after.minY, before.minY, accuracy: 0.001, "The panorama has no vertical axis")
         XCTAssertEqual(panorama.parallaxLayer.transform.tx, -delta * factor, accuracy: 0.001)
     }
 
-    // MARK: - Покрытие экрана
+    // MARK: - Screen coverage
 
-    /// В начале ленты (offset 0) фон закрывает экран.
+    /// At the start of the strip (offset 0) the background covers the screen.
     func testBackgroundCoversScreenAtStart() throws {
         let panorama = makePanorama()
         scroll(panorama, toX: 0)
         try assertBackgroundCoversScreen(panorama, "offset 0")
     }
 
-    /// В конце ленты (максимальный offset) фон закрывает экран: ход фона
-    /// `maximumOffsetX × factor` лежит справа от вьюпорта.
+    /// At the end of the strip (maximum offset) the background covers the screen: the background's travel
+    /// `maximumOffsetX × factor` lies to the right of the viewport.
     func testBackgroundCoversScreenAtEnd() throws {
         let panorama = makePanorama()
         scroll(panorama, toX: panorama.scrollView.maximumOffsetX)
-        try assertBackgroundCoversScreen(panorama, "максимальный offset")
+        try assertBackgroundCoversScreen(panorama, "maximum offset")
     }
 
-    /// «Резина» за обоими краями ленты не обнажает краёв фона.
+    /// The rubber band past both edges of the strip does not expose the background's edges.
     func testBackgroundCoversScreenOnBounceAtBothEdges() throws {
         let panorama = makePanorama()
         let bounce = screenSize.width / 2
 
         scroll(panorama, toX: -bounce)
-        try assertBackgroundCoversScreen(panorama, "bounce до начала ленты")
+        try assertBackgroundCoversScreen(panorama, "bounce before the start of the strip")
 
         scroll(panorama, toX: panorama.scrollView.maximumOffsetX + bounce)
-        try assertBackgroundCoversScreen(panorama, "bounce за концом ленты")
+        try assertBackgroundCoversScreen(panorama, "bounce past the end of the strip")
     }
 
-    /// Покрытие держится на всём допустимом диапазоне фактора (E9.7: кламп
-    /// `(0, 1)` вместо `0.4…0.6`), включая крайние 0.01 и 0.99 — в том числе на
-    /// «резине» в полэкрана за обоими краями.
+    /// Coverage holds over the whole allowed factor range (a clamp to
+    /// `(0, 1)` instead of `0.4…0.6`), including the extreme 0.01 and 0.99, and also on
+    /// a half-screen rubber band past both edges.
     func testBackgroundCoversScreenForWholeFactorRange() throws {
         let bounce = screenSize.width / 2
         for factor: CGFloat in [0.01, 0.2, 0.8, 0.99] {

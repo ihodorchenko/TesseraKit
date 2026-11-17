@@ -2,173 +2,173 @@
 //  TesseraPanoScrollView.swift
 //  TesseraPanorama
 //
-//  Горизонтальный скролл панорамы: секции уже экрана (peek), кастомный снап и
-//  единственный источник прогресса `t`.
-//  Проектный документ: docs/PANORAMA-IOS-DESIGN.md — §3 «Концептуальная
-//  архитектура» (слой TesseraPanoScrollView под TesseraPanoramaViewController), §4 «Геометрия
-//  и математика ядра» (`itemWidth = screenWidth − peek`; `t = offset.x / itemWidth`;
-//  снап через `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)`;
-//  `decelerationRate = .fast`; на границах — стандартный bounce), §6
-//  «Производительность» (в `scrollViewDidScroll` нет layout), §7 «Accessibility»
-//  (VoiceOver, RTL), §8 «Адаптивность» (одна секция — без снапа, по центру).
+//  The horizontal scroll view of the panorama: sections narrower than the screen (peek), custom snapping, and
+//  the single source of the progress `t`.
+//  Design document: docs/PANORAMA-IOS-DESIGN.md (conceptual
+//  architecture: the TesseraPanoScrollView layer under TesseraPanoramaViewController; core geometry
+//  and math: `itemWidth = screenWidth − peek`; `t = offset.x / itemWidth`;
+//  snapping via `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)`;
+//  `decelerationRate = .fast`; standard bounce at the edges),
+//  performance (no layout in `scrollViewDidScroll`), accessibility
+//  (VoiceOver, RTL), and adaptivity (a single section: no snapping, centered).
 //
 
 #if canImport(UIKit)
 import TesseraCore
 import UIKit
 
-/// Наблюдатель событий ``TesseraPanoScrollView``.
+/// An observer of ``TesseraPanoScrollView`` events.
 ///
-/// Протокол внутримодульный: наружу панорама отдаёт только ``TesseraPanoramaDelegate``,
-/// а жизненный цикл скролла — деталь ядра (§3 `docs/PANORAMA-IOS-DESIGN.md`).
-/// Ссылка наблюдателя слабая: скролл-вью удерживает контроллер, обратной сильной
-/// связи нет.
+/// The protocol is module-internal: the panorama exposes only ``TesseraPanoramaDelegate`` publicly,
+/// and the scroll lifecycle is a core detail (see `docs/PANORAMA-IOS-DESIGN.md`).
+/// The observer reference is weak: the scroll view is retained by the controller, so there is no
+/// strong back reference.
 protocol PanoScrollViewObserving: AnyObject {
 
-    /// Содержимое прокрутилось — горячий путь кадра (§4, §6).
+    /// The content scrolled: the per-frame hot path.
     ///
-    /// Наблюдатель обязан ограничиться `frame`/`transform`/`alpha`: layout в этом
-    /// вызове запрещён.
+    /// The observer must restrict itself to `frame`/`transform`/`alpha`: layout is
+    /// forbidden in this call.
     ///
-    /// - Parameter scrollView: Источник события.
+    /// - Parameter scrollView: The event source.
     func panoScrollViewDidScroll(_ scrollView: TesseraPanoScrollView)
 
-    /// Жест закончился, система готовится начать инерцию.
+    /// The gesture ended and the system is about to start inertia.
     ///
-    /// Отдаёт уже рассчитанный целевой индекс **в порядке чтения** — это точка
-    /// prefetch'а соседа до снапа (§6).
+    /// Provides the already computed target index **in reading order**; this is the point
+    /// for prefetching the neighbor before the snap.
     ///
     /// - Parameters:
-    ///   - scrollView: Источник события.
-    ///   - velocityX: Горизонтальная скорость жеста в pt/s (знаковая, в физических
-    ///     координатах контента — как в `UIScrollView`).
-    ///   - targetReadingIndex: Индекс секции, к которой прилипнет скролл, в порядке
-    ///     чтения (в RTL зеркалирован через ``TesseraRTL``).
+    ///   - scrollView: The event source.
+    ///   - velocityX: The gesture's horizontal velocity in pt/s (signed, in physical
+    ///     content coordinates, as in `UIScrollView`).
+    ///   - targetReadingIndex: The index, in reading order, of the section the scroll will settle on
+    ///     (mirrored through ``TesseraRTL`` in RTL).
     func panoScrollViewWillEndDragging(
         _ scrollView: TesseraPanoScrollView,
         velocityX: CGFloat,
         targetReadingIndex: Int
     )
 
-    /// Жест завершён; `decelerate == false` — движения по инерции не будет.
+    /// The gesture finished; `decelerate == false` means there will be no inertial motion.
     ///
     /// - Parameters:
-    ///   - scrollView: Источник события.
-    ///   - decelerate: Начнётся ли инерция после жеста.
+    ///   - scrollView: The event source.
+    ///   - decelerate: Whether inertia will begin after the gesture.
     func panoScrollViewDidEndDragging(_ scrollView: TesseraPanoScrollView, willDecelerate decelerate: Bool)
 
-    /// Инерция закончилась — снап встал на секцию.
+    /// Inertia ended: the snap settled on a section.
     ///
-    /// - Parameter scrollView: Источник события.
+    /// - Parameter scrollView: The event source.
     func panoScrollViewDidEndDecelerating(_ scrollView: TesseraPanoScrollView)
 
-    /// Завершилась программная анимация `setContentOffset(_:animated:)`.
+    /// A programmatic `setContentOffset(_:animated:)` animation finished.
     ///
-    /// - Parameter scrollView: Источник события.
+    /// - Parameter scrollView: The event source.
     func panoScrollViewDidEndScrollingAnimation(_ scrollView: TesseraPanoScrollView)
 
-    /// Жест VoiceOver «три пальца»: шаг по секциям в порядке чтения.
+    /// The VoiceOver three-finger gesture: a step through the sections in reading order.
     ///
     /// - Parameters:
-    ///   - scrollView: Источник события.
-    ///   - step: `+1` — следующая секция, `-1` — предыдущая (уже с учётом RTL).
-    /// - Returns: `true`, если переход выполнен.
+    ///   - scrollView: The event source.
+    ///   - step: `+1` is the next section and `-1` the previous one (already adjusted for RTL).
+    /// - Returns: `true` if the transition was performed.
     func panoScrollView(_ scrollView: TesseraPanoScrollView, accessibilityStep step: Int) -> Bool
 }
 
-/// Горизонтальный скролл панорамы с неполностраничными секциями и кастомным
-/// снапом (docs/PANORAMA-IOS-DESIGN.md §3, §4).
+/// The panorama's horizontal scroll view with non-full-page sections and custom
+/// snapping (see docs/PANORAMA-IOS-DESIGN.md).
 ///
-/// ## Роль в архитектуре (§3)
+/// ## Role in the architecture
 ///
 /// ```
-/// TesseraPanoramaViewController  ← оркестрация, child-VC, фон, заголовки
-///     └─ TesseraPanoScrollView    ← только горизонталь, геометрия и снап
+/// TesseraPanoramaViewController  ← orchestration, child view controllers, background, headers
+///     └─ TesseraPanoScrollView    ← horizontal only, geometry and snapping
 /// ```
 ///
-/// Скролл-вью владеет **только** геометрией секций, снапом и жизненным циклом
-/// прокрутки. Иерархией child-контроллеров, фоном, заголовками, делегатом и
-/// accessibility-анонсами владеет ``TesseraPanoramaViewController``: он получает события
-/// через внутримодульный ``PanoScrollViewObserving``. `contentOffset` пишут
-/// исключительно жест этого скролл-вью и программный переход контроллера — правило
-/// одного писателя из `docs/CORE-IOS-DESIGN.md` §2 соблюдается.
+/// The scroll view owns **only** the section geometry, snapping, and the scroll
+/// lifecycle. The hierarchy of child controllers, the background, headers, the delegate, and
+/// accessibility announcements belong to ``TesseraPanoramaViewController``: it receives events
+/// through the module-internal ``PanoScrollViewObserving``. `contentOffset` is written
+/// exclusively by this scroll view's gesture and the controller's programmatic transition, so the
+/// single-writer rule from `docs/CORE-IOS-DESIGN.md` is respected.
 ///
-/// ## Геометрия (§4)
+/// ## Geometry
 ///
-/// - `itemWidth = bounds.width − peek`, `peek` в диапазоне 16…64 pt;
-/// - секция `i` (в порядке чтения) стоит в физическом слоте
-///   `slot = i` (LTR) или `slot = sectionCount − 1 − i` (RTL), по x =
-///   `slot × itemWidth` (+ `peek` в RTL — зеркальный запас в начале ленты);
-/// - `contentSize.width = sectionCount × itemWidth + peek`: дополнительная
-///   полоса `peek` в конце ленты позволяет выровнять последнюю секцию по ведущему
-///   краю и показывает фон в зоне «подсматривания» на границе (§4);
-/// - выравнивание секции `i` — `offset.x = slot × itemWidth`;
-/// - прогресс `t = offset.x / itemWidth` — в ``currentProgress()`` он сырой
-///   (физические координаты контента), а в порядке чтения его отдаёт
-///   ``readingProgress(forRawOffset:)``: в RTL он нормализуется через
-///   ``TesseraRTL`` (§7, «RTL»).
+/// - `itemWidth = bounds.width − peek`, with `peek` in the range 16…64 pt;
+/// - section `i` (in reading order) sits in the physical slot
+///   `slot = i` (LTR) or `slot = sectionCount − 1 − i` (RTL), at x =
+///   `slot × itemWidth` (+ `peek` in RTL, a mirrored margin at the start of the strip);
+/// - `contentSize.width = sectionCount × itemWidth + peek`: the extra
+///   `peek` strip at the end of the strip lets the last section align to the leading
+///   edge and shows the background in the peeking zone at the boundary;
+/// - the alignment of section `i` is `offset.x = slot × itemWidth`;
+/// - the progress `t = offset.x / itemWidth` is raw in ``currentProgress()``
+///   (physical content coordinates), and in reading order it is provided by
+///   ``readingProgress(forRawOffset:)``: in RTL it is normalized through
+///   ``TesseraRTL`` (see the RTL notes in the design document).
 ///
-/// В координатах выравнивания сырой прогресс всегда целый (`slot`), поэтому
-/// нормализация ``TesseraRTL`` даёт ровно индекс секции в порядке чтения —
-/// инвариант «целая часть `t` — индекс» из §4 выполняется без поправок.
+/// In alignment coordinates the raw progress is always an integer (`slot`), so the
+/// ``TesseraRTL`` normalization gives exactly the section index in reading order:
+/// the "integer part of `t` is the index" invariant holds without corrections.
 ///
-/// ## Снап (§4)
+/// ## Snapping
 ///
-/// `isPagingEnabled = false` (полностраничный пейджинг не умеет peek),
-/// `decelerationRate = .fast`, расчёт цели — в
-/// `scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)` через
-/// ``TesseraSnapPolicy``: ближайший центр плюс порог скорости. Политика
-/// клампит результат в `0...(sectionCount − 1) × itemWidth`, что совпадает с
-/// допустимым диапазоном `contentOffset` этого скролл-вью, поэтому «резина» на
-/// границах остаётся штатной, а снап в bounce не вмешивается.
+/// `isPagingEnabled = false` (full-page paging cannot do peek),
+/// `decelerationRate = .fast`, and the target is computed in
+/// `scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)` through
+/// ``TesseraSnapPolicy``: the nearest center plus a velocity threshold. The policy
+/// clamps the result to `0...(sectionCount − 1) × itemWidth`, which matches this scroll view's
+/// valid `contentOffset` range, so the rubber band at the
+/// edges stays standard and snapping does not interfere with bounce.
 ///
-/// ## Дисциплина производительности (§6)
+/// ## Performance discipline
 ///
-/// ``scrollViewDidScroll(_:)`` только пробрасывает событие наблюдателю: ни layout,
-/// ни изменения `contentSize`/frame'ов здесь нет. Геометрию задаёт контроллер
-/// в `viewDidLayoutSubviews`.
+/// ``scrollViewDidScroll(_:)`` only forwards the event to the observer: there is no layout
+/// and no change to `contentSize` or frames here. The controller sets the geometry
+/// in `viewDidLayoutSubviews`.
 ///
-/// - Important: Делегат скролл-вью занят самим скроллом (self-delegation).
-///   Назначать свой `delegate` нельзя: это отключило бы снап и события
-///   наблюдателя. Публичная настройка — ``snapPolicy`` и ``peek``.
-/// - Important: Только главный поток: UIKit-состояние не размазывается по модулям
-///   (`docs/CORE-IOS-DESIGN.md` §3).
+/// - Important: The scroll view's delegate is occupied by the scrolling itself (self-delegation).
+///   Do not assign your own `delegate`: that would disable snapping and the observer
+///   events. The public configuration is ``snapPolicy`` and ``peek``.
+/// - Important: Main thread only: UIKit state is not spread across modules
+///   (`docs/CORE-IOS-DESIGN.md`).
 public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
 
-    // MARK: - Константы геометрии
+    // MARK: - Geometry constants
 
-    /// Рабочий диапазон ``peek`` из §4 («Ширина секции»): 16…64 pt.
+    /// The working range of ``peek``: 16…64 pt.
     private static let peekRange: ClosedRange<CGFloat> = 16...64
 
-    /// Значение ``peek`` по умолчанию (середина диапазона §4).
+    /// The default value of ``peek`` (the middle of the range).
     private static let defaultPeek: CGFloat = 48
 
-    // MARK: - Публичное состояние
+    // MARK: - Public state
 
-    /// Запас «подсматривания» следующей секции, в точках.
+    /// The margin for peeking at the next section, in points.
     ///
-    /// §4: `itemWidth = bounds.width − peek`. Как и ``TesseraPanoramaStyle/peek``,
-    /// значение удерживается в диапазоне `16...64`; `NaN` и бесконечности
-    /// трактуются как дефолт `48`. Запись не меняет геометрию сама по себе:
-    /// `contentSize` пересчитывает контроллер в своём layout-проходе (§6).
+    /// `itemWidth = bounds.width − peek`. Like ``TesseraPanoramaStyle/peek``,
+    /// the value is kept in the range `16...64`; `NaN` and infinities
+    /// are treated as the default `48`. Writing does not change the geometry by itself:
+    /// the controller recomputes `contentSize` in its layout pass.
     public var peek: CGFloat {
         get { storedPeek }
         set { storedPeek = Self.sanitizedPeek(newValue) }
     }
 
-    /// Политика снапа (docs/CORE-IOS-DESIGN.md §3, `TesseraSnapPolicy`).
+    /// The snapping policy (`TesseraSnapPolicy` from `docs/CORE-IOS-DESIGN.md`).
     ///
-    /// Формула снапа живёт в Core и чиста: скролл-вью только подставляет
-    /// фактическую ширину секции и скорость жеста. Смена политики не выполняет
-    /// layout и вступает в силу со следующего жеста (§4).
+    /// The snapping formula lives in Core and is pure: the scroll view only supplies
+    /// the actual section width and the gesture velocity. Changing the policy does not perform
+    /// layout and takes effect from the next gesture.
     public var snapPolicy: TesseraSnapPolicy
 
-    /// Число секций панорамы; задаёт контроллер.
+    /// The number of panorama sections; set by the controller.
     ///
-    /// Влияет на ``itemWidth`` (одна секция — на всю ширину, §8), `contentSize`,
-    /// снап и bounce: при `sectionCount <= 1` листать некуда, поэтому
-    /// горизонтальный bounce и прокрутка выключаются (§8, «одна секция — без
-    /// снапа, по центру»).
+    /// It affects ``itemWidth`` (a single section takes the full width), `contentSize`,
+    /// snapping, and bounce: with `sectionCount <= 1` there is nowhere to page, so
+    /// horizontal bounce and scrolling are disabled (a single section: no
+    /// snapping, centered).
     public var sectionCount: Int {
         get { storedSectionCount }
         set {
@@ -179,11 +179,11 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         }
     }
 
-    /// Ширина одной секции (§4): `bounds.width − peek`.
+    /// The width of a single section: `bounds.width − peek`.
     ///
-    /// Для пустой панорамы и для единственной секции равна ширине скролл-вью:
-    /// подсматривать нечего, холст занимает всю ширину (§8). Значение всегда
-    /// больше нуля при непустых `bounds` — на нём держится деление в
+    /// For an empty panorama and for a single section it equals the scroll view's width:
+    /// there is nothing to peek at, and the canvas takes the full width. The value is always
+    /// greater than zero for non-empty `bounds`; the division in
     /// ``currentProgress()``.
     public var itemWidth: CGFloat {
         let width = bounds.width
@@ -192,57 +192,57 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         return max(width - effectivePeek, 1)
     }
 
-    // MARK: - Внутреннее состояние
+    // MARK: - Internal state
 
-    /// Наблюдатель жизненного цикла скролла (контроллер панорамы).
+    /// The observer of the scroll lifecycle (the panorama controller).
     weak var observer: PanoScrollViewObserving?
 
-    /// Хранилище ``peek`` — валидируется на записи.
+    /// The storage for ``peek``, validated on write.
     private var storedPeek: CGFloat = TesseraPanoScrollView.defaultPeek
 
-    /// Хранилище ``sectionCount`` — валидируется на записи.
+    /// The storage for ``sectionCount``, validated on write.
     private var storedSectionCount: Int = 0
 
-    /// `contentOffset.x` на начале жеста — опора шага ±1 снапа (E10.11).
+    /// `contentOffset.x` at the start of a gesture: the anchor for the ±1 snap step.
     private var dragStartOffsetX: CGFloat?
 
-    /// Цель снапа последнего `scrollViewWillEndDragging` (E9.2б).
+    /// The snap target of the last `scrollViewWillEndDragging`.
     ///
-    /// При нулевой скорости UIKit игнорирует изменённый `targetContentOffset`
-    /// и не двигает offset к цели; контроллер забирает её через
-    /// ``consumePendingSnapOffsetX()`` и доводит offset сам.
+    /// At zero velocity UIKit ignores a modified `targetContentOffset`
+    /// and does not move the offset to the target; the controller picks it up through
+    /// ``consumePendingSnapOffsetX()`` and settles the offset itself.
     private var pendingSnapOffsetX: CGFloat?
 
-    /// Подмена признака «идёт жест или инерция» для тестов (E10.13).
+    /// An override of the "gesture or inertia in progress" flag for tests.
     ///
-    /// `isDragging`/`isDecelerating` — read-only свойства UIKit, их не
-    /// выставить без настоящего касания. `nil` — фактическое состояние.
+    /// `isDragging`/`isDecelerating` are read-only UIKit properties and cannot
+    /// be set without a real touch. `nil` means the actual state.
     var interactionOverrideForTesting: Bool?
 
-    /// Идёт ли пользовательская прокрутка: жест или инерция (§8).
+    /// Whether user scrolling is in progress: a gesture or inertia.
     var isUserScrollInFlight: Bool {
         interactionOverrideForTesting ?? (isDragging || isDecelerating)
     }
 
-    /// ``peek`` с гарантией диапазона (страховка для значений, полученных до init).
+    /// ``peek`` with a guaranteed range (a safeguard for values received before init).
     private var effectivePeek: CGFloat { Self.sanitizedPeek(storedPeek) }
 
-    /// Направление чтения текущей иерархии (для слотов и нормализации прогресса).
+    /// The reading direction of the current hierarchy (for slots and progress normalization).
     ///
-    /// §7, «RTL»: прогресс и индекс считаются от направления чтения.
+    /// Progress and index are computed from the reading direction (see the RTL notes in the design document).
     var resolvedLayoutDirection: UIUserInterfaceLayoutDirection {
         effectiveUserInterfaceLayoutDirection
     }
 
-    // MARK: - Жизненный цикл
+    // MARK: - Lifecycle
 
-    /// Создаёт скролл-вью панорамы.
+    /// Creates the panorama scroll view.
     ///
     /// - Parameters:
-    ///   - peek: Запас подсматривания в точках; по умолчанию `48`, клампится в
-    ///     `16...64` (§4).
-    ///   - snapPolicy: Политика снапа; по умолчанию — параметры Core
-    ///     (порог 600 pt/s, выравнивание по центру).
+    ///   - peek: The peeking margin in points; `48` by default, clamped to
+    ///     `16...64`.
+    ///   - snapPolicy: The snapping policy; Core's parameters by default
+    ///     (a threshold of 600 pt/s, center alignment).
     public init(peek: CGFloat = 48, snapPolicy: TesseraSnapPolicy = TesseraSnapPolicy()) {
         self.storedPeek = TesseraPanoScrollView.sanitizedPeek(peek)
         self.snapPolicy = snapPolicy
@@ -250,9 +250,9 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         commonInit()
     }
 
-    /// Создаёт скролл-вью с заданным кадром и дефолтными peek/снапом.
+    /// Creates a scroll view with the given frame and default peek/snapping.
     ///
-    /// - Parameter frame: Начальный кадр.
+    /// - Parameter frame: The initial frame.
     public override init(frame: CGRect) {
         self.storedPeek = TesseraPanoScrollView.defaultPeek
         self.snapPolicy = TesseraSnapPolicy()
@@ -260,19 +260,19 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         commonInit()
     }
 
-    /// Не поддерживается: скролл-вью создаётся только из кода.
-    @available(*, unavailable, message: "Используйте init(peek:snapPolicy:)")
+    /// Not supported: the scroll view is created only from code.
+    @available(*, unavailable, message: "Use init(peek:snapPolicy:)")
     public required init?(coder: NSCoder) {
-        fatalError("TesseraPanoScrollView не поддерживает загрузку из Interface Builder")
+        fatalError("TesseraPanoScrollView does not support loading from Interface Builder")
     }
 
-    /// Общая настройка скролл-вью (§4, «Снап»).
+    /// Common scroll view setup.
     ///
-    /// `isPagingEnabled` выключен осознанно: пейджинг умеет только полноширинные
-    /// страницы, а панорама показывает peek. `contentInsetAdjustmentBehavior =
-    /// .never` — исходное значение: кадр скролл-вью задаёт контроллер, а нижнюю
-    /// safe area получают child-контроллеры секций. Контроллер панорамы
-    /// переопределяет его из `TesseraPanoramaStyle.contentInsetAdjustmentBehavior` (§8).
+    /// `isPagingEnabled` is off on purpose: paging handles only full-width
+    /// pages, while the panorama shows a peek. `contentInsetAdjustmentBehavior =
+    /// .never` is the initial value: the controller sets the scroll view's frame, and the child section
+    /// controllers get the bottom safe area. The panorama controller
+    /// overrides it from `TesseraPanoramaStyle.contentInsetAdjustmentBehavior`.
     private func commonInit() {
         isPagingEnabled = false
         decelerationRate = .fast
@@ -280,55 +280,55 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         showsHorizontalScrollIndicator = false
         showsVerticalScrollIndicator = false
         alwaysBounceVertical = false
-        // Горизонтальный bounce включает sectionCount > 1 — листать некуда, если
-        // секция одна (§8).
+        // Horizontal bounce is enabled by sectionCount > 1: there is nowhere to page if
+        // there is only one section.
         alwaysBounceHorizontal = false
         bounces = true
-        // Блокировка направления: диагональный жест не «размазывается» между
-        // осями, вертикаль остаётся ребёнку (§5, «Вертикальный скролл»).
+        // Direction lock: a diagonal gesture is not split between the
+        // axes, and vertical stays with the child (vertical scrolling inside a section).
         isDirectionalLockEnabled = true
         backgroundColor = .clear
         delegate = self
     }
 
-    // MARK: - Публичный API
+    // MARK: - Public API
 
-    /// Сырой прогресс прокрутки `t = contentOffset.x / itemWidth` (§4).
+    /// The raw scroll progress `t = contentOffset.x / itemWidth`.
     ///
-    /// Значение в физических координатах контента: `0` — начало ленты, целая
-    /// часть — физический слот секции, дробная — прогресс перехода. При bounce
-    /// может выходить за `0...(sectionCount − 1)` — потребитель сам решает, как
-    /// его ограничить. Для прогресса в порядке чтения (в RTL он зеркалируется)
-    /// есть ``readingProgress(forRawOffset:)``; наружу панорама отдаёт именно
-    /// его (см. ``TesseraPanoramaDelegate``).
+    /// A value in physical content coordinates: `0` is the start of the strip, the integer
+    /// part is the section's physical slot, and the fractional part is the transition progress. During bounce
+    /// it may go beyond `0...(sectionCount − 1)`; the consumer decides how
+    /// to clamp it. For progress in reading order (mirrored in RTL)
+    /// use ``readingProgress(forRawOffset:)``; this is what the panorama exposes
+    /// (see ``TesseraPanoramaDelegate``).
     ///
-    /// Метод чистый: только читает `contentOffset` и `bounds`, ничего не пишет и
-    /// не запускает layout.
+    /// The method is pure: it only reads `contentOffset` and `bounds`, writes nothing, and
+    /// does not trigger layout.
     ///
-    /// - Returns: Сырой прогресс; `0` при нулевой ширине или нечисловом offset.
+    /// - Returns: The raw progress; `0` for zero width or a non-finite offset.
     public func currentProgress() -> CGFloat {
         let width = itemWidth
         guard width > 0, contentOffset.x.isFinite else { return 0 }
         return contentOffset.x / width
     }
 
-    // MARK: - Геометрия (внутримодульная; используется контроллером и тестами)
+    // MARK: - Geometry (module-internal; used by the controller and tests)
 
-    /// Максимальный допустимый `contentOffset.x` (§4, границы ленты).
+    /// The maximum valid `contentOffset.x` (the strip bounds).
     ///
-    /// Для `contentSize.width = sectionCount × itemWidth + peek` это ровно
-    /// `(sectionCount − 1) × itemWidth` — та же граница, в которую клампит
-    /// ``TesseraSnapPolicy``. Отрицательных значений не бывает.
+    /// For `contentSize.width = sectionCount × itemWidth + peek` this is exactly
+    /// `(sectionCount − 1) × itemWidth`, the same bound that
+    /// ``TesseraSnapPolicy`` clamps to. There are no negative values.
     var maximumOffsetX: CGFloat {
         guard bounds.width > 0 else { return 0 }
         return max(contentSize.width - bounds.width, 0)
     }
 
-    /// Размер контента под текущее число секций (§4).
+    /// The content size for the current number of sections.
     ///
-    /// - пусто — `.zero` (листать нечего);
-    /// - одна секция — размер вьюпорта: секция занимает весь холст (§8);
-    /// - иначе — `sectionCount × itemWidth + peek`.
+    /// - empty: `.zero` (nothing to page);
+    /// - one section: the viewport size, the section takes the whole canvas;
+    /// - otherwise: `sectionCount × itemWidth + peek`.
     var requiredContentSize: CGSize {
         let width = bounds.width
         let height = bounds.height
@@ -340,11 +340,11 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         )
     }
 
-    /// Физический слот секции `index` (в порядке чтения).
+    /// The physical slot of section `index` (in reading order).
     ///
-    /// LTR: слот совпадает с индексом; RTL: зеркалится
-    /// (`sectionCount − 1 − index`), чтобы первая секция чтения была самой правой
-    /// (§7, «RTL»).
+    /// LTR: the slot equals the index; RTL: mirrored
+    /// (`sectionCount − 1 − index`) so the first section in reading order is the rightmost
+    /// (see the RTL notes in the design document).
     func physicalSlot(forReadingIndex index: Int) -> Int {
         guard storedSectionCount > 0 else { return 0 }
         let clamped = min(max(index, 0), storedSectionCount - 1)
@@ -352,14 +352,14 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         return storedSectionCount - 1 - clamped
     }
 
-    /// Кадр секции `index` в координатах контента (§4).
+    /// The frame of section `index` in content coordinates.
     ///
-    /// В RTL секции сдвинуты на `peek` вправо: зеркальная копия LTR-ленты
-    /// начинается не с нуля, а с полосы запаса, чтобы «подсматривание» следующей
-    /// секции оказалось на ведущей стороне чтения (слева).
+    /// In RTL the sections are shifted right by `peek`: the mirrored copy of the LTR strip
+    /// starts not at zero but with the margin strip, so that the peek of the next
+    /// section ends up on the leading side of reading (the left).
     ///
-    /// - Parameter index: Индекс секции в порядке чтения.
-    /// - Returns: Кадр секции; `.zero` для пустой панорамы или нулевой ширины.
+    /// - Parameter index: The section index in reading order.
+    /// - Returns: The section frame; `.zero` for an empty panorama or zero width.
     func rect(forReadingIndex index: Int) -> CGRect {
         guard storedSectionCount > 0, bounds.width > 0 else { return .zero }
         guard storedSectionCount > 1 else { return CGRect(origin: .zero, size: bounds.size) }
@@ -374,42 +374,42 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         )
     }
 
-    /// `contentOffset.x`, при котором секция `index` выровнена по ведущему краю.
+    /// The `contentOffset.x` at which section `index` is aligned to the leading edge.
     ///
-    /// В RTL выравнивание зеркальное: секция прижата к правому краю вьюпорта, а
-    /// полоса подсматривания следующей секции — слева (§7, «RTL»). Формула
-    /// `slot × itemWidth` одинакова для обоих направлений, потому что слот уже
-    /// зеркалирован, а секции в RTL сдвинуты на `peek`.
+    /// In RTL the alignment is mirrored: the section is pressed to the right edge of the viewport, and
+    /// the peek strip of the next section is on the left. The formula
+    /// `slot × itemWidth` is the same for both directions because the slot is already
+    /// mirrored and the sections in RTL are shifted by `peek`.
     ///
-    /// - Parameter index: Индекс секции в порядке чтения.
-    /// - Returns: Offset выравнивания; `0` для одной секции и пустой ленты (§8).
+    /// - Parameter index: The section index in reading order.
+    /// - Returns: The alignment offset; `0` for a single section and an empty strip.
     func alignmentOffset(forReadingIndex index: Int) -> CGFloat {
         guard storedSectionCount > 1 else { return 0 }
         return CGFloat(physicalSlot(forReadingIndex: index)) * itemWidth
     }
 
-    /// Прогресс в порядке чтения для сырого offset'а (§7, «RTL»).
+    /// The progress in reading order for a raw offset.
     ///
-    /// В LTR это `offset / itemWidth`; в RTL ``TesseraRTL/normalizedProgress(_:pageCount:layoutDirection:)``
-    /// зеркалирует его относительно середины ленты. При bounce значение может
-    /// выходить за диапазон — нормализация не клампит (так же ведёт себя Core).
+    /// In LTR this is `offset / itemWidth`; in RTL ``TesseraRTL/normalizedProgress(_:pageCount:layoutDirection:)``
+    /// mirrors it around the middle of the strip. During bounce the value may
+    /// go outside the range; normalization does not clamp (Core behaves the same way).
     ///
-    /// - Parameter rawOffsetX: Физический `contentOffset.x`.
-    /// - Returns: Прогресс в порядке чтения; `0` при одной секции и мусорном входе.
+    /// - Parameter rawOffsetX: The physical `contentOffset.x`.
+    /// - Returns: The progress in reading order; `0` for a single section and garbage input.
     func readingProgress(forRawOffset rawOffsetX: CGFloat) -> CGFloat {
         readingProgress(forRawOffset: rawOffsetX, layoutDirection: resolvedLayoutDirection)
     }
 
-    /// Прогресс в порядке чтения для сырого offset'а в **заданном** направлении.
+    /// The progress in reading order for a raw offset in a **given** direction.
     ///
-    /// Нужен при смене LTR↔RTL на лету (E10.13): offset ещё стоит в слотах
-    /// прежнего направления, а ``resolvedLayoutDirection`` уже новое —
-    /// нормализация по новому направлению открыла бы зеркальную секцию.
+    /// Needed when LTR↔RTL changes on the fly: the offset still sits in the slots
+    /// of the previous direction while ``resolvedLayoutDirection`` is already the new one,
+    /// and normalizing by the new direction would reveal the mirrored section.
     ///
     /// - Parameters:
-    ///   - rawOffsetX: Физический `contentOffset.x`.
-    ///   - layoutDirection: Направление, в котором разложены слоты.
-    /// - Returns: Прогресс в порядке чтения; `0` при одной секции и мусорном входе.
+    ///   - rawOffsetX: The physical `contentOffset.x`.
+    ///   - layoutDirection: The direction in which the slots are laid out.
+    /// - Returns: The progress in reading order; `0` for a single section and garbage input.
     func readingProgress(
         forRawOffset rawOffsetX: CGFloat,
         layoutDirection: UIUserInterfaceLayoutDirection
@@ -424,23 +424,23 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         )
     }
 
-    /// Забирает цель снапа последнего жеста (E9.2б); повторный вызов — `nil`.
+    /// Takes the snap target of the last gesture; a repeated call returns `nil`.
     ///
-    /// - Returns: `contentOffset.x` цели, рассчитанной политикой, либо `nil`,
-    ///   если жест её не рассчитывал (одна секция, нулевая ширина).
+    /// - Returns: The `contentOffset.x` of the target computed by the policy, or `nil`
+    ///   if the gesture did not compute one (a single section, zero width).
     func consumePendingSnapOffsetX() -> CGFloat? {
         defer { pendingSnapOffsetX = nil }
         return pendingSnapOffsetX
     }
 
-    /// Ближайший выровненный offset для доводки после жеста без инерции (E9.2б).
+    /// The nearest aligned offset for settling after a gesture without inertia.
     ///
-    /// Предпочитается цель политики из `scrollViewWillEndDragging`; без неё —
-    /// ближайшая секция к текущему offset'у (та же политика с нулевой
-    /// скоростью). Результат зажат в `0...maximumOffsetX`.
+    /// The policy target from `scrollViewWillEndDragging` is preferred; without it,
+    /// the section nearest to the current offset (the same policy with zero
+    /// velocity). The result is clamped to `0...maximumOffsetX`.
     ///
-    /// - Parameter preferred: Цель, рассчитанная политикой для жеста.
-    /// - Returns: Выровненный offset либо `nil`, если снапа нет (≤ 1 секции).
+    /// - Parameter preferred: The target computed by the policy for the gesture.
+    /// - Returns: The aligned offset, or `nil` if there is no snapping (≤ 1 section).
     func alignedSnapOffsetX(preferred: CGFloat?) -> CGFloat? {
         let width = itemWidth
         guard storedSectionCount > 1, width > 0 else { return nil }
@@ -459,17 +459,17 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         return min(max(target, 0), maximumOffsetX)
     }
 
-    /// Сырой offset для прогресса в порядке чтения — обратное к
-    /// ``readingProgress(forRawOffset:)`` преобразование.
+    /// The raw offset for a progress in reading order: the inverse of the
+    /// ``readingProgress(forRawOffset:)`` conversion.
     ///
-    /// В RTL ``TesseraRTL/normalizedProgress(_:pageCount:layoutDirection:)`` —
-    /// инволюция (`(n − 1) − ((n − 1) − t) == t`), поэтому тот же вызов переводит
-    /// прогресс чтения обратно в физические координаты. Результат клампится в
-    /// `0...maximumOffsetX`: у самой границы ленты доля внутри секции не
-    /// представима (§8).
+    /// In RTL ``TesseraRTL/normalizedProgress(_:pageCount:layoutDirection:)`` is
+    /// an involution (`(n − 1) − ((n − 1) − t) == t`), so the same call converts
+    /// reading progress back to physical coordinates. The result is clamped to
+    /// `0...maximumOffsetX`: right at the strip boundary, the fraction within a section is not
+    /// representable.
     ///
-    /// - Parameter progress: Прогресс в порядке чтения (`0...sectionCount − 1`).
-    /// - Returns: Клампированный `contentOffset.x`.
+    /// - Parameter progress: The progress in reading order (`0...sectionCount − 1`).
+    /// - Returns: The clamped `contentOffset.x`.
     func rawOffset(forReadingProgress progress: CGFloat) -> CGFloat {
         guard storedSectionCount > 1 else { return 0 }
         let width = itemWidth
@@ -483,14 +483,14 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         return min(max(raw * width, 0), maximumOffsetX)
     }
 
-    /// Ближайший индекс секции в порядке чтения для сырого offset'а (§4, §7).
+    /// The nearest section index in reading order for a raw offset.
     ///
-    /// Округление до слота выполняется **до** зеркалирования — так же, как в
-    /// ``TesseraRTL/pageIndex(for:pageCount:layoutDirection:)``: важен физический
-    /// слот, который сейчас в кадре, а не прогресс входа следующей секции.
+    /// Rounding to the slot happens **before** mirroring, as in
+    /// ``TesseraRTL/pageIndex(for:pageCount:layoutDirection:)``: what matters is the physical
+    /// slot currently in frame, not the entry progress of the next section.
     ///
-    /// - Parameter rawOffsetX: Физический `contentOffset.x`.
-    /// - Returns: Индекс в порядке чтения (при пустой ленте — `0`).
+    /// - Parameter rawOffsetX: The physical `contentOffset.x`.
+    /// - Returns: The index in reading order (`0` for an empty strip).
     func readingIndex(forRawOffset rawOffsetX: CGFloat) -> Int {
         guard storedSectionCount > 1 else { return 0 }
         let width = itemWidth
@@ -509,41 +509,41 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
 
     // MARK: - UIScrollViewDelegate
 
-    /// Горячий путь прокрутки (§6).
+    /// The scrolling hot path.
     ///
-    /// Ни layout, ни изменений `contentSize`: событие уходит наблюдателю, который
-    /// двигает только `transform`/`alpha` и сообщает прогресс делегату.
+    /// No layout and no `contentSize` changes: the event goes to the observer, which
+    /// moves only `transform`/`alpha` and reports progress to the delegate.
     ///
-    /// - Parameter scrollView: Скролл-вью-источник (всегда `self`).
+    /// - Parameter scrollView: The source scroll view (always `self`).
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === self else { return }
         observer?.panoScrollViewDidScroll(self)
     }
 
-    /// Начало жеста: запоминаем стартовый offset для снапа (E10.11).
+    /// Gesture start: remember the start offset for snapping.
     ///
-    /// - Parameter scrollView: Скролл-вью-источник.
+    /// - Parameter scrollView: The source scroll view.
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === self else { return }
         dragStartOffsetX = contentOffset.x
         pendingSnapOffsetX = nil
     }
 
-    /// Кастомный снап панорамы (§4, «Снап»).
+    /// The panorama's custom snapping.
     ///
-    /// Расчёт цели полностью делегируется ``TesseraSnapPolicy``: скролл-вью
-    /// подставляет фактическую ширину секции (`itemWidth`) и скорость жеста.
-    /// `isPagingEnabled` выключен, поэтому это единственный механизм прилипания.
+    /// The target computation is fully delegated to ``TesseraSnapPolicy``: the scroll view
+    /// supplies the actual section width (`itemWidth`) and the gesture velocity.
+    /// `isPagingEnabled` is off, so this is the only settling mechanism.
     ///
-    /// Для одной секции снапа нет: листать некуда, offset остаётся нулевым (§8).
-    /// Префetch-хук: наблюдатель получает уже рассчитанный целевой индекс — сосед
-    /// успевает загрузиться до начала децелерации (§6).
+    /// For a single section there is no snapping: there is nowhere to page, and the offset stays zero.
+    /// Prefetch hook: the observer receives the already computed target index, so the neighbor
+    /// has time to load before deceleration begins.
     ///
     /// - Parameters:
-    ///   - scrollView: Скролл-вью-источник.
-    ///   - velocity: Скорость жеста; используется только горизонтальная компонента.
-    ///   - targetContentOffset: Предложенная системой цель; перезаписывается
-    ///     результатом снапа.
+    ///   - scrollView: The source scroll view.
+    ///   - velocity: The gesture velocity; only the horizontal component is used.
+    ///   - targetContentOffset: The target proposed by the system; overwritten
+    ///     with the snap result.
     public func scrollViewWillEndDragging(
         _ scrollView: UIScrollView,
         withVelocity velocity: CGPoint,
@@ -551,7 +551,7 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
     ) {
         guard scrollView === self else { return }
 
-        // UIKit отдаёт скорость в points/ms, политика и наблюдатель — в pt/s.
+        // UIKit reports velocity in points/ms; the policy and the observer use pt/s.
         let velocityX = velocity.x * 1000
         let startOffsetX = dragStartOffsetX
         dragStartOffsetX = nil
@@ -561,7 +561,7 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
 
         pendingSnapOffsetX = nil
         guard count > 1, width > 0 else {
-            // Одна секция: снап не нужен, цель не трогаем (§8).
+            // A single section: no snapping needed, leave the target alone.
             if count == 1 {
                 targetContentOffset.pointee.x = 0
             }
@@ -582,7 +582,7 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         )
         pendingSnapOffsetX = targetContentOffset.pointee.x
 
-        // Prefetch (§6): цель уже известна, снап ещё не начался.
+        // Prefetch: the target is already known and the snap has not started yet.
         observer?.panoScrollViewWillEndDragging(
             self,
             velocityX: velocityX,
@@ -590,11 +590,11 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         )
     }
 
-    /// Жест завершён — сообщаем контроллеру, будет ли инерция.
+    /// The gesture finished: tell the controller whether inertia will follow.
     ///
     /// - Parameters:
-    ///   - scrollView: Скролл-вью-источник.
-    ///   - decelerate: Начнётся ли инерция.
+    ///   - scrollView: The source scroll view.
+    ///   - decelerate: Whether inertia will begin.
     public func scrollViewDidEndDragging(
         _ scrollView: UIScrollView,
         willDecelerate decelerate: Bool
@@ -603,50 +603,50 @@ public final class TesseraPanoScrollView: UIScrollView, UIScrollViewDelegate {
         observer?.panoScrollViewDidEndDragging(self, willDecelerate: decelerate)
     }
 
-    /// Инерция закончилась: снап встал на секцию.
+    /// Inertia ended: the snap settled on a section.
     ///
-    /// - Parameter scrollView: Скролл-вью-источник.
+    /// - Parameter scrollView: The source scroll view.
     public func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === self else { return }
         observer?.panoScrollViewDidEndDecelerating(self)
     }
 
-    /// Программная анимация offset'а завершилась.
+    /// The programmatic offset animation finished.
     ///
-    /// - Parameter scrollView: Скролл-вью-источник.
+    /// - Parameter scrollView: The source scroll view.
     public func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         guard scrollView === self else { return }
         observer?.panoScrollViewDidEndScrollingAnimation(self)
     }
 
-    // MARK: - Accessibility (§7)
+    // MARK: - Accessibility
 
-    /// Пагинация секций жестом VoiceOver «три пальца» (§7, «VoiceOver»).
+    /// Section paging with the VoiceOver three-finger gesture.
     ///
-    /// Собственная реализация `UIScrollView` листала бы «экран», игнорируя
-    /// границы секций и снап; здесь направление превращается в шаг по секциям
-    /// через ``TesseraAccessibility/pageStep(for:layoutDirection:)`` (с учётом
-    /// RTL), а решение и переход выполняет контроллер — `contentOffset` пишет
-    /// по-прежнему он (§2, «Один писатель»).
+    /// `UIScrollView`'s own implementation would page by a "screen", ignoring
+    /// section boundaries and snapping; here the direction is converted into a step through the sections
+    /// via ``TesseraAccessibility/pageStep(for:layoutDirection:)`` (taking
+    /// RTL into account), and the controller makes the decision and performs the transition, so
+    /// `contentOffset` is still written by it alone (the single-writer contract).
     ///
-    /// - Parameter direction: Направление жеста VoiceOver.
-    /// - Returns: `true`, если жест обработан.
+    /// - Parameter direction: The VoiceOver gesture direction.
+    /// - Returns: `true` if the gesture was handled.
     public override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
-        // Одна секция или пустая лента: пагинации нет, отдаём жест системе.
+        // A single section or an empty strip: there is no paging, hand the gesture to the system.
         guard storedSectionCount > 1 else { return super.accessibilityScroll(direction) }
 
         let step = TesseraAccessibility.pageStep(
             for: direction,
             layoutDirection: resolvedLayoutDirection
         )
-        // Вертикальные жесты и отсутствие наблюдателя — не наша адресация.
+        // Vertical gestures and a missing observer are not ours to address.
         guard step != 0, let observer else { return super.accessibilityScroll(direction) }
         return observer.panoScrollView(self, accessibilityStep: step)
     }
 
-    // MARK: - Санитизация входа
+    // MARK: - Input sanitization
 
-    /// Приводит `peek` к диапазону `16...64`; `NaN`/бесконечности — к дефолту.
+    /// Clamps `peek` to the range `16...64`; `NaN`/infinities become the default.
     private static func sanitizedPeek(_ value: CGFloat) -> CGFloat {
         guard value.isFinite else { return defaultPeek }
         return min(max(value, peekRange.lowerBound), peekRange.upperBound)
