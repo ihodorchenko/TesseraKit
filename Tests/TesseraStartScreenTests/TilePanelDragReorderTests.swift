@@ -4,7 +4,7 @@
 //
 //  Reordering tiles by dragging inside an open folder panel (D40;
 //  Windows 10 Mobile §6.5, §6.6). Design document: docs/STARTSCREEN-IOS-DESIGN.md
-//  ("Implementation deviations"); decision D40 in docs/STATE.md.
+//  ("Implementation notes and deviations"); decision D40 in docs/DECISIONS.md.
 //
 //  The rules that are checked:
 //  - a long press on a panel tile in edit mode starts a reorder: the panel

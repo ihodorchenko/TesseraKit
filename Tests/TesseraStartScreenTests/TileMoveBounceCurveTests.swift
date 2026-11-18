@@ -3,7 +3,7 @@
 //  TesseraStartScreenTests
 //
 //  Tests for the tile move bounce curve.
-//  Design document: docs/PLAN.md: neighbor movements during a reorder
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode": neighbor movements during a reorder
 //  end with a light "bounce" `cubic-bezier(0.175, 0.885, 0.32, 1.1)`,
 //  without abrupt jumps.
 //

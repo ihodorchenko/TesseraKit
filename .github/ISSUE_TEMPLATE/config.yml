@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/ihodorchenko/TesseraKit/tree/main/docs
+    about: Design documents, decision log and manual testing checklist.
+  - name: Report a security vulnerability
+    url: https://github.com/ihodorchenko/TesseraKit/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.

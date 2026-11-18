@@ -7,7 +7,7 @@
 //  (leading-edge policy, axis arbitration), §4 "Live tiles" (off-screen pauses),
 //  §7 "Left page: the hook" (appear/disappear callbacks), §8 "Background
 //  parallax" (wallpaper margin) and §9 "Accessibility" (page announcements).
-//  Core pager contract: docs/CORE-IOS-DESIGN.md, "Implementation deviations"
+//  Core pager contract: docs/CORE-IOS-DESIGN.md, "Behaviour of the implementation"
 //  (reload by id, appearance only for the current page).
 //
 //  The screen is embedded into a window manually (without a rootViewController); the screen's

@@ -2,8 +2,7 @@
 //  StartScreenViewFacadeTests.swift
 //  TesseraStartScreenTests
 //
-//  Regression tests for the SwiftUI start screen facade, from the review
-//  (see docs/PLAN.md).
+//  Regression tests for the SwiftUI start screen facade, from the review.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md, §2 "Architecture"
 //  (TesseraStartScreenView -> StartScreenViewController, TesseraStartScreenDelegate), §4
 //  "Live tiles", §7 "Left page: the hook" and §14 (D12: a tap is an event, the action

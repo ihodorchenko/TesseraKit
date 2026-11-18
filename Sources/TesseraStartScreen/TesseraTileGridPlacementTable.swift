@@ -1,7 +1,7 @@
 // The explicit cell table in a grid snapshot: the "side" input of the layout (D30).
 //
 // Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 (the tile grid) and the implementation notes
-// for explicit cells; decisions D30–D33 in docs/STATE.md.
+// for explicit cells; decisions D30–D33 in docs/DECISIONS.md.
 //
 // Before explicit cells, the layout was a function of order:
 // ``TesseraTileLayoutEngine/pack(items:columns:unit:)`` packed tiles strictly compactly by the

@@ -1,303 +1,212 @@
-# Сверка TesseraStartScreen с рабочим столом Windows 10 Mobile
+# TesseraStartScreen vs. the Windows 10 Mobile start screen
 
-Документ сверяет поведение `TesseraStartScreen` с рабочим столом Windows 10 Mobile (сборки 10586 и 14393). Эталон — референс `docs/W10M-STARTSCREEN.md` (§1–§9); факты о нашей реализации — рабочий факт-лист сверки (временный документ, после сборки не хранится) со ссылками на код и проектный дизайн; решения и вопросы — `docs/STATE.md` (D1–D45, Q1–Q9); мотивы и оговорки — `docs/STARTSCREEN-IOS-DESIGN.md` (§3, §5, §6, §9 и «Отступления реализации», пп. 1–56); статусы и отложенное — `docs/PLAN.md`. Сверка отвечает, что совпадает, что нет и что сделано иначе; она не ТЗ и не приговор: расхождение — не дефект, а следствие решения или кандидат в план. Недосмотры и молчание источника оговорены.
+This document compares the behaviour of `TesseraStartScreen` with the Windows 10 Mobile (W10M) start screen (builds 10586 and 14393). The reference is [W10M-STARTSCREEN.md](W10M-STARTSCREEN.md) (§1–§9, referred to below as "ref §n"); facts about our implementation come from the code and from [STARTSCREEN-IOS-DESIGN.md](STARTSCREEN-IOS-DESIGN.md); decisions are in [DECISIONS.md](DECISIONS.md) (D-numbers); manual verification status is in [MANUAL-TESTING.md](MANUAL-TESTING.md). The review answers what matches, what does not, and what is done differently. It is not a specification and not a verdict: a difference is not a defect, it is either a deliberate decision or a known gap.
 
-## Оглавление
+TesseraKit is an independent project and is not affiliated with Microsoft. Windows Phone and Windows 10 Mobile are trademarks of Microsoft Corporation.
 
-- [Как читать](#как-читать)
-- [Границы сравнения](#границы-сравнения)
-- [Сводная таблица](#сводная-таблица)
-  - [Модель и данные](#модель-и-данные)
-  - [Сетка и геометрия](#сетка-и-геометрия)
-  - [Раскладка и пустоты](#раскладка-и-пустоты)
-  - [Страницы и прокрутка](#страницы-и-прокрутка)
-  - [Обычный режим](#обычный-режим)
-  - [Режим редактирования](#режим-редактирования)
-  - [Папки](#папки)
-  - [Live-плитки и badge](#live-плитки-и-badge)
-  - [Accessibility и локализация](#accessibility-и-локализация)
-- [Разбор по группам](#разбор-по-группам)
-- [Сознательные отступления](#сознательные-отступления)
-- [Расхождения без решения](#расхождения-без-решения)
-- [Список приложений — вне области сверки](#список-приложений--вне-области-сверки)
-- [План исправлений](#план-исправлений)
-- [Что сверка не покрывает](#что-сверка-не-покрывает)
-- [Источники](#источники)
+## Contents
 
-## Как читать
+- [How to read this](#how-to-read-this)
+- [Scope of the comparison](#scope-of-the-comparison)
+- [Summary table](#summary-table)
+- [Notes by group](#notes-by-group)
+- [Deliberate departures](#deliberate-departures)
+- [Known gaps](#known-gaps)
+- [Apps list: outside the comparison](#apps-list-outside-the-comparison)
+- [What the review does not cover](#what-the-review-does-not-cover)
+- [Sources](#sources)
 
-Статусы сводной таблицы:
+## How to read this
 
-- ✅ **совпадает** — поведение и его смысл те же; различия только в единицах, оценках таймингов или технике.
-- 🔶 **частично** — механика есть, но часть её отличается или не покрыта эталоном (сказано в комментарии).
-- ❌ **отличается** — механика есть, но по другим правилам (порядок, модель, объект воздействия).
-- ➖ **не реализовано** — у нас нет; в колонке W10M — что и насколько достоверно было в ОС.
-- ➕ **добавлено у нас** — в W10M нет или эталон не описывает; расширение, не расхождение. Если эталон об аспекте не говорит ничего и сравнивать не с чем — это ❔, а не ➕.
-- ❔ **не сравнимо** — эталон молчит об этом аспекте: в колонке W10M стоит «не зафиксировано / не описано», у нас при этом своё поведение. Строка — справка, а не оценка: сравнивать не с чем, поэтому и ✅/❌/➖ были бы оценкой без эталона. Граница с ➕: ➕ — когда эталон фиксирует отсутствие аспекта (или его нет достоверно), ❔ — когда он об аспекте не говорит ничего.
+Statuses in the summary table:
 
-Первая оговорка: часть поведения у нас — **параметр хоста**, а не зашитое значение. Это `columns`, `onTap` (D12), `beginEditing`/`toggleEditing`, порог `onLongPress`, `supportedSizesProvider`, обои и параллакс, боковые страницы (D13) и тексты. В таких строках в комментарии стоит «параметр хоста»; где пометки нет, значение задаёт компонент. «У нас 4 колонки» и «4 по умолчанию, хост может задать 6» — разные утверждения.
+- ✅ **matches**: behaviour and meaning are the same; differences are only in units, timing estimates or technique.
+- 🔶 **partly**: the mechanic exists, but part of it differs or is not covered by the reference (stated in the comment).
+- ❌ **differs**: the mechanic exists but follows different rules (order, model, object of the action).
+- ➖ **not implemented**: we do not have it; the W10M column says what existed in the OS and how reliably it is known.
+- ➕ **added by us**: absent in W10M or not described by the reference; an extension, not a divergence. If the reference says nothing about the aspect and there is nothing to compare with, the status is ❔, not ➕.
+- ❔ **not comparable**: the reference is silent on the aspect (the W10M column says "not recorded / not described") while we have our own behaviour. The row is information, not a grade: with nothing to compare, ✅/❌/➖ would be a grade without a reference. Border with ➕: ➕ means the reference records the aspect's absence (or it is reliably absent), ❔ means the reference says nothing at all.
 
-Вторая оговорка: «факт-лист §n» — временный документ сверки (в репозитории не хранится); факты проверяемы по коду и дизайн-доку.
+Some of our behaviour is a **host parameter**, not a built-in value: `columns`, `onTap` (D12), `beginEditing`/`toggleEditing`, the `onLongPress` threshold, `supportedSizesProvider`, the wallpaper and parallax, the side pages (D13) and texts. Such rows say "host parameter"; without that note, the component sets the value. "We have 4 columns" and "4 by default, the host may set 6" are different statements.
 
-Третья оговорка — про эталон: референс размечен по достоверности (`[спека]`, `[наблюдение]`, `[не документировано]`). Пометка «не документировано» сама по себе строку не обесценивает: если рабочая модель референса описана, статус ставится по ней (обычно 🔶 или ❌), и это сказано в комментарии. Если же эталон об аспекте молчит совсем — в колонке W10M «не зафиксировано / не описано», а раздела в референсе нет, — строка получает ❔ и остаётся справкой: ни ✅, ни ➖, ни ➕ не ставятся, потому что сравнивать не с чем.
+The reference marks reliability: `[spec]`, `[observed]`, `[undocumented]`. An `[undocumented]` mark does not by itself devalue a row: if the reference describes a working model, the status follows it (usually 🔶 or ❌) and the comment says so. If the reference is entirely silent and has no section, the row gets ❔.
 
-## Границы сравнения
+## Scope of the comparison
 
-Сверяется только рабочий стол: сетка и размеры, раскладка, обычный режим и правка, папки, жесты. Левый хук и правая страница списка приложений — расширения пакета (D13): в W10M Start их нет, поэтому они не оцениваются по шкале «как в W10M»; отсутствие поиска, «Recently Installed» и контекстного меню в правой странице — не дефект рабочего стола. Компонент универсален: ярлык — это действие (`TesseraTileDescriptor.action`), приложение, файл и ссылка для компонента неразличимы, поэтому «виды плиток» W10M (обычная, вторичная, веб) — не ориентир. Системные экраны W10M — список приложений, «Параметры», Continuum, экран блокировки — вне области.
+Only the start screen itself is compared: grid and sizes, layout, normal mode and editing, folders, gestures. The left hook and the right apps-list page are package extensions (D13): W10M Start has neither, so they are not graded on an "as in W10M" scale; the absence of search, "Recently installed" and a context menu on the right page is not a defect of the start screen. The component is generic: a tile is an action (`TesseraTileDescriptor.action`); app, file and link are indistinguishable to it, so the W10M tile kinds (normal, secondary, web) are not a benchmark. W10M system screens (the apps list, Settings, Continuum, the lock screen) are out of scope.
 
-## Сводная таблица
+## Summary table
 
-Строки сгруппированы по слоям — от модели к доступности.
+Rows are grouped by layer, from model to accessibility.
 
-### Модель и данные
+### Model and data
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Состав модели | Плитка приложения, вторичная плитка, веб-ссылка, папка `start:Folder` (§1, §6.1) | Ярлык `TesseraTileDescriptor` и папка `TesseraTileFolder`; отдельных типов нет | ➕ | Отдельных типов нет и не нужно: любой элемент (приложение, файл, ссылка) — равноправный ярлык с действием; универсальность, не ограничение. |
-| Что обозначает ярлык | Приложение, вторичная плитка или веб-ссылка; тип задан манифестом и разметкой (§1, §6.1) | Любой элемент: приложение, файл или произвольное действие; тип не различается, `action` — замыкание хоста (D12) | ➕ | Намеренно: компонент не знает, что запускает плитка (`TesseraTileDescriptor.swift:124`; `action`). |
-| Хранение позиции | `Row`, `Column`, `Size` — абсолютные координаты в разметке (§1, §3) | `tiles.json` версии 2: явная ячейка `row`/`column` у каждого верхнеуровневого элемента (логические координаты, 0 — начало чтения), ширина холста `columns`, `sizes`, папки; порядок чтения — производное от ячеек | ✅ | D30, D33, E14.1, п. 49, 52. Совпадает для верхнего уровня; ячеек внутри папки нет — у W10M вложенные плитки имеют координаты относительно папки (§6.1), у нас порядок ярлыков (его перестановка — E16, D40). |
-| Набор размеров | В интерфейсе три: 1×1, 2×2, 4×2; 4×4 — схема и десктоп (§1, §5) | Четыре размера, по умолчанию `.medium` (D15) | ❌ | `TesseraTileDescriptor.swift:27`; `large` доступен в UI, чего телефонный Start не делал. |
+| Model composition | App tile, secondary tile, web link, folder `start:Folder` (ref §1, §6.1) | A `TesseraTileDescriptor` tile and a `TesseraTileFolder` folder; no separate types | ➕ | Separate types are not needed: any item (app, file, link) is an equal tile with an action. This is generality, not a limitation. |
+| What a tile represents | App, secondary tile or web link; the type comes from the manifest and markup (ref §1, §6.1) | Any item: app, file or arbitrary action; the type is not distinguished, `action` is a host closure (D12) | ➕ | Deliberate: the component does not know what a tile launches. |
+| Position storage | `Row`, `Column`, `Size`: absolute coordinates in the layout markup (ref §1, §3) | `tiles.json` version 2: an explicit `row`/`column` cell per top-level item (logical coordinates, 0 is the start of reading order), canvas width `columns`, `sizes`, folders; reading order is derived from cells | ✅ | D30, D33. Matches for the top level; folder contents have no cells, whereas in W10M nested tiles have coordinates relative to the folder (ref §6.1); ours keep an order, which can be changed (D40). |
+| Size set | Three in the UI: 1×1, 2×2, 4×2; 4×4 is schema and desktop only (ref §1, §5) | Four sizes, `.medium` by default (D15) | ❌ | `large` is available in the UI, which the phone Start did not offer. |
 
-### Сетка и геометрия
+### Grid and geometry
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Число колонок | 6 по умолчанию, 8 при «Show more tiles»; зависит от DPI и масштаба (§2) | 6 по умолчанию (D26, E13); `columns` — параметр хоста, автоподбора нет | ✅ | `TesseraTileLayoutEngine.defaultColumns`; ширина экрана на число колонок не влияет (§3 design); 8 колонок — см. следующую строку. |
-| «Show more tiles» | Переключатель 6↔8, плитки мельче, раскладка пересчитывается (§2–§3) | Ни переключателя, ни пересчёта | ➖ | факт-лист §12; достижимо только сменой `columns` хостом; решено не делать (D26). |
-| Пропорции и зазоры | Ассеты 71/150/310 epx, зазор 6–10, поля ~12 — реконструкция (§2) | Юнит от ширины, зазор 8 pt, поля 16 + safeArea, выравнивание по пикселям | 🔶 | Кратность ячейке и пропорции совпадают, абсолютные значения другие (факт-лист §3). |
-| Ориентация | Start портретный, сетка при повороте не перестраивается (§2) | Поворот пересчитывает рамки по `bounds`; колонки не меняются | ❌ | `TileGridView.swift:2572`; ландшафт не запрещён; ориентацию, если нужно, ограничивает хост. |
+| Column count | 6 by default, 8 with "Show more tiles"; depends on DPI and scale (ref §2) | 6 by default (D26); `columns` is a host parameter, no auto-selection | ✅ | `TesseraTileLayoutEngine.defaultColumns`; screen width does not change the column count. For 8 columns see the next row. |
+| "Show more tiles" | A 6↔8 toggle, smaller tiles, layout recomputed (ref §2–§3) | Neither toggle nor recomputation | ➖ | Reachable only by the host changing `columns`; deliberately not built (D26). |
+| Proportions and gaps | Assets 71/150/310 epx, gap 6–10, margins about 12: a reconstruction (ref §2) | Unit derived from width, 8 pt gap, 16 pt margins plus safe area, pixel alignment | 🔶 | Cell multiples and proportions match; absolute values differ. |
+| Orientation | Start is portrait; the grid is not rebuilt on rotation (ref §2) | Rotation recomputes frames from `bounds`; columns do not change | ❌ | Landscape is not forbidden; the host restricts orientation if needed. |
 
-### Раскладка и пустоты
+### Layout and holes
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Пустоты и упаковка | Сетка не переупаковывается, дыры сохраняются, Start — холст (§3) | Плитки якорятся на своих ячейках, дыры сохраняются (в том числе после открепления, слияния, уменьшения и drop), обратного заполнения нет; упаковка по порядку остаётся только запасным путём (откат раскладки, миграция v1 → v2, раскладка первого запуска) | ✅ | D30, E14.2–E14.5, п. 49–53; композиции пустотами («колонка у края», «L») достижимы. Исключение — при другой ширине холста показывается проекция без дыр (строка «Другая ширина холста»). |
-| Схлопывание после открепления | Соседи не подтягиваются; схлопывается только полностью опустевшая строка (§3, §5) | Соседи не двигаются, остаётся дыра; полностью пустая строка (её не занимает ни одна плитка, включая высокие) схлопывается сразу после открепления и на drop, но не во время drag | ✅ | D31, п. 50, 52–53 (`collapseEmptyRows`). Правило «одна строка» W10M держится на одном разборе (§3) — совпадает с ним по построению. |
-| Добавление новой плитки | В конец ленты новой строкой, не в первую дыру (§3, [не документировано]) | `pinTile(_:columns:)` и pin из списка приложений — новая строка в конце холста, в дыры не встаёт | ✅ | D33, п. 52–53; эталон о пользовательском «Pin to start» молчит, совпадение — с косвенной рабочей моделью (§3, OEM-разметка). |
-| Drop и коллизии | Плитка занимает ячейку под пальцем, соседи расходятся, остальные переупаковываются в затронутых строках; в пустоту тащить можно (§5) | Drop выбирает клетку под пальцем (пустую, занятую или «новая строка» внизу); занятую цель и мешающих плиток выталкивает вниз каскадом в тех же колонках, остальное не трогается | 🔶 | D31, п. 50, 53; механика «ячейка под пальцем» и «в пустоту можно» совпадает, но W10M описывает переупаковку затронутых строк (в том числе по горизонтали), у нас только сдвиг вниз; точное поведение W10M не документировано. |
-| Другая ширина холста | Раскладка пересчитывается, часть позиций «поедет», уплотнения нет — остаются пустоты (§3, «Show more tiles», [наблюдение]) | Если сохранённая ширина холста ≠ `columns` хоста, показывается проекция — репак по порядку чтения без дыр; файл не перезаписывается, возврат к прежней ширине возвращает дыры, первая правка принимает новую ширину | ❌ | D32, п. 49, 52; параметр хоста (`columns`), штатно ширина не меняется. Правила другие: у W10M уплотнения нет, у нас проекция уплотняет. |
+| Holes and packing | The grid is not repacked, holes remain, Start is a canvas (ref §3) | Tiles anchor to their cells and holes remain (after unpin, merge, shrink and drop); there is no back-filling; packing by order is only a fallback (no usable cell table, v1 migration, first-launch layout) | ✅ | D30. Compositions with holes ("column at the edge", "L") are reachable. Exception: at a different canvas width a hole-free projection is shown (see "Different canvas width"). |
+| Collapse after unpin | Neighbours do not move up; only a fully empty row collapses (ref §3, §5) | Neighbours stay and a hole remains; a row that no tile occupies (tall tiles included) collapses right after unpin and on drop, not during a drag | ✅ | D31. |
+| Adding a new tile | Appended to the end of the feed as a new row, not into the first hole (ref §3, [undocumented]) | `pinTile(_:columns:)` and pin from the apps list go to a new row at the end of the canvas | ✅ | The reference is silent on user-initiated "Pin to start"; the match is with the indirect working model (ref §3, OEM markup). |
+| Drop and collisions | A tile takes the cell under the finger, neighbours move apart, others are repacked in the affected rows; dropping into emptiness is possible (ref §5) | A drop picks the cell under the finger (empty, occupied or "new row" below); an occupied target and colliding tiles are pushed down in a cascade in their own columns, everything else stays | 🔶 | D31. "Cell under the finger" and "into emptiness" match; W10M repacks the affected rows (horizontally too), ours only shifts down. Exact W10M behaviour is undocumented. |
+| Different canvas width | Layout is recomputed, some positions "move", no compaction, holes remain (ref §3, "Show more tiles", [observed]) | If the stored canvas width differs from the host's `columns`, a projection is shown: a reading-order repack without holes; the file is not rewritten, returning to the old width restores the holes, the first edit adopts the new width | ❌ | D32. Host parameter (`columns`); the width normally does not change. The rules differ: W10M does not compact, our projection does. |
 
-### Страницы и прокрутка
+### Pages and scrolling
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Одна лента или страницы | Одна вертикальная лента; горизонтальных страниц нет (§1, §3) | Пейджер из 1–3 полноэкранных страниц, START — центральная (D13) | ➕ | Расширение пакета (D13), не другой способ делать ленту: на START прокрутка вертикальная, без страниц. |
-| Переход к списку свайпом влево | Start уезжает влево, список входит справа; свайп вправо и «Назад» возвращают (§4) | Правая страница пейджера, если хост дал фабрику; свайп вправо возвращает | 🔶 | `StartScreenViewController.swift:871`; свайпы совпадают, аппаратной «Назад» на iOS нет — возврат свайпом или `showPage`. |
-| Хук слева | Нет (§1) | Левая страница `TesseraQuickPanelProviding` (D13) | ➕ | §7 design: расширение; в W10M аналога не было. |
-| Параллакс обоев | Фон идёт медленнее контента при вертикальном скролле и при переходе (§4) | Вертикальный параллакс, множитель 0,5, зажим 0,4–0,6; горизонтально 1:1 | 🔶 | `StartScreenViewController.swift:177`; параллакса перехода нет; при Reduce Motion фактор 0 (п. 6). |
+| One feed or pages | One vertical feed; no horizontal pages (ref §1, §3) | A pager of 1–3 full-screen pages, START in the center (D13) | ➕ | A package extension, not a different way to build the feed: START scrolls vertically without paging. |
+| Swipe left to the list | Start slides left and the list enters from the right; swipe right and Back return (ref §4) | The right page of the pager if the host provides a factory; swipe right returns | 🔶 | Swipes match; iOS has no hardware Back, so return is by swipe or `showPage`. |
+| Hook on the left | None (ref §1) | A left page, `TesseraQuickPanelProviding` (D13) | ➕ | Extension; no analogue in W10M. |
+| Wallpaper parallax | The background moves slower than content when scrolling vertically and on transitions (ref §4) | Vertical parallax, factor 0.5 clamped to 0.4–0.6; horizontally 1:1 | 🔶 | No parallax on page transitions; with Reduce Motion the factor is 0. |
 
-### Обычный режим
+### Normal mode
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Тап по плитке | Анимация нажатия и запуск приложения (§4) | `onTap(.tile)` — событие; действие вызывает хост (D12) | 🔶 | `TileGridView.swift:241`; запуск приложения — параметр хоста, компонент его не выполняет. |
-| Тап по папке | Раскрывает панель с ярлыками (§6.4) | Переключает панель; `folderTapHandler` может отменить раскрытие и `onTap` | ✅ | Жест совпадает; `folderTapHandler` (D18) — параметр хоста. |
-| Обои, прозрачность, акцент | Картинка «на весь экран» или «плиткой», ползунок прозрачности, акцент темы (§4) | `wallpaperImage` и множитель; тайлинга, прозрачности и акцента нет | 🔶 | Обойное изображение на весь экран и параллакс библиотека рисует; тайлинг, прозрачность и акцент отсутствуют — оформление остаётся параметром хоста (факт-лист §1). |
+| Tap on a tile | A press animation and the app launches (ref §4) | `onTap(.tile)` is an event; the host runs the action (D12) | 🔶 | Launching is a host parameter; the component does not do it. |
+| Tap on a folder | Expands a panel with tiles (ref §6.4) | Toggles the panel; `folderTapHandler` may cancel the expansion and `onTap` | ✅ | The gesture matches; `folderTapHandler` (D18) is a host parameter. |
+| Wallpaper, transparency, accent | A full-screen or tiled picture, a transparency slider, a theme accent (ref §4) | `wallpaper` and a factor; no tiling, transparency or accent | 🔶 | The library draws a full-screen wallpaper with parallax; tiling, transparency and accent are left to the host. |
 
-### Режим редактирования
+### Edit mode
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Вход | Только долгое нажатие ~1 с (фактически 0,4–0,8); кнопки нет (§4, §5) | Долгое нажатие 0,45 с, если хост задал `onLongPress`; `beginEditing`/`toggleEditing` — API хоста | 🔶 | `TileGridView.swift:871`; п. 1: координатор подключается хостом, кнопка «Изменить» — хост (п. 43). |
-| Виджеты правки | Два угловых виджета только на удерживаемой плитке; остальные затемнены без виджетов (§5) | Булавка и стрелка на всех видимых плитках сразу; у папки булавки нет; на ярлыках открытой панели папки — булавка (без стрелки, D46) | ❌ | `TileEditCoordinator.swift:366`, `:5039`; состояния «выбранная плитка» нет — оверлеи монтируются на все ячейки. Решено оставить как есть (D27); после E15.2 обе кнопки плитки стоят у конца строки одна над другой. Панель: те же виджеты внутри папки (§6.5–§6.6) — кнопка открепления на каждом ярлыке панели, зона касания урезана до угла ярлыка (D46, E15.9). |
-| Угол кнопки открепления | Правый верхний угол (§5, §9) | Верхний угол **у конца строки**: правый в LTR, левый в RTL; стрелка размера — нижний угол той же стороны, обе кнопки одной плитки друг над другом | ✅ | `TileEditCoordinator.swift`, `unpinButtonFrame(inTileBounds:side:isRightToLeft:)` — единственное место выбора угла (сетка и панель папки, D46); перенос — D29, E15.2. Расплата: на малой плитке ≈ 50–55 pt зоны касания двух кнопок делятся по половинам высоты (открепление — верхняя, стрелка — нижняя; п. 59 «Отступлений реализации»), а стрелка верхней плитки и открепление плитки под ней стоят в одной колонке: круги касаются, но не перекрываются (выступ 4 pt при зазоре 8 pt, D48; было 6 pt и перекрытие 4 pt), зоны касания пересекаются, и касание в пересечении решает ближайший центр. |
-| Затемнение | Остальные затемняются; величина не документирована (§5) | alpha 0,7 всем, кроме перетаскиваемой и цели; анимация 0,18 с | 🔶 | Механика совпадает, величина наша; при Reduce Motion дим остаётся (факт-лист §7). |
-| «Желе» | Плитки не качаются, сетка статична (§5) | По умолчанию сетка статична; хост может включить синусоиду ±1,2° за 0,4 с со сдвигом фазы (`TesseraTileEditConfiguration.isJiggleEnabled`); при Reduce Motion выключено всегда | ✅ по умолчанию; ➕ при включении | `TileEditCoordinator.swift`, `isJiggleEnabled` (по умолчанию `false`), `applyJiggle`; без параметра совпадает с W10M, включённое — iOS-заимствование (§5 design). Решено: D39, E15.6; п. 63 «Отступлений реализации». |
-| Цикл размеров и завершение | Малый → широкий → средний → малый; один тап — шаг, правка завершается (§5) | small → wide → medium → large → small; правка после шага продолжается | 🔶 | `TesseraTileSize.cycleOrder`, `TesseraTileSize.next(among:)`, `TileEditCoordinator.cycleSize(of:)`; порядок W10M с `large` в конце (D28, E15.3), хост задаёт набор (`supportedSizesProvider`), а не порядок; то же шаг делает действие VoiceOver. Остаётся сознательное отступление: правка после шага не завершается (D27); четвёртый размер — D15. |
-| Открепление | Сразу, без подтверждения; плитка исчезает, остаётся дыра (§5) | Fly-out 0,22 с, `store.unpin(_:columns:)`, без подтверждения; остаётся дыра, пустая строка схлопывается | ✅ | `TileEditCoordinator.swift:1177`; расположение после — строка «Схлопывание после открепления». Анимация — наша. |
-| Выход | Тап по экрану или «Назад»; кнопки «Done» нет (§5) | Тап по фону и `endEditing`; кнопка «Готово» — только в Example | 🔶 | п. 43: библиотека «Done» не рисует; кнопку в хосте нельзя записывать в совпадения. |
+| Entry | Long press only, about 1 s (actually 0.4–0.8); no button (ref §4, §5) | A 0.45 s long press if the host set `onLongPress`; `beginEditing`/`toggleEditing` are host API | 🔶 | The coordinator is attached by the host; an "Edit" button, if any, is the host's. |
+| Edit widgets | Two corner widgets only on the held tile; the rest are dimmed without widgets (ref §5) | Unpin and resize buttons on all visible tiles at once; no unpin on a folder; unpin (without resize) on tiles of an open folder panel (D46) | ❌ | There is no "selected tile" state: overlays are mounted on every cell. Kept as is (D27). Both buttons of a tile stand at the end of the line, one above the other. |
+| Unpin button corner | Top right (ref §5, §9) | The top corner **at the end of the line**: right in LTR, left in RTL; the resize arrow is the bottom corner of the same side | ✅ | One helper chooses the corner for the grid and the folder panel (D46); D29. On a small tile (about 50–55 pt) the touch zones of the two buttons split the height (unpin the upper half, resize the lower half); circles of neighbouring tiles touch without overlapping (4 pt overhang against an 8 pt gap, D48), and a touch in an intersection goes to the nearest center. |
+| Dimming | The rest are dimmed; the amount is undocumented (ref §5) | Alpha 0.7 for everything except the dragged tile and the target; 0.18 s animation | 🔶 | The mechanic matches; the amount is ours; with Reduce Motion the dim stays. |
+| Jiggle | Tiles do not wobble; the grid is static (ref §5) | The grid is static by default; the host may enable a ±1.2° sine over 0.4 s with phase offsets (`TesseraTileEditConfiguration.isJiggleEnabled`); always off with Reduce Motion | ✅ by default; ➕ when enabled | D39. Without the parameter it matches W10M; enabled, it is an iOS borrowing. |
+| Size cycle and exit | Small → wide → medium → small; one tap is a step, editing ends (ref §5) | small → wide → medium → large → small; editing continues after a step | 🔶 | `TesseraTileSize.cycleOrder`, `TesseraTileSize.next(among:)`. W10M order with `large` appended (D28); the host sets the set (`supportedSizesProvider`), not the order; the VoiceOver action does the same step. Editing not ending after a step is deliberate (D27); the fourth size is D15. |
+| Unpin | Immediate, no confirmation; the tile disappears and a hole remains (ref §5) | A 0.22 s fly-out, `store.unpin(_:columns:)`, no confirmation; a hole remains, an empty row collapses | ✅ | The animation is ours. |
+| Exit | Tap on the screen or Back; no "Done" button (ref §5) | Tap on the background and `endEditing`; a Done button exists only in the Example host | 🔶 | The library draws no "Done"; a host button must not be counted as a match. |
 
-### Папки
+### Folders
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Создание и размер | Перетащить и подержать над плиткой; папка 2×2 (§6.2, §6.8) | Drop на центр с удержанием 0,6 с и смещением <10 pt; всегда `.medium` (D20). Облегчение (наши решения, D50, п. 66): входная зона слияния `max(50 % стороны, 36 pt)` по оси, после входа цель держится почти по всей плитке (гистерезис 6 pt), превью вытеснения края цели — только после паузы 0,2 с | ✅; ➕ зона, гистерезис и пауза | E8.6, D22; из wide/large папка замещает слот средней (п. 41); одобрение хоста (D14) по умолчанию разрешено. W10M («задержите на мгновение», «цель раздувается») размеры зоны и паузы не задаёт `[не документировано]`: 36 pt, 6 pt и 0,2 с — наши оценки после ручного теста на 1×1, на устройстве не проверены (чек-лист «Ручная проверка E14»); удержание 0,6 с — как прежде. |
-| Превью | Мозаика миниатюр: 4 в 1×1, до 8 в 2×2 — оценка; живая (§6.3) | До 4 мини-иконок с независимым флипом и бейджами; число не зависит от размера | 🔶 | `TileGridView.swift:4374`; мозаика и «живость» есть, количество фиксировано. Решено оставить до 4 независимо от размера (D43). |
-| Бейдж папки | Не зафиксирован (§6.3, [не документировано]) | Сумма числовых бэйджей вложенных ярлыков; нет числовых, но есть точка — точка; сумма > 99 — «99+»; нет бэйджей — виджета нет. Место, размер и правила (угол, обход стрелки размера, скрытие «99+» на 1×1) — как у бэйджа плитки; на 1×1 с бэйджем подписи нет, мини-сетка над рядом бэйджа | ❔ | `TesseraTileFolder.aggregateBadge(of:)`, `TileGridView.swift` (`configureStaticFolder`, `layoutFolderPreview`). Эталон о бэйдже папки молчит, сравнивать не с чем: это наше решение D44, а не расхождение и не совпадение (E15.7, п. 64). Сумма считается по всем ярлыкам папки, а не только по четырём мини-иконкам превью; мини-иконки сохраняют свои бэйджи (рядом с бэйджем папки они отчасти дублируют сумму — не убраны). VoiceOver: value папки — значение бэйджа, число ярлыков, «раскрыта». Не проверено на устройстве (чек-лист «Ручная проверка E14»). |
-| Панель | Оверлей поверх Start, 4 колонки, растёт из плитки (§6.4) | Инлайн-строка в сетке под «полосой папки»; ярлыки 1×1 в колонках сетки | ❌ | D17/D18, п. 11: панель раздвигает плитки, а не накрывает; колонок столько же. |
-| Переименование папки | Тап и удержание имени в открытой папке (в 8.1 — касание поля над папкой); имя — одна строка, обрезается по ширине заголовка, предела по символам нет; пустая строка, вероятно, возвращает имя по умолчанию (§6.7) | Долгое нажатие (≈0,5 с) по имени в открытой инлайн-панели → однострочное поле на месте заголовка (всё выделено, return «Готово»); возврат пустого имени — «Папка»/«Folder» (или `folderTitle`), предел 64 символа; размер и состав не меняются; работает и вне правки; VoiceOver «Переименовать» | 🔶 | D35, E15.5, п. 62. Жест и смысл те же. Наши решения, которых эталон не фиксирует: предел 64 символа (защита раскладки), выделение всего имени при входе, фиксация тапом мимо/закрытием панели/входом и выходом из правки (отмены нет), имя по умолчанию «Папка»/«Folder». Встроенный `TesseraFolderViewController` (sheet) имя не редактирует: он нужен лишь хосту, который сам ведёт экран папки. Не проверено на устройстве (чек-лист «Ручная проверка E14»). |
-| Открепление папки | Отдельной команды удаления нет; в правке у папки есть маркеры (§6.7, §6.9) | Булавки у папки нет, только стрелка размера | ➖ | факт-лист §12; п. 44г; решено не делать (D38): папка живёт, пока в ней есть ярлыки (D45). |
-| Вынос и перенос | Добавить — перетащить на закрытую папку; вынести — из панели на сетку; между папками — в два приёма (§6.6) | Из панели в edit: на клетку под пальцем (пустую, занятую — выталкивание вниз) или «новую строку», на другую папку с удержанием; между папками — один жест | 🔶 | E11.1, E14.5: набор операций тот же, но перенос между папками делается одним жестом, а не двумя. Решено оставить один жест (D41). |
-| Распад папки | Пустой папки не существует; «осталась одна плитка» не описано — по аналогии с десктопом папка сохраняется с одной миниатюрой (§6.9, [не документировано]) | Папка не бывает из 0–1 ярлыков: при одном оставшемся она распускается, ярлык встаёт на ячейку папки со своим размером; пустая исчезает (D45) | ❔ | Эталон о случае одного ярлыка молчит; решено пользователем 13.11.2026 (D45, E14.8) — сознательное отступление от аналогии «папка из одного ярлыка остаётся». Бо́льший ярлык выталкивает соседей вниз (D31), `didDissolveFolder` сообщает хосту. Путь «открепить плитки по одной» (§6.9) для зрячего пользователя — кнопка открепления на ярлыке панели (D46); раньше ярлык можно было только вынести перетаскиванием. |
-| Перестановка внутри панели | Свободная перестановка ярлыков внутри (§6.5) | В правке long-press по ярлыку открытой панели и drag внутри панели: панель остаётся открытой, ярлык скрыт и заменён пустышкой, соседи сдвигаются (bounce 0,26 с, Reduce Motion — мгновенно), drop фиксирует порядок (`TesseraTileStore.moveWithinFolder`, делегат `didReorderTile`, одобрения хоста нет); выход пальца за панель (+16 pt) — вынос на стол (E11.1/E14.5); VoiceOver «Переместить раньше/позже» | ✅ | D40, E16.1, п. 65. Смысл тот же («свободное упорядочивание»); механика и пороги наши: слот — по рамкам слотов панели, запас 16 pt до выноса, возврата к перестановке в том же drag нет, тика haptic на смену слота нет (на столе его тоже нет). Эталон деталей жеста внутри панели не фиксирует, поэтому поведение у края и в высокой панели (автопрокрутка) — наше решение. Не проверено на устройстве (чек-лист «Ручная проверка E14»). |
+| Creation and size | Drag and hold over a tile; a 2×2 folder (ref §6.2, §6.8) | Drop on the center with a 0.6 s hold and movement under 10 pt; always `.medium` (D20). Easing (our decisions, D50): the merge entry zone is `max(50 % of the side, 36 pt)` per axis, once in, the target holds across almost the whole tile (6 pt hysteresis), and the push-away preview of the target's edge appears only after a 0.2 s dwell | ✅; ➕ zone, hysteresis and dwell | From wide/large the folder replaces the slot with a medium one; host approval (D14) defaults to allowed. W10M ("hold for a moment", "the target swells") does not give zone or dwell sizes `[undocumented]`: 36 pt, 6 pt and 0.2 s are our estimates, not yet verified on a device. |
+| Preview | A mosaic of thumbnails: 4 in 1×1, up to 8 in 2×2 (an estimate); live (ref §6.3) | Up to 4 mini icons with independent flips and badges; the count does not depend on size | 🔶 | A mosaic and "liveness" exist; the count is fixed (D43). |
+| Folder badge | Not recorded (ref §6.3, [undocumented]) | The sum of numeric badges of the contained tiles; no counts but a dot gives a dot; a sum above 99 shows "99+"; no badges means no widget. Place, size and rules (corner, avoiding the resize arrow, hiding "99+" on 1×1) match a tile's badge; a 1×1 folder with a badge has no label and its mini grid sits above the badge row | ❔ | `TesseraTileFolder.aggregateBadge(of:)`; our decision D44, neither a match nor a divergence. The sum covers all tiles of the folder, not only the four preview icons; mini icons keep their own badges. VoiceOver: the folder's value combines the badge value, tile count and "expanded". |
+| Panel | An overlay above Start, 4 columns, grows out of the tile (ref §6.4) | An inline row in the grid under the "folder band"; 1×1 tiles in the grid's columns | ❌ | D17/D18: the panel pushes tiles apart instead of covering them; the column count is the same as the grid's. |
+| Renaming | Tap and hold the name in an open folder (in 8.1 a field above the folder); one line, truncated to the header width, no character limit; an empty string probably restores the default (ref §6.7) | A long press (about 0.5 s) on the name in an open inline panel gives a one-line field in place (all selected, Return is "Done"); an empty name returns the default title ("Folder", or `folderTitle`), limit 64 characters; size and composition do not change; works outside editing too; VoiceOver "Rename" | 🔶 | D35. Gesture and meaning are the same. Ours where the reference is silent: the 64-character limit (layout protection), select-all on entry, committing on tap away, panel close and entering or leaving editing (no cancel). The built-in `TesseraFolderViewController` (sheet) does not rename; it is for hosts that run their own folder screen. Not verified on a device. |
+| Unpinning a folder | There is no separate delete command; folders have markers in edit mode (ref §6.7, §6.9) | No unpin button on a folder, only the resize arrow | ➖ | Deliberately not built (D38): a folder lives while it holds tiles (D45). |
+| Take-out and moving | Add by dropping onto a closed folder; take out from the panel to the grid; between folders in two steps (ref §6.6) | From the panel in edit mode: onto the cell under the finger (empty, or occupied with push-down) or a "new row", onto another folder with a hold; between folders in one gesture | 🔶 | The set of operations is the same, but moving between folders takes one gesture, not two (D41). |
+| Dissolving a folder | An empty folder does not exist; "one tile left" is not described, by analogy with desktop the folder stays with one thumbnail (ref §6.9, [undocumented]) | A folder never has 0–1 tiles: with one left it dissolves and the tile takes the folder's cell with its own size; an empty one disappears (D45) | ❔ | The reference is silent on the one-tile case; our deliberate departure from the analogy "a one-tile folder stays". A larger tile pushes neighbours down (D31), `didDissolveFolder` informs the host. For a sighted user the way to "unpin tiles one by one" (ref §6.9) is the unpin button on panel tiles (D46). |
+| Reordering inside the panel | Free reordering of tiles inside (ref §6.5) | In edit mode, long press and drag inside the open panel: the panel stays open, the tile is hidden behind a placeholder, neighbours shift (0.26 s bounce; instant with Reduce Motion), a drop commits the order (`TesseraTileStore.moveWithinFolder`, delegate `didReorderTile`, no host approval); moving the finger outside the panel (+16 pt) switches to take-out; VoiceOver "Move earlier/later" | ✅ | D40, D49. The meaning is the same ("free ordering"); mechanics and thresholds are ours: the slot comes from the panel's slot frames, 16 pt of slack before take-out, no return to reordering within one drag, no haptic tick per slot change. The reference does not fix gesture details, so behaviour at the edge and in a tall panel (auto-scroll) is our decision. Not verified on a device. |
 
-### Live-плитки и badge
+### Live tiles and badges
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Флип | Переворот вокруг горизонтальной оси, контент из очереди (§4) | `CATransform3D` + `m34`, фронт/бэк; цикл 8 с, флип 0,45 с | ✅ | `LiveTileEngine.swift:387`; механика переворота и подмена стороны совпадают, тайминги — наши. |
-| Очередь уведомлений | До пяти, циклический показ, интервал — политика системы (§4) | Две стороны (front/back), очереди нет | ➖ | факт-лист §12; хост может менять контент, но очередь не моделируется. |
-| Синхронность обновления | В 14393 плитки обновляются все сразу, а не по одной (§4, §8) | Стахгер батчами по 3 с разбросом — намеренно не синхронно | ❌ | §4 design утверждает «у WP именно так», референс опровергает. Решено: стахгер остаётся как собственное решение, формулировка §4 правится (D36, E15.8). |
-| Badge: угол и диапазон | Правый нижний угол; 1–99, 0 снимает (§1) | Нижний угол у конца строки (правый в LTR, левый в RTL); капсула или точка; >99 — «99+», 0 скрыт | ✅ | Угол как в W10M (D29, E15.1), диапазон совпадает; бейдж — отдельный виджет, не часть флипа (факт-лист §6). Подпись уступает место (рядом либо над бэйджем), в правке бэйдж сдвигается от стрелки размера; «99+» на 1×1 в правке скрыт (плитка уже 58 pt: на всех ширинах 375–414 pt после D48; п. 59, 60). Малая плитка с бэйджем и иконкой — отдельная строка ниже. Бэйдж плитки папки — E15.7, мини-бэйджи внутри превью папки не менялись. |
-| Малая плитка (1×1) с badge | Иконка и badge; подпись малой плитки в референсе не описана (§1, §2: малая 71×71, badge в правом нижнем) `[не документировано]` | Малая плитка с видимым бэйджем и иконкой: иконка по центру сверху, бэйдж в нижнем углу, подписи нет; малая плитка без бэйджа (и без иконки) подпись сохраняет; 2×2 и больше — с подписью | 🔶 | D47, E15.11, п. 60 «Отступлений реализации». Вариант «иконка и бэйдж» принят по указанию пользователя (вариант W10M), источником в референсе не подтверждён; подписи на малой плитке без бэйджа решение D47 не трогает, поэтому в одном ряду малые плитки с бэйджем (без подписи) и без него (с подписью) выглядят разнородно — если подпись на 1×1 нужна не всегда, единообразно её можно убрать со всех малых плиток с иконкой (отдельное решение). Живая плитка 1×1 следует правилу по сторонам (сторона без иконки сохраняет текст). |
-| Паузы live-контента | Не описаны; контент обновляет система (§4) | Пауза вне экрана, в фоне, при Reduce Motion; публичная `isLiveContentPaused` | ❔ | `LiveTileEngine.swift:605`; дисциплина §4 design; в эталоне паузы не описаны — сравнивать не с чем. |
+| Flip | A turn about the horizontal axis, content from a queue (ref §4) | `CATransform3D` with `m34`, front/back; an 8 s cycle, 0.45 s flip | ✅ | The turn and side swap match; timings are ours. |
+| Notification queue | Up to five, cycled; the interval is system policy (ref §4) | Two faces (front/back), no queue | ➖ | The host may change content, but a queue is not modelled. |
+| Update synchrony | In 14393 tiles update all at once, not one by one (ref §4, §8) | Stagger in batches of 3 with spread: deliberately not synchronous | ❌ | The stagger stays as our own decision (D36). |
+| Badge: corner and range | Bottom right; 1–99, 0 clears (ref §1) | The bottom corner at the end of the line (right in LTR, left in RTL); capsule or dot; above 99 "99+", 0 hidden | ✅ | Corner as in W10M (D29); range matches; the badge is a separate widget, not part of the flip. The label yields (beside or above the badge), in edit mode the badge shifts away from the resize arrow; "99+" on 1×1 is hidden in edit mode (the tile is only 58 pt wide). A small tile with a badge and an icon is the next row. |
+| Small tile (1×1) with a badge | An icon and a badge; the label of a small tile is not described in the reference (ref §1, §2: small 71×71, badge bottom right) `[undocumented]` | A small tile with a visible badge and an icon: icon centered at the top, badge in the bottom corner, no label; a small tile without a badge (or without an icon) keeps its label; 2×2 and larger keep their label | 🔶 | D47. The "icon and badge" variant follows W10M; the label on a small tile without a badge is not changed by D47, so in one row small tiles with a badge (no label) and without one (label) look different. A live 1×1 tile follows the rule per side (a side without an icon keeps its text). |
+| Live content pauses | Not described; the system updates content (ref §4) | Paused off screen, in the background and with Reduce Motion; public `isLiveContentPaused` | ❔ | Nothing to compare against: the reference does not describe pauses. |
 
-### Accessibility и локализация
+### Accessibility and localization
 
-| Аспект | W10M | TesseraKit | Статус | Комментарий |
+| Aspect | W10M | TesseraKit | Status | Comment |
 |---|---|---|---|---|
-| Плитка и папка как элемент | Narrator в референсе не разбирается (§1–§9) | Один элемент: label из фронта live-плитки, value — число; custom actions «Открепить», «Изменить размер», папки | ❔ | `TileGridView.swift:3320`, п. 26/37; с W10M не сравнивается — в референсе темы нет. |
-| `.dot` в VoiceOver | Глиф или число озвучивает Narrator — не описано | `.dot` не озвучивается, `accessibilityValue` = nil; число озвучивается | ❔ | `TileGridView.swift:3320`; для незрячего наличие внимания теряется. Отсутствие озвучивания — самостоятельный accessibility-дефект, а не расхождение с W10M (кандидат P1 остаётся). Решено озвучивать (D34, E15.4). **Решено D34/E15.4 (13.11.2026): `.dot` озвучивается — «есть уведомление» / «has a notification» в `accessibilityValue`, label не меняется.** |
-| Reduce Motion, Dynamic Type, RTL | Настройки ОС есть, Start в референсе не разобран | RM выключает желе/подъём/магнит/bounce/параллакс/флип; DT с потолком и подгонкой; RTL зеркалит рамки и кнопки | ❔ | п. 43, факт-лист §11; поведение Windows-аналогов не сверялось — эталон об этих настройках молчит. |
-| Локализация | Интерфейс локализован ОС; имена плиток — из приложений | 45 ключей en/ru, fallback en; заголовки страниц и `TesseraStartScreenStyle` — английские дефолты хоста | 🔶 | `TesseraStartScreenStrings.swift:39`, п. 33; часть совпадает — строки интерфейса локализованы (en/ru, fallback en), `folderScreen.defaultTitle` тоже; часть нет — заголовки страниц и стиль остаются английскими дефолтами хоста. |
+| Tile and folder as one element | The reference does not cover Narrator (ref §1–§9) | One element: the label from a live tile's front, the value is the count; custom actions "Unpin", "Resize", folder actions | ❔ | Not compared: the reference has no such topic. |
+| `.dot` in VoiceOver | Whether Narrator reads a glyph or a number is not described | `.dot` reads "has a notification" in `accessibilityValue`; the number is read as before; the label does not change | ❔ | D34. A separate accessibility matter, not a divergence from W10M. |
+| Reduce Motion, Dynamic Type, RTL | OS settings exist; Start is not analyzed in the reference | Reduce Motion turns off jiggle, lift, magnet, bounce, parallax and flips; Dynamic Type with a cap and fitting; RTL mirrors frames and buttons | ❔ | The reference is silent on these settings. |
+| Localization | The UI is localized by the OS; tile names come from apps | en/ru string tables with English fallback; page titles and `TesseraStartScreenStyle` are English host-owned defaults | 🔶 | Interface strings are localized (including the default folder title); page titles and style stay English defaults of the host. |
 
-## Разбор по группам
+## Notes by group
 
-### Раскладка и пустоты: что стоит за строками
+### Layout and holes
 
-До E14 расхождение было модельным: позиция у нас — место в порядке (`gridOrder`), упаковщик строго компактно выводил из него строку и колонку, поэтому дыры поглощались, а drop выбирал индекс, а не клетку. Решение D30 (13.11.2026) заменило D23: у каждого верхнеуровневого элемента теперь явная ячейка (`row`, `column`), схема `tiles.json` — версия 2 с шириной холста, порядок чтения (для VoiceOver и делегата) — производное от ячеек, канонизации порядка нет. Дыры остаются после открепления, слияния, уменьшения и drop; drop выбирает клетку под пальцем, внизу есть цель «новая строка»; новая плитка, закреплённая из списка, ложится в новую строку в конце. Коллизии (drop на занятую клетку, рост плитки, слияние в 2×2, распад папки по D45) разрешаются выталкиванием вниз каскадом (D31) — у W10M затронутые строки переупаковываются, и это единственное расхождение механики; строка схлопывается, только если пуста целиком, и только на drop/после открепления, не во время drag. Вторая оговорка — D32: при ширине холста, не равной `columns` хоста, показывается проекция по порядку чтения без дыр (у W10M уплотнения нет); файл при этом не перезаписывается. Композиции пустотами («колонка у края», «L») снова достижимы. Не проверено на устройстве: порядок VoiceOver по ячейкам, миграция реального файла v1 и анимации превью — чек-лист «Ручная проверка E14» в PLAN.md.
+The model is explicit cells (D30): every top-level item has a `row` and `column`, and the `tiles.json` schema (version 2) carries the canvas width. Reading order, used for VoiceOver and delegates, is derived from the cells. Holes remain after unpin, merge, shrink and drop; a drop picks the cell under the finger and a "new row" target exists at the bottom; a newly pinned tile goes into a new row at the end. Collisions (a drop on an occupied cell, a growing tile, a merge into 2×2, a dissolving folder) are resolved by a push-down cascade (D31); in W10M the affected rows are repacked, which is the one remaining mechanical difference. A row collapses only if empty and only on drop or after unpin, never during a drag. At a canvas width different from the host's `columns` a hole-free projection is shown (D32) and the file is not rewritten. The VoiceOver order by cells, migration of a real v1 file and preview animations are listed in [MANUAL-TESTING.md](MANUAL-TESTING.md).
 
-### Режим редактирования: фокус и сессия
+### Edit mode: focus and session
 
-Ключевое отличие — не порог удержания и не анимации, а отсутствие состояния «выбранная плитка». В W10M правка начинается с одной плитки: она получает виджеты, остальные только затемняются. У нас координатор монтирует оверлей с булавкой и стрелкой на каждую видимую ячейку сразу (`reconcileEditControls`), а «выбранной» считается лишь перетаскиваемая — и то на время drag. Отсюда три следствия: виджеты на всех плитках, глобальный дим 0,7 вместо фокуса на одной и отсутствие выхода после изменения размера. Цикл размеров — самостоятельная операция над моделью (`cycleSize`), а не сессия «плитка + её следующее состояние», поэтому после шага правка продолжается; в W10M шаг и выход связаны. «Желе» — iOS-заимствование: в W10M сетка в правке статична.
+The key difference is not the hold threshold or the animations but the absence of a "selected tile" state. In W10M editing starts from one tile, which gets the widgets while the others are only dimmed. Here the coordinator mounts an overlay with unpin and resize on every visible cell at once, and the only "selected" tile is the dragged one, for the duration of the drag. Three consequences follow: widgets on all tiles, a global 0.7 dim instead of a single focus, and no exit after a size change. The size cycle is an independent model operation (`cycleSize`), not a "tile plus its next state" session, so editing continues after a step. Jiggle is an iOS borrowing; in W10M the grid is static in edit mode, and ours is static by default.
 
-### Папки: цена инлайн-панели
+### Folders: the price of the inline panel
 
-Инлайн-панель (D17) — главная причина отличий группы, почти все они — её производные. Панель — не оверлей, а полноширинная строка в раскладке: она занимает место в сетке, её содержимое живёт в общей геометрии (юнит, зазор, колонки), а плитки под ней переупаковываются. Отсюда колонки панели, равные колонкам сетки, а не фиксированные четыре; ярлыки 1×1 без собственных размеров; отсутствие отдельного скролла (прокручивается вся страница); пустота под короткими плитками «полосы папки» (п. 44в). Перестановка внутри панели (E16.1) сделана поверх той же модели: панель — представление снимка папки, порядок ярлыков хранит `TesseraTileStore` (`FolderRecord.tileKeys`), а drag внутри панели лишь двигает ячейки панели в превью и пишет порядок один раз на drop. Открепления папки нет не из-за панели, а из-за модели (D38, D45): папка живёт, пока в ней есть ярлыки. Переименование — есть (D35, E15.5): имя меняется в панели на месте заголовка, а не в отдельном экране.
+The inline panel (D17) is the main reason for the differences in this group. The panel is not an overlay but a full-width row in the layout: it takes space in the grid, its content shares the grid's geometry (unit, gap, columns) and the tiles below shift down. Hence panel columns equal to grid columns rather than a fixed four, 1×1 tiles without sizes of their own, no separate scroll (the whole page scrolls), and empty space under shorter tiles of the "folder band". Reordering inside the panel is built on the same model: the panel is a view of the folder snapshot, the order of tiles is stored by `TesseraTileStore`, and a drag inside the panel only moves panel cells in the preview and writes the order once on drop. Folders cannot be unpinned for model reasons (D38, D45). Renaming exists (D35) and happens in place of the panel title.
 
-### Страницы: цена пейджера
+### Pages: the price of the pager
 
-Пейджер — архитектурная рамка, в которую W10M-поведение уложено не полностью. У W10M одна вертикальная поверхность, а список — соседняя, входящая свайпом; у нас START, список и хук — равноправные страницы пейджера, и лента живёт внутри центральной. Поэтому «свайп влево к списку» совпадает, а «одна лента» — нет: есть горизонтальная ось, которой в W10M не было, и хук слева. Следствия: параллакс только внутри страницы (при переходе обои едут 1:1), `currentPage` подтверждается пейджером, левый край — параметр хоста (на iOS он занят системным жестом).
+The pager is an architectural frame into which W10M behaviour does not fit completely. W10M has one vertical surface and the list is an adjacent screen entered by a swipe; here START, the list and the hook are equal pages of a pager and the feed lives inside the central one. So "swipe left to the list" matches, while "one feed" does not: there is a horizontal axis W10M did not have, and a left hook. Consequences: parallax works only within a page (wallpaper moves 1:1 across transitions), `currentPage` is confirmed by the pager, and the left edge is a host parameter (on iOS the system gesture owns it).
 
-## Сознательные отступления
+## Deliberate departures
 
-- **D12 — ярлык это действие.** Модель: `id`, `title`, `icon`, `action`, `badge`, `size`, `liveContent`; поля `type` нет. Расплата: запуск выполняет хост, компонент лишь сообщает о тапе; вторичные плитки и веб-ссылки выражаются обычным ярлыком. Универсальность содержимого (приложение, файл, действие) — намеренная черта: `TesseraTileDescriptor.action` — замыкание хоста, `TesseraTileStore` не различает приложение и файл; паритет с W10M по видам плиток не является целью.
-- **D15 — четыре размера плиток.** 1×1, 2×2, 4×2, 4×4. Расплата: `large` доступен в UI, хотя телефонный W10M его не предлагал; цикл стал четырёхшаговым (строка «Цикл размеров»).
-- **D13 — три страницы: хук слева, START в центре, список справа.** Расплата: «одна лента» не воспроизводится буквально; появляется горизонтальная ось и политика левого края; параллакс живёт только внутри страницы.
-- **D17/D18 — папка раскрывается инлайн.** Панель — строка в сетке под «полосой папки», а не оверлей; кому нужно иное, хост перехватывает тап через `folderTapHandler`. Расплата: панель занимает место, её колонки и ярлыки подчинены геометрии сетки, отдельного скролла и «вырастания из плитки» поверх контента нет.
-- **D20 — папка всегда 2×2.** Как в W10M, независимо от размера цели. Расплата: папка из wide/large меняет размер на ячейке цели, соседи при необходимости выталкиваются вниз (D31); сохранённый размер при загрузке не нормализуется, чтобы не терять осознанный выбор пользователя.
-- **D30–D33 — явные ячейки и настоящие пустоты (заменяют D23/Q6-А).** Модель, как у W10M, хранит координаты; поворот и смена ширины хоста при этом не «бесплатны». Расплата: коллизии разрешаются выталкиванием вниз каскадом (D31), а не переупаковкой затронутых строк; при другой ширине холста показывается проекция без дыр (D32); у W10M уплотнения нет; индексного публичного API нет (D33), без deprecated-обёрток; схема файла и порядок VoiceOver завязаны на ячейки (R25, R26).
-- **D45 — папка не бывает из 0–1 ярлыков.** В W10M «осталась одна плитка» не описано (по аналогии папка сохранялась, §6.9); у нас в этот момент папка распускается, ярлык встаёт на её ячейку со своим размером. Расплата: одиночную миниатюру в папке получить нельзя (переходная `createFolder(withTile:)` — только до `addToFolder`); ярлык при распаде может сменить размер плитки на экране (2×2 → свой), соседи при этом выталкиваются вниз.
-- **D36, D41, D42, D43 — подтверждённые решения сверки.** Стахгер live-обновлений остаётся (собственное решение, не «как у WP»); перенос между папками — один жест; масштаб при захвате 0,95; до 4 миниатюр на плитке папки независимо от размера. Расплата: во всех четырёх случаях поведение отличается от W10M осознанно.
-- **п. 1 — архитектура правки: координатор у хоста.** Экран не создаёт `TileEditCoordinator` и не имеет собственного API входа; хост создаёт `TesseraTileStore` и координатор поверх `gridView`. Расплата: без хоста нет ни входа, ни виджетов, ни дима — «встроенного» редактирования нет; зато приложение без правки не платит за оверлеи.
+- **D12: a tile is an action.** `id`, `title`, `icon`, `action`, `badge`, `size`, `liveContent`; there is no `type` field. The host launches; the component only reports the tap. Secondary tiles and web links are plain tiles. Parity with W10M tile kinds is not a goal.
+- **D15: four tile sizes.** 1×1, 2×2, 4×2, 4×4. `large` is available in the UI though the phone W10M did not offer it; the cycle has four steps.
+- **D13: three pages.** Hook on the left, START in the center, list on the right. A horizontal axis and a left-edge policy appear; parallax lives only within a page.
+- **D17/D18: folders expand inline.** The panel is a row in the grid under the "folder band", not an overlay; a host that wants something else intercepts the tap with `folderTapHandler`. There is no separate scroll and no "growing out of the tile" over content.
+- **D20: a folder is always 2×2,** as in W10M, regardless of the target's size. A folder from wide/large changes size on the target's cell; neighbours are pushed down when needed. A stored size is not normalized on load, to avoid discarding a deliberate choice.
+- **D30–D33: explicit cells and real holes.** Collisions are pushed down in a cascade (D31) rather than repacked by affected rows; a different canvas width shows a hole-free projection (D32), which W10M does not do; there is no index-based public API (D33).
+- **D45: a folder never has 0–1 tiles.** W10M does not describe the one-tile case (by analogy the folder stays). Here it dissolves and the tile takes the folder's cell with its own size; a tile may change its on-screen size on dissolve, pushing neighbours down.
+- **D27: widgets on all tiles and no exit after a size step.** Kept as an architectural choice of the overlays.
+- **D36: stagger of live updates.** The library's own decision, not "as in WP".
+- **D37, D41, D42, D43:** live tiles keep flipping in edit mode; moving between folders is one gesture; the grab scale is 0.95 (the reference says tiles grow 5–10 %, `[undocumented]`); up to 4 mini icons per folder regardless of size.
+- **D38: no unpinning of folders.**
+- **Edit coordinator owned by the host.** The screen does not create `TesseraTileEditCoordinator`; the host creates `TesseraTileStore` and a coordinator over `gridView`. Without a host there is no entry, no widgets and no dim; an app that does not edit pays nothing for overlays.
 
-## Расхождения без решения
+## Known gaps
 
-На 13.11.2026 по всем пунктам ниже решения приняты (отметки «Решено», D27–D45); исходный текст находок сохранён как есть.
+- No "Show more tiles" (8 columns) and no notification queue per tile.
+- No tile-kind distinctions (secondary tiles, web links) by design.
+- No wallpaper tiling, transparency or accent; no parallax on page transitions.
+- Collisions are resolved only by shifting down; W10M's horizontal repack of affected rows is not reproduced.
+- The hold threshold, dwell, zone sizes and timings are estimates; several behaviours (take-out and reorder in the folder panel, folder renaming, folder badge, merge zone, VoiceOver order by cells, migration of a real v1 file) are not yet verified on a physical device (see [MANUAL-TESTING.md](MANUAL-TESTING.md)).
+- Narrator-specific behaviour of W10M is not covered by the reference, so accessibility rows are information only.
 
-- **Пустоты и порядок вместо ячеек (Q6).** У нас раскладка была строго компактной (D23/Q6-А): дыры поглощались, композиции пустотами и drop по клетке были недостижимы; в W10M Start — холст. **Решено 13.11.2026: настоящие пустоты, явные ячейки, выталкивание вниз, схема v2 (D30–D33), папка не бывает из 0–1 ярлыков (D45); реализовано эпиком E14.**
-- **Угол badge.** У нас верхний угол, в W10M — правый нижний (§1). Похоже на наследие WP 8.1; решения нет, в «Отступлениях» не зафиксировано — скорее недосмотр. **Решено 13.11.2026: переносим в правый нижний угол (D29, E15.1); выполнено, п. 59 «Отступлений реализации».**
-- **Стахгер вместо синхронного обновления.** §4 дизайна утверждает, что у WP плитки флипаются не одновременно; референс для 14393 говорит обратное — обновляются все сразу. Одно из двух неверно; решения нет. **Решено 13.11.2026: стахгер остаётся как собственное решение, формулировка §4 правится (D36, E15.8).**
-- **Подъём плитки при захвате.** У нас плитка уменьшается до 0,95 (E8.1), в референсе — «увеличивается на 5–10 %» (§5, [не документировано]). E8.1 ссылается на «спеку WP», наш референс — на наблюдения; какая трактовка верна, не зафиксировано. **Решено 13.11.2026: масштаб при захвате остаётся 0,95 (D42).**
-- **Виджеты на всех плитках и дим 0,7.** Следствие архитектуры оверлеев, но отдельного D нет: возможно, упрощение, возможно — недооценённое расхождение с §5. Честно: и то и другое. **Решено 13.11.2026: виджеты остаются на всех плитках (D27).**
-- **Порядок цикла размеров.** Набор из четырёх размеров — решение D15, а вот порядок small → medium → wide → large никто не выбирал: он получился из `TesseraTileSize.allCases`. В W10M порядок другой (малый → широкий → средний), так что это скорее недосмотр. **Решено 13.11.2026: малый → широкий → средний → большой → малый (D28, E15.3); выполнено.**
-- **Число миниатюр в папке фиксировано.** До 4 независимо от размера папки; в референсе модель «1×1 — 4, 2×2 — до 8» сама помечена как оценка (§6.3). Наше число — следствие реализации превью, а не решение. **Решено 13.11.2026: остаётся до 4 независимо от размера (D43).**
-- **`.dot` не озвучивается.** В коде это описано как осознанный выбор (точка без числа), но пользовательского решения об этом нет; для незрячего наличие внимания просто исчезает. Может быть и осознанным, и недосмотром. С W10M не сверяется — в референсе Narrator не разобран (строка ❔); как дефект доступности пункт остаётся в P1. **Решено 13.11.2026: озвучиваем — «есть уведомление» в `accessibilityValue`, label не меняется (D34, E15.4). Сделано (E15.4).**
-- **Бейдж папки.** Агрегата на плитке папки не было (всегда `.none`); эталон о нём молчит. **Решено 13.11.2026: badge папки — сумма числовых badge вложенных ярлыков; нет числовых, но есть точка — точка; сумма > 99 — «99+» (D44). Выполнено в E15.7: строка «Бейдж папки» — ❔ (эталона нет, это наше решение).**
-- **Живые плитки в правке.** Дизайн-док молчал о флипах в edit-режиме; сейчас они продолжаются (Q7). **Решено 13.11.2026: продолжают флипаться (D37, закрывает Q7).**
-- **«Желе» в правке.** Раньше у нас было включено (±1,2°), в W10M сетка в правке статична. **Решено 13.11.2026: по умолчанию выключено, включается параметром хоста; при Reduce Motion по-прежнему выключено (D39). Выполнено в E15.6: `TesseraTileEditConfiguration.isJiggleEnabled`, по умолчанию `false`.**
-- **Перенос между папками одним жестом.** В W10M — «в два приёма» (§6.6). **Решено 13.11.2026: остаётся один жест (D41).**
-- **Перестановка внутри панели папки.** Не была реализована (E11.1). **Решено 13.11.2026: делаем после E14 (D40, эпик E16). Выполнено в E16.1: строка «Перестановка внутри панели» — ✅ (drag внутри открытой панели, действия VoiceOver, п. 65).**
+## Apps list: outside the comparison
 
-## Список приложений — вне области сверки
+In W10M this is a separate system screen, not a part of Start; here it is the optional right page of the pager, `TesseraAppsListPageViewController` (D13). Parity with the system list is not a goal, and the table is information without statuses.
 
-В W10M это отдельный системный экран, а не часть Start; у нас — необязательная правая страница пейджера `TesseraAppsListPageViewController` (D13). Паритет с системным списком не цель: таблица — справка без статусов.
-
-| Аспект | W10M | У нас | Примечание |
+| Aspect | W10M | Ours | Note |
 |---|---|---|---|
-| Секции и буквенный указатель | Алфавитный порядок с буквенными разделителями (§1) | Секции `UILocalizedIndexedCollation`, jump-list с полным алфавитом | `AppsListPage.swift:912`, `:977`; указатель в референсе не описан. |
-| Поиск | Поле поиска вверху системного списка — [руководство Lumia, с. 14](https://mcgrp.ru/files/viewer/146152/14) | Нет | Вне Start; в референсе не описано. |
-| «Recently Installed» | Секция недавно установленных вверху — [обзор 2015](https://techbang.com/posts/22370-windows-10-for-phone) | Нет | Вне Start; нужна история установок. |
-| Контекстное меню и закрепление | Долгое нажатие → `Pin to start` / `Uninstall` (§1, §5) | Кнопка-аксессуар 44×44 для pin/unpin, меню нет | `AppsListPage.swift:1059`; `Uninstall` на iOS недоступен. |
-| Секция настроек | Персонализация Start — в системных «Параметрах» (§4) | Опциональная секция настроек внизу страницы | §6 design; строки задаёт хост. |
+| Sections and index | Alphabetical order with letter separators (ref §1) | `UILocalizedIndexedCollation` sections, a jump list with the full alphabet | The reference does not describe the index. |
+| Search | A search box at the top of the system list, see the Lumia guide, p. 14 (https://mcgrp.ru/files/viewer/146152/14) | None | Outside Start; not described in the reference. |
+| "Recently installed" | A section of recently installed apps on top, see the 2015 review (https://techbang.com/posts/22370-windows-10-for-phone) | None | Outside Start; needs an install history. |
+| Context menu and pinning | Long press gives `Pin to start` / `Uninstall` (ref §1, §5) | A 44×44 accessory button for pin/unpin, no menu | `Uninstall` is unavailable on iOS. |
+| Settings section | Start personalization is in system Settings (ref §4) | An optional settings section at the bottom of the page | Rows are supplied by the host. |
 
-## План исправлений
+## What the review does not cover
 
-Кандидаты по приоритету; часовых оценок нет. Для каждого — что затронет и что может пойти не так; требующие пересмотра решения помечены. **Каждый пункт — отдельное решение:** что меняем и как, обсуждается с владельцем проекта по одному; без явного решения по конкретному пункту работа не начинается.
+- **System gestures and the edge:** the presence of a policy (`yieldsLeftEdgeToSystemGesture`) was checked, not behaviour inside a navigation stack.
+- **Continuum and the desktop Start:** the desktop layout, `large` on a monitor, OEM partner slots.
+- **Secondary tiles and deep links as entities:** they are not in the model; they are expressed as a tile with an action and are not compared in that form.
+- **Apps list:** the reference describes it in a single paragraph of §1, without search, "Recently installed" or an index.
+- **Themes, accent, transparency, tiling:** styling is a host parameter; in the reference these are OS settings.
+- **Sound and haptics:** W10M's merge sound is undocumented; our haptic was not compared.
+- **Exact timings:** all milliseconds in the reference are estimates and cannot be compared.
+- **W10M Narrator:** the reference has no accessibility section, so rows in that group are information, marked ❔.
+- **W10M localization:** string sets, pluralization and RTL are not analyzed in the reference.
 
-### P1 — заметно пользователю и дёшево
+## Sources
 
-1. **Озвучивать `.dot`.** *(Решено и сделано: D34, E15.4.)* Добавить локализованную строку («есть уведомление») и отдавать её в value, не меняя label. Затронет `TileGridView.swift` (`configureAccessibility`), таблицы en/ru, тест `TileGridAccessibilityTests`. Риск: удлинение озвучивания; новый D не нужен.
+Repository documents:
 
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-2. **Перенести badge в правый нижний угол.** *(Решено: D29, E15.1 — выполнено; вместе с проверкой наложения badge и стрелки размера в правке: бэйдж в правке сдвигается от стрелки, «99+» на 1×1 при ширинах ≤ 402 pt скрыт; кнопка открепления перенесена в правый верхний угол — E15.2.)* Правка `layoutSubviews` плитки; затронет `TileGridView.swift`, тесты раскладки бейджа и скриншоты. Риск: на малых плитках бейдж может задеть подпись или иконку; с решениями не конфликтует. Закрывает расхождение с §1 (угол WP 8.1 → W10M).
+- [W10M-STARTSCREEN.md](W10M-STARTSCREEN.md): the reference, §1–§9.
+- [DECISIONS.md](DECISIONS.md): decisions D1–D51.
+- [STARTSCREEN-IOS-DESIGN.md](STARTSCREEN-IOS-DESIGN.md): design and implementation notes.
+- [MANUAL-TESTING.md](MANUAL-TESTING.md): manual verification checklist.
+- [CORE-IOS-DESIGN.md](CORE-IOS-DESIGN.md): pager, parallax, arbitration (for pages and scrolling).
 
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-3. **Завершать правку после шага размера.** *(Решено: не делаем, D27 — правка после шага продолжается.)* Вернуть связку «шаг → выход», как в §5. Затронет `TileEditCoordinator.cycleSize`, вызывающий код хоста (Example), тесты resize. Риск: пользователь ждёт серию шагов; это смена взаимодействия — оформить решением (D или правка §5), не молчаливой правкой.
+Key code files (under `Sources/TesseraStartScreen/`): `TesseraTileDescriptor.swift`, `TesseraTileFolder.swift`, `TesseraTileStore.swift`, `TesseraTileLayoutEngine.swift`, `TileCollectionViewLayout.swift`, `TileGridView.swift`, `TileEditCoordinator.swift`, `LiveTileEngine.swift`, `LiveTileView.swift`, `AppsListPage.swift`, `StartScreenViewController.swift`, `TesseraStartScreenView.swift`, `TesseraStartScreenStrings.swift`; and in `Sources/TesseraCore/`: `Pager/TesseraPagerViewController.swift`, `Parallax/TesseraParallaxLayer.swift`.
 
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-
-### P2 — среднее
-
-4. **Виджеты только на удерживаемой плите.** *(Решено: не делаем, D27 — виджеты остаются на всех плитках.)* Ввести состояние выбранного элемента в координаторе: оверлеи создаются для одной плитки, остальные только затемняются. Затронет `TileEditCoordinator` (`reconcileEditControls`, `dimmingTargetAlpha`), `TileGridView`, тесты `TileEditControlsTests` и `DragSessionTests`. Риск: у остальных пропадает быстрый resize/unpin, VoiceOver-действия остаются; нужна сверка сценариев и решение пользователя.
-
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-5. **Привести цикл размеров к W10M.** *(Решено: D28, E15.3, выполнено — цикл малый → широкий → средний → большой → малый; четыре размера D15 сохраняются, миграция размеров не нужна, пересмотр D15 не требуется.)* Три шага (малый → широкий → средний) и, возможно, три размера. Затронет `TesseraTileSize`/`supportedSizes`, `cycleSize`, персистентность (сохранённые `large`), тесты и доки. **Требует пересмотра D15**; риск — миграция сохранённых размеров и потеря `large` в раскладках.
-
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-6. **Переименование папки.** *(Решено: D35, E15.5, выполнено — долгое нажатие по имени в открытой панели, пустое имя возвращает имя по умолчанию, предел 64 символа.)* Метод смены `title` в `TesseraTileStore`, жест «тап и удержание имени» в панели/экране папки, строки и тесты. Затронет `TesseraTileStore`, `TileGridView` (заголовок панели), `TileEditCoordinator`. Риск: пустое имя, обрезка по ширине, озвучивание; D17 не ломает, схема не меняется.
-
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-
-### P3 — большое или спорное
-
-7. **Поиск и контекстное меню в списке приложений (по желанию).** *(Вне области, не делаем: компонент универсальный.)* `UISearchController` с фильтрацией секций и jump-list; долгое нажатие с `Pin to start` / «Открыть» вдобавок к кнопке-аксессуару. Затронет `AppsListPage.swift`, тесты `AppsListPageTests` и строки. Риск: коллация и пустые секции, конфликт с кнопкой и D12; `Uninstall` на iOS недоступен. **Вне области сверки**: для правой страницы это продуктовое решение, а не соответствие W10M.
-
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-8. **Дополнить референс разделом о списке приложений.** *(Вне области, не делаем: компонент универсальный.)* Поиск, «Recently Installed», буквенный указатель, контекстное меню системного списка. Затронет `docs/W10M-STARTSCREEN.md` (§1, возможно §9). **Справочная правка, к компоненту не относится**; риска нет.
-
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-9. **Синхронные live-обновления вместо стахгера.** *(Решено: D36, E15.8 — стахгер остаётся, правится только формулировка §4 дизайна.)* Убрать батчи/разброс или сделать режим настройкой. Затронет `LiveTileEngine`, тесты флипов, визуал. **Требует решения**: противоречит §4 дизайна — сначала определить, что считать эталоном (референс 14393 или формулировку дизайна); без D менять нельзя.
-
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-10. **Настоящие пустоты (Q6-Б).** *(Сделано: D30–D33, эпик E14 закрыт — PR #49–#56 и E14.9; D23 заменено; остаточные ручные проверки — «Ручная проверка E14» в PLAN.)* Хранить в модели явные координаты слота, якорить на них плитки, пересмотреть `pack`, `canonicalizeVisibleOrder`, схему `tiles.json`, порядок VoiceOver и drop. Затронет почти весь target и тесты раскладки. **Требует пересмотра D23** и отдельного эпика (PLAN «Вне плана»); риск — несовместимость сохранённых раскладок и рост краевых случаев drag.
-
-11. **Открепление папки.** *(Решено: не делаем, D38.)* Кнопка или пункт меню папки; семантика «что с содержимым». Затронет `TileEditCoordinator` (`canUnpin`), `TesseraTileStore`, тесты, доки. **Конфликтует с п. 44г и D17**: у папки сейчас намеренно только размер; нужно решение пользователя, а не правка «до кучи». Риск: папка, исчезающая с содержимым, — потеря закреплений без подтверждения.
-
-    **Обсудить отдельно:** что меняем и как — решение пользователя, пункт не начинается без него.
-
-### Решено вне нумерации плана (13.11.2026)
-
-Пункты сверки без номера P, по которым решения тоже приняты:
-
-- Живые плитки в правке продолжают флипаться — D37 (закрывает Q7).
-- «Желе» в правке выключено по умолчанию, включается параметром `isJiggleEnabled` конфигурации координатора — D39 (E15.6, выполнено).
-- Badge папки — сумма числовых badge вложенных ярлыков — D44 (E15.7, выполнено).
-- Масштаб при захвате остаётся 0,95 — D42.
-- Число миниатюр на плитке папки остаётся до 4 — D43.
-- Перенос из папки в папку остаётся одним жестом — D41.
-- Перестановка ярлыков внутри панели папки — D40 (E16.1, выполнено).
-- Папка не бывает из 0–1 ярлыков (распад при одном оставшемся) — D45 (E14.8, сделано).
-
-## Что сверка не покрывает
-
-- **Системные жесты и край**: сверено наличие политики (`yieldsLeftEdgeToSystemGesture`), не поведение в стеке.
-- **Continuum и настольный Start**: десктопная раскладка, `large` на мониторе, партнёрские слоты OEM.
-- **Вторичные плитки и deep links как отдельные сущности**: в модели их нет — они выражаются ярлыком с действием, и в этом виде не сверяются.
-- **Ограничение эталона — список приложений**: в `W10M-STARTSCREEN.md` он описан одним абзацем §1, без поиска, «Recently Installed» и указателя.
-- **Темы, акцент, прозрачность, тайлинг**: оформление — параметры хоста, в референсе — настройки ОС.
-- **Звук и haptics**: в W10M звук слияния не документирован, наш haptic не сверялся.
-- **Точные тайминги**: в референсе все миллисекунды — оценки, сравнивать нельзя.
-- **Narrator W10M**: раздела accessibility в референсе нет — строки группы не сверка, в таблице они помечены ❔ (справка, не оценка).
-- **Локализация W10M**: наборы, плюрализация и RTL в эталоне не разбираются.
-
-## Источники
-
-Документы репозитория:
-
-- `docs/W10M-STARTSCREEN.md` — эталон, §1–§9.
-- `docs/STATE.md` — решения D1–D45, вопросы Q1–Q9.
-- `docs/STARTSCREEN-IOS-DESIGN.md` — §1, §3, §4, §5, §6, §9 и «Отступления реализации», пп. 1–65.
-- `docs/PLAN.md` — статусы E0–E16, «Вне плана»; пустоты Q6-Б — эпик E14 (закрыт, остаточные ручные проверки — чек-лист «Ручная проверка E14»), остальные решения сверки — E15, перестановка внутри папки — E16.
-- `docs/CORE-IOS-DESIGN.md` — пейджер, параллакс, арбитраж (для страниц и прокрутки).
-
-Ключевые файлы кода:
-
-- `Sources/TesseraStartScreen/TesseraTileDescriptor.swift`
-- `Sources/TesseraStartScreen/TesseraTileFolder.swift`
-- `Sources/TesseraStartScreen/TesseraTileStore.swift`
-- `Sources/TesseraStartScreen/TesseraTileLayoutEngine.swift`
-- `Sources/TesseraStartScreen/TileCollectionViewLayout.swift`
-- `Sources/TesseraStartScreen/TileGridView.swift`
-- `Sources/TesseraStartScreen/TileEditCoordinator.swift`
-- `Sources/TesseraStartScreen/LiveTileEngine.swift`
-- `Sources/TesseraStartScreen/LiveTileView.swift`
-- `Sources/TesseraStartScreen/AppsListPage.swift`
-- `Sources/TesseraStartScreen/StartScreenViewController.swift`
-- `Sources/TesseraStartScreen/TesseraStartScreenView.swift`
-- `Sources/TesseraStartScreen/TesseraStartScreenStrings.swift`
-- `Sources/TesseraStartScreen/Resources/en.lproj/Localizable.strings`
-- `Sources/TesseraCore/Pager/TesseraPagerViewController.swift`
-- `Sources/TesseraCore/Parallax/TesseraParallaxLayer.swift`
-
-Внешние источники для пробела референса: руководство Lumia (с. 14) и обзор 2015; ссылки — в таблице.
+External sources for gaps in the reference: the Lumia user guide (p. 14) and a 2015 review; links are in the apps list table.

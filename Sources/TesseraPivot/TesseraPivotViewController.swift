@@ -5,7 +5,7 @@
 //  The pivot orchestrator: the large app title, the header strip, and
 //  a full-screen pager from TesseraCore.
 //  Contract: docs/PIVOT-IOS-DESIGN.md (architecture: the layout from top to bottom:
-//  PivotTitleView → TesseraPivotHeaderStripView → the pager; core math:
+//  the app title label → TesseraPivotHeaderStripView → the pager; core math:
 //  auto-centering of the strip when a transition completes; synchronizing the strip and
 //  the pager: a single source of truth and a single writer of `contentOffset`;
 //  vertical scrolling inside a page: option B, where the pager only scrolls

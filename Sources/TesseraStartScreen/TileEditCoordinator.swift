@@ -37,7 +37,7 @@
 //  operations by cell followed by `collapseEmptyRows`; the edit buttons and the public
 //  methods use the same operations. There is no index-based API (D33): the delegate
 //  receives a cell, not an index. See STARTSCREEN-IOS-DESIGN,
-//  section "Implementation deviations", for details.
+//  section "Implementation notes and deviations", for details.
 //
 //  The model is NOT changed during a drag. The neighbor layout is a
 //  preview that lives only in the grid (`grid.update(snapshot:animated:)`); the change is
@@ -126,7 +126,7 @@
 //  `panelReorderExitMargin`, the session is replaced by a take-out to the desktop (D45;
 //  the panel closes immediately); there is no return to reordering within the same
 //  drag. VoiceOver offers "Move earlier"/"Move later" on panel tiles.
-//  See STARTSCREEN-IOS-DESIGN, section "Implementation deviations", for details.
+//  See STARTSCREEN-IOS-DESIGN, section "Implementation notes and deviations", for details.
 //
 //  Scrolling discipline (§3, CORE-IOS-DESIGN.md §2): in the `contentOffset` callback
 //  the coordinator touches only `frame`/`isHidden` of the button views over the grid and
@@ -641,7 +641,7 @@ public struct TesseraTileEditConfiguration {
 // MARK: - Coordinator
 
 /// The start screen edit-mode coordinator
-/// (docs/STARTSCREEN-IOS-DESIGN.md §5; D14/D15 in docs/STATE.md).
+/// (docs/STARTSCREEN-IOS-DESIGN.md §5; D14/D15 in docs/DECISIONS.md).
 ///
 /// ## Usage
 ///

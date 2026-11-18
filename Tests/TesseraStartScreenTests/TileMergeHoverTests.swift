@@ -4,7 +4,7 @@
 //
 //  Tests for merging into a folder by hold.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode"
-//  and docs/PLAN.md: a folder of two tiles is not created instantly on
+//  (merge hold): a folder of two tiles is not created instantly on
 //  a drop on the center of the target tile, but after a hold of **strictly more than** 600 ms with
 //  a finger displacement **strictly less than** 10 pt.
 //

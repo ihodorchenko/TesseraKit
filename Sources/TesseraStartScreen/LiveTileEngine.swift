@@ -9,7 +9,7 @@
 //  (engine)" (content model, flip, stagger, pauses, badge, Reduce Motion),
 //  §9 "Accessibility" (Reduce Motion, VoiceOver), and §10 "MVP" (flip of simple
 //  text tiles, no push updates). User clarifications — D12 and D15
-//  in docs/STATE.md: an action tile with a badge; live tiles are part of the design.
+//  in docs/DECISIONS.md: an action tile with a badge; live tiles are part of the design.
 //
 //  Responsibilities:
 //  - the engine neither draws a tile nor takes part in the grid layout: it reads the
@@ -17,7 +17,7 @@
 //    ``TesseraLiveTileView`` to show the right face;
 //  - a flip is performed only by layer transforms (`CATransform3D` + m34) —
 //    layout is not involved in the hot path (§4, the discipline from
-//    CORE-IOS-DESIGN.md §2 and RISK.md R10);
+//    CORE-IOS-DESIGN.md §2 and RISKS.md R10);
 //  - pauses: a tile off screen (the host's visibility callback), the app in the background,
 //    Reduce Motion (§4) — in all three cases no new flips are started;
 //  - stagger is computed by the pure functions of ``TesseraLiveTileStaggerPlanner`` with a

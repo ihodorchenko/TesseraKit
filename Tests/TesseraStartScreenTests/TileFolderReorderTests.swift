@@ -4,7 +4,7 @@
 //
 //  Reordering tiles inside a folder: model, coordinator, VoiceOver
 //  (D40; Windows 10 Mobile spec §6.5). Design document: docs/STARTSCREEN-IOS-DESIGN.md
-//  "Implementation deviations"; decision D40 in docs/STATE.md.
+//  "Implementation notes and deviations"; decision D40 in docs/DECISIONS.md.
 //
 //  What is checked:
 //  - `TesseraTileStore.moveWithinFolder(_:folderID:toIndex:)`: forward/backward, index

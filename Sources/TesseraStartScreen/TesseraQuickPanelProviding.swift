@@ -3,7 +3,7 @@
 // Design document: docs/STARTSCREEN-IOS-DESIGN.md, §1 (three pages: the left page is a hook for
 // calling anything), §7 (the left page: a container with the `TesseraQuickPanelProviding` protocol,
 // an empty placeholder by default, appear/disappear callbacks for lazy loading) and §14 (MVP
-// clarifications; D13 in docs/STATE.md: both side pages are optional, the pager has 1 to 3 pages).
+// clarifications; D13 in docs/DECISIONS.md: both side pages are optional, the pager has 1 to 3 pages).
 //
 // Decision D13: no provider, no page. The pager does not silently substitute an empty placeholder;
 // it simply does not create the left page. A host that needs an empty hook (for example, to keep

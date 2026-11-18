@@ -4,7 +4,7 @@
 //
 //  Tests for the folder tap interceptor (D17).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid";
-//  D17 in docs/STATE.md: a `folderTapHandler` that returns `true` cancels
+//  D17 in docs/DECISIONS.md: a `folderTapHandler` that returns `true` cancels
 //  the native expansion: the panel does not open and `onTap` is not called.
 //
 //  A tap arrives the same way as from UICollectionView: through the public

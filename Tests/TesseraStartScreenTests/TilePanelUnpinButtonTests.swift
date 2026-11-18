@@ -3,8 +3,8 @@
 //  TesseraStartScreenTests
 //
 //  The unpin button on tiles of an expanded folder panel in edit mode (D46).
-//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
-//  decision D46 in docs/STATE.md; reference:
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation notes and deviations";
+//  decision D46 in docs/DECISIONS.md; reference:
 //  docs/W10M-STARTSCREEN.md §6.5, §6.6, §6.9.
 //
 //  Tested on a real `TesseraTileStore` and a grid in a window (`TesseraTestDragHost`):

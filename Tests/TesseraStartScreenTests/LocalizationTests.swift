@@ -4,7 +4,7 @@
 //
 //  Localization of the default `TesseraStartScreen` strings.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §9 "Accessibility"
-//  (VoiceOver announcements with localized strings), "Implementation deviations".
+//  (VoiceOver announcements with localized strings), "Implementation notes and deviations".
 //
 //  What is checked:
 //  - parity of the `Resources/en.lproj/Localizable.strings` and `ru.lproj` tables

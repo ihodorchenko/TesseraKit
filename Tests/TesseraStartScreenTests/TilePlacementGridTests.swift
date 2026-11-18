@@ -4,7 +4,7 @@
 //
 //  A grid with a snapshot carrying a table of explicit cells (D30). Design
 //  document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid" and "Implementation
-//  deviations"; decisions D30–D33 in docs/STATE.md.
+//  deviations"; decisions D30–D33 in docs/DECISIONS.md.
 //
 //  `TesseraTileGridView` is checked:
 //  - `baseContentFrames(for:placementTable:)` takes slots from the same source

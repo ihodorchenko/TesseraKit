@@ -4,9 +4,9 @@
 //
 //  Tests of the pure "placement by coordinates" layer (D30–D31).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid" and
-//  "Implementation deviations"; D30 (real holes), D31 (collisions —
+//  "Implementation notes and deviations"; D30 (real holes), D31 (collisions —
 //  a cascading push down; a row collapses only if nobody
-//  occupies it) in docs/STATE.md.
+//  occupies it) in docs/DECISIONS.md.
 //
 //  The functions are pure: no UIKit loop, no store, no window. Covered here: slots, validity
 //  checks, cell clamping, insertion/cascade, resize, removal,

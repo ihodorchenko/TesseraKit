@@ -1,151 +1,135 @@
-# Пивот (Pivot) для iOS — проектный дизайн
+# TesseraPivot design
 
-> Проектный документ: теоретическое проектирование компонента «Пивот» по мотивам Windows Phone для iOS.
-> Ограничения: **iOS 15+**, **Swift 5.9+**, допускаются UIKit и SwiftUI. Реализация в объём документа не входит.
-> Парные документы: **PANORAMA-IOS-DESIGN.md** (компонент «Панорама»), **STARTSCREEN-IOS-DESIGN.md** (рабочий стол). Общий слой: **CORE-IOS-DESIGN.md** (пакет **TesseraKit**, target `TesseraCore`).
+> Design document for the Pivot component: a Windows Phone style pivot for iOS.
+> Constraints: **iOS 15+**, **Swift 5.9+**, UIKit and SwiftUI.
+> Companion documents: [PANORAMA-IOS-DESIGN.md](PANORAMA-IOS-DESIGN.md), [STARTSCREEN-IOS-DESIGN.md](STARTSCREEN-IOS-DESIGN.md). Shared layer: [CORE-IOS-DESIGN.md](CORE-IOS-DESIGN.md) (`TesseraCore`).
 
-## 0. Что такое Pivot и чем он отличается от Panorama
+## 0. What Pivot is and how it differs from Panorama
 
-| Свойство | Panorama | Pivot |
+| Property | Panorama | Pivot |
 |---|---|---|
-| Ширина секции | меньше экрана (peek) | полная ширина экрана |
-| Фон | общий фон с параллаксом | обычный фон, без параллакса |
-| Заголовки секций | плавают над контентом | отдельная горизонтальная лента сверху, интерактивная (тап = переход) |
-| Снап | кастомный | нативный `pagingEnabled` — бесплатно |
-| Вертикальный скролл | внутри секции | внутри страницы (лента заголовков остаётся на месте) |
-| Крупный заголовок приложения | нет | да, статичный над лентой |
+| Section width | narrower than the screen (peek) | full screen width |
+| Background | shared background with parallax | plain background, no parallax |
+| Section headers | float over the content | a separate horizontal strip on top, interactive (tap = jump) |
+| Snapping | custom | native `isPagingEnabled`, for free |
+| Vertical scrolling | inside a section | inside a page (the header strip stays in place) |
+| Large app title | no | yes, static above the strip |
 
-Ключевая особенность WP-Pivot — **двусторонняя синхронизация**: свайпишь контент — подсветка в ленте едет непрерывно; тапаешь заголовок — контент прыгает на страницу. Вся проектировочная работа сводится к этой синхронизации.
+The key feature of the Windows Phone Pivot is **two-way synchronization**: swipe the content and the highlight in the strip moves continuously; tap a header and the content jumps to that page. Nearly all the design work is about this synchronization.
 
-## 1. Целевые UX-свойства
+## 1. Target UX properties
 
-1. Полноэкранные страницы, горизонтальное листание с нативным снапом.
-2. **Лента заголовков сверху**: активный выделен (акцентный цвет/жирность), неактивные приглушены; при большом числе секций лента сама горизонтально скроллится.
-3. **Индикатор/подсветка движется непрерывно** вместе с прогрессом свайпа, а не переключается по факту.
-4. Тап по заголовку — прямой прыжок на страницу (без пролёта промежуточных), лента доцентровывается так, чтобы активный заголовок был виден.
-5. Вертикальный скролл внутри страницы, лента при этом закреплена.
-6. Крупный заголовок приложения над лентой, статичный.
+1. Full-screen pages with horizontal paging and native snapping.
+2. **A header strip on top:** the active header is emphasized (accent color / weight) and inactive ones are muted; with many sections the strip scrolls horizontally on its own.
+3. **The indicator / highlight moves continuously** with swipe progress instead of switching after the fact.
+4. Tapping a header jumps straight to the page (without flying through intermediate pages), and the strip re-centers so that the active header is visible.
+5. Vertical scrolling inside a page while the strip stays pinned.
+6. A large static app title above the strip.
 
-## 2. Выбор фундамента
+## 2. Foundation
 
-Здесь приятный сюрприз: **снап проектировать не нужно вообще** — страницы полной ширины, значит `UIScrollView.isPagingEnabled = true` даёт и инерцию, и прилипание, и bounce бесплатно. В Panorama от `pagingEnabled` пришлось отказаться только из-за peek; в Pivot этой проблемы нет.
+A pleasant surprise: **snapping does not need to be designed at all.** Pages are full width, so `UIScrollView.isPagingEnabled = true` provides inertia, snapping and bounce for free. Panorama had to give up `isPagingEnabled` only because of the peek.
 
-Но UIKit-ядро всё равно нужно — из-за непрерывной синхронизации ленты:
+A UIKit core is still required because of the continuous strip synchronization:
 
-- прогресс свайпа `t = offset.x / pageWidth` доступен только из `scrollViewDidScroll`;
-- `UIPageViewController` не подходит: он не отдаёт непрерывный offset (его внутренний `UIScrollView` — приватная деталь, копаться в иерархии хрупко), а переходы кастомизируются тяжело;
-- чистый SwiftUI на iOS 15 (`TabView` со стилем `.page`) даёт пагинацию, но **не даёт прогресс перетаскивания** — индикатор сможет только «прыгать» по завершении свайпа, а не ехать за пальцем.
+- the swipe progress `t = offset.x / pageWidth` is available only from `scrollViewDidScroll`;
+- `UIPageViewController` does not fit: it does not expose a continuous offset (its inner `UIScrollView` is a private detail and digging in the hierarchy is fragile), and its transitions are hard to customize;
+- plain SwiftUI on iOS 15 (`TabView` with the `.page` style) gives paging but **no drag progress**, so the indicator could only jump after a swipe finishes rather than follow the finger.
 
-Вывод тот же, что в Panorama: **UIKit-ядро + SwiftUI-фасад** (`TesseraPivotView: UIViewControllerRepresentable`).
+Same conclusion as Panorama: **UIKit core, SwiftUI facade** (`TesseraPivotView: UIViewControllerRepresentable`).
 
-## 3. Архитектура
+## 3. Architecture
 
 ```
-TesseraPivotView (SwiftUI-фасад)               ← декларативный API
-    └─ TesseraPivotViewController (UIKit)       ← оркестрация, единый источник истины
-        ├─ PivotTitleView                ← крупный заголовок приложения (опц.)
-        ├─ TesseraPivotHeaderStripView          ← UICollectionView заголовков + индикатор
-        ├─ PivotPagerView                ← UIScrollView, isPagingEnabled = true
-        └─ PivotSectionContainerView     ← child VC страниц + ленивая загрузка
+TesseraPivotView (SwiftUI facade)               declarative API
+    └─ TesseraPivotViewController (UIKit)       orchestration, single source of truth
+        ├─ app title label                      large app title (optional)
+        ├─ TesseraPivotHeaderStripView          UICollectionView of headers + indicator
+        └─ TesseraPagerViewController (Core)    UIScrollView, isPagingEnabled = true, child VC pages, lazy loading
 ```
 
-Модель — по аналогии с Panorama:
+The model mirrors Panorama:
 
-- `TesseraPivotSection` — id, заголовок, фабрика контента (`makeContent() -> UIViewController` или `-> some View` для SwiftUI-страниц);
-- `TesseraPivotStyle` — шрифты/цвета заголовков, вид индикатора (подчёркивание и/или акцентный цвет текста), режим ленты: по ширине контента или равные ширины (`fill`);
-- `TesseraPivotDelegate` — `didSelectSection`, `didChangeProgress(_ t: Double)`.
+- `TesseraPivotSection`: id, title and a content provider (`TesseraContentProviding`: a `UIViewController` factory or a SwiftUI view);
+- `TesseraPivotStyle`: header font and colors, indicator style (`.underline`, `.accentText` or `.underlineAndText`), strip mode (`.content` for content width or `.fill` for equal widths), optional `appTitle`;
+- `TesseraPivotDelegate`: `didSelectSectionAt`, `didChangeProgress(_ t:)` and an optional `didShowSectionAt`.
 
-## 4. Математика ядра
+## 4. Core math
 
-- **Прогресс**: `t = offset.x / pageWidth` — тот же инвариант, что в Panorama; целая часть — индекс страницы, дробная — прогресс перехода.
-- **Индикатор**: центр индикатора — линейная интерполяция между центрами соседних заголовков:
+- **Progress:** `t = offset.x / pageWidth`, the same invariant as in Panorama; the integer part is the page index and the fractional part the transition progress.
+- **Indicator:** the indicator center is a linear interpolation between the centers of neighbouring headers:
 
   ```
   indicatorCenter = lerp(center[i], center[i+1], frac(t))
   ```
 
-- **Важная тонкость (отличие от Panorama)**: в Panorama всё было равной ширины, поэтому индикатор ехал с константной скоростью. Здесь заголовки имеют **разную ширину** (по размеру текста), поэтому интерполировать надо именно между центрами заголовков, а не как `t × constWidth` — иначе индикатор «уплывает» от текста на середине свайпа.
-- **Окраска текста**: активный/неактивный цвета интерполируются по расстоянию заголовка от `t` (ближний к `t` заголовок активнее). Это даёт тот самый WP-эффект плавной «передачи акцента».
-- **Автоцентрирование ленты**: по завершении перехода `UICollectionView.scrollToItem` к активному заголовку с позицией `.centeredHorizontally` — только если лента переполнена и заголовок за краем.
+- **An important subtlety (unlike Panorama):** in Panorama everything had equal width, so the indicator moved at constant speed. Here headers have **different widths** (they follow the text), so interpolation must happen between header centers rather than as `t × constWidth`; otherwise the indicator drifts away from the text mid-swipe.
+- **Text coloring:** active and inactive colors are interpolated by the header's distance from `t` (the header closest to `t` is the most active). This gives the Windows Phone effect of smoothly handing over the accent.
+- **Auto-centering of the strip:** `scrollToCenter` moves the strip only if it is overflowing and the header is fully or partly beyond the visible edge; for a strip that fits, any residual offset is reset to the start. On a width change (rotation) or a layout-direction change, the strip rebuilds its geometry and returns the selected header to the visible area without animation. `selectSection(at:animated: false)` does not animate the strip.
 
-Правило производительности из Panorama действует без изменений: в `scrollViewDidScroll` — только `frame`/`transform`/`alpha`, ни одного layout-прохода.
+The performance rule from Panorama applies unchanged: in `scrollViewDidScroll` only `frame` / `transform` / `alpha`, no layout pass.
 
-## 5. Синхронизация ленты и пейджера (сердце компонента)
+## 5. Strip and pager synchronization (the heart of the component)
 
-Правило: **один источник истины и один писатель**. Источник — `contentOffset` пейджера; пишет в него только пейджер (жест) и контроллер (тап по заголовку).
+Rule: **one source of truth and one writer.** The source is the pager's `contentOffset`; only the pager (the gesture) and the controller (a header tap) write to it.
 
-- **Свайп → лента**: `scrollViewDidScroll` дёргает индикатор и окраску (п. 4). Обратной записи нет — циклов нет.
-- **Тап → пейджер**: `pager.setContentOffset(target, animated: true)`. Важно: при анимированной установке делегат скролла продолжает вызываться на каждом кадре, поэтому **лента анимируется сама** — отдельную анимацию индикатора писать не нужно. Единственное — не забыть флаг/защиту, чтобы обработчик тапа не мешал скроллу ленты (у `UICollectionView` тап и скролл разведены нативно, тут проблем нет).
-- Жёсткость снапа: `pagingEnabled` двигает по одной странице за свайп — это в точности поведение WP, отдельный кастомный снап не нужен.
+- **Swipe → strip:** `scrollViewDidScroll` drives the indicator and the coloring (section 4). There is no write back, hence no loops.
+- **Tap → pager:** the pager is moved with an animated `setContentOffset`. While it animates, the scroll delegate keeps firing on every frame, so **the strip animates by itself**; no separate indicator animation is needed. A `UICollectionView` separates tap from scroll natively, so the tap handler does not interfere with strip scrolling.
+- **Snapping behaviour:** `isPagingEnabled` moves by one page per swipe, which is exactly the Windows Phone behaviour; no custom snapping is needed.
+- **Interrupted transitions.** When a new animated transition interrupts a previous one, UIKit synchronously completes the old animation, and the Core pager reports `didShowPageAt` for the intermediate page. `TesseraPivotViewController` keeps a generation counter of programmatic transitions and drops shows that arrive during `go(toPage:animated:)` for anything but the target, as well as shows during `reload(sections:)`. The delegate therefore sees only real completions.
+- **Far taps.** The Core pager jumps farther than ±1 through the target's neighbour (see [CORE-IOS-DESIGN.md](CORE-IOS-DESIGN.md)), so raw progress arrives with a jump. The strip is not put on the target in advance (that made the indicator flicker for a frame); it receives progress linearly remapped from the segment `[neighbour, target]` to `[source header, target]`, so the indicator travels continuously from the source header to the target during the single animated step, and intermediate headers are briefly highlighted on the way. The external delegate receives the raw pager progress (with the jump). The remapping is dropped on `didShowPageAt`, at the start of a pan, on `reload` and on the next `selectSection`. It is a progress transformation, not a separate animation.
 
-## 6. Вертикальный скролл внутри страницы
+## 6. Vertical scrolling inside a page
 
-Тот же вариант B, что выбран для Panorama, но проще: пейджер скроллит **только горизонтально**, страницы владеют вертикалью. Арбитраж направлений — в `gestureRecognizerShouldBegin` родителя. Лента заголовков живёт вне пейджера и потому закреплена по вертикали автоматически — отдельно её «прибивать» не нужно.
+The same option B as Panorama, but simpler: the pager scrolls **only horizontally** and pages own the vertical axis. The header strip lives outside the pager, so it stays pinned vertically with no extra work.
 
-## 7. Производительность
+**Axis arbitration.** `TesseraPagerViewController` does not expose its `UIScrollView`, so `TesseraPivotViewController` finds it by walking the direct subviews of the pager's root view. It then adds a target to the pager's pan recognizer (`addTarget`, without replacing the delegate) and decides on `.began` with `TesseraGestureArbiter.axisDecision(forVelocity:)`: for a horizontal axis it builds a `TesseraGestureArbiter` and blocks the vertical children (`prepareForHorizontalScroll()`), restoring them when the gesture ends (`endHorizontalScroll()`). Children register through the public `registerVerticalOwner(_:)` / `unregisterVerticalOwner(_:)`; references are weak and lazily unloaded pages drop out of the registry on their own. A public hook in Core (for instance a `horizontalScrollView` accessor) is a possible future improvement.
 
-- Ленивая загрузка страниц ±1 (как в Panorama).
-- Лента — обычный `UICollectionView` с переиспользованием, на сотни заголовков масштабируется бесплатно.
-- Индикатор — отдельный `CALayer`/view, гоняется только трансформом.
-- Prefetch страниц, чтобы инертный свайп не упирался в ленивую загрузку.
+**When to register.** Only the current page receives appearance callbacks; the ±1 neighbours are loaded without `viewDidAppear`. Pages should therefore call `registerVerticalOwner(_:)` from `viewDidLoad`, not from `viewDidAppear`.
 
-## 8. Accessibility и системная интеграция
+## 7. Performance
 
-- **VoiceOver**: страницы листаются `UIAccessibilityScrollDirection.left/right`; заголовки в ленте — обычные кнопки (тап работает); название секции озвучивается при смене.
-- **Reduce Motion**: при `isReduceMotionEnabled` прыжок по тапу — без анимации; непрерывный индикатор при свайпе оставить (он повторяет жест пользователя, это не самодвижущаяся анимация).
-- **Dynamic Type**: шрифты заголовков масштабируются; режим ленты `fill` при больших шрифтах переключается на усечение или на режим «по ширине контента», иначе заголовки сольются.
-- **RTL**: зеркалится всё — и порядок заголовков, и направление свайпа.
+- Lazy loading of pages ±1 (as in Panorama).
+- The strip is a regular reusable `UICollectionView`, scaling to hundreds of headers for free.
+- The indicator is a separate `CALayer` / view driven by transforms only.
+- Page prefetch so that an inertial swipe does not stall on lazy loading.
 
-## 9. Адаптивность
+## 8. Accessibility and system integration
 
-- **Поворот/iPad**: пересчитать `pageWidth` и `contentSize`, восстановить индекс страницы; лента пересоберётся сама (коллекция).
-- **Много секций**: лента скроллится, страницы ленивые — ограничений практически нет.
-- **Одна секция / пусто**: лента скрывается; пусто — placeholder через делегат.
-- **Заголовок приложения**: два режима — встроенный статичный заголовок внутри компонента (WP-поведение) либо интеграция с `navigationItem.largeTitle` и лентой под навбаром.
+- **VoiceOver:** pages are paged with `UIAccessibilityScrollDirection.left/right`; headers in the strip are regular buttons (a tap works); the section name is announced on change (by the host).
+- **Reduce Motion:** with `isReduceMotionEnabled` the jump on tap is not animated; the continuous indicator during a swipe stays (it follows the user's gesture and is not a self-driven animation).
+- **Dynamic Type:** header fonts scale; the `fill` strip mode falls back to truncation or to content-width mode at large font sizes, otherwise the headers would run together.
+- **RTL:** everything mirrors, both the header order and the swipe direction. `UICollectionViewFlowLayout` is not mirrored by default when RTL is set locally (`flipsHorizontallyInOppositeLayoutDirection == false`), and the collection does not inherit the strip's `semanticContentAttribute`, so the header order used to disagree with the pager's swipe direction. The strip therefore uses its own layout with the flag enabled (`developmentLayoutDirection = .leftToRight`) and forwards `semanticContentAttribute` to the collection. Application-wide RTL (double mirroring is excluded by the layout flag) has not been verified on a device.
 
-## 10. Объём MVP
+## 9. Adaptivity
 
-**Входит:**
+- **Rotation / iPad:** recompute `pageWidth` and `contentSize` and restore the page index; the strip rebuilds itself (it is a collection).
+- **Many sections:** the strip scrolls and pages are lazy, so there are practically no limits.
+- **One section / empty:** the strip is hidden when `sections.count <= 1`. `TesseraPivotDelegate` has no empty-state event and the controller draws no placeholder: with no sections, the large app title (if `TesseraPivotStyle.appTitle` is set) and an empty pager remain. The host detects the empty state from `sections` / `reload(sections:)` and shows its own state. Adding a delegate hook would be a breaking change to a public protocol.
+- **App title:** a built-in static title inside the component (Windows Phone behaviour).
+- **Content updates from SwiftUI.** When the set of ids or titles changes, `TesseraPivotView` calls `reload(sections:)` immediately. With the same ids and titles it hands the sections to the core on every update; at rest this is a `reload` that preserves the current page, controllers, scroll position and `@State` and refreshes the SwiftUI hosting `rootView` in place. During a gesture, inertia or an animated transition the update is deferred until the motion ends (a pager `reload` would cut the motion short). Progress that changed during `reload` is delivered to the delegate asynchronously (on the next main-queue pass) and only if it changed, never inside `updateUIViewController`. Updating content without stopping motion would need a public Core API.
 
-1. Пейджер на `pagingEnabled`.
-2. Лента заголовков с индикатором и непрерывной подсветкой.
-3. Тап-переход с автоцентрированием ленты.
-4. Вертикальный скролл на страницу (вариант B).
-5. Ленивая загрузка ±1.
-6. SwiftUI-фасад + UIKit-API.
-7. Accessibility (VoiceOver + Reduce Motion).
+## 10. Scope of the first release
 
-**Отрезано в v1:** повторяющаяся/бесконечная лента (на WP был эффект «перетекания» — спорная фича), кастомные переходы между страницами, заголовки-подписи под лентой, фичи iOS 17+.
+**Included:**
 
-## 11. Риски
+1. A pager on `isPagingEnabled`.
+2. A header strip with an indicator and continuous highlighting.
+3. Tap navigation with strip auto-centering.
+4. Vertical scrolling per page (option B).
+5. Lazy loading ±1.
+6. SwiftUI facade and UIKit API.
+7. Accessibility (VoiceOver and Reduce Motion).
 
-- **Интерполяция при разных ширинах заголовков** (п. 4) — самая вероятная зона визуальных багов; решается тестами на случайных наборах заголовков.
-- **Анимированный `setContentOffset` + делегат** — потенциальный источник двойной анимации; лечится правилом одного писателя.
-- **iOS-гейдлайны**: Pivot гораздо ближе к нативным паттернам (segmented control + пагинация), чем Panorama, — пользователи его поймут без обучения; риск культурного отторжения низкий.
-- **`pagingEnabled` — чёрный ящик**: он не позволяет менять скорость децелерации и перехватывать снап так же тонко, как в Panorama; для Pivot это приемлемо, но если захочется «прыжок через несколько страниц» быстрым свайпом — придётся вернуться к кастомному снапу из Panorama.
+**Out of scope:** a looping / infinite strip (Windows Phone had a "wrap-around" effect, a debatable feature), custom page transitions, captions under the strip, iOS 17+ features.
 
-## 12. Итог
+## 11. Risks
 
-Pivot получается заметно дешевле Panorama — бесплатный снап, нет слоя фона, лента с тапами строится на обычном `UICollectionView`; вся сложность сосредоточена в одной точке — непрерывной синхронизации `contentOffset ↔ индикатор`. Математика (`t` и интерполяция) переиспользуется из Panorama почти дословно.
+- **Interpolation with different header widths** (section 4) is the likeliest source of visual bugs; it is addressed by tests on random header sets.
+- **Animated `setContentOffset` plus the delegate** can produce a double animation; the single-writer rule prevents it.
+- **iOS guidelines:** Pivot is much closer to native patterns (segmented control plus paging) than Panorama, so users understand it without instruction; the risk of cultural rejection is low.
+- **`isPagingEnabled` is a black box:** it does not allow changing the deceleration speed or intercepting the snap as finely as in Panorama. That is acceptable for Pivot, but if "jump over several pages" on a fast swipe is ever wanted, the custom snapping from Panorama would have to return.
 
-## Отступления реализации (v0.1, 29.10.2026)
+## 12. Summary
 
-> Сверка проектного документа с фактическим кодом релиза 0.1.0. Текст выше не переписывался: отступления зафиксированы отдельной секцией. Формат пункта: что обещал документ → что делает код → решение.
-
-1. **§6 «Вертикальный скролл внутри страницы»: точка решения по оси и доступ к скроллу пейджера.** Документ обещал: арбитраж направлений выполняется «в `gestureRecognizerShouldBegin` родителя». Код: `TesseraPagerViewController` (Core) не публикует свой `UIScrollView`; `TesseraPivotViewController` находит его обходом прямых потомков корневого вида пейджера (`pagerViewController.view.subviews`) — тот же приём используют контрактные тесты Core. Далее контроллер подписывается на пан пейджера аддитивно (`addTarget`, без подмены делегата) и на состоянии `.began` решает по `TesseraGestureArbiter.axisDecision(forVelocity:)`: при горизонтали собирает `TesseraGestureArbiter` и блокирует прокрутку вертикальных детей (`prepareForHorizontalScroll()`), при завершении жеста возвращает их состояние (`endHorizontalScroll()`). Дети регистрируются вручную публичными `registerVerticalOwner(_:)` / `unregisterVerticalOwner(_:)`; ссылки слабые, лениво выгруженные страницы выпадают из реестра сами. Решение: поведение §6 соблюдено (пейджер — только горизонталь, вертикаль — странице), но механика отличается: точка решения сдвинута на `.began`, а скролл пейджера ищется по иерархии. Для «как в документе» нужен публичный хук Core (например, `horizontalScrollView`), Core в v0.1 не менялся — это открытый вопрос следующей версии.
-
-2. **§9 «Адаптивность»: «одна секция / пусто».** Документ обещал: при одной секции лента скрывается, «пусто — placeholder через делегат». Код: лента действительно скрывается при `sections.count <= 1` (`layoutPivot`), но `TesseraPivotDelegate` содержит только `didSelectSectionAt`, `didChangeProgress` и опциональный `didShowSectionAt` — события пустого состояния в нём нет, и `TesseraPivotViewController` никакого placeholder не рисует и не фабрикует. При пустом наборе остаются крупный заголовок приложения (если задан `TesseraPivotStyle.appTitle`) и пустой пейджер; хост узнаёт о пустоте по публичному `sections` / `reload(sections:)` и показывает своё состояние. Решение: пустое состояние в v0.1 — за хостом; добавление хука в делегат — ломающее изменение публичного протокола, отложено (зафиксировано как открытый вопрос).
-
-## Отступления реализации (T3 по ревью E9/E10, 02.11.2026)
-
-> Дополнение к секции выше по итогам трека T3 (`docs/PLAN.md`, раздел «E9–E10», задачи E9.6 и E10.12а). Текст §1–§12 по-прежнему не переписывается. Формат тот же: что обещал документ → что делает код → решение.
-
-3. **§5 «Тап → пейджер», перехват перехода (E9.6).** Документ полагал, что при программном переходе нужен лишь «флаг/защита». Код: UIKit при перехвате анимированного `setContentOffset` новым переходом синхронно завершает прежнюю анимацию (`scrollViewDidEndScrollingAnimation`), и пейджер Core сообщает `didShowPageAt` для промежуточной страницы, на которой анимацию прервали. `TesseraPivotViewController` ведёт счётчик поколений программных переходов и отбрасывает показы, пришедшие внутри `go(toPage:animated:)` не для цели, а также показы во время `reload(sections:)`. Решение: делегат видит только настоящие завершения переходов; корень — в Core (`go` мог бы игнорировать `didEndScrollingAnimation` перехваченной анимации) — открытый вопрос (CORE, «Отступления реализации», п. 14).
-
-4. **§4 «Автоцентрирование», §9 «Поворот», §8 «RTL» (E9.6).** Код: `scrollToCenter` двигает ленту, только если она переполнена и заголовок целиком или частично за краем видимой области; у непереполненной ленты остаточный offset сбрасывается к началу. При смене ширины (поворот) или направления раскладки лента пересобирает геометрию и без анимации возвращает выделенный заголовок в видимую область. `UICollectionViewFlowLayout` по умолчанию не зеркалится при локально заданном RTL (`flipsHorizontallyInOppositeLayoutDirection == false`), а коллекция не наследует `semanticContentAttribute` ленты — порядок заголовков расходился с направлением свайпа пейджера. Лента использует собственную раскладку с включённым флагом (`developmentLayoutDirection = .leftToRight`) и переносит `semanticContentAttribute` на коллекцию. `selectSection(at:animated: false)` ленту не анимирует. Решение: поведение §4/§8/§9 соблюдено; глобальный RTL приложения (двойное зеркалирование исключено флагом раскладки) на устройстве не проверялся.
-
-5. **§5 «Лента анимируется сама», дальний тап после W1 (E10.12а).** Документ предполагал, что лента едет за прогрессом анимированного `setContentOffset`. Код: пейджер прыгает дальше ±1 через соседа цели (CORE, «Отступления реализации», п. 6), и сырой прогресс приходит со скачком. Лента не ставится на цель заранее (это давало мигание индикатора на один кадр) и получает прогресс, линейно перенесённый с отрезка `[сосед, цель]` на `[исходный заголовок, цель]`: индикатор непрерывно едет от исходного заголовка к целевому за время единственного анимированного шага, промежуточные заголовки кратко подсвечиваются по пути. Внешний делегат получает сырой прогресс пейджера (со скачком). Перенос снимается по `didShowPageAt`, на начале пана, при `reload` и при следующем `selectSection`. Решение: отдельной анимации индикатора по-прежнему нет — это преобразование прогресса, а не самостоятельная анимация.
-
-6. **§3 SwiftUI-фасад, обновление контента (E10.12а).** Документ не уточнял, как фасад обновляет контент секций. Код: при изменении набора `id`/заголовков `TesseraPivotView` вызывает `reload(sections:)` сразу; при тех же `id`/заголовках передаёт секции ядру на каждом обновлении — в покое это `reload`, который после W1 сохраняет текущую страницу, контроллеры, скролл и `@State` и обновляет `rootView` SwiftUI-хостингов на месте. Во время жеста, инерции или анимированного перехода обновление откладывается до его завершения (иначе `reload` пейджера оборвал бы движение). Прогресс, изменившийся при `reload`, приходит делегату асинхронно (следующим проходом главной очереди) и только если изменился — не внутри `updateUIViewController`. Решение: для обновления контента без остановки движения нужен публичный API Core (`TesseraContentUpdating` внутренний) — открытый вопрос (CORE, «Отступления реализации», п. 14).
-
-7. **§6, точка регистрации вертикального скролла.** Документ не уточнял, когда страница регистрирует свой скролл-вью. Код: после W1 appearance-коллбэки получает только текущая страница, соседи ±1 загружаются без `viewDidAppear`. Решение: страницам рекомендуется вызывать `registerVerticalOwner(_:)` из `viewDidLoad` (документация метода обновлена), а не из `viewDidAppear`; контракт закреплён тестом `testOnlyCurrentSectionReceivesAppearanceCallbacks`.
+Pivot is noticeably cheaper than Panorama: free snapping, no background layer, and a tappable strip built on an ordinary `UICollectionView`. All the complexity sits in one place, the continuous synchronization of `contentOffset` and the indicator. The math (`t` and interpolation) is reused from Panorama almost verbatim.

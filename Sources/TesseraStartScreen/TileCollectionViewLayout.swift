@@ -103,7 +103,7 @@ final class TesseraTileLayoutAttributes: UICollectionViewLayoutAttributes {
 // MARK: - Layout
 
 /// The tile grid layout on top of ``TesseraTileLayoutEngine``
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3; D15 in docs/STATE.md).
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3; D15 in docs/DECISIONS.md).
 ///
 /// ## How the geometry is computed (§3)
 ///

@@ -4,7 +4,7 @@
 //
 //  Shared helpers for `TesseraTileStore` cell-operation tests.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid" and
-//  "Implementation deviations"; decisions D30–D33 in docs/STATE.md.
+//  "Implementation notes and deviations"; decisions D30–D33 in docs/DECISIONS.md.
 //
 //  The fixture writes a version 2 schema file with explicit cells (including
 //  holes) and loads it into `TesseraTileStore`, so the starting layout is exact and does not

@@ -6,7 +6,7 @@
 //
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §9 "Accessibility"
 //  (Reduce Motion: no flips, jiggle or parallax; animations are not played);
-//  STATE.md: the crossfade of a grid composition change honors
+//  the crossfade of a grid composition change honors
 //  the setting.
 //
 //  The crossfade branch with `animated: true` is reachable only after

@@ -1,90 +1,72 @@
 # AGENTS.md
 
-Инструкция для AI-агентов, работающих с этим репозиторием. Прочитай этот файл и документы в `docs/` **до** любых изменений кода.
+A short guide for AI agents and contributors. Read it and the relevant document in `docs/` before changing code.
 
-## Что это за проект
+## Project
 
-**TesseraKit** — единый Swift Package с четырьмя библиотеками: компоненты UI в духе Windows Phone для iOS.
+TesseraKit is one Swift package with four libraries: Windows Phone style UI components for iOS.
 
-- `TesseraCore` — общий слой: пейджер, параллакс, арбитраж жестов, хостинг контента, accessibility;
-- `TesseraPanorama` — панорама (peek, параллакс фона, кастомный снап);
-- `TesseraPivot` — пивот (лента заголовков со сквозной синхронизацией);
-- `TesseraStartScreen` — рабочий стол (сетка живых плиток, список приложений, страница-хук).
+- `Sources/TesseraCore`: pager, parallax, gesture arbitration, content hosting, accessibility.
+- `Sources/TesseraPanorama`, `Sources/TesseraPivot`: the panorama and pivot components.
+- `Sources/TesseraStartScreen`: tile grid, live tiles, folders, apps list, `TesseraTileStore`.
+- `Tests/<Target>Tests`: XCTest suites. `Example/`: a host app for manual checks.
+- `docs/`: design documents, decision log, risk register, manual testing checklist.
 
-## Текущий статус
+## Hard constraints
 
-Проект **реализован**: закрыты эпики E0–E17 — четыре библиотеки (`TesseraCore`, `TesseraPanorama`, `TesseraPivot`, `TesseraStartScreen`), Example-хост (D16), папки WP-поведения (D17/D18), физика drag по спеке WP (E8), исправления по ревью E9/E10 (волны W1–W5), drag&drop папок (E11, PR #31–#33), исправления по ручному тестированию Example (E12, PR #34–#43; E12.8 — 🔶) и колонки по умолчанию — 6 (E13, D26). **E14 «Настоящие пустоты» (Q6-Б, D30–D33, D45) реализован** (PR #49–#56 — E14.1–E14.8; E14.9 «Тесты и документы» — PR #57): у верхнеуровневых элементов явные ячейки `row`/`column`, `tiles.json` версии 2, дыры сохраняются, drop выбирает клетку, коллизии выталкивают плитки вниз, пустая строка схлопывается только на drop, порядок чтения для VoiceOver — по ячейкам, папка не бывает из 0–1 ярлыков; индексного API нет. Остаточные ручные проверки E14 — чек-лист «Ручная проверка E14» в [docs/PLAN.md](docs/PLAN.md). **E15 «Сверка с W10M» закрыт** (PR #58–#67; D28–D29, D34–D39, D44, D46–D48): углы badge и кнопок правки, порядок цикла размеров, `.dot` в VoiceOver, переименование папки, «желе» — параметр хоста `TesseraTileEditConfiguration.isJiggleEnabled`, выключено по умолчанию (D39), 1×1 с badge без подписи, выступ кнопок 4 pt, badge папки — сумма badge ярлыков (D44). **E16 «Перестановка ярлыков внутри панели папки» (D40, D49) закрыт** (E16.1, PR #68): `TesseraTileStore.moveWithinFolder`, drag внутри открытой панели (выход пальца за панель выносит ярлык), VoiceOver «Переместить раньше/позже». **E17 «Создание папки перетаскиванием» закрыт** (E17.1, PR #70, D50): крупнее зона слияния, гистерезис цели слияния, пауза перед вытеснением соседей. Всё смержено в `dev`. Последний выпущенный тег — `0.3.0` (merge-коммит `7237b03`); релизный PR #69 (релиз 0.4.0 — номер предложение) смержен в `main` 16.11.2026, а правки E17 ложатся в `main` отдельным PR после него; **тег `0.4.0` и GitHub Release ставит владелец** после мерджа этого PR. `dev` впереди `main` на изменения E11–E17 (на 16.11.2026 — 80 коммитов до PR #69, затем PR #70; последний смерженный PR — #70). Источник истины по архитектуре — документы в `docs/` (Core, Panorama, Pivot, StartScreen); работа идёт от ветки `dev`.
+- iOS 15+, Swift 5.9, `swift-tools-version: 5.9`. No API newer than iOS 15: no `@Observable`,
+  `scrollTargetBehavior`, `@Entry` and similar.
+- UIKit core with SwiftUI facades (`UIViewControllerRepresentable`).
+- No external dependencies, system frameworks only.
+- No `.xcodeproj` files except the Example host (`Example/TesseraKitExample`).
 
-Ход работ и статусы задач — в [docs/PLAN.md](docs/PLAN.md) (эпики E0–E16, волны D19), риски — [docs/RISK.md](docs/RISK.md), состояние, решения (D…) и открытые вопросы (Q…) — [docs/STATE.md](docs/STATE.md).
+## Key contracts
 
-## План, риски и состояние
+1. **Progress invariant**: everything animates from one scalar `t = contentOffset.x / pageWidth`; in RTL `t` is
+   normalized by reading direction.
+2. **Single writer of `contentOffset`**: only the pager (gesture) and the controller (programmatic transitions).
+   Subscribers only read; do not create write-back loops.
+3. **Two pager modes**: `paged` (full-page pages) and `snapping` (custom snap through
+   `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)`).
+4. **Gesture arbitration**: horizontal goes to the pager, vertical to the child, decided by the dominant axis
+   in `gestureRecognizerShouldBegin`.
+5. **Performance discipline**: `scrollViewDidScroll` only touches `frame`, `transform` and `alpha`; no layout.
+6. **Reduce Motion**: parallax, flips and the jiggle are disabled when it is on (the jiggle is also a host
+   option, off by default).
+7. **Rule of three**: a mechanism goes into `TesseraCore` only if at least two components need it.
+8. **API stability**: `TesseraCore` is a dependency of the other libraries; change its public surface only
+   through deprecation. Every public top-level type has the `Tessera` prefix; nested types do not need it.
 
-Работа ведётся по [docs/PLAN.md](docs/PLAN.md): эпики E0–E8 выполнялись **последовательно**, исправления E9/E10 выполнены общими волнами W1–W5 и параллельными треками T1–T4 (D19); внутри эпика/волны подпункты распараллеливаются саб-агентами. **Эстимейты не используются** — работа в свободной форме, часовые оценки в план не добавлять.
+## StartScreen model
 
-- **Перед задачей**: свериться с `docs/PLAN.md` (текущий эпик, статусы, что отрезано в v1) и `docs/STATE.md` (решения D, открытые вопросы Q).
-- **После каждой задачи**: обновить статус в `docs/PLAN.md` — ✅ готово, 🔶 частично, ⬜ не начато.
-- **Новые риски** — в `docs/RISK.md` (влияние — качественное, без часов).
-- **Новые решения и вопросы** — в `docs/STATE.md` (D… / Q…). Статус «подтверждено» — только за пользователем; «предложено» — решение агента, которое пользователь видел, но явно не подтверждал: на нём можно строить план, но не необратимые шаги.
-- `PLAN.md`, `RISK.md`, `STATE.md` живут в `docs/`, из `docs/` их не выносить.
+- A top-level item's position is an explicit cell (`row`, `column`), not an index. There is no index-based
+  public API; reading order is derived from cells.
+- `TesseraTileStore` operations take the grid width `columns`. Holes are kept; only an empty row collapses,
+  and only on drop.
+- A folder never holds fewer than two tiles. Persistence is `tiles.json`, schema version 2.
 
-## Жёсткие ограничения
-
-- **iOS 15+**, **Swift 5.9+**, `swift-tools-version: 5.9`. API новее iOS 15 запрещены: никаких `@Observable` (использовать `ObservableObject`), `scrollTargetBehavior`/`scrollTargetLayout`, `@Entry` и т.п.
-- **UIKit-ядро + SwiftUI-фасады** (`UIViewControllerRepresentable`).
-- **Без внешних зависимостей** — только системные фреймворки.
-- Сборка через SPM (`swift build`, `swift test`). Файлов `.xcodeproj` в репозитории быть не должно — **кроме Example-хоста** (`Example/TesseraKitExample/TesseraKitExample.xcodeproj`, решение D16): он нужен для ручной проверки компонентов на симуляторе.
-
-## Ключевые контракты (из docs/CORE-IOS-DESIGN.md)
-
-1. **Инвариант прогресса**: всё анимируется от одного скаляра `t = contentOffset.x / pageWidth`; в RTL `t` нормализуется по направлению чтения.
-2. **Один писатель `contentOffset`**: пишут только пейджер (жест) и контроллер (программный переход). Подписчики только читают — циклов обратной записи не создавать.
-3. **Два режима пейджера**: `paged` (`pagingEnabled`, полностраничные страницы) и `snapping` (кастомный снап через `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)`).
-4. **Арбитраж жестов**: горизонталь — пейджеру, вертикаль — ребёнку; решение по доминирующей оси в `gestureRecognizerShouldBegin`.
-5. **Дисциплина производительности**: в `scrollViewDidScroll` — только `frame`/`transform`/`alpha`, никакого layout.
-6. **Reduce Motion**: параллакс, флипы, «желе» отключаются при `isReduceMotionEnabled` (желе дополнительно — параметр хоста, выключено по умолчанию, D39).
-7. **Правило трёх для Core**: механика попадает в `TesseraCore` только если нужна минимум двум компонентам. Не раздувать Core; специфика компонента остаётся в его target'е.
-8. **Стабильность API**: `TesseraCore` — зависимость трёх библиотек. Публичную поверхность менять только через deprecation.
-
-## Правила работы
-
-- Код каждого компонента — строго в `Sources/<Target>/`. Компоненты зависят только от `TesseraCore`, не друг от друга.
-- Публичные верхнеуровневые типы — с префиксом `Tessera` (D51); вложенные типы префикса не требуют.
-- StartScreen: позиция верхнеуровневого элемента — явная ячейка (`row`/`column`, D30), а не индекс в порядке; индексного публичного API нет (D33), порядок чтения — производное от ячеек. Операции `TesseraTileStore` зовутся с шириной сетки `columns`; дыры остаются, схлопывается только пустая строка и только на drop (D31).
-- Example-хост: вкладка «Стол» — сетка + `TesseraTileStore` + координатор, вкладка «Старт» — полный `TesseraStartScreenViewController` (хук, START, список приложений, параллакс); для ручной проверки drag/edit/папок прогонять «Старт».
-- Тесты — в `Tests/<Target>Tests` (XCTest, совместимо с Swift 5.9). Контрактные тесты Core (прогресс, снап, арбитраж) обязательны.
-- Accessibility (VoiceOver, Reduce Motion, Dynamic Type, RTL) — обязательная часть любого компонента, не опция.
-- Изменение архитектуры — вместе с обновлением соответствующего документа в `docs/`. Язык документации — русский.
-- Перед пушем: компиляция `swift build --triple arm64-apple-ios15.0-simulator` и прогон тестов
-  `xcodebuild test -scheme TesseraKit-Package -destination 'platform=iOS Simulator,name=iPhone 17'`
-  (UIKit-код `swift test` на macOS-хосте не исполняет — D10 в `docs/STATE.md`).
-- **Исполнение — саб-агентами (Flash, High)**: работу выполняют саб-агенты (модель Flash, режим рассуждений High); оркестратор (Lead) сам работу не выполняет — только ставит задачи, контролирует выполнение и выдаёт пользователю финальный результат.
-- **Коммиты и pull request'ы — на английском**: сообщения коммитов, заголовки и описания PR пишутся на английском языке. Язык самих документов (`AGENTS.md`, `docs/`) остаётся русским.
-
-## Рабочий процесс с ветками
-
-- `main` — стабильная ветка. Прямые коммиты и push в неё **запрещены** (branch protection на GitHub не включён — правило держится на дисциплине).
-- Работа идёт от `dev`; в `main` изменения попадают только через **pull request** с минимум одним апрувом.
-
-**Порядок работы над задачей:**
-
-1. **Описание перед работой** — до старта задачи коротко описать, что будет сделано; приступать к работе только после апрува пользователя. К следующей задаче переходить только по явной команде пользователя.
-2. **Ветка задачи** — от `dev` создаётся ветка (например, `task/<краткое-имя>`), работа ведётся в ней.
-3. **Саб-агенты** — на каждую задачу и её подпункты выделяется отдельный саб-агент; независимые подпункты выполняются параллельно, с непересекающимися write-скоупами (разные подкаталоги `Sources/` и `Tests/`).
-4. **Апрув перед коммитом** — по завершении работы коммит **не делается сразу**: результат сначала показывается пользователю, коммит выполняется только после апрува.
-5. **Завершение задачи** — когда задача закрыта целиком, создаётся pull request из ветки задачи в `dev`.
-6. **Мердж** — при наличии апрува PR смерживается в `dev`, ветка задачи удаляется (локально и на remote).
-7. **Релиз в `main`** — отдельным PR из `dev` по готовности; порядок тот же: апрув → мердж.
-
-## Полезные команды
+## Build and test
 
 ```bash
-swift build --triple arm64-apple-ios15.0-simulator   # компиляция пакета под iOS
-xcodebuild test -scheme TesseraKit-Package -destination 'platform=iOS Simulator,name=iPhone 17'   # тесты
+swift build --triple arm64-apple-ios15.0-simulator
+xcodebuild test -scheme TesseraKit-Package -destination 'platform=iOS Simulator,name=<an available iPhone>'
 ```
 
-Пакет — только iOS (+ Mac Catalyst для совместимости, D9): на macOS-хосте обычный `swift build`
-UIKit-код не соберёт, а `swift test` тесты не запустит.
+`swift test` does not run UIKit code on a macOS host; use `xcodebuild` with a simulator.
 
-В среде DSH (файловый сандбокс) команды запускаются с флагом `--disable-sandbox`, иначе вложенный
-`sandbox-exec` SwiftPM падает с `Operation not permitted`; `xcodebuild` требует полного доступа
-(кэши SwiftPM и CoreSimulator — вне workspace). В обычной среде флаги/доступы не нужны.
+## Tests and accessibility
+
+- Add tests under `Tests/<Target>Tests`. Core contract tests (progress, snap, arbitration) are mandatory.
+- Accessibility (VoiceOver, Reduce Motion, Dynamic Type, RTL) is part of every component.
+- An architecture change updates the matching document in `docs/`; record notable decisions in
+  `docs/DECISIONS.md` and risks in `docs/RISKS.md`.
+
+## Commits and pull requests
+
+English messages, small focused pull requests, `main` changes only through a pull request.
+
+## Links
+
+[README](README.md), [CONTRIBUTING](CONTRIBUTING.md), [docs/DECISIONS.md](docs/DECISIONS.md),
+[docs/CORE-IOS-DESIGN.md](docs/CORE-IOS-DESIGN.md), [docs/STARTSCREEN-IOS-DESIGN.md](docs/STARTSCREEN-IOS-DESIGN.md),
+[docs/MANUAL-TESTING.md](docs/MANUAL-TESTING.md).

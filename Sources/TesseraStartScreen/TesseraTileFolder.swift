@@ -2,7 +2,7 @@
 // Design document: docs/STARTSCREEN-IOS-DESIGN.md — §3 (tile grid)
 // (a folder is a grid element) and §14 (MVP clarifications)
 // (D12: action tiles; D14: folder operations go only through the host
-// approval function, see docs/STATE.md). Folder mutations (creation, adding
+// approval function, see docs/DECISIONS.md). Folder mutations (creation, adding
 // a tile, moving between folders) are performed by `TesseraTileStore`, not by this model.
 
 #if canImport(UIKit)

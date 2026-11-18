@@ -6,7 +6,7 @@
 //  bottom left in RTL, as in Windows 10 Mobile. The title does not go under the badge (it sits beside it if
 //  there is room, otherwise above it); in edit mode the badge avoids the resize arrow
 //  that sits in the same corner. Design document: docs/STARTSCREEN-IOS-DESIGN.md,
-//  §4 and "Implementation deviations"; docs/W10M-STARTSCREEN.md §1.
+//  §4 and "Implementation notes and deviations"; docs/W10M-STARTSCREEN.md §1.
 //
 //  Screen widths 375/390/402/414 pt with 6 columns (insets 16, gap 8): a small
 //  tile is 50.3 / 53 / 55 / 57 pt, medium and wide follow the layout formula.

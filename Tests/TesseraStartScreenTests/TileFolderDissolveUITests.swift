@@ -4,7 +4,7 @@
 //
 //  A folder never holds 0–1 tiles: coordinator and grid (D45).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md "Implementation
-//  deviations"; decision D45 in docs/STATE.md.
+//  deviations"; decision D45 in docs/DECISIONS.md.
 //
 //  Checked on a real `TesseraTileStore` and a grid in a window (`TesseraTestDragHost`):
 //  - unpinning a tile of an opened panel in a two-tile folder: the panel closes,
