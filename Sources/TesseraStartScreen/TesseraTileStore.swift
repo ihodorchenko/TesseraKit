@@ -1091,9 +1091,9 @@ public final class TesseraTileStore: ObservableObject {
     /// order-based packing. Without a known width the snapshot is the previous kind: the grid lays it
     /// out by packing.
     private func notifyChange() {
-        let snapshot = hostColumns.map { snapshot(columns: $0) } ?? snapshot()
+        let current = hostColumns.map { snapshot(columns: $0) } ?? snapshot()
         objectWillChange.send()
-        onChange?(snapshot)
+        onChange?(current)
     }
 
     /// Saves the state, remembering the error instead of rethrowing it.
