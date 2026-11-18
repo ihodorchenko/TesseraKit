@@ -29,6 +29,11 @@ jobs:
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Use the software keyboard in the simulator
+        # Tests that start text editing expect the on-screen keyboard; a connected
+        # hardware keyboard changes the keyboard notifications they rely on.
+        run: defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
+
       - name: Run tests
         run: |
           xcodebuild test -scheme TesseraKit-Package \

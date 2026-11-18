@@ -586,7 +586,23 @@ final class TileFolderRenameTests: XCTestCase {
             userInfo: [UIResponder.keyboardFrameEndUserInfoKey: CGRect(x: 0, y: 200, width: 390, height: 300)]
         )
         XCTAssertEqual(collection.contentInset.bottom, 0, accuracy: 0.001, "Outside editing the insets are not touched")
+
+        // The simulator may post its own keyboard notifications when the field becomes first
+        // responder (for example with a hardware keyboard connected, as on CI runners). Those
+        // legitimately replace the frame posted above, so the remembered-frame scenario cannot be
+        // observed in that environment.
+        var systemNotifications = 0
+        let tokens = [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification]
+            .map { name in NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in
+                systemNotifications += 1
+            } }
+        defer { tokens.forEach { NotificationCenter.default.removeObserver($0) } }
+
         XCTAssertTrue(panel.beginTitleEditing())
+        try XCTSkipIf(
+            systemNotifications > 0,
+            "The simulator posted its own keyboard notifications while editing started"
+        )
         XCTAssertEqual(collection.contentInset.bottom, 300, accuracy: 0.5)
         pressReturn(in: panel)
         NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
