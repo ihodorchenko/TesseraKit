@@ -1,6 +1,6 @@
 // Layout by explicit coordinates: the pure "placement by cells" layer.
 // Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 (tile grid) and
-// "Implementation deviations"; decisions D30–D33 in docs/STATE.md.
+// "Implementation notes and deviations"; decisions D30–D33 in docs/DECISIONS.md.
 //
 // Layout used to be a function of order: ``TesseraTileLayoutEngine/pack(items:columns:unit:)``
 // packed tiles strictly compactly along the array. Variant B (D30) makes the model

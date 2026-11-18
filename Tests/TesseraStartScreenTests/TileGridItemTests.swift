@@ -4,7 +4,7 @@
 //
 //  Tests of the desktop grid item (decision D17).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid";
-//  D17 in docs/STATE.md — the panel of an opened folder, `folderContent`, lives in the same
+//  D17 in docs/DECISIONS.md — the panel of an opened folder, `folderContent`, lives in the same
 //  enumeration as the tile and the folder, but is not a data item.
 //
 //  The tests check identity, size, "view" properties and a switch over all three

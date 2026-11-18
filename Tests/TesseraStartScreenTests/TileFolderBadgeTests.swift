@@ -8,8 +8,8 @@
 //  a tile badge: the bottom corner at the end of the line, avoiding the resize arrow in
 //  edit mode, hiding "99+" on 1×1 in edit mode. A small folder (1×1) with a badge does not draw
 //  a title (like a small tile with an icon, D47): the mini grid sits above the badge row.
-//  Design document: docs/STARTSCREEN-IOS-DESIGN.md (the "Implementation deviations"
-//  section); decisions D44 and D47 in docs/STATE.md.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md (the "Implementation notes and deviations"
+//  section); decisions D44 and D47 in docs/DECISIONS.md.
 //
 //  Screen widths 375/414 pt with 6 columns (margins 16, gap 8): a small tile is
 //  50.3 / 57 pt.

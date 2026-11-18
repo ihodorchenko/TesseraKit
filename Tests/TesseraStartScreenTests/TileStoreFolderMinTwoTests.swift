@@ -3,8 +3,8 @@
 //  TesseraStartScreenTests
 //
 //  A folder never has 0–1 tiles: the `TesseraTileStore` model (D45).
-//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
-//  decisions D30–D33 and D45 in docs/STATE.md.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation notes and deviations";
+//  decisions D30–D33 and D45 in docs/DECISIONS.md.
 //
 //  The rule: when an operation removes a tile from a folder and one is left, the folder
 //  is dissolved: the remaining tile takes the folder's cell with **its own** size

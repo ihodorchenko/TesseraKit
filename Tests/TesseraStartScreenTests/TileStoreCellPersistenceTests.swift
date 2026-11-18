@@ -4,7 +4,7 @@
 //
 //  Persistence and edge cases of `TesseraTileStore` cell operations.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 and "Implementation
-//  deviations"; decisions D31–D33 in docs/STATE.md.
+//  deviations"; decisions D31–D33 in docs/DECISIONS.md.
 //
 //  Checked: the write/read round trip with holes, adopting a canvas of a new width
 //  by the very first successful operation (D32) and keeping the file safe on refusal,

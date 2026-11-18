@@ -5,7 +5,7 @@
 //  Tests for visible and invisible grid keys in `TesseraTileStore`, on
 //  cell-based operations.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid",
-//  "Implementation deviations".
+//  "Implementation notes and deviations".
 //
 //  Checked:
 //  - tiles outside the catalog (invisible keys) keep their cells and places in the

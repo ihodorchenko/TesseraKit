@@ -5,7 +5,7 @@
 //  Contract tests for section content updates.
 //  Design document: docs/PIVOT-IOS-DESIGN.md §3 (architecture: the SwiftUI facade
 //  `TesseraPivotView`), §5 (synchronization: a single writer of `contentOffset`),
-//  docs/CORE-IOS-DESIGN.md, implementation deviations (the pager's `reload`
+//  docs/CORE-IOS-DESIGN.md, "Behaviour of the implementation" (the pager's `reload`
 //  keeps the page and controllers by `id`, SwiftUI content is updated through
 //  `TesseraContentHosting`).
 //

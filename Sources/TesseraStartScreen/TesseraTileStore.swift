@@ -8,7 +8,7 @@
 //    launches";
 //  - §6 (the right page): TesseraTileStore is the single source of truth for both the grid and the
 //    app list (two-way pin/unpin, the "single writer" rule);
-//  - §14 (MVP clarifications) and D12–D15 in docs/STATE.md: a shortcut is just an action (no type
+//  - §14 (MVP clarifications) and D12–D15 in docs/DECISIONS.md: a shortcut is just an action (no type
 //    field), folders are created/changed only through the host approval function, shortcuts have
 //    four sizes.
 //

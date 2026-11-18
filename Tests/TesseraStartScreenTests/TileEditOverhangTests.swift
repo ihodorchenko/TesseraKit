@@ -6,8 +6,8 @@
 //  the tile frame by `cornerOverhang` = 4 pt, exactly half the grid gap (8 pt),
 //  so the button circles of adjacent tiles (the arrow of the upper one and the unpin of the lower one in
 //  the same column) touch but do not overlap (with 6 pt the overlap was 4 pt).
-//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
-//  decision D48 in docs/STATE.md.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation notes and deviations";
+//  decision D48 in docs/DECISIONS.md.
 //
 
 #if canImport(UIKit)

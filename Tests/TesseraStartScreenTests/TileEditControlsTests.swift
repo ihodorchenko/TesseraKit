@@ -5,7 +5,7 @@
 //  Tests of the edit-mode buttons: clipped together with the tile,
 //  sized by tile size, a touch target of at least 44 pt, contrast in both
 //  themes. Design document: docs/STARTSCREEN-IOS-DESIGN.md §5
-//  ("Implementation deviations").
+//  ("Implementation notes and deviations").
 //
 
 #if canImport(UIKit)

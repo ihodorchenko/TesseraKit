@@ -1,174 +1,152 @@
-# Панорама (Panorama) для iOS — проектный дизайн
+# TesseraPanorama design
 
-> Проектный документ: теоретическое проектирование компонента «Панорама» по мотивам Windows Phone для iOS.
-> Ограничения: **iOS 15+**, **Swift 5.9+**, допускаются UIKit и SwiftUI. Реализация в объём документа не входит.
-> Общий слой: **CORE-IOS-DESIGN.md** (пакет **TesseraKit**, target `TesseraCore`).
+> Design document for the Panorama component: a Windows Phone style panorama for iOS.
+> Constraints: **iOS 15+**, **Swift 5.9+**, UIKit and SwiftUI. Shared layer: [CORE-IOS-DESIGN.md](CORE-IOS-DESIGN.md) (`TesseraCore`).
 
-## 0. Что воспроизводим
+## 0. What is being reproduced
 
-На Windows Phone было два родственных компонента:
+Windows Phone had two related controls:
 
-- **Pivot** — табы с тонким заголовком, листание «страниц»;
-- **Panorama** — полноэкранный фон с параллаксом, секции-«холсты» шире экрана, заголовки секций, подсматривание следующей секции с правого края.
+- **Pivot**: tabs with a thin header, paging between pages;
+- **Panorama**: a full-screen background with parallax, section "canvases" wider than the screen, section headers, and a peek of the next section at the right edge.
 
-Этот документ проектирует именно **Panorama**; почти всё применимо и к Pivot (там просто выключаются параллакс и peek).
+This document covers **Panorama**. Almost everything also applies to Pivot, which simply turns off parallax and peek (see [PIVOT-IOS-DESIGN.md](PIVOT-IOS-DESIGN.md)).
 
-## 1. Целевые UX-свойства
+## 1. Target UX properties
 
-Компонент обязан уметь:
+The component must provide:
 
-1. **Горизонтальное листание секций** с инерцией и «прилипанием» к секции (snap).
-2. **Peek** — с правого края виден кусочек следующей секции (на WP секция занимала не всю ширину экрана).
-3. **Параллакс фона** — фоновое изображение шире экрана, при свайпе едет медленнее контента; чем дальше секция, тем «глубже» она кажется.
-4. **Вертикальный скролл внутри секции**, если контент выше экрана.
-5. **Заголовки секций** сдвигаются/появляются с анимацией, привязанной к прогрессу свайпа.
-6. Жестовая эргономика: свайп упругий, ловится с любой скорости, не конфликтует с внутренними скроллами и навигацией.
+1. **Horizontal paging of sections** with inertia and snapping to a section.
+2. **Peek**: a sliver of the next section is visible at the right edge (on Windows Phone a section did not fill the whole screen width).
+3. **Background parallax**: the background image is wider than the screen and moves slower than the content; the farther the section, the "deeper" it feels.
+4. **Vertical scrolling inside a section** when its content is taller than the screen.
+5. **Section headers** that move and fade with animations bound to swipe progress.
+6. Good gesture ergonomics: an elastic swipe that can be caught at any speed and does not conflict with inner scroll views or navigation.
 
-**Главный инвариант:** всё в компоненте — функция одного скаляра
+**Main invariant:** everything in the component is a function of one scalar,
 
 ```
 t = contentOffset.x / itemWidth
 ```
 
-(глобальный прогресс свайпа). Каждый элемент (фон, заголовки, секции) — это отображение `t → transform`. Если инвариант выдержан, компонент предсказуем.
+the global swipe progress. Every element (background, headers, sections) is a mapping `t → transform`. As long as the invariant holds, the component is predictable.
 
-## 2. Выбор фундамента: UIKit или SwiftUI (iOS 15)
+## 2. Foundation: UIKit or SwiftUI (iOS 15)
 
-Ограничения iOS 15:
+iOS 15 limits:
 
-- нет `scrollTargetBehavior` / `scrollTargetLayout` (iOS 17+);
-- нет `@Observable` (iOS 17+);
-- доступ к `contentOffset` в чистом SwiftUI — только трюк с `GeometryReader` + именованным координатным пространством.
+- no `scrollTargetBehavior` / `scrollTargetLayout` (iOS 17+);
+- no `@Observable` (iOS 17+);
+- in plain SwiftUI, `contentOffset` is reachable only through a `GeometryReader` and a named coordinate space.
 
-**Вывод:**
+**Conclusion:**
 
-- **Ядро скролла и параллакса — UIKit.** `UIScrollView` даёт честные `contentOffset`, `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)` для кастомного снапа и `scrollViewDidScroll` для драйва параллакса без хаков.
-- **Внешний API — два фасада**: нативный UIKit-контейнер (`TesseraPanoramaViewController`) и SwiftUI-обёртка (`TesseraPanoramaView: UIViewControllerRepresentable`). Внутри — одно общее ядро.
+- **The scrolling and parallax core is UIKit.** `UIScrollView` provides a real `contentOffset`, `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)` for custom snapping, and `scrollViewDidScroll` to drive parallax without hacks.
+- **The external API has two facades:** a native UIKit container (`TesseraPanoramaViewController`) and a SwiftUI wrapper (`TesseraPanoramaView: UIViewControllerRepresentable`), both on top of the same core.
 
-Чистый SwiftUI на iOS 15 возможен (TabView со стилем `.page` + GeometryReader-параллакс), но управление снапом, скоростью и синхронизацией вертикального скролла превращается в борьбу с фреймворком. Поэтому: **UIKit-ядро, SwiftUI-фасад**.
+Plain SwiftUI on iOS 15 is possible (a `TabView` with the `.page` style plus `GeometryReader` parallax), but controlling snapping, velocity and the synchronization of vertical scrolling becomes a fight with the framework. Hence: **UIKit core, SwiftUI facade**.
 
-## 3. Концептуальная архитектура
+## 3. Architecture
 
-Три слоя:
+Three layers:
 
 ```
-TesseraPanoramaView (SwiftUI-фасад)          ← декларативный API
-    └─ TesseraPanoramaViewController (UIKit)  ← оркестрация, делегат скролла, снап
-        ├─ TesseraPanoScrollView              ← UIScrollView, кастомная децелерация
-        ├─ PanoBackgroundView          ← слой фона, параллакс-трансформ
-        ├─ PanoHeaderView              ← заголовки секций, анимация по t
-        └─ PanoSectionContainerView    ← child VC / view секции + ленивая загрузка
+TesseraPanoramaView (SwiftUI facade)           declarative API
+    └─ TesseraPanoramaViewController (UIKit)   orchestration, scroll delegate, snapping
+        ├─ TesseraPanoScrollView               UIScrollView with custom deceleration
+        ├─ background layer                    parallax transform (TesseraParallaxLayer from Core)
+        ├─ TesseraPanoHeaderView               section headers animated by t
+        └─ section containers                  child VC per section, lazy loading
 ```
 
-Модель данных — протокол-источник (в духе `UICollectionViewDataSource`, чтобы не держать все секции в памяти):
+The data model is an array of sections that are loaded lazily, so that not every section has to stay in memory:
 
-- `TesseraPanoramaSection` — идентификатор, заголовок, фабрика контента (`makeContent() -> UIViewController` или `-> some View` для SwiftUI-секций);
-- `TesseraPanoramaStyle` — ширина секции (peek), множитель параллакса, шрифты/цвета заголовков, поведение фона;
-- `TesseraPanoramaDelegate` — `didShowSection`, `didChangeProgress(_ t: Double)`.
+- `TesseraPanoramaSection`: id, title and a content provider (`TesseraContentProviding`: a `UIViewController` factory or a SwiftUI view);
+- `TesseraPanoramaStyle`: peek, parallax factor, header font and colors, background behaviour, `contentInsetAdjustmentBehavior`;
+- `TesseraPanoramaDelegate`: `didShowSectionAt` and `didChangeProgress(_ t:)`.
 
-## 4. Геометрия и математика ядра
+## 4. Geometry and core math
 
-- **Ширина секции**: `itemWidth = screenWidth - peek`, где `peek ≈ 16–64 pt` (регулируется). На WP «холст» был примерно 80–90% ширины.
-- **Глобальный прогресс**: `t = offset.x / itemWidth`. Целая часть — индекс текущей секции, дробная — её прогресс показа.
-- **Параллакс фона**: `backgroundOffset = offset.x * parallaxFactor`, где `0 < parallaxFactor < 1` (типично 0.4–0.6). Фон — картинка, заведомо шире `contentSize`, чтобы при любом `t` не было пустых краёв. Реализация — чистый `frame.origin`/`transform`, без layout-прохода. Направление на экране и расположение слоя — см. «Отступления реализации», п. 3.
-- **Снап**: `pagingEnabled` не подходит (умеет только страницы в ширину экрана), поэтому:
+- **Section width:** `itemWidth = screenWidth − peek`, where `peek ≈ 16–64 pt` (configurable). On Windows Phone a canvas was roughly 80–90% of the screen width.
+- **Global progress:** `t = offset.x / itemWidth`. The integer part is the current section index, the fractional part is its show progress.
+- **Background parallax:** `backgroundOffset = offset.x × parallaxFactor`, with `0 < parallaxFactor < 1` (typically 0.4–0.6). The background is an image that is always wider than `contentSize`, so no edges show at any `t`. The implementation uses only `frame.origin` / `transform`, no layout pass.
+  - The layer is a sibling of the scroll view, not a subview, so its on-screen transform is `−backgroundOffset`: the background moves left together with the sections, but slower.
+  - The layer starts `padding` to the left of the viewport (room for rubber-banding before the first section); the whole background travel (`maximumOffsetX × factor`) and the right-hand margin lie to the right. The viewport stays covered for offsets in `[−padding/factor, maximumOffsetX + padding/factor]`.
+  - `parallaxFactor` is clamped to the open interval `(0, 1)`, represented as `0.01...0.99`; non-finite values fall back to 0.5. The typical 0.4–0.6 range is a recommendation, not a bound. So that rubber-banding never exposes the edges at high factors, the background margin grows with the factor: `padding = max(96, 0.35 × width, 0.6 × width × factor)`.
+- **Snapping:** `isPagingEnabled` does not fit (it only supports screen-wide pages), so:
   - `decelerationRate = .fast`;
-  - в `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)` вычисляем ближайший центр секции, при большой скорости свайпа — следующую/предыдущую (единицы скорости и опорная секция — см. «Отступления реализации», п. 4);
-  - на границах — «резина» через стандартный bounce.
-- **Заголовки**: для каждой секции трансформ/альфа — функция дробной части `t`. Идеально — кусочно-линейная интерполяция между ключевыми кадрами (0, 0.5, 1), а не жёсткое переключение.
+  - `targetContentOffset(forProposedContentOffset:withScrollingVelocity:)` finds the nearest section center, or the next/previous section on a fast swipe;
+  - `UIScrollView` reports velocity in points/ms, while the policy threshold (`TesseraSnapPolicy.velocityThreshold`, default 600) is in points/s, so `TesseraPanoScrollView` multiplies by 1000;
+  - the offset at the start of the drag is passed to the policy as `startOffset`, so a fast flick moves exactly one section from where it began (without unit conversion a short fast flick rolled back; without the start anchor it skipped a section);
+  - at the boundaries the standard bounce provides the rubber band.
+- **Drag without inertia.** With zero velocity UIKit ignores a modified `targetContentOffset`. `TesseraPanoScrollView` remembers the policy's target from `scrollViewWillEndDragging`; when `decelerate == false`, the controller (as the programmatic offset writer) animates the offset to that target (or to the nearest section if there is none) and reports the shown section only in `scrollViewDidEndScrollingAnimation`. With Reduce Motion the settling is instant.
+- **Headers:** for each section the transform and alpha are a function of the fractional part of `t`, ideally piecewise-linear interpolation between keyframes (0, 0.5, 1) rather than a hard switch. The title color is interpolated too: `lerp(headerColor, headerActiveColor, w)` with `w = max(0, 1 − |i − t|)`, the same piecewise-linear phase as the alpha. It is implemented as an accent copy of the label inside the main one whose alpha carries the weight, so `scrollViewDidScroll` still changes only `alpha` / `transform`. With `headerActiveColor == headerColor` no copy is created. The default `headerActiveColor` is `.systemBlue`.
 
-**Правило производительности:** ни одного layout-прохода во время скролла — только `frame`/`transform`/`alpha`. Autolayout секций выполняется один раз при создании.
+**Performance rule:** no layout pass while scrolling, only `frame` / `transform` / `alpha`. Autolayout of sections runs once at creation.
 
-## 5. Вертикальный скролл внутри секции
+## 5. Vertical scrolling inside a section
 
-Самая коварная часть. Два варианта:
+The trickiest part. Two options:
 
-**Вариант A — «один двумерный скролл»** (как «наклон холста» на WP): один `UIScrollView` с `contentSize = (sections × itemWidth, maxSectionHeight)`, весь контент — вложенные контейнеры в одном тайловом поле.
+**Option A, "one two-dimensional scroll"** (like the canvas tilt on Windows Phone): one `UIScrollView` with `contentSize = (sections × itemWidth, maxSectionHeight)`; all content lives in nested containers inside one tiled field.
 
-- Плюсы: диагональный свайп «просто работает», вертикальная позиция общая и сохраняется при листании.
-- Минусы: вложенные `UITableView`/`UICollectionView` с переиспользованием сюда не вписываются — придётся рендерить секции целиком и городить собственный рециклинг.
+- Pros: a diagonal swipe "just works", and the vertical position is shared and survives paging.
+- Cons: nested `UITableView` / `UICollectionView` with cell reuse do not fit; sections would have to be rendered whole and a custom recycling scheme invented.
 
-**Вариант B — «секция = свой вертикальный скролл» (рекомендуется):** каждая секция — child VC со своим `UIScrollView`/`UICollectionView`.
+**Option B, "a section is its own vertical scroll" (chosen):** each section is a child view controller with its own `UIScrollView` / `UICollectionView`.
 
-- Горизонтальный свайп обрабатывает родитель, вертикальный — ребёнок; направление определяется по скорости жеста в `gestureRecognizerShouldBegin`.
-- Плюсы: можно использовать обычные `UITableView`/`UICollectionView`/`ScrollView` со всеми их оптимизациями; вертикальная позиция каждой секции сохраняется сама собой (child VC живёт в памяти).
+- The parent handles horizontal swipes and the child handles vertical ones; the direction is decided by gesture velocity (see below).
+- Pros: regular `UITableView` / `UICollectionView` / `ScrollView` with all their optimizations; each section's vertical position is preserved because the child VC stays in memory.
 
-## 6. Производительность
+**Where the axis decision is made.** `TesseraPanoScrollView` is its own delegate and keeps `isDirectionalLockEnabled = true`. `TesseraPanoramaViewController` adds a target to its pan recognizer (`addTarget`) and decides on `.began` using `TesseraGestureArbiter.axisDecision(forVelocity:)` (by `translation` when velocity is zero). For a horizontal axis it builds a `TesseraGestureArbiter` and blocks the children's scrolling via `prepareForHorizontalScroll()`, restoring it with `endHorizontalScroll()` when the gesture ends; for a vertical axis the children are not blocked. Children register with `registerVerticalOwner(_:)` / `unregisterVerticalOwner(_:)` (weak references). The pan recognizer's delegate is never replaced, so the scroll view keeps its own handling of simultaneous gestures. See [CORE-IOS-DESIGN.md](CORE-IOS-DESIGN.md), "Gesture arbitration".
 
-- **Ленивая загрузка**: в памяти — текущая секция и соседи (±1), остальные создаются по мере приближения (колбэк на смену `t` либо хук до снапа).
-- **Никакого layout в `scrollViewDidScroll`** — только трансформы (см. п. 4).
-- **Фон**: одно `UIImageView` на весь слой; картинка декодируется в масштабе экрана (не гигабайтный original), при желании — лёгкий blur поверх для читаемости заголовков. Память на фон считается отдельно от секций.
-- **SwiftUI-секции**: `UIHostingController` не пересоздавать при каждом обновлении состояния.
-- **Prefetch** секций (аналог `UICollectionViewDataSourcePrefetching`), чтобы инертный свайп не упирался в ленивую загрузку.
+## 6. Performance
 
-## 7. Accessibility и системная интеграция
+- **Lazy loading:** the current section and its neighbours (±1) are in memory; others are created as they approach.
+- **No layout in `scrollViewDidScroll`**, only transforms (see section 4).
+- **Background:** one `UIImageView` for the whole layer; the image is decoded at screen scale (not a gigabyte original), optionally with a light blur on top for header legibility. Background memory is accounted separately from sections.
+- **SwiftUI sections:** `UIHostingController` is not recreated on every state update.
+  - `reload(sections:)` reuses the controllers of sections whose `id` survived in the new ±1 window (vertical position and `@State` are preserved), like the Core pager.
+  - With unchanged `id`s and titles, `TesseraPanoramaView` delivers new content to already loaded sections in place (a new `rootView`, the same controller), without stopping the scroll or resetting the shown section. For UIKit providers the controller instance is kept and the host must update it.
+  - Assigning an equivalent style (all fields equal, the same background image instance) does nothing.
+- **Programmatic jumps** farther than a neighbour are direct: the ±1 window is loaded around the target, the offset is set without animation on the target's neighbour, and one step is animated. The delegate sees a single progress jump and `didShowSectionAt` only for the target.
 
-- **VoiceOver**: компонент целиком — одна accessibility-страница с навигацией через `UIAccessibilityScrollDirection.left/right` (трёхпальцевый свайп); внутри секций — обычная иерархия; заголовок секции озвучивается при смене.
-- **Reduce Motion**: при `isReduceMotionEnabled` параллакс и анимации заголовков отключаются, остаётся простой снап.
-- **Dynamic Type**: заголовки на текстовых стилях с масштабированием; при большом шрифте проверять, что заголовки не обрезаются (peek можно оставлять).
-- **RTL**: прогресс `t` и направление снапа считаются от направления чтения (в RTL «следующая секция» слева).
+## 7. Accessibility and system integration
 
-## 8. Адаптивность и жизненные случаи
+- **VoiceOver:** the whole component is one accessibility page navigated with `UIAccessibilityScrollDirection.left/right` (three-finger swipe); inside sections the hierarchy is regular; the section title is announced on change. The announcement is the host's responsibility (see Core). The header layer is a separate accessibility element with the `.header` trait, and VoiceOver focus can rest on it; its `accessibilityScroll(_:)` forwards the swipe to the controller, which turns the direction into a section step and writes `contentOffset` itself, so paging from the header and from the section content behaves identically.
+- **Reduce Motion:** with `isReduceMotionEnabled`, parallax and header animations are off; plain snapping remains.
+- **Dynamic Type:** headers use text styles with scaling; check that headers are not cut off at large sizes (the peek can stay).
+- **RTL:** `t` and the snap direction follow the reading direction (in RTL the "next section" is on the left).
 
-- **Поворот / iPad / split view**: при смене ширины — пересчитать `itemWidth` и `contentSize`, восстановить текущую секцию (по индексу и сохранённому прогрессу), пересоздать/перезагрузить секции. При активном свайпе изменение размера лучше отложить до конца децелерации.
-- **Пустой список / одна секция**: одна секция — без снапа, по центру; пусто — placeholder-состояние наружу через делегат.
-- **Много секций**: ленивая загрузка обязательна, иначе O(n) в памяти.
-- **Navigation bar**: компонент хорошо живёт под большим заголовком; честный fullscreen-фон требует либо прозрачного бара, либо отступа. Заложить в стиль: `contentInsetAdjustmentBehavior` и место фона под баром.
+## 8. Adaptivity and lifecycle
 
-## 9. Объём MVP
+- **Rotation / iPad / split view:** on a geometry change (view width and height, reading direction, `peek`) the current section is restored by index and fraction. The fraction is taken in the previous slot direction and previous section width; otherwise a LTR↔RTL switch would open the mirrored section, and a `peek` change would leave the section between snap points. The root view's reading direction (`semanticContentAttribute` or the trait environment) is propagated to the strip and the header layer, since `semanticContentAttribute` is not inherited by subviews. Writing the frame, `contentSize` and offset in a layout pass does not emit `didChangeProgress`; a layout deferred during a gesture is applied when inertia ends.
+- **Empty list / single section:** the delegate has no empty-state event and the controller does not draw a placeholder. With no sections only the background remains (the background layer is stretched to at least the viewport), headers are hidden and nothing scrolls. The host detects the empty state from `sections` after `reload(sections:)` and shows its own placeholder.
+- **Many sections:** lazy loading is mandatory, otherwise memory is O(n).
+- **Navigation bar:** the component works well under a large title; a true full-screen background needs a transparent bar or an inset. The style carries `contentInsetAdjustmentBehavior` (default `.never`), applied to the section strip; the background lies under the bar for the full height of the view. Snapping and progress are computed from `contentOffset` without horizontal `adjustedContentInset`, so values that produce side insets (`.always`, and in landscape with a notch also `.automatic` / `.scrollableAxes`) shift the strip by the side safe-area width. `.never` is recommended for a full-screen panorama.
 
-**Входит:**
+## 9. Scope of the first release
 
-1. UIKit-ядро: горизонтальный скролл + кастомный снап + peek.
-2. Параллакс фона (одна картинка, множитель).
-3. Заголовки секций с интерполяцией по `t`.
-4. Вертикальный скролл по варианту B.
-5. SwiftUI-фасад + UIKit-API.
-6. Accessibility (VoiceOver + Reduce Motion).
+**Included:**
 
-**Отрезано в v1:** произвольный фон на каждую секцию (у WP фон был общим), «наклон холста», фичи iOS 17+, сложный рециклинг (секций с ±1 соседями хватает для типичных 3–7 секций).
+1. UIKit core: horizontal scroll, custom snapping, peek.
+2. Background parallax (one image, a factor).
+3. Section headers interpolated by `t`.
+4. Vertical scrolling by option B.
+5. SwiftUI facade and UIKit API.
+6. Accessibility (VoiceOver and Reduce Motion).
 
-## 10. Риски
+**Out of scope:** an arbitrary background per section (on Windows Phone the background was shared), canvas tilt, iOS 17+ features, complex recycling (sections with ±1 neighbours suffice for the typical 3–7 sections).
 
-- **iOS-гейдлайны**: Panorama — чуждая iOS-паттерну штука; пользователи iOS привыкли к `UIPageViewController`/`TabView(.page)`. Компонент должен быть опциональным стилем, а не заменой навигации.
-- **Конфликт жестов** (вариант B) — самая вероятная зона багов: граничные случаи с `UICollectionView` внутри, bounce и «упругость» на стыке.
-- **SwiftUI-секции на iOS 15**: каждый `UIHostingController` — свой layout-цикл; при быстрых свайпах возможны просадки, если секции тяжёлые.
-- **Живучесть под будущими iOS**: опора только на публичные `UIScrollView`-API — риск обновлений низкий.
+## 10. Risks
 
-## Приложение A. UIScreenEdgePanGestureRecognizer (итог обсуждения)
+- **iOS guidelines:** Panorama is alien to iOS patterns; iOS users are used to `UIPageViewController` / `TabView(.page)`. The component should be an optional style, not a replacement for navigation.
+- **Gesture conflicts** (option B) are the likeliest source of bugs: edge cases with an inner `UICollectionView`, bounce, and elasticity at the seam.
+- **SwiftUI sections on iOS 15:** each `UIHostingController` has its own layout cycle; fast swipes may drop frames if sections are heavy.
+- **Resilience to future iOS versions:** the component relies only on public `UIScrollView` API, so the risk is low.
 
-- **Как основной жест — не упрощает.** Теряются бесплатные возможности `UIScrollView` (инерция, bounce, снап через `targetContentOffset`, `contentOffset` как источник истины, `accessibilityScroll`), ломается свайп «по всему холсту» — суть панорамы. Дополнительно: конфликт с системным жестом «назад» на левом краю и задержка дочерних скроллов у кромки (edge pan долго «фейлится»).
-- **Как вспомогательный — полезен в одном сценарии:** когда секция сама горизонтально-скроллящаяся (карта, галерея). Контент владеет всей площадью, а кромка экрана всегда переключает секцию — конфликт направлений не возникает физически.
-- **Решение:** основной жест — нативный pan `UIScrollView`; edge pan — опциональный плагин, ведущий в тот же `contentOffset` (spring-аниматор), не второй движок. Внутри `UINavigationController` левый край отдать системе, edge pan вешать на правый (в RTL — наоборот).
+## Appendix A. UIScreenEdgePanGestureRecognizer
 
-## Отступления реализации (v0.1, 29.10.2026)
-
-> Сверка проектного документа с фактическим кодом релиза 0.1.0. Текст выше не переписывался: отступления зафиксированы отдельной секцией. Формат пункта: что обещал документ → что делает код → решение.
-
-1. **§5 «Вертикальный скролл», вариант B: где принимается решение по оси.** Документ обещал: направление определяется по скорости жеста в `gestureRecognizerShouldBegin` родителя, горизонталь — пейджеру, вертикаль — ребёнку. Код: `TesseraPanoScrollView` — сам себе делегат (self-delegation) и держит `isDirectionalLockEnabled = true`; `TesseraPanoramaViewController` подписывается на его `panGestureRecognizer` аддитивно (`addTarget`) и на состоянии `.began` решает по `TesseraGestureArbiter.axisDecision(forVelocity:)` (при нулевой скорости — по `translation`). Если ось горизонтальная, контроллер собирает `TesseraGestureArbiter` и блокирует прокрутку детей через `prepareForHorizontalScroll()`, а по завершении восстанавливает её через `endHorizontalScroll()`; при вертикальной оси дети не блокируются. Дети регистрируются вручную публичным `registerVerticalOwner(_:)` / `unregisterVerticalOwner(_:)`, ссылки слабые. Делегат `panGestureRecognizer` не подменяется. Решение: контракт арбитража по существу соблюдён (горизонталь родителю, вертикаль ребёнку), но точка решения сдвинута на `.began`; полноценный §5 требует публичного хука от Core — открытый вопрос следующей версии.
-
-2. **§8 «Адаптивность» и §9 «Объём MVP»: пустое состояние.** Документ обещал: «пусто — placeholder-состояние наружу через делегат». Код: в `TesseraPanoramaDelegate` только `didShowSectionAt` и `didChangeProgress`; хука пустого состояния нет, и `TesseraPanoramaViewController` собственный placeholder не фабрикует — при пустом наборе секций остаётся только фон (фоновый слой растянут не меньше вьюпорта), заголовки скрыты, а полоса прокрутки пуста и не прокручивается. Хост узнаёт о пустом состоянии по пустому массиву `sections` после `reload(sections:)` (`public private(set) var sections`) и показывает placeholder сам. Решение: в v0.1 пустое состояние — ответственность хоста; событие в делегате требует изменения публичного протокола и отложено до следующей версии.
-
-3. **§4 «Параллакс фона»: направление и расположение слоя (E10.7в, W1, 30.10.2026).** Документ задавал `backgroundOffset = offset.x * parallaxFactor` и «фон шире `contentSize`», не уточняя знак на экране и сторону запаса. Код: `TesseraParallaxLayer` (Core) лежит рядом с `TesseraPanoScrollView`, а не внутри него, и проецирует смещение на экран со знаком минус (`transform = −offset × factor`): при росте offset'а фон уезжает влево вместе с секциями, но медленнее (до W1 фон ехал навстречу). `TesseraPanoramaViewController` ставит начало слоя на `padding` левее вьюпорта (поле под «резину» до начала ленты), а весь ход фона (`maximumOffsetX × factor`) и правое поле — справа; вьюпорт закрыт картинкой при offset ∈ [−padding/factor, maximumOffsetX + padding/factor]. Решение: формулу §4 читать как смещение в координатах контента, экранная проекция — `−backgroundOffset` (Core, «Отступления реализации», п. 8); направление покрыто тестом `PanoParallaxBackgroundTests`.
-
-4. **§4 «Снап»: единицы скорости в `TesseraPanoScrollView` (E10.11, W1, 30.10.2026).** Документ обещал снап «ближайший центр + следующая/предыдущая при большой скорости». Код: `scrollViewWillEndDragging` получает скорость от UIKit в points/ms; `TesseraPanoScrollView` переводит её в pt/s (`× 1000`) для порога `TesseraSnapPolicy` (600 pt/s) и наблюдателя, а offset начала жеста из `scrollViewWillBeginDragging` передаёт политике как `startOffset` — быстрый флик сдвигает ровно на одну секцию от стартовой (без перевода единиц короткий быстрый флик откатывался назад, без опоры на старт — перескакивал секцию). Решение: контракт единиц зафиксирован (Core, «Отступления реализации», п. 4); место вызова покрыто тестом `PanoScrollViewVelocityTests`. Доводка снапа при окончании drag без инерции в панораме — отдельная задача (E9.2б).
-
-5. **§4 «Параллакс фона»: диапазон множителя (E9.7, T4, 02.11.2026).** Документ: `0 < parallaxFactor < 1`, типично 0.4–0.6. Код v0.1 зажимал фактор в `0.4...0.6`, превращая типичный диапазон в границу. Код: кламп `TesseraPanoramaStyle.parallaxFactor` — открытый интервал `(0, 1)`, представленный замкнутым `0.01...0.99`; нечисловые значения дают дефолт 0.5. Чтобы при факторе до 0.99 «резина» в полэкрана не обнажала краёв фона (покрытие из п. 3 — offset до `padding / factor`), запас фонового слоя растёт с фактором: `padding = max(96, 0.35 × width, 0.6 × width × factor)`. Решение: типичный диапазон — рекомендация, а не граница; канон — `PanoStyleTests`, покрытие на всём диапазоне — `PanoParallaxBackgroundTests`.
-
-6. **§3 `TesseraPanoramaStyle`: цвет активного заголовка (E9.7, T4, 02.11.2026).** В v0.1 `headerActiveColor` хранился в стиле, но не применялся. Код: цвет заголовка интерполируется по `t` — `lerp(headerColor, headerActiveColor, w)`, где `w = max(0, 1 − |i − t|)`, та же кусочно-линейная функция фазы, что и альфа заголовка (§4). Реализация — акцентная копия метки внутри основной (`TesseraPanoHeaderView.Style.activeTextColor`), вес задаётся её альфой, поэтому в `scrollViewDidScroll` по-прежнему меняются только `alpha`/`transform`, а цвет метки покадрово не перекрашивается. При `headerActiveColor == headerColor` копии не создаются. Решение: поле реализовано, а не устарело; дефолт `.systemBlue` означает, что активный заголовок по умолчанию синий.
-
-7. **§8 «Navigation bar»: `contentInsetAdjustmentBehavior` в стиле (E9.7, T4, 02.11.2026).** Документ: заложить в стиль `contentInsetAdjustmentBehavior` и место фона под баром. Код: поле `TesseraPanoramaStyle.contentInsetAdjustmentBehavior` (по умолчанию `.never`) применяется к полосе секций; фон лежит под баром на всю высоту вида. Ограничение: снап и прогресс считаются от `contentOffset` без горизонтальных `adjustedContentInset`, поэтому значения, дающие боковые отступы (`.always`, а в альбомной ориентации с вырезом — и `.automatic`/`.scrollableAxes`), сдвигают ленту на ширину бокового safe area. Решение: для полноэкранной панорамы рекомендуется `.never`.
-
-8. **§7 «VoiceOver»: жест с заголовка (E9.7, T4, 02.11.2026).** Слой заголовков — отдельный accessibility-элемент с трейтом `.header`, и фокус VoiceOver может стоять на нём. Код: его `accessibilityScroll(_:)` направляет трёхпальцевый свайп в контроллер, который превращает направление в шаг по секциям и сам пишет `contentOffset` (§2 Core, «Один писатель»). Решение: листание с заголовка и с контента секции работает одинаково.
-
-9. **§4 «Снап»: жест без инерции (E9.2б, T4, 02.11.2026).** Документ обещал прилипание к секции через `targetContentOffset`. При нулевой скорости UIKit игнорирует изменённый `targetContentOffset` и не двигает offset к цели. Код: `TesseraPanoScrollView` запоминает цель политики из `scrollViewWillEndDragging`; при `decelerate == false` контроллер панорамы как программный писатель offset'а доводит его анимацией до этой цели (без цели — до ближайшей секции) и сообщает показ секции только в `scrollViewDidEndScrollingAnimation`. При Reduce Motion доводка мгновенная. Решение: снап выровнен при любой скорости, правило одного писателя соблюдено.
-
-10. **§8 «Адаптивность»: смена геометрии на лету (E10.13, T4, 02.11.2026).** Документ: при смене ширины восстановить текущую секцию по индексу и прогрессу, изменение размера во время свайпа отложить. Код: сменой геометрии считаются ширина и высота вида, направление чтения и `peek`; во всех случаях секция восстанавливается по индексу и доле, а доля берётся в прежнем направлении слотов и прежней ширине секции (иначе смена LTR↔RTL открывала зеркальную секцию, а смена `peek` оставляла секцию между снап-точками). Направление чтения корневого вида (`semanticContentAttribute` или trait-окружение) переносится на ленту и слой заголовков — `semanticContentAttribute` subview'ами не наследуется. Запись кадра, `contentSize` и offset'а в layout-проходе не порождает `didChangeProgress`; отложенный во время жеста layout применяется по завершении инерции. Решение: §8 выполняется для всех видов смены геометрии.
-
-11. **§6 «Ленивая загрузка» и SwiftUI-секции (E10.13, E10.12б, T4, 02.11.2026).** Код:
-    - `reload(sections:)` переиспользует контроллеры секций с сохранившимся `id` в новом окне ±1 (вертикальная позиция и `@State` сохраняются), как пейджер Core после W1;
-    - анимированный переход дальше соседней секции — прямой прыжок: окно ±1 загружается вокруг цели, offset без анимации ставится на соседа цели, анимируется один шаг; делегат получает один скачок прогресса, `didShowSectionAt` — только для цели;
-    - `TesseraPanoramaView` при тех же `id` и заголовках доносит новый контент до загруженных секций на месте (новый `rootView`, тот же контроллер) без остановки прокрутки и сброса показа; для UIKit-поставщиков экземпляр контроллера сохраняется, обновлять его хост должен сам;
-    - присваивание эквивалентного стиля (все поля совпадают, картинка фона — тот же экземпляр) ничего не делает.
-
-    Решение: §6 («`UIHostingController` не пересоздавать при каждом обновлении») выполняется и для `reload`, и для SwiftUI-перерисовок.
+- **As the main gesture it does not simplify anything.** It loses the free capabilities of `UIScrollView` (inertia, bounce, snapping via `targetContentOffset`, `contentOffset` as the source of truth, `accessibilityScroll`) and breaks the swipe "anywhere on the canvas" that is the essence of a panorama. It also conflicts with the system back gesture on the left edge and delays child scroll views near the edge (an edge pan stays in the "possible" state for a long time).
+- **As an auxiliary gesture it is useful in one scenario:** a section that scrolls horizontally itself (a map, a gallery). The content owns the whole area while the screen edge always switches sections, so no direction conflict arises.
+- **Decision:** the main gesture is the native `UIScrollView` pan; an edge pan would be an optional plugin that drives the same `contentOffset` (a spring animator), not a second engine. Inside a `UINavigationController` the left edge belongs to the system and the edge pan goes on the right (reversed in RTL). The plugin is not implemented.

@@ -6,7 +6,7 @@
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md, section "Tile grid",
 //  section "Edit mode" (scroll locking), section "Accessibility"
 //  (state announcements, `.layoutChanged`, Dynamic Type); D17/D18 in
-//  docs/STATE.md: the panel expands inline, at most one folder is
+//  docs/DECISIONS.md: the panel expands inline, at most one folder is
 //  open at a time.
 //
 //  These tests cover the serialization of panel transitions:

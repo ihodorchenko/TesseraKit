@@ -4,8 +4,8 @@
 //
 //  Cell-based drag: the target is the cell under the finger, the preview is computed from base placements,
 //  and the drop is committed by `TesseraTileStore` cell operations.
-//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
-//  decisions D20, D21, D22, D30–D33 in docs/STATE.md.
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md, "Implementation notes and deviations";
+//  decisions D20, D21, D22, D30–D33 in docs/DECISIONS.md.
 //
 //  User acceptance scenarios:
 //  - A: a tile taken out of a folder panel (or dragged across the grid) and

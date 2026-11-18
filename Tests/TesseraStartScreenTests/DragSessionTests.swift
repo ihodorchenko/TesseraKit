@@ -5,8 +5,7 @@
 //  Full drag sessions of edit mode.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode"
 //  (the own drag coordinator: snapshot, placeholder, push preview, magnet,
-//  merge into a folder by hold, unpin/resize) and §3 "Tile grid";
-//  plan: docs/PLAN.md.
+//  merge into a folder by hold, unpin/resize) and §3 "Tile grid".
 //
 //  Checked on real cells and a real `TesseraTileStore` in a window
 //  (`TesseraTestWindowedGrid` + `TesseraTestDragHost`):

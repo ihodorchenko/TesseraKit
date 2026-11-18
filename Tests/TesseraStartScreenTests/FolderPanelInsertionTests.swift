@@ -4,7 +4,7 @@
 //
 //  Tests for the pure geometry of the expanded folder panel (D17).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid";
-//  D17 in docs/STATE.md: the panel is inserted as a separate item right after
+//  D17 in docs/DECISIONS.md: the panel is inserted as a separate item right after
 //  the folder tile (the tile stays visible), and geometrically occupies
 //  a full-width row right after the row in which the folder ends;
 //  everything that starts below that row sits under the panel.

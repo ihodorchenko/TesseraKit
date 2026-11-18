@@ -4,7 +4,7 @@
 //
 //  Tests for the closed folder preview (D17).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md, section "Tile grid";
-//  D17 in docs/STATE.md: a closed folder shows a 2×2 mini-grid of the first
+//  D17 in docs/DECISIONS.md: a closed folder shows a 2×2 mini-grid of the first
 //  four content icons.
 //
 //  There is no separate pure "first four" function in the API: the choice is made by

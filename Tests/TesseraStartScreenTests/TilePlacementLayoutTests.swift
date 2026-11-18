@@ -4,8 +4,8 @@
 //
 //  Layout by explicit cells: tiles land on their cells, holes remain
 //  (D30). Design document: docs/STARTSCREEN-IOS-DESIGN.md §3
-//  "Tile grid" and "Implementation deviations"; decisions D30–D33
-//  in docs/STATE.md.
+//  "Tile grid" and "Implementation notes and deviations"; decisions D30–D33
+//  in docs/DECISIONS.md.
 //
 //  `TesseraTileCollectionViewLayout` is checked on a collection without a window and on
 //  hand-built cell tables (`TesseraTileGridPlacementTable`):

@@ -4,9 +4,9 @@
 //
 //  Folder creation by dragging: the merge zone, hysteresis and the dwell before
 //  the push-down preview.
-//  Design document: docs/STARTSCREEN-IOS-DESIGN.md ("Implementation deviations");
+//  Design document: docs/STARTSCREEN-IOS-DESIGN.md ("Implementation notes and deviations");
 //  docs/W10M-STARTSCREEN.md §6.2; decisions D22 (hold of 600 ms / 10 pt,
-//  unchanged), D50 in docs/STATE.md.
+//  unchanged), D50 in docs/DECISIONS.md.
 //
 //  What is checked:
 //  - zone geometry (`TesseraTileMergeZone`): entry is the frame's center with a side of

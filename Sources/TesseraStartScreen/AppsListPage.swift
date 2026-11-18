@@ -8,7 +8,7 @@
 //    list section, with two-way sync with tiles through TesseraTileStore;
 //  - §9 "Accessibility": rows are standard elements, the jump list is available,
 //    Dynamic Type, RTL;
-//  - §14 "MVP clarifications" and D12/D13 in docs/STATE.md: a tile is just an
+//  - §14 "MVP clarifications" and D12/D13 in docs/DECISIONS.md: a tile is just an
 //    action (no `type` field), and the page itself is optional — the host creates it
 //    if it wants a third pager page;
 //  - D14: the page does nothing with folders by itself — all folder operations

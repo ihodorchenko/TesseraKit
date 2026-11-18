@@ -3,8 +3,8 @@
 //  TesseraStartScreenTests
 //
 //  Folder rename (D35; docs/W10M-STARTSCREEN.md §6.7). Design document:
-//  docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations";
-//  decision D35 in docs/STATE.md.
+//  docs/STARTSCREEN-IOS-DESIGN.md, "Implementation notes and deviations";
+//  decision D35 in docs/DECISIONS.md.
 //
 //  What is tested:
 //  - the model: `TesseraTileStore.renameFolder(_:to:)` (whitespace trimming, an empty name is

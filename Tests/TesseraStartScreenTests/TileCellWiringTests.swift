@@ -4,7 +4,7 @@
 //
 //  Live wiring of cells and the edit button to `TesseraTileStore` cell operations
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md
-//  "Implementation deviations"; decisions D30–D33 in docs/STATE.md.
+//  "Implementation notes and deviations"; decisions D30–D33 in docs/DECISIONS.md.
 //
 //  What is checked:
 //  - grid frames match the model's stored cells (including holes);

@@ -5,7 +5,7 @@
 //  `TesseraTileStore` cell operations: move, in-place resize, folders,
 //  unpin/pin, collapsing empty rows.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 and "Implementation
-//  deviations"; decisions D20, D30–D33 in docs/STATE.md.
+//  deviations"; decisions D20, D30–D33 in docs/DECISIONS.md.
 //
 //  What is tested: holes remain (no repack), cascading push down,
 //  a 2×2 folder in place of a small target and a column shift to the left, take-out onto a cell and into

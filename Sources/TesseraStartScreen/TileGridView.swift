@@ -15,7 +15,7 @@
 //  scrollViewDidScroll lays nothing out itself) and §9 "Accessibility"
 //  (VoiceOver, Dynamic Type, RTL).
 //  Clarifications: D12 (a tile is an action), D14 (folders are a grid
-//  item), D15 (four sizes and live tiles) — docs/STATE.md; §14
+//  item), D15 (four sizes and live tiles) — docs/DECISIONS.md; §14
 //  STARTSCREEN-IOS-DESIGN.md.
 //
 //  Neighbors move during reorder and resize along a bounce curve
@@ -30,7 +30,7 @@
 //  `TesseraTileLayoutEngine.pack`; no centers are returned while a folder is expanded,
 //  because the panel shifts the rows.
 //
-//  D17 (docs/STATE.md) — native Windows Phone folder expansion: below the folder tile
+//  D17 (docs/DECISIONS.md) — native Windows Phone folder expansion: below the folder tile
 //  (which stays visible) a full-width panel
 //  `TesseraTileGridItem.folderContent` is inserted — a separate row right after the row where
 //  the folder ends. Scrolling is locked during the animation, icons cascade in
@@ -6142,7 +6142,7 @@ final class TesseraFolderPreviewView: UIView {
 /// ``flipDuration`` each: the outgoing face turns to the edge (+90°, `m34` perspective),
 /// the swap, then the incoming face turns the rest of the way (−90° → 0°). Only
 /// `layer.transform` and `isHidden` change; `frame`/`bounds` are not touched — the
-/// discipline of §4 and RISK.md R10.
+/// discipline of §4 and RISKS.md R10.
 final class TesseraFolderMiniTileView: UIView {
 
     /// The duration of a full flip around the X axis, in seconds.

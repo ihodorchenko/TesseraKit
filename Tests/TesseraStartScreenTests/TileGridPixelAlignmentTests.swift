@@ -4,7 +4,7 @@
 //
 //  Pixel alignment of the start screen grid.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Layout model"
-//  (the unit formula), "Implementation deviations" (pixel alignment).
+//  (the unit formula), "Implementation notes and deviations" (pixel alignment).
 //
 //  The §3 formula gives a fractional unit: at a width of 393 pt (content 361, gap 8)
 //  the unit is 84.25 pt, so tile edges fall between pixels. The layout rounds the

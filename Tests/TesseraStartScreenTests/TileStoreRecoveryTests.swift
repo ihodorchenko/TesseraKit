@@ -5,7 +5,7 @@
 //  Tests of `TesseraTileStore` state recovery.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit
 //  mode" (persistence), §6 (a single source of truth, pin/unpin) and
-//  "Implementation deviations"; plan — docs/PLAN.md.
+//  "Implementation notes and deviations".
 //
 //  What is checked:
 //  - "dead" folders: after `setCatalog` → `load()` a folder without a single tile

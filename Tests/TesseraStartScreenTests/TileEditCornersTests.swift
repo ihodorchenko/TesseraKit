@@ -7,7 +7,7 @@
 //  so both buttons of one tile stand one above the other. The rule for owning
 //  touch zones on a small tile: unpin owns the upper half of the height,
 //  the arrow owns the lower half, and the tile center belongs to nobody. Design document:
-//  docs/STARTSCREEN-IOS-DESIGN.md (the "Implementation deviations" section).
+//  docs/STARTSCREEN-IOS-DESIGN.md (the "Implementation notes and deviations" section).
 //
 //  Also covers the badge versus the buttons in real edit mode at widths 375/390/402/414 pt
 //  with 6 columns.

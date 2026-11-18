@@ -4,7 +4,7 @@
 //
 //  Tests for the magnet to cells.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §5 "Edit mode"
-//  and docs/PLAN.md: a virtual grid is built under the dragged tile,
+//  (magnet): a virtual grid is built under the dragged tile,
 //  and the drag image is smoothly pulled to the center of the nearest slot of the same dimensions.
 //
 //  The pure math of `TesseraTileMagnet` is tested (no UI): choosing

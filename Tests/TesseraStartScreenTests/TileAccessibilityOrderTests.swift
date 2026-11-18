@@ -4,7 +4,7 @@
 //
 //  VoiceOver order by cells and focus after edit operations.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §9 "Accessibility" and
-//  "Implementation deviations"; decisions D30–D33 in docs/STATE.md.
+//  "Implementation notes and deviations"; decisions D30–D33 in docs/DECISIONS.md.
 //
 //  VoiceOver traversal order is the order of collection indexes (the grid does not set
 //  `accessibilityElements`; the layout supplies attributes by index), so the tests

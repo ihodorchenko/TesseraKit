@@ -7,9 +7,9 @@
 //  `CATransform3D` with `m34` perspective, a 90° rotation around Y, a face swap and a rotation to
 //  completion; transforms only, no layout; the badge is a separate view, not part of the flip), §9
 //  (Accessibility: VoiceOver, Dynamic Type, RTL) and §10 (MVP: flipping simple text tiles).
-//  Clarifications: D12 and D15 in docs/STATE.md.
+//  Clarifications: D12 and D15 in docs/DECISIONS.md.
 //
-//  Performance discipline (§4, RISK.md R10): the flip does not change `frame` or `bounds` and does
+//  Performance discipline (§4, RISKS.md R10): the flip does not change `frame` or `bounds` and does
 //  not trigger layout; only `layer.transform` and `isHidden` at the moment of the face swap. Text
 //  and colors change off the hot path: on registration, on content updates and on a face change.
 //
@@ -643,7 +643,7 @@ final class TesseraLiveTileFaceView: UIView {
 ///
 /// The faces are swapped at the moment both are edge-on, so no mirrored text is visible. Only
 /// `layer.transform` and `isHidden` change; `frame`/`bounds`/layout are not touched, which is the
-/// discipline of §4 and RISK.md R10.
+/// discipline of §4 and RISKS.md R10.
 ///
 /// ## Reduce Motion (§9)
 ///

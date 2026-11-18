@@ -2,7 +2,7 @@
 // Design document: docs/STARTSCREEN-IOS-DESIGN.md — §3 (tile grid)
 // (layout model, unit coordinates) and §14 (MVP clarifications)
 // (D12/D15: a tile is just an action with no `type` field; four tile sizes).
-// D14 (folders and the approval function) is described in docs/STATE.md; the folder model is
+// D14 (folders and the approval function) is described in docs/DECISIONS.md; the folder model is
 // in TesseraTileFolder.swift, folder operations are in TesseraTileStore.
 
 #if canImport(UIKit)
@@ -12,7 +12,7 @@ import CoreGraphics
 #endif
 
 /// The size of a tile on the start screen grid, in units
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14; D15 in docs/STATE.md).
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14; D15 in docs/DECISIONS.md).
 ///
 /// Sizes are given as "columns × rows" pairs:
 /// - ``small`` — 1×1,
@@ -101,7 +101,7 @@ public enum TesseraTileSize: String, CaseIterable, Codable, Hashable {
 }
 
 /// An attention badge on a tile: a red dot or a counter
-/// (docs/STARTSCREEN-IOS-DESIGN.md §14; D12 in docs/STATE.md).
+/// (docs/STARTSCREEN-IOS-DESIGN.md §14; D12 in docs/DECISIONS.md).
 ///
 /// The badge is not part of the live flip: it is a separate element in a tile corner
 /// (document §4, "Badge"). The model stores the intent, while the appearance and the
@@ -155,7 +155,7 @@ public enum TesseraTileBadge: Equatable, Hashable {
 #if canImport(UIKit)
 
 /// A start screen tile is just an action on a tile
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14; D12 in docs/STATE.md).
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3, §14; D12 in docs/DECISIONS.md).
 ///
 /// A tile has **no** `type` field: grouping by app type is not
 /// used. A tile is described by an identifier, a title, an icon,

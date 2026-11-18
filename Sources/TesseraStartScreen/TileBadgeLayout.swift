@@ -1,6 +1,6 @@
 // Layout of the tile badge in the bottom corner (D29).
 // Design document: docs/STARTSCREEN-IOS-DESIGN.md — §4 "Badge" and
-// "Implementation deviations" (D47); docs/W10M-STARTSCREEN.md §1.
+// "Implementation notes and deviations" (D47); docs/W10M-STARTSCREEN.md §1.
 
 #if canImport(UIKit)
 import UIKit

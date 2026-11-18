@@ -13,7 +13,7 @@
 //  Reduce Motion → static), and §9 "Accessibility" (accessibilityScroll,
 //  announcing the page title, RTL).
 //  User clarifications: D13 (the side pages exist only if the host
-//  supplied them; the pager has 1 to 3 pages) — docs/STATE.md and §14 of the document.
+//  supplied them; the pager has 1 to 3 pages) — docs/DECISIONS.md and §14 of the document.
 //
 //  Responsibilities:
 //  - the controller owns the page composition and the edge policy, but not the data:
@@ -134,7 +134,7 @@ public final class TesseraStartScreenViewController: UIViewController {
     /// The hook page identifier for the Core pager.
     ///
     /// The pager reuses page controllers with the same `id`
-    /// (docs/CORE-IOS-DESIGN.md, "Implementation deviations"). Replacing
+    /// (docs/CORE-IOS-DESIGN.md, "Behaviour of the implementation"). Replacing
     /// the provider in ``configure(leftPanel:rightPage:)`` therefore changes
     /// the generation in the `id`: otherwise the pager would keep the controller
     /// of the previous provider on screen.

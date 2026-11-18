@@ -1,7 +1,7 @@
 // Coordinates of a top-level element of the start screen grid (D30–D33).
 //
 // Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 (tile grid; persistence of
-// TesseraTileStore) and decisions D30–D33 in docs/STATE.md.
+// TesseraTileStore) and decisions D30–D33 in docs/DECISIONS.md.
 
 import Foundation
 

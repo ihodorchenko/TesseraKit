@@ -9,7 +9,7 @@
 //    UIKit core (`TesseraTileGridView`, `TesseraTileEditCoordinator`,
 //    `TesseraStartScreenViewController`); the delegate is an observer and neither duplicates nor
 //    announces anything;
-//  - §14 (MVP clarifications) and D12/D13 in docs/STATE.md: a shortcut is just an action (no `type`
+//  - §14 (MVP clarifications) and D12/D13 in docs/DECISIONS.md: a shortcut is just an action (no `type`
 //    field), side pages are optional.
 //
 // The delegate is the only event channel of the facade: the UIKit core reports grid taps and pager

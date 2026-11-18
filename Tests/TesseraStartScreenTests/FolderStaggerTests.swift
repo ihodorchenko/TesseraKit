@@ -4,7 +4,7 @@
 //
 //  Tests for the icon cascade of the expanded folder panel (D17).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md, section "Tile grid",
-//  section "Reduce Motion"; D17 in docs/STATE.md: icons appear in a cascade
+//  section "Reduce Motion"; D17 in docs/DECISIONS.md: icons appear in a cascade
 //  of ~35 ms per index.
 //
 //  `TesseraTileGridView.staggerDelay(index:)` is a pure function: the tests check

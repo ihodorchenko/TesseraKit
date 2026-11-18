@@ -9,7 +9,7 @@
 // D30 this is **not** the main start screen layout but a fallback path (see below):
 // normally tiles sit at explicit cells and holes are preserved.
 //
-// D17 (docs/STATE.md) — the expanded folder panel: pure functions for the panel insertion index
+// D17 (docs/DECISIONS.md) — the expanded folder panel: pure functions for the panel insertion index
 // after the folder band, for the row offset below the panel, and for its height — at the
 // end of the file. Also here: the pixel alignment of the unit and the grid geometry
 // (``TesseraTileLayoutEngine/gridMetrics(contentWidth:columns:spacing:scale:)``).
@@ -126,7 +126,7 @@ public struct TesseraTileLayoutSlot: Equatable {
 }
 
 /// Pure layout functions of the tile grid
-/// (docs/STARTSCREEN-IOS-DESIGN.md §3, "Tile grid"; D15 in docs/STATE.md).
+/// (docs/STARTSCREEN-IOS-DESIGN.md §3, "Tile grid"; D15 in docs/DECISIONS.md).
 ///
 /// The grid is described by the number of columns and the unit size in points. Order-based
 /// packing (`pack`/`packCompact`) is strictly compact: every tile goes to the
@@ -136,7 +136,7 @@ public struct TesseraTileLayoutSlot: Equatable {
 /// onto a different canvas width (D32), and the first-launch layout. The main
 /// layout is by explicit cells (`TesseraTileLayoutEngine+Placement.swift`, D30):
 /// holes are preserved, collisions push tiles down (D31). The history of abandoning
-/// "honest holes" and returning to them is in "Implementation deviations" of
+/// "honest holes" and returning to them is in "Implementation notes and deviations" of
 /// docs/STARTSCREEN-IOS-DESIGN.md.
 ///
 /// All functions are `static` and hold no state: the result depends only on

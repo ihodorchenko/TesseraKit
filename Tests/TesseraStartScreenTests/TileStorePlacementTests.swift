@@ -4,8 +4,8 @@
 //
 //  Tests for the model with explicit cells and the `tiles.json` version 2 schema.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 "Tile grid"
-//  (TesseraTileStore persistence) and "Implementation deviations"; decisions D30–D33 in
-//  docs/STATE.md; plan: docs/PLAN.md.
+//  (TesseraTileStore persistence) and "Implementation notes and deviations"; decisions D30–D33 in
+//  docs/DECISIONS.md.
 //
 //  Checked:
 //  - the v1 → v2 migration: lazy, one-time, cells equal `packCompact` by the

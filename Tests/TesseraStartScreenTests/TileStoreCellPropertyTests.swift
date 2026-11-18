@@ -6,7 +6,7 @@
 //  operation sequences (seeded, reproducible), with the model invariants
 //  checked after each one.
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md §3 and "Implementation
-//  deviations"; decisions D30–D33 in docs/STATE.md.
+//  deviations"; decisions D30–D33 in docs/DECISIONS.md.
 //
 //  Invariants after every operation: no overlaps, everything inside
 //  `[0, columns)`, every visible item has exactly one cell, tiles

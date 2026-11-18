@@ -8,7 +8,7 @@
 //  (the tile grid: the grid snapshot is the only data input), §6 (the right page) and §7 (the left
 //  page; side pages exist only if the host provided them, D13), §8 (background parallax: wallpaper
 //  and multiplier), §9 (Accessibility: VoiceOver, Dynamic Type, RTL) and §14 (MVP clarifications;
-//  D12–D15 in docs/STATE.md).
+//  D12–D15 in docs/DECISIONS.md).
 //
 //  Responsibilities:
 //  - the facade does not duplicate mechanics: the pager, the grid, parallax, edit mode and folders

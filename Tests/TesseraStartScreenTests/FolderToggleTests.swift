@@ -4,7 +4,7 @@
 //
 //  Tests for the folder expansion state machine (D17).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md, section "Tile grid";
-//  D17 in docs/STATE.md: at most one folder is expanded at a time, the panel
+//  D17 in docs/DECISIONS.md: at most one folder is expanded at a time, the panel
 //  is inserted as a separate item below the folder tile (the tile stays visible),
 //  and it is closed by a repeated tap or an explicit call from the host.
 //

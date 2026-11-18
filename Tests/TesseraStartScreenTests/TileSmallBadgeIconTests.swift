@@ -7,7 +7,7 @@
 //  ("Mail" with badge "3" had no icon). The title is hidden only visually:
 //  the VoiceOver label and value do not change. A small tile without a badge and 2×2, 4×2 tiles
 //  are laid out as before. Design document: docs/STARTSCREEN-IOS-DESIGN.md
-//  ("Implementation deviations"); decision D47 in docs/STATE.md.
+//  ("Implementation notes and deviations"); decision D47 in docs/DECISIONS.md.
 //
 //  Screen widths 375/390/402/414 pt with 6 columns (margins 16, gap 8): a small
 //  tile is 50.3 / 53 / 55 / 57 pt.

@@ -4,7 +4,7 @@
 //
 //  Tests for the layout of the expanded folder panel based on the "folder band" (D17).
 //  Design document: docs/STARTSCREEN-IOS-DESIGN.md, section "Tile grid" and
-//  "Implementation deviations"; D17/D18 in docs/STATE.md: the panel is a
+//  "Implementation notes and deviations"; D17/D18 in docs/DECISIONS.md: the panel is a
 //  full-width row placed BELOW the folder tile.
 //
 //  Previously the decision "stays above the panel / moves below the panel" was made by

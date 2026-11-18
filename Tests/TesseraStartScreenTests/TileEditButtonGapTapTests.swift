@@ -9,7 +9,7 @@
 //  edit mode ended unexpectedly. Now the background gesture does not accept touches
 //  that land in the touch area of any edit overlay, using the same
 //  `hitTest` as the buttons themselves. Design document:
-//  docs/STARTSCREEN-IOS-DESIGN.md, "Implementation deviations".
+//  docs/STARTSCREEN-IOS-DESIGN.md, "Implementation notes and deviations".
 //
 //  Touch simulation: the window's real `hitTest` determines the view under the finger,
 //  the background gesture gets a `UITouch` with that view and point (`shouldReceive`), then
